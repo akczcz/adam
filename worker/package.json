@@ -1,0 +1,19 @@
+{
+  "name": "adam-knowledge-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:knowledge": "node scripts/bundle-knowledge.mjs",
+    "dev": "npm run build:knowledge && wrangler dev",
+    "deploy": "npm run build:knowledge && wrangler deploy"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.1.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260924.1",
+    "typescript": "^7.0.2"
+  }
+}
