@@ -15,7 +15,15 @@ import { z } from "zod";
 import { BUILT_AT, DOCS, INDEX, SECTIONS } from "./knowledge.generated.js";
 
 interface Env {
-  /** Sdílený bearer token. Nastav přes: wrangler secret put MCP_BEARER_TOKEN */
+  /**
+   * Přijímané bearer tokeny, oddělené čárkou. Každý může mít štítek:
+   *
+   *   MCP_BEARER_TOKEN="adam:tok1,kolega-jan:tok2,tok3"
+   *
+   * Štítek se loguje při úspěšné autentizaci, takže je ve Workers Logs vidět,
+   * kdo se připojuje – a jde odvolat jeden token, aniž by to shodilo ostatní.
+   * Nastav přes: wrangler secret put MCP_BEARER_TOKEN
+   */
   MCP_BEARER_TOKEN?: string;
 }
 
@@ -43,6 +51,59 @@ function secureEquals(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < ab.byteLength; i++) diff |= ab[i] ^ bb[i];
   return diff === 0;
+}
+
+interface Credential {
+  label: string;
+  token: string;
+}
+
+/**
+ * Rozparsuje seznam tokenů. Tvar položky je "stitek:token" nebo holý "token".
+ * Za štítek se považuje jen bezpečný prefix před první dvojtečkou – tokeny
+ * z `openssl rand -base64 32 | tr -d '/+='` dvojtečku neobsahují, takže
+ * nehrozí, že bychom token omylem rozsekli vejpůl.
+ */
+function parseCredentials(raw: string): Credential[] {
+  const out: Credential[] = [];
+  for (const [i, part] of raw.split(",").entries()) {
+    const item = part.trim();
+    if (!item) continue;
+
+    const sep = item.indexOf(":");
+    if (sep > 0) {
+      const label = item.slice(0, sep);
+      const token = item.slice(sep + 1).trim();
+      if (token && /^[A-Za-z0-9._-]{1,32}$/.test(label)) {
+        out.push({ label, token });
+        continue;
+      }
+    }
+    // Bez štítku: do logu jde jen pořadí, nikdy ne kus tokenu.
+    out.push({ label: `token#${i + 1}`, token: item });
+  }
+  return out;
+}
+
+/** Isolate se mezi requesty recykluje, takže parsujeme jen při změně secretu. */
+let credCache: { raw: string; creds: Credential[] } | null = null;
+
+function credentialsOf(raw: string): Credential[] {
+  if (credCache?.raw !== raw) credCache = { raw, creds: parseCredentials(raw) };
+  return credCache.creds;
+}
+
+/**
+ * Vrátí štítek odpovídajícího tokenu, jinak null.
+ * Záměrně projde všechny položky i po nálezu – doba běhu tak neprozradí,
+ * kolikátý token v pořadí to byl.
+ */
+function identify(presented: string, creds: Credential[]): string | null {
+  let found: string | null = null;
+  for (const cred of creds) {
+    if (secureEquals(presented, cred.token)) found ??= cred.label;
+  }
+  return found;
 }
 
 function unauthorized(detail: string): Response {
@@ -266,8 +327,8 @@ export default {
       });
     }
 
-    const expected = env.MCP_BEARER_TOKEN;
-    if (!expected) {
+    const raw = env.MCP_BEARER_TOKEN;
+    if (!raw) {
       // Radši tvrdě spadnout než nechat bázi omylem veřejně.
       console.error("MCP_BEARER_TOKEN není nastavený – odmítám obsluhovat.");
       return new Response(
@@ -276,10 +337,24 @@ export default {
       );
     }
 
+    const creds = credentialsOf(raw);
+    if (creds.length === 0) {
+      console.error("MCP_BEARER_TOKEN je nastavený, ale prázdný – odmítám obsluhovat.");
+      return new Response(
+        JSON.stringify({ error: "server_misconfigured", detail: "MCP_BEARER_TOKEN is empty" }),
+        { status: 500, headers: { "content-type": "application/json" } },
+      );
+    }
+
     const auth = request.headers.get("authorization") ?? "";
     const match = auth.match(/^Bearer\s+(.+)$/i);
     if (!match) return unauthorized("Chybí hlavička Authorization: Bearer <token>");
-    if (!secureEquals(match[1].trim(), expected)) return unauthorized("Neplatný token");
+
+    const label = identify(match[1].trim(), creds);
+    if (!label) return unauthorized("Neplatný token");
+
+    // Kdo se připojuje – viditelné ve Workers Logs. Token samotný se neloguje.
+    console.log(`mcp auth ok: ${label} ${request.method} ${url.pathname}`);
 
     return handler.fetch(request);
   },

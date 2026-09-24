@@ -1,0 +1,11 @@
+# Lokální proměnné pro `npm run dev`. Zkopíruj na .dev.vars a vyplň.
+# .dev.vars je v .gitignore – nikdy ho necommituj.
+#
+# Formát: položky oddělené čárkou, každá volitelně "stitek:token".
+# Štítek se loguje při úspěšné autentizaci, token nikdy.
+# Štítek musí odpovídat [A-Za-z0-9._-]{1,32}.
+#
+# Produkční tokeny generuj přes:
+#   openssl rand -base64 32 | tr -d '/+=' | head -c 40
+
+MCP_BEARER_TOKEN=adam:lokalni-testovaci-token-1,kolega:lokalni-testovaci-token-2
