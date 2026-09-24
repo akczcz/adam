@@ -1,6 +1,6 @@
 ---
 tema: Model Context Protocol (MCP)
-naposledy_overeno: 2026-09-23
+naposledy_overeno: 2026-09-24
 zralost: stable
 primarni_zdroje:
   - https://modelcontextprotocol.io/specification/2026-07-28
@@ -102,6 +102,30 @@ jakékoli server→klient volání → přepsat na MRTR.
 
 **Pozn. Adam:** tahle tabulka zastarává nejrychleji z celého souboru – po ~3 měsících re-verifikovat.
 
+### Ověřeno empiricky (2026-09-24)
+
+Tvrzení v tomto souboru byla protažena smoke testem proti **mcp 2.2.0 / mcp-types 2.2.0**
+na reálném HTTP drátě – `tools/smoke_mcp_2026_07_28.py`, **15/15 potvrzeno**.
+Verze SDK ověřeny proti PyPI a npm registru (sedí na den: Python 2.2.0 = 2026-09-07,
+`@modelcontextprotocol/server` 2.1.0 = 2026-09-23, v1 linie 1.30.1).
+
+Potvrzeno na drátě: request bez `initialize` projde; `tools/list` bez session vrátí nástroje
+a odpověď nenese `Mcp-Session-Id`; `ping`, `logging/setLevel` i `resources/subscribe` vracejí
+`-32601`; HTTP GET vrací 400; neznámý resource vrací **`-32602`** (ne `-32002`);
+výsledek nástroje nese `resultType: "complete"`; `NoBackChannelError` v SDK existuje;
+modul `mcp.server.tasks` ani identifikátor `io.modelcontextprotocol/tasks` v SDK **nejsou**.
+
+**Jak vypadá 2026-era request v praxi** (zjištěno metodou pokus-omyl, chyby SDK navigují):
+1. hlavička `MCP-Protocol-Version: 2026-07-28` – **jinak server routuje do legacy větve**;
+2. `params._meta` s `io.modelcontextprotocol/protocolVersion` a `.../clientCapabilities`
+   (bez nich `-32602`) – tady jsou data, která dřív nesl handshake;
+3. hlavička `Mcp-Method` shodná s `method` v těle (jinak `-32020`);
+4. hlavička `Mcp-Name` zrcadlící `name` (u `tools/call`, `prompts/get`) nebo `uri`
+   (u `resources/read`), jinak `-32020`.
+
+**Limit testu:** ověřuje chování SDK, ne text specifikace. Tvrzení o spec samotné
+(earliest removal 2027-07-28, SEP čísla) stojí dál na primárních zdrojích.
+
 ## Roadmapa (blog 2026-08-22)
 - **Server Card** – `.well-known` metadata pro discovery serveru bez připojení.
   Stav: **SEP-2127, PR otevřený a nemergovaný** (vytvořen 2026-01-21, `in-review`), míří do
@@ -124,8 +148,13 @@ Vrstva agent → nástroje/data. Ne pro delegaci úkolů autonomním agentům (t
 - **Tasks chybí v Python SDK** → tři cesty: vlastní implementace `io.modelcontextprotocol/tasks`
   nad SDK / server-minted handle jako běžný argument nástroje (vzor, který spec sama doporučuje pro
   cross-call stav) / ten konkrétní server postavit v C#. Reálný trade-off při volbě jazyka.
-- **Default `legacy` u Claude Code je past při testování** – server může být plně 2026-07-28 a přesto
-  s ním Claude Code mluví starou revizí. Interoperabilitu testovat explicitně v obou érách.
+- **Era-routing je opt-in napříč celým ekosystémem – to je nejčastější past.** Ověřeno, že
+  **Python SDK** routuje podle hlavičky `MCP-Protocol-Version`: bez ní server spadne do legacy
+  stateful větve a odpoví `Missing session ID`, i když 2026-07-28 plně umí. **TS SDK** to říká
+  otevřeně („nothing puts a 2026-07-28 byte on the wire by default"), **Claude Code** má
+  `MCP_PROTOCOL_NEGOTIATION` default `legacy`. Důsledek: „server je na 2026-07-28" a „komunikace
+  běží na 2026-07-28" jsou dvě různá tvrzení. Interoperabilitu testovat explicitně v obou érách
+  a v provozu logovat skutečně vyjednanou revizi, ne tu nakonfigurovanou.
 - **Interní katalog MCP serverů stavět na `server.json`** (schéma 2025-12-11, Registry API v0.1,
   subregistry pattern s vlastním `_meta` namespace jako kanonický model), Server Card řešit jako
   jeden z ingest adaptérů za rozhraním typu `fetch(endpoint) → ServerDescriptor`. Cesta k metadatům
@@ -145,9 +174,10 @@ Vrstva agent → nástroje/data. Ne pro delegaci úkolů autonomním agentům (t
       **Rozhodnutí (Adam, 2026-09-23):** katalog stavět na `server.json` jako kanonickém modelu,
       Server Card řešit jako ingest adaptér. Re-verifikovat při mergnutí SEP-2127.
 - [ ] Podporuje Microsoft Foundry Agent Service revizi 2026-07-28 jako klient? Nenalezen primární
-      zdroj; docs (upd. 2026-09-04) stále odkazují 2025-11-25. Ověřit přes release notes nebo
-      empiricky (request bez `initialize`).
+      zdroj; docs (upd. 2026-09-04) stále odkazují 2025-11-25.
+      **Nástroj připraven:** `tools/probe_remote_mcp.py <URL> --token <TOKEN>` (vyžaduje credentials).
 - [ ] Podporuje Claude API MCP connector 2026-07-28? Beta header je `mcp-client-2025-11-20`.
+      **Nástroj připraven:** `tools/probe_remote_mcp.py` (vyžaduje credentials).
 - [ ] Kdy přijde Tasks extension do Python SDK (issue #2806) a jaký je interim pattern?
 - [ ] Server-initiated events (webhooky / channels) z roadmapy – zatím bez SEP a bez termínu.
       Relevantní, protože Claude Code channels dnes vyžadují revizi *před* 2026-07-28.
@@ -159,3 +189,7 @@ Vrstva agent → nástroje/data. Ne pro delegaci úkolů autonomním agentům (t
   (registr deprecated funkcí, earliest removal 2027-07-28), doplněna sekce Migrace (chybové kódy,
   auth), sekce Stav SDK a hostitelů, upřesněn stav Server Card (SEP-2127 = draft) a rozhodnutí
   stavět interní katalog na `server.json`.
+- 2026-09-24: znalost ověřena empiricky smoke testem proti mcp 2.2.0 (15/15 potvrzeno),
+  verze SDK ověřeny proti PyPI/npm. Nový nález: era-routing podle hlavičky
+  `MCP-Protocol-Version` je opt-in i v Python SDK, ne jen v TS SDK a Claude Code.
+  Přidány `tools/smoke_mcp_2026_07_28.py` a `tools/probe_remote_mcp.py`.

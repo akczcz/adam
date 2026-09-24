@@ -1,3 +1,7 @@
 .DS_Store
 *.local.*
 .claude/settings.local.json
+
+# Python venv pro smoke testy
+tools/.venv-smoke/
+__pycache__/
