@@ -1,12 +1,15 @@
 ---
 tema: Licenční vzorce a pasti v open-source AI frameworcích
-naposledy_overeno: 2026-09-27
+naposledy_overeno: 2026-09-28
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
   - https://github.com/temporalio/temporal/blob/main/LICENSE
   - https://www.cncf.io/projects/dapr/
   - https://docs.litellm.ai/docs/enterprise
+  - https://pypi.org/pypi/kagent-adk/json
+  - https://raw.githubusercontent.com/diagridio/python-ai/main/LICENSE.md
+  - https://docs.dapr.io/developing-ai/agent-integrations/
 ---
 
 # Licenční vzorce a pasti
@@ -39,6 +42,50 @@ Pro produkční self-hosted provoz serverové části je potřeba komerční kl�
 Stejný vzorec jinde: **Mastra** má jádro Apache-2.0, ale některé komponenty pod Elastic licencí.
 **LiteLLM** má SDK i proxy MIT, ale adresář `enterprise/` je licencovaný zvlášť.
 
+## Druhý vzorec: publikovaný artefakt bez licenčních metadat
+
+Repozitář je Apache-2.0, ale **publikovaný balíček nedeklaruje licenci vůbec**.
+Pro SBOM, license gate v CI a compliance review zákazníka to není „Apache-2.0",
+ale **„unknown"** – a to bývá v enterprise politikách horší než permisivní licence.
+
+**Doložený případ (ověřeno 2026-09-28):** balíčky kagentu na PyPI – `kagent-adk`,
+`kagent-core`, `kagent-langgraph`, `agentsts-core` – mají `license: null`,
+`license_expression: null` a žádný license classifier. Repozitář přitom Apache-2.0 je.
+
+Mírnější varianta: licence deklarovaná legacy free-textem (`"Apache License 2.0"`),
+ale chybějící `license_expression` podle PEP 639 v SPDX tvaru (`Apache-2.0`).
+Přísný gate, který čte jen `license_expression`, uvidí prázdno. Tak to má `dapr-agents`.
+
+Není to licenční past, je to **hygiena**. Řeší se jedním PR – ale dokud se nevyřeší,
+je to práce pro dodavatele produktu: doložit licenci ručně.
+
+## Třetí vzorec: dokumentace projektu jako vektor pasti
+
+Šev nemusí být v repu. Může být **vedle něj** – a odkazovat na něj oficiální dokumentace
+nadačního projektu.
+
+**Doložený případ (ověřeno 2026-09-28):** stránka `docs.dapr.io/developing-ai/agent-integrations/`
+na doméně CNCF projektu nabízí durable execution pro 11 agentních frameworků instalací
+`pip install diagrid[...]`. Ty balíčky pocházejí z `github.com/diagridio/python-ai` –
+repozitáře firmy, ne dapr orgu – a jsou pod **Diagrid Business Source License 1.1**:
+
+| Omezení | |
+|---|---|
+| Produkční použití zdarma | jen organizace pod **60 FTE a 15 M USD obratu** |
+| Zákaz | SaaS, konkurenční infrastruktura (agent runtime, durable execution) |
+| Zákaz | **komerční redistribuce a sublicencování za úplatu** |
+| Change Date | 2030-03-01 → Apache-2.0 |
+
+Třetí řádek míří přesně na model *dodáváme produkt do prostředí zákazníka*.
+**Otázka na právníka.**
+
+Zákeřné je, že PyPI balíček `diagrid` **licenci v metadatech neuvádí vůbec** a GitHub
+ji hlásí jako `NOASSERTION`. License gate tedy uvidí *unknown*, ne *BUSL* – a pustí to dál.
+
+**Pozn. Adam – poučení:** „projekt je pod nadací" chrání **repozitář**, ne `pip install`
+příkaz v jeho dokumentaci. Kontrolovat vlastníka **každého** balíčku ve finálním lock filu.
+Balíčky s BUSL licencí patří na deny-list v license gate, aby se nedostaly do lock filu omylem.
+
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
 Aktuální soubor `LICENSE` říká, co platí dnes. Neříká nic o tom, co bude platit za rok.
@@ -48,6 +95,7 @@ Rozhodující je, **kdo smí licenci změnit**.
 |---|---|---|---|
 | Jeden vendor + CLA / copyright assignment | Ano, jednostranně a bez varování | **Vysoké** | HashiCorp → BUSL, Elastic → SSPL, Redis → RSAL, Sentry → BUSL |
 | Projekt pod nadací (CNCF, ASF, LF AI & Data) | Prakticky ne – copyright je rozptýlený mezi přispěvatele | **Nízké** | Kubernetes, Dapr, OpenTelemetry |
+| Jeden vendor + **DCO** + trademark u nadace | Jen budoucí vlastní kód; cizí příspěvky ne | **Nízké licenčně, střední směrově** | kagent (Apache-2.0 + DCO + CNCF IP Policy, ale 7/8 maintainerů od jednoho vendora) |
 
 **Pozn. Adam:** tohle je nejdůležitější otázka celé licenční analýzy a zároveň ta, na kterou
 automatický license gate v CI neodpoví. Gate kontroluje dnešní stav souboru `LICENSE`.
@@ -64,6 +112,7 @@ Neumí říct „tenhle projekt má CLA a jednoho vlastníka, takže může kdyk
 | **ELv2** (Elastic License 2.0) | **Ne** | Zákaz řízené služby, zákaz obcházení licenčních klíčů | |
 | **SSPL** | **Ne** | Velmi restriktivní u poskytování služby | |
 | Vlastní „enterprise" licence | Ne | Podle smlouvy | Typicky adresář `enterprise/` v jinak MIT repu |
+| **Diagrid BSL** (BUSL 1.1 s prahy FTE a obratu) | **Ne** | **Otázka na právníka** – zákaz komerční redistribuce míří přímo na dodávku produktu | Change Date 2030-03-01 |
 
 BUSL a ELv2 **nejsou fatální** pro produkt nasazovaný u zákazníka on-prem – bývají mířené
 na konkurenční poskytovatele cloudu. Je ale nutné si to nechat potvrdit právníkem, ne architektem,
@@ -79,6 +128,11 @@ a počítat s tím, že to vyloučí model „provozujeme to jako SaaS pro víc 
 5. **Volá komponenta domů?** Telemetrie, kontrola licenčního klíče, hostovaný tracing –
    diskvalifikuje to air-gapped nasazení bez ohledu na licenci.
 6. **Co se stane, když vendor zítra relicencuje?** Kolik práce je odejít a co zůstane funkční?
+7. **Deklarují publikované balíčky licenci strojově čitelně?** Pole `license`,
+   **`license_expression`** (SPDX, PEP 639) a classifier `License :: OSI Approved`.
+   Chybějící hodnota = „unknown" v SBOM i u jinak čistě Apache-2.0 projektu.
+8. **Vlastní kdokoliv jiný balíčky, které dokumentace doporučuje instalovat?**
+   Ověř owner **každého** balíčku ve finálním lock filu, ne jen hlavního repa.
 
 ## Obranný vzor: vytlačit komerční vrstvu ven
 
@@ -91,3 +145,5 @@ Totéž platí pro přístup k modelům – viz model gateway v [overview.md](ov
 
 ## Changelog
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
+- 2026-09-28: přidán druhý vzorec (balíček bez licenčních metadat, kagent) a třetí
+  (dokumentace jako vektor, Diagrid BSL); doplněn řádek DCO do tabulky governance.

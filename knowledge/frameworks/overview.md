@@ -1,6 +1,6 @@
 ---
 tema: Mapa agentních frameworků pro přenositelné multiagentní platformy
-naposledy_overeno: 2026-09-27
+naposledy_overeno: 2026-09-28
 zralost: n/a (přehled)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -9,6 +9,10 @@ primarni_zdroje:
   - https://github.com/cncf/sandbox/issues/360
   - https://github.com/temporalio/temporal/blob/main/LICENSE
   - https://learn.microsoft.com/en-us/agent-framework/overview/
+  - https://github.com/kagent-dev/kagent/blob/main/LICENSE
+  - https://github.com/cncf/toc/issues/1978
+  - https://github.com/aaif/project-proposals/issues/34
+  - https://github.com/dapr/dapr/issues/8703
 ---
 
 # Mapa agentních frameworků
@@ -56,8 +60,8 @@ Vyřazovací kritéria A1–A5 z [kriteria.md](kriteria.md). Ověřeno 2026-09-2
 
 | Framework | Licence (runtime) | Governance | A1 | Trvalost stavu | Výsledek |
 |---|---|---|---|---|---|
-| **Dapr Agents** | Apache-2.0 | **CNCF Graduated** (Dapr) | ✅ | V runtimu, stejná licence | **postupuje** |
-| **kagent** | Apache-2.0 | **CNCF Sandbox** (od 5/2025) | ✅ | Externí | **postupuje** |
+| **[Dapr Agents](dapr-agents.md)** | Apache-2.0 | Apache-2.0, **DCO**, LF/CNCF – ale Graduated se týká **runtimu, ne sub-projektu** (repo 1/2025, graduace 10/2024) | ✅ | Ve **tvém** state storu, 28 providerů | **postupuje** |
+| **[kagent](kagent.md)** | Apache-2.0 (celý stack) | CNCF **Sandbox**; žádost o Incubating od 12/2025 bez posunu; **DCO, ne CLA** | ✅ | Postgres v runtimu (v0.10+); checkpointy a durable HITL až ve v1.0-alpha | **postupuje** |
 | **Microsoft Agent Framework** | MIT | Microsoft, jeden vendor | ✅ | Vestavěná správa stavu | **postupuje** |
 | **Google ADK** | Apache-2.0 | Google, jeden vendor | ✅ | ověřit | postupuje s výhradou |
 | **Pydantic AI** | MIT | Pydantic, jeden vendor | ✅ | Žádná – tenká knihovna | postupuje jako „tenká smyčka" |
@@ -84,23 +88,44 @@ Vylučuje to LangGraph jako runtime dodávaného produktu.
 
 | # | Varianta | Silné stránky | Rizika |
 |---|---|---|---|
-| **1** | **Dapr Agents + Dapr Workflows** | Jediná kombinace „OSI licence + nadace + Graduated + durable execution v runtimu". Sidecar model je z principu cloud-agnostický. GA od 3/2026. | Mladý projekt navzdory zralosti Dapru. Sidecar je provozní režie navíc. Menší agentní ekosystém. |
-| **2** | **kagent + externí durable vrstva** | Kubernetes-nativní od návrhu (CRD), A2A gateway a MCP registry přímo v produktu – tedy protokolová hranice jako vlastnost, ne dodatek. | CNCF **Sandbox** = nejnižší stupeň zralosti. Postavený na AutoGenu, který Microsoft v 4/2026 sloučil do Agent Frameworku – **je třeba ověřit, co to znamená pro jeho základ.** Trvalost si musíš dodat sám. |
-| **3** | **Tenká smyčka + Temporal/Dapr + vlastní protokolová hranice** | Maximální přenositelnost a nulová závislost na jednom frameworku. Smyčka (Pydantic AI, OpenAI Agents SDK) je vyměnitelná za dny. | Nejvíc vlastního kódu. Lifecycle agentů, katalog a gateway si stavíš sám. |
+| **1** | **[Dapr Agents](dapr-agents.md) + Dapr Workflows** | **Nejlepší cena odchodu v poli:** stav leží ve *tvém* state storu (28 providerů) v dokumentovaném append-only formátu. Durable HITL včetně checkpointu ve stavu čekání. PyPI deklaruje licenci. DCO. Air-gap doložený. Model gateway šev otevřený (`base_url`, LiteLLM je přímá závislost). | **CNCF Graduated se na sub-projekt nevztahuje.** Žádná support ani versioning policy. **Breaking change v patch releasu** měsíc po GA. Bus factor 2. **A2A ani AG-UI nepodporuje vůbec.** Vedle repa BUSL balíčky propagované z docs.dapr.io. |
+| **2** | **[kagent](kagent.md)** | Celý stack Apache-2.0, **DCO**, trademark u CNCF. **A2A v1.0 a MCP přes oficiální SDK** – nejlepší protokolový profil. Abstrakce **Harness** dělá runtime agenta vyměnitelným (ADK / Claude / Codex / BYO). Nulové phone-home. | Paralelní rewrite **v1.0-alpha bez migrační cesty a bez HA gateway**. Závislost **Substrate rozbíjí air-gap**. Bus factor 7/8 Solo.io. Žádost o Incubating leží od 12/2025. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. |
+| **3** | **Tenká smyčka + Dapr Workflow nebo Temporal + vlastní hranice** | Maximální přenositelnost. **Dapr Workflow umí být substrátem pod cizí tenkou smyčkou** – tím se varianta posouvá z „nejvíc práce" na nejlepší poměr trvalost / nulová vazba. | Nejvíc vlastního kódu. Hotová implementace té integrace je pod **BUSL** – OSS cestou je vlastní obal nad `dapr-ext-workflow`. |
 
-**Pozn. Adam – doporučení:** začít hloubkové kolo variantou **1 vs. 2**, a variantu **3** držet
-jako referenční dno. Varianta 3 totiž definuje, kolik práce framework ve skutečnosti ušetří –
-bez ní se nedá posoudit, jestli se závislost vyplatí.
+**Pozn. Adam – doporučení po hloubkovém kole (2026-09-28):** obě prověrky **snížily důvěru,
+ne zvýšily** – každá z jiného důvodu. Žádný z finalistů zároveň nepokrývá protokolovou
+hranici celou: kagent má A2A i MCP přes oficiální SDK, ale AG-UI odmítl; Dapr Agents mají
+jen MCP klienta.
 
-## Co ověřit v hloubkovém kole
+Proto se těžiště posouvá k **variantě 3**: Dapr Workflow jako durable substrát pod tenkou
+vyměnitelnou smyčkou, s vlastní protokolovou hranicí nad `a2a-sdk`. Dostaneš trvalost
+v Apache-2.0 a smyčku, která se vymění za dny. Cenou je vlastní obal nad `dapr-ext-workflow`
+(hotová integrace je pod BUSL) a vlastní A2A server.
 
-- [ ] Dopad sloučení AutoGen + Semantic Kernel do Microsoft Agent Frameworku (4/2026) na základ kagentu.
-- [ ] Vyžadují Temporal, Dapr Agents a kagent CLA? Jaký je bus factor mimo hlavního vendora?
-- [ ] Google ADK, CrewAI, LlamaIndex Workflows – jak řeší trvalost stavu a v jaké licenci.
+## Co ověřit dál
+
+Uzavřeno 2026-09-28: dopad sloučení AutoGenu na kagent (přechod na ADK už ve v0.5.0);
+CLA u kagentu i Dapr Agents (oba DCO).
+
+- [ ] **Právní posudek Diagrid BSL** – vylučují prahy 60 FTE / 15 M USD a zákaz komerční
+      redistribuce balíčky `diagrid` i z vývoje, nebo jen z produkce? Do té doby `diagrid*`
+      na deny-list v license gate.
+- [ ] **kagent: je Substrate v linii v1.0 povinný, nebo volitelný?** Visí na tom vanilla
+      Kubernetes i air-gap. Nutno číst kód controlleru.
+- [ ] **kagent v1.0: váže `credential-injection` modely na pevný výčet DNS hostnames?**
+- [ ] **Dapr Workflow jako substrát pod tenkou smyčkou bez `diagrid`** – odhadnout práci
+      na vlastním obalu nad `dapr-ext-workflow`.
+- [ ] Cena vlastního A2A serveru nad `a2a-sdk` vedle Dapr Agents.
+- [ ] Změřit harnessem: pozastavení HITL → restart clusteru → obnovení po 14 dnech.
+- [ ] Síťový test air-gapped u obou kandidátů.
+- [ ] Google ADK, CrewAI, LlamaIndex Workflows – trvalost stavu a licence.
 - [ ] Mastra – které komponenty přesně jsou pod Elastic licencí.
-- [ ] Chová se `langgraph` bez `langgraph-api` jako použitelná knihovna, nebo je vazba těsná?
+- [ ] Je `langgraph` bez `langgraph-api` použitelný jako pouhá knihovna?
 - [ ] DBOS jako durable vrstva – licence a governance.
-- [ ] Platformní benchmark – návrh harnessu podle [kriteria.md](kriteria.md#proč-veřejné-benchmarky-neměří-framework).
+- [ ] Návrh harnessu pro platformní benchmark.
 
 ## Changelog
 - 2026-09-27: první verze; široké síto kolo 1, 10 kandidátů, LangGraph a Mastra vyřazeny na licenci.
+- 2026-09-28: hloubkové prověrky kagentu a Dapr Agents. Korekce: kagent nemá MCP registry
+  ani AG-UI a trvalost už neleží mimo runtime; u Dapr Agents se CNCF Graduated nevztahuje
+  na sub-projekt. Těžiště doporučení posunuto k variantě 3.

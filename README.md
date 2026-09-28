@@ -23,10 +23,12 @@ adam/
 │   │   ├── a2ui.md
 │   │   └── ag-ui.md
 │   └── frameworks/            # Oblast 2: Agentní frameworky a runtimy
-│       ├── overview.md        # Mapa vrstev, široké síto kandidátů
+│       ├── overview.md        # Mapa vrstev, široké síto kandidátů, top 3
 │       ├── kriteria.md        # Hodnoticí rubrika
 │       ├── licencni-vzorce.md # Licenční pasti a jak je poznat
-│       └── durable-execution.md
+│       ├── durable-execution.md
+│       ├── kagent.md
+│       └── dapr-agents.md
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly

@@ -1,12 +1,14 @@
 ---
 tema: Durable execution jako samostatná vrstva pod agenty
-naposledy_overeno: 2026-09-27
+naposledy_overeno: 2026-09-28
 zralost: stable (Temporal, Dapr) / mixed (licence ostatních)
 primarni_zdroje:
   - https://github.com/temporalio/temporal/blob/main/LICENSE
   - https://www.cncf.io/projects/dapr/
   - https://github.com/dapr/dapr-agents
   - https://pypi.org/project/langgraph-api/
+  - https://github.com/aaif/project-proposals/issues/34
+  - https://docs.dapr.io/concepts/dapr-services/scheduler/
 ---
 
 # Durable execution
@@ -50,11 +52,11 @@ a licenční změnu, se to vyplatí.
 
 ## Kandidáti (ověřeno 2026-09-27)
 
-| Engine | Licence | OSI? | Governance | Poznámka |
+| Engine | Licence | OSI? | Governance | Kde je stav |
 |---|---|---|---|---|
-| **Temporal** | **MIT** (server) | Ano | Temporal Technologies, jeden vendor | Nejrozšířenější; provozně těžší (cluster + závislosti) |
-| **Dapr Workflows** | **Apache-2.0** | Ano | **CNCF Graduated** (od 10/2024) | Nejlepší governance profil; durable execution je součást runtimu |
-| **Restate** | **BUSL** (runtime), MIT (SDK) | **Ne** (runtime) | Restate, jeden vendor | Nejmenší provozní stopa – jeden binárník bez závislostí |
+| **Temporal** | **MIT** (server) | Ano | Temporal Technologies, jeden vendor | Vlastní cluster; provozně těžší |
+| **Dapr Workflows** | **Apache-2.0** | Ano | **CNCF Graduated** (od 10/2024) | **V tvém state storu – 28 providerů, dokumentovaný append-only formát** |
+| **Restate** | **BUSL** (runtime), MIT (SDK) | **Ne** (runtime) | Restate, jeden vendor | Vlastní binárník, nejmenší provozní stopa |
 | **Inngest** | **SSPL** | **Ne** | Inngest, jeden vendor | Restriktivní u poskytování služby |
 | **DBOS** | ověřit | ověřit | ověřit | Postgres-native přístup |
 
@@ -70,14 +72,43 @@ trvalost tedy není doplněk, ale vlastnost runtimu, a je ve stejné licenci jak
 To je dnes nejčistší kombinace, jakou lze složit.
 
 Návrh na přesun Dapr Agents pod **Agentic AI Foundation** (pod jménem *Durable Agents*)
-byl v červnu 2026 **zamítnut**; projekt zůstává pod Dapr / CNCF / Linux Foundation.
-Z hlediska governance to nic nezhoršuje – CNCF Graduated je vyšší záruka než nová nadace.
+byl podán **2026-06-02**, hlasování TC uzavřeno 2026-09-03 a **zamítnut 2026-09-11**.
+Projekt zůstává pod Dapr / CNCF / Linux Foundation.
+
+Struktura governance se tím nezhoršuje. Zhoršuje se ale obrázek o **neutralitě vrstvy** –
+odůvodnění komise je architektonicky důležitější než výsledek a je to trojí nezávislé
+potvrzení rizika „jak drahé je vzít stav jinam":
+
+1. Záruky trvalosti jsou demonstrované **jen nad Dapr Workflow** – *„every guarantee it
+   offers is currently expressed through Dapr Workflow"*.
+2. **Rozhodující bod:** žádná jiná durable-execution komunita o to nestojí; deklarovaný
+   Temporal provider nestačil.
+3. Projekt *„reads more as an agent framework than as a substrate"*.
+
+Governance ani security posture zpochybněné nebyly. Resubmise je možná bez čekací lhůty –
+**sledovat, jestli přibude druhý durable backend**, je to přímý indikátor ceny odchodu.
+
+> ⚠️ **Pozor na zdroj zralosti.** CNCF Graduated se vztahuje na **Dapr runtime**, ne na
+> Dapr Agents: repozitář sub-projektu vznikl 2025-01-02, tedy dva měsíce **po** graduaci
+> (2024-10-30). Sub-projekt navíc nemá vlastní support ani versioning policy.
+
+### Provozní past Dapru
+
+Scheduler má ve výchozím nastavení **embedded etcd** a *„scaling the Scheduler service
+replicas up or down is not possible without incurring data loss"*. Drží přitom reminders,
+které probouzejí pozastavená workflow – tedy i čekající schvalovací body.
+Pro produkt dodávaný zákazníkovi zvážit **externí etcd** (`--etcd-embed=false`)
+a zálohování podle stanoveného RPO.
 
 ## Otevřené otázky
 - [ ] DBOS – licence, governance, provozní model.
 - [ ] Temporal: vyžaduje CLA? Jaká je struktura přispěvatelů mimo vendora?
 - [ ] Jak se durable execution snáší s protokolovou hranicí A2A – kde končí běh jednoho agenta.
 - [ ] Praktický dopad BUSL u Restate na dodávku produktu on-prem (otázka na právníka).
+- [ ] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
+      po 14 dnech. Ani jeden kandidát nemá dokumentovaný maximální horizont čekání.
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-09-28: opraveno datum a odůvodnění zamítnutí v AAIF; doplněno, že CNCF Graduated
+  se nevztahuje na Dapr Agents; přidána provozní past Scheduleru.

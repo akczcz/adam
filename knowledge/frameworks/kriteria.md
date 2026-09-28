@@ -1,6 +1,6 @@
 ---
 tema: Hodnoticí kritéria pro výběr agentního frameworku
-naposledy_overeno: 2026-09-27
+naposledy_overeno: 2026-09-28
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://www.cncf.io/project-metrics/
@@ -35,7 +35,12 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | Vyžaduje projekt CLA? | `CONTRIBUTING.md`, bot u PR |
 | Vlastní projekt nadace? Jaký stupeň zralosti? | CNCF Sandbox / Incubating / Graduated |
 | Existuje adresář `enterprise/`, `ee/`, `pro/`? | Strom repozitáře |
-| Bus factor – kolik přispěvatelů mimo hlavního vendora? | Statistiky přispěvatelů |
+| Bus factor – kolik přispěvatelů mimo hlavního vendora? | Statistiky přispěvatelů; **ověř i podíl commitů, nejen počet maintainerů** |
+| **Vztahuje se stupeň zralosti nadace na *tuhle* komponentu?** | Porovnej datum graduace s `created_at` repozitáře sub-projektu |
+| **Má komponenta vlastní support a versioning policy?** | `SUPPORT.md`, `docs/versioning` – politika runtimu na sub-projekt platit nemusí |
+| **Byly po GA breaking changes v patch releasech?** | Release notes od tagu `v1.0.0` dál |
+| **Deklaruje publikovaný balíček licenci strojově čitelně?** | Registry JSON API – `license`, `license_expression` (SPDX), OSI classifier |
+| **Vlastní kdokoliv jiný balíčky, které dokumentace doporučuje instalovat?** | Owner **každého** balíčku ve finálním lock filu |
 
 ### B2. Trvalost stavu a odolnost
 
@@ -45,6 +50,7 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | Kde je uložený stav a jde ho vzít jinam? | Určuje cenu odchodu |
 | Umí pozastavit běh na lidské rozhodnutí na dny až týdny? | Schvalovací body v regulovaném procesu nemají hodinový horizont |
 | Je trvalost součástí OSS části, nebo komerční? | Nejčastější místo licenční pasti |
+| **Je durable komponenta sama stavová a lze ji škálovat?** | Stavový singleton v control plane je skrytá provozní past |
 
 ### B3. Přenositelnost a hranice
 
@@ -134,3 +140,6 @@ Tenhle benchmark veřejně nikdo neprovozuje – je to práce na vlastní harnes
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-09-28: do B1 přidána zralost sub-projektu, support policy, breaking changes,
+  deklarace licence v registry a vlastnictví doporučovaných balíčků; do B2 škálovatelnost
+  durable komponenty.
