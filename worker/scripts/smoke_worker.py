@@ -142,10 +142,12 @@ def main(base: str, token: str) -> int:
             f"→ {len(out)} znaků; první nadpis: {out.splitlines()[0][:70] if out else '—'}",
         )
 
+        # Dotaz musí být bez reálných slov: tokenizér strhává diakritiku, takže
+        # i "neexistujici" trefí "neexistující" v bázi a test by falešně spadl.
         print("\n[9] search_knowledge na nesmysl vrátí srozumitelnou hlášku")
         r, d = rpc(
             c, base, token, "tools/call",
-            {"name": "search_knowledge", "arguments": {"query": "zzzqqq neexistujici vyraz"}},
+            {"name": "search_knowledge", "arguments": {"query": "zzzqqq xkqvzw pppfff"}},
         )
         out = d.get("result", {}).get("content", [{}])[0].get("text", "")
         verdict("nic k" in out.lower() or "Dostupné dokumenty" in out, f"→ {out[:80]}")
