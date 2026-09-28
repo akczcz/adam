@@ -52,6 +52,12 @@ MCP Apps = alternativní cesta UI, kde UI dodává přímo MCP server
 - A2A, AG-UI a A2UI zapouzdřit za vlastní abstrakci (adaptér), aby šly vyměnit.
 - Pro UI rozhodnout podle toho, kdo vlastní frontend: vlastní aplikace → AG-UI + A2UI; UI uvnitř cizího hostitele (Claude, ChatGPT) → MCP Apps.
 
+## Vztah k frameworkům
+
+Protokoly jsou **švy, na kterých stojí vyměnitelnost frameworku**. Když hranice mezi
+orchestrační vrstvou a agenty stojí na A2A, MCP a AG-UI, je výměna orchestrátoru prací
+na platformní vrstvě, ne přepisem agentů. Viz [`../frameworks/overview.md`](../frameworks/overview.md).
+
 ## Další protokoly k prozkoumání
 
 - AP2 (Agent Payments Protocol), X42 – platby a governance agentů

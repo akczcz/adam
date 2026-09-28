@@ -48,6 +48,7 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | Oblast | Znalosti | Skill / agent |
 |---|---|---|
 | AI protokoly pro multiagentní platformy | `knowledge/protocols/` | skill `protocol-research`, agent `protocol-scout` |
+| Agentní frameworky a runtimy | `knowledge/frameworks/` | skill `framework-research`, agent `framework-scout` |
 
 ## Principy práce
 
