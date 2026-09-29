@@ -65,6 +65,7 @@ Tři gradace téhož symptomu, od nejhorší:
 | kagent (PyPI) | `null` | `null` | ❌ chybí |
 | Microsoft Agent Framework (PyPI) | `null` u většiny | `null` u všech | ✅ přítomný |
 | Dapr Agents (PyPI) | free-text, ne SPDX | `null` | ✅ přítomný |
+| Google ADK (PyPI) | `null` | `null` | ✅ přítomný |
 
 **Hygiena se liší i mezi jazykovými SDK jednoho repozitáře:** MAF má na PyPI `license_expression: null`,
 ale jeho .NET balíček deklaruje SPDX `MIT` v nuspecu správně. Kontrolovat každý registry zvlášť.
@@ -143,6 +144,25 @@ Obojí je otázka na půl hodiny čtení kódu a obojí může obrátit závěr.
 backend, který si smíme provozovat sami?"* MIT knihovna, která umí mluvit jen s jednou
 hostovanou službou, není přenositelná bez ohledu na licenci.
 
+## Pátý vzorec: governance tranzitivní závislosti
+
+**Nadace chrání projekt, ne jeho runtime závislosti.**
+
+**Doložený případ (ověřeno 2026-09-29):** kagent je Apache-2.0, má **DCO** a trademark
+darovaný CNCF – Solo.io ho tedy nemůže jednostranně relicencovat. Jeho agentní smyčku
+ale dodává **Google ADK**: jeden vendor, **CLA** (explicitně v `CONTRIBUTING.md`),
+žádná nadace, žádná versioning ani support politika.
+
+Riziko relicencování se tím na kagent nepřenáší – Apache-2.0 verze ADK zůstává.
+**Přenáší se riziko směru:** tempo breaking changes, kadenci a EOL staré větve určuje
+Google, ne CNCF. Konkrétně ADK vydává breaking changes v minorech, takže kagentí pin
+`<3` nechrání, a ADK 1.x, na kterém jede doporučená linie v0.10.x, nemá od 2026-08-27
+release ani publikované EOL.
+
+**Pozn. Adam – kontrolní otázka:** *„Pod jakou governance je komponenta, která v tom
+projektu reálně vykonává práci?"* Nadační odznak na repozitáři neříká nic o tom, kdo
+vlastní dependency tree.
+
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
 Aktuální soubor `LICENSE` říká, co platí dnes. Neříká nic o tom, co bude platit za rok.
@@ -193,6 +213,8 @@ a počítat s tím, že to vyloučí model „provozujeme to jako SaaS pro víc 
    Ověř owner **každého** balíčku ve finálním lock filu, ne jen hlavního repa.
 9. **Má komponenta produkční backend, který si smíme provozovat sami?** MIT knihovna,
    která umí mluvit jen s jednou hostovanou službou, není přenositelná bez ohledu na licenci.
+10. **Pod jakou governance jsou runtime závislosti, které dělají tu podstatnou práci?**
+    Nadace chrání repozitář, ne dependency tree finálního obrazu.
 
 ## Obranný vzor: vytlačit komerční vrstvu ven
 
@@ -205,6 +227,8 @@ Totéž platí pro přístup k modelům – viz model gateway v [overview.md](ov
 
 ## Changelog
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
+- 2026-09-29: přidán pátý vzorec (governance tranzitivní závislosti, doloženo na
+  kagent → Google ADK) a kontrolní otázka 10.
 - 2026-09-29: doplněno zobecnění – rozpor dokumentace vs. kód potvrzen na dvou projektech
   a v obou směrech.
 - 2026-09-29: čtvrtý vzorec zpřesněn po přečtení kódu – past je v dokumentované cestě

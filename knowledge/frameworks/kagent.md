@@ -1,6 +1,6 @@
 ---
 tema: kagent – Kubernetes-nativní control plane pro agenty
-naposledy_overeno: 2026-09-28
+naposledy_overeno: 2026-09-29
 zralost: preview (v0.10.x) / experimental (v1.0.0-alpha)
 primarni_zdroje:
   - https://github.com/kagent-dev/kagent/blob/main/LICENSE
@@ -15,6 +15,11 @@ primarni_zdroje:
   - https://github.com/kagent-dev/kagent/blob/main/go/core/pkg/app/app.go
   - https://github.com/kagent-dev/kagent/blob/main/go/core/internal/substrate/client.go
   - https://github.com/kagent-dev/kagent/blob/main/go/core/internal/translator/credentials.go
+  - https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.2/python/packages/kagent-adk/pyproject.toml
+  - https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.2/python/packages/kagent-adk/src/kagent/adk/_a2a.py
+  - https://raw.githubusercontent.com/google/adk-python/main/src/google/adk/apps/_configs.py
+  - https://raw.githubusercontent.com/google/adk-python/main/CONTRIBUTING.md
+  - https://pypi.org/pypi/google-adk/2.10.0/json
 ---
 
 # kagent
@@ -52,11 +57,13 @@ ne s jiným orchestrátorem.
 | Governance | ✅ **DCO, ne CLA** – Solo.io nemůže jednostranně relicencovat cizí příspěvky; trademark darovaný CNCF, projekt se řídí CNCF IP Policy |
 | Stupeň zralosti | ⚠️ CNCF **Sandbox**; žádost o Incubating leží ~10 měsíců bez posunu |
 | Bus factor | ⚠️ **7 z 8 maintainerů ze Solo.io** (8. je z Amdocs); 88 unikátních přispěvatelů |
-| Protokoly | ✅ **A2A v1.0 i MCP přes oficiální SDK**, ne vlastní implementace |
+| Protokoly | ✅ A2A i MCP přes oficiální SDK, ale **přes ADK jako mezičlánek** – kagent subclassuje `A2aAgentExecutor` (ten je `@a2a_experimental`) a `McpToolset` |
 | Model gateway | ✅ **šev otevřený** – `BaseURL` / `Endpoint` / `Host` přepisují defaulty; self-hosted vLLM funguje |
 | AG-UI | ❌ **nepodporuje a nebude** – issue #589 uzavřeno jako *not planned* |
 | MCP registry | ❌ **nemá** – kmcp je kagentí CRD, ne standardní `modelcontextprotocol/registry` |
-| Trvalost stavu | ⚠️ Postgres výchozí store od v0.10; checkpointy a durable HITL až ve v1.0-alpha |
+| Trvalost stavu | ⚠️ **kagentí** Postgres (`KAgentSessionService` → vlastní Go API), **ne** ADK `[db]`. HITL pause/resume funguje **už ve v0.10.x**, ale mechanika je ADK `ResumabilityConfig` – `@experimental` a **at-least-once** |
+| Artefakty | ❌ `InMemoryArtifactService()` **bez podmínky v obou liniích** – nepřežijí restart |
+| Governance závislostí | ⚠️ agentní smyčka je **Google ADK**: Apache-2.0, ale **CLA, žádná nadace**, breaking changes v minorech; pin `<3` nechrání |
 | Air-gap | ✅ v0.10.x (Substrate opt-in); ❌ **v1.0 – Substrate povinný a stahuje `runsc` z veřejného `gs://` bucketu** ([#2932](https://github.com/kagent-dev/kagent/issues/2932)) |
 | Phone-home | ✅ žádné; čistá OTLP telemetrie, výchozí vypnutá, žádný licenční klíč |
 | Licence v balíčcích | ❌ PyPI balíčky mají `license: null` – pro SBOM „unknown" |
@@ -126,6 +133,55 @@ kagent AutoGen **opustil už ve v0.5.0**, před sloučením do Microsoft Agent F
 Dnes stojí na Google ADK, respektive na abstrakci Harness. Fork `kagent-dev/autogen`
 existuje, ale není závislostí žádného publikovaného balíčku.
 
+## Google ADK pod kapotou
+*Ověřeno 2026-09-29.*
+
+kagent nepoužívá ADK jako knihovnu vedle sebe – **je to jeho agentní smyčka**.
+Piny se ale mezi liniemi liší, což je důležitější, než vypadá:
+
+| Linie | Pin |
+|---|---|
+| v0.10.2 | `google-adk>=1.38.0,<2` – **bez extras** |
+| main (v1.0-alpha) | `google-adk[a2a,db]>=2.9.2,<3` |
+
+**ADK 1.x nemá release od 2026-08-27** (poslední 1.39.1) a EOL publikované není.
+Doporučená linie v0.10.x tedy jede na větvi, u které nevíme, jestli dostane
+bezpečnostní opravy.
+
+### Co drží kdo
+
+| Vrstva | Drží |
+|---|---|
+| Agentní smyčka, Runner, flows | **ADK** |
+| A2A server executor | **ADK** (`@a2a_experimental`), kagent subclassuje |
+| MCP klient | **ADK** (`McpToolset`), kagent subclassuje |
+| A2A gateway, authz, routing | **kagent** (Go) |
+| A2A TaskStore, session store (v0.10) | **kagent** → Postgres přes vlastní API |
+| Model gateway | **kagent** – vlastní `BaseLlm` adaptéry; **ADK model vrstva se nepoužívá** |
+| MCP server lifecycle | **kagent** (kmcp) |
+| HITL pause/resume | **ADK** (`request_confirmation` + `ResumabilityConfig`) |
+| Sandbox | **kagent** (Substrate); ADK `code_executors/` se nepoužívá |
+| **Artefakty** | **nikdo** – vždy in-memory |
+
+### Co to zhoršuje
+
+1. **HITL resume je `@experimental` a at-least-once.** Docstring ADK: *„we only guarantee
+   an at-least-once behavior once resumed"*. Nástroj za schvalovacím bodem se při obnovení
+   **může spustit podruhé** → idempotency key je na naší straně. Maximální horizont
+   čekání není dokumentovaný.
+2. **Artefakty se při restartu ztrácejí** – `InMemoryArtifactService()` nepodmíněně.
+3. **A2A executor ADK je `@a2a_experimental`.**
+4. **v0.10.x jede na ADK 1.x** bez release a bez EOL.
+5. **Governance runtime závislosti** – Google CLA, žádná nadace, pod jinak DCO+CNCF projektem.
+6. **`<3` není ochrana** – ADK vydává breaking changes v minorech (doloženo na v2.9.0).
+
+### Co se nezhoršuje
+
+Licence (Apache-2.0), **model gateway** (kagentí a otevřený – ADK model vrstva je v obrazu
+mrtvý kód), phone-home (ADK telemetrie má exportéry i Cloud tracing výchozí vypnuté),
+air-gap (ADK nic nevynucuje). **Cena odchodu se nemění** – ADK sedí uvnitř Harnessu,
+a BYO harness s vlastní A2A gRPC implementací ADK vůbec nepotřebuje.
+
 ## Architektonické důsledky (Pozn. Adam)
 - **Protokolová sémantika je standardní, správa je vlastní.** Agenti mluví A2A a lze je vzít
   jinam; manifesty, CRD a nasazovací mechanika se při odchodu zahazují.
@@ -145,8 +201,16 @@ existuje, ale není závislostí žádného publikovaného balíčku.
 - [ ] Podíl commitů mimo Solo.io – bus factor na úrovni maintainerů je jasný, na úrovni
       commitů nekvantifikovaný.
 - [ ] Release a support politika; dostane v0.10.x bezpečnostní opravy po GA v1.0?
+- [ ] **Dostane ADK 1.x bezpečnostní opravy?** Poslední release 1.39.1 (2026-08-27),
+      EOL nepublikované – přímé riziko pro kagent v0.10.x.
+- [ ] Otestovat, co udělá resume neidempotentního nástroje za schvalovacím bodem
+      (ADK garantuje jen at-least-once).
+- [ ] Kolik práce je BYO harness bez ADK?
 
 ## Changelog
 - 2026-09-28: první verze; hloubková prověrka.
+- 2026-09-29: prověřen Google ADK jako smyčka pod kagentem. Korekce: kagentí Postgres
+  nestojí na ADK `[db]`; HITL resume existuje už ve v0.10.x, ale je ADK `@experimental`
+  s at-least-once; A2A i MCP jdou přes ADK jako mezičlánek; artefakty jsou vždy in-memory.
 - 2026-09-29: ověřeno čtením kódu – Substrate je ve v1.0 fakticky povinný (A2 i A3 padají),
   ve v0.10.x je opt-in. Obava o pevný allowlist hostnames v credential-injection vyvrácena.

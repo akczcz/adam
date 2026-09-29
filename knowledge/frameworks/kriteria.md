@@ -41,6 +41,7 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | **Byly po GA breaking changes v patch releasech?** | Release notes od tagu `v1.0.0` dál |
 | **Deklaruje publikovaný balíček licenci strojově čitelně?** | Registry JSON API – `license`, `license_expression` (SPDX), OSI classifier |
 | **Vlastní kdokoliv jiný balíčky, které dokumentace doporučuje instalovat?** | Owner **každého** balíčku ve finálním lock filu |
+| **Pod jakou governance je runtime závislost, která vykonává práci?** | Dependency tree finálního obrazu, ne jen hlavní repo – nadace chrání repozitář, ne `pip install` |
 
 ### B2. Trvalost stavu a odolnost
 
@@ -52,6 +53,7 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | Je trvalost součástí OSS části, nebo komerční? | Nejčastější místo licenční pasti |
 | **Je durable komponenta sama stavová a lze ji škálovat?** | Stavový singleton v control plane je skrytá provozní past |
 | **Má durable vrstva alespoň jeden produkční backend, který si smíme provozovat sami?** | MIT knihovna mluvící jen s hostovanou službou není přenositelná bez ohledu na licenci |
+| **Je obnovení běhu exactly-once, nebo at-least-once?** | At-least-once resume za schvalovacím bodem znamená riziko dvojího provedení neidempotentní akce |
 
 ### B3. Přenositelnost a hranice
 
@@ -141,6 +143,7 @@ Tenhle benchmark veřejně nikdo neprovozuje – je to práce na vlastní harnes
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-09-29: do B1 přidána governance runtime závislostí, do B2 sémantika obnovení běhu.
 - 2026-09-29: do B2 přidána otázka na vlastní provozovatelný backend durable vrstvy.
 - 2026-09-28: do B1 přidána zralost sub-projektu, support policy, breaking changes,
   deklarace licence v registry a vlastnictví doporučovaných balíčků; do B2 škálovatelnost

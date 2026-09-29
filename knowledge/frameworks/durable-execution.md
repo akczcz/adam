@@ -11,6 +11,7 @@ primarni_zdroje:
   - https://docs.dapr.io/concepts/dapr-services/scheduler/
   - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
   - https://github.com/microsoft/durabletask-mssql
+  - https://raw.githubusercontent.com/google/adk-python/main/src/google/adk/apps/_configs.py
 ---
 
 # Durable execution
@@ -133,17 +134,39 @@ které probouzejí pozastavená workflow – tedy i čekající schvalovací bod
 Pro produkt dodávaný zákazníkovi zvážit **externí etcd** (`--etcd-embed=false`)
 a zálohování podle stanoveného RPO.
 
+### Google ADK: store konverzace ≠ durable execution
+
+Rozdíl, který se snadno přehlédne. ADK `DatabaseSessionService` (extra `[db]`, dialekty
+sqlite / Postgres / MySQL / MSSQL / Spanner) ukládá **session, eventy a stav jako JSON**
+a přežije restart procesu. **Není to durable execution engine.**
+
+Obnovení běhu dělá `ResumabilityConfig(is_resumable=True)` – a to je jiná liga:
+
+- třída je `@experimental`, výchozí hodnota `False`
+- docstring: *„we only guarantee an **at-least-once** behavior once resumed"*
+- dokumentace: nástroje *„are run at least once, and may run more than once when resuming"*
+- dočasný in-memory stav se ztrácí; maximální horizont čekání nedokumentovaný
+
+**Pozn. Adam:** pro schvalovací bod v regulovaném procesu to znamená **idempotency key
+na naší straně**. Neidempotentní akce za schvalovacím bodem se při obnovení může
+provést podruhé. Je to zároveň dobrá připomínka, že „přežije restart" a „obnoví se
+korektně" jsou dvě různá tvrzení.
+
 ## Otevřené otázky
 - [ ] DBOS – licence, governance, provozní model.
 - [ ] Temporal: vyžaduje CLA? Jaká je struktura přispěvatelů mimo vendora?
 - [ ] Jak se durable execution snáší s protokolovou hranicí A2A – kde končí běh jednoho agenta.
 - [ ] Praktický dopad BUSL u Restate na dodávku produktu on-prem (otázka na právníka).
+- [ ] ADK resume: chová se kagentí `KAgentSessionService` při at-least-once obnovení
+      stejně jako `DatabaseSessionService`? Netestováno.
 - [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
 - [ ] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
       po 14 dnech. Ani jeden kandidát nemá dokumentovaný maximální horizont čekání.
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-09-29: doplněn Google ADK – store konverzace není durable execution, resume je
+  experimentální a at-least-once.
 - 2026-09-29: ověřeno, že MAF backend nevynucuje; doplněn MSSQL provider jako cestu
   mimo Azure (jen .NET) a vyřazen Netherite (konec podpory 2028-03-31).
 - 2026-09-29: doplněn Azure Durable Task Scheduler a vzorec „monetizovaný backend".
