@@ -1,9 +1,10 @@
 ---
 tema: AG-UI (Agent–User Interaction Protocol)
-naposledy_overeno: 2026-09-23
+naposledy_overeno: 2026-09-29
 zralost: early / community-driven
 primarni_zdroje:
   - https://docs.ag-ui.com/introduction
+  - https://www.copilotkit.ai/openmuse
 ---
 
 # AG-UI – Agent–User Interaction Protocol
@@ -28,6 +29,20 @@ Obecné obousměrné spojení mezi uživatelskou aplikací a libovolným agentn�
 ## Místo v architektuře
 Runtime vrstva agent ↔ frontend. Pro batch/background agenty bez uživatele zbytečná.
 
+## Referenční implementace
+**OpenMuse** (CopilotKit, MIT, **alpha**) – osobní agent pro iOS, Android a web, který
+AG-UI mluví. Jako runtime pro platformu nepoužitelný (osobní aplikace, viz
+[`../frameworks/overview.md`](../frameworks/overview.md#co-do-síta-nepatří-a-proč)),
+ale je to **funkční ukázka, jak AG-UI vypadá v praxi**.
+
+Má to praktickou cenu: AG-UI je díra, kterou mají oba dnešní finalisté mezi frameworky –
+kagent ji odmítl jako *not planned*, Dapr Agents ji nemají vůbec. Pokud si UI vrstvu
+postavíme sami, je OpenMuse použitelný jako referenční kód.
+
+Pozor na roztříštěnost jména: vedle `CopilotKit/OpenMuse` existuje několik dalších
+repozitářů téhož jména, z nichž část je archivovaná. Kanonický je ten od CopilotKitu.
+Ověřeno 2026-09-29.
+
 ## Architektonické důsledky (Pozn. Adam)
 - Dobrý kandidát na standardní kanál pro vlastní frontendy platformy.
 - Event stream = přirozený zdroj pro observabilitu a audit interakcí.
@@ -38,3 +53,4 @@ Runtime vrstva agent ↔ frontend. Pro batch/background agenty bez uživatele zb
 
 ## Changelog
 - 2026-09-23: první verze.
+- 2026-09-29: doplněna referenční implementace OpenMuse.

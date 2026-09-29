@@ -1,6 +1,6 @@
 ---
 tema: Mapa agentních frameworků pro přenositelné multiagentní platformy
-naposledy_overeno: 2026-09-28
+naposledy_overeno: 2026-09-29
 zralost: n/a (přehled)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -13,6 +13,7 @@ primarni_zdroje:
   - https://github.com/cncf/toc/issues/1978
   - https://github.com/aaif/project-proposals/issues/34
   - https://github.com/dapr/dapr/issues/8703
+  - https://www.copilotkit.ai/openmuse
 ---
 
 # Mapa agentních frameworků
@@ -84,6 +85,23 @@ případ vzorce popsaného v [licencni-vzorce.md](licencni-vzorce.md).
 To **nevylučuje LangGraph jako knihovnu** ve scénáři, kde si trvalost drží někdo jiný.
 Vylučuje to LangGraph jako runtime dodávaného produktu.
 
+## Co do síta nepatří a proč
+
+Jak trh houstne, přibývá projektů, které *vypadají* relevantně, ale řeší jinou vrstvu
+nebo jiný druh softwaru. Aby se nemusely posuzovat pokaždé znovu, patří sem i výsledek
+záporného posouzení.
+
+**Dělicí otázka:** obsluhuje to víc agentů a víc uživatelů současně jako sdílená
+infrastruktura, nebo je to software pro jednoho člověka na jednom zařízení?
+
+| Projekt | Co to je | Proč nepatří do síta |
+|---|---|---|
+| **OpenMuse** (CopilotKit, MIT, alpha) | Osobní agent pro iOS, Android a web – prohlížeč, terminál, soubory, trezor kredencí, paměť, cíle | Osobní aplikace, ne platformní runtime. Bez multi-tenancy, bez Kubernetes. Padá na A2 a A4 ne kvůli kvalitě, ale kvůli kategorii. **Hodnotu má jinde:** je to referenční implementace AG-UI – viz [`../protocols/ag-ui.md`](../protocols/ag-ui.md#referenční-implementace) |
+
+**Pozn. Adam:** u projektů z téhle kategorie stojí za to se vždy zeptat, jestli nemají
+cenu jako *referenční kód* pro vrstvu, kterou si stejně budeme stavět sami. OpenMuse je
+přesně takový případ – AG-UI dnes neumí ani jeden z finalistů.
+
 ## Top 3 pro hloubkové kolo
 
 | # | Varianta | Silné stránky | Rizika |
@@ -126,6 +144,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
 
 ## Changelog
 - 2026-09-27: první verze; široké síto kolo 1, 10 kandidátů, LangGraph a Mastra vyřazeny na licenci.
+- 2026-09-29: přidána sekce „Co do síta nepatří a proč"; posouzen OpenMuse – osobní
+  agentní aplikace, do síta nepatří, ale je referenční implementací AG-UI.
 - 2026-09-28: hloubkové prověrky kagentu a Dapr Agents. Korekce: kagent nemá MCP registry
   ani AG-UI a trvalost už neleží mimo runtime; u Dapr Agents se CNCF Graduated nevztahuje
   na sub-projekt. Těžiště doporučení posunuto k variantě 3.
