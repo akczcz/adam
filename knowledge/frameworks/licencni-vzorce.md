@@ -117,9 +117,14 @@ Framework) je MIT, repozitář i balíček. Ale:
 - emulátor: *„The emulator internally stores orchestration and entity state in local memory,
   so **it isn't suitable for production use**."*
 
-Proti třem předchozím vzorcům je tu jeden podstatný rozdíl: **neexistuje alternativa**.
-U LangGraphu lze knihovnu použít a trvalost si dodat jinak. Tady žádná OSS varianta
-té vrstvy není – buď Azure, nebo vlastní implementace.
+**Zpřesnění po přečtení kódu (2026-09-29):** past není ve frameworku, ale v **dokumentované
+cestě a v jazykovém SDK**. MAF sám backend nevynucuje – registruje generické buildery
+a provider určuje volající. Cesta ven existuje (`Microsoft.DurableTask.SqlServer`, MIT,
+persistuje do MS SQL kdekoliv), ale **jen na .NET**; Python SDK je popsané jako
+*„requires Azure Durable Task Scheduler, it is not a generic gRPC sidecar connector"*.
+
+To vzorec nevyvrací, jen ukazuje, kde přesně hledat: **ne v `LICENSE`, ale v tom, jaké
+backendy SDK daného jazyka umí oslovit, a jestli je dokumentace vůbec zmiňuje.**
 
 **Pozn. Adam – kontrolní otázka:** *„Má tahle OSS komponenta alespoň jeden produkční
 backend, který si smíme provozovat sami?"* MIT knihovna, která umí mluvit jen s jednou
@@ -187,6 +192,8 @@ Totéž platí pro přístup k modelům – viz model gateway v [overview.md](ov
 
 ## Changelog
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
+- 2026-09-29: čtvrtý vzorec zpřesněn po přečtení kódu – past je v dokumentované cestě
+  a v jazykovém SDK, ne ve frameworku.
 - 2026-09-29: přidán čtvrtý vzorec (OSS SDK, uzavřený backend – Azure DTS); doplněna
   skrytá CLA do tabulky governance a gradace hygieny licenčních metadat.
 - 2026-09-28: přidán druhý vzorec (balíček bez licenčních metadat, kagent) a třetí

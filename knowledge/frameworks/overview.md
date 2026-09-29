@@ -131,8 +131,9 @@ durable vrstva – tím se obejde jeho jediná tvrdá vazba na Azure.
 Uzavřeno 2026-09-28: dopad sloučení AutoGenu na kagent (přechod na ADK už ve v0.5.0);
 CLA u kagentu i Dapr Agents (oba DCO).
 
-- [ ] **Jsou MSSQL či Netherite backendy Durable Functions použitelné pro MAF mimo Azure?**
-      Zachránilo by to A4. Dokumentace ukazuje jen DTS, kód nikdo nečetl.
+- [x] ~~Jsou MSSQL či Netherite backendy použitelné pro MAF mimo Azure?~~ –
+      **uzavřeno: MSSQL ano, ale jen .NET; Netherite končí 2028-03-31.** MAF backend
+      nevynucuje, past je v dokumentované cestě a v Python SDK.
 - [ ] Odhadnout práci na vlastním `CheckpointStorage` (Postgres) a `AgentSessionStore` pro MAF.
 - [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
 - [ ] **Právní posudek Diagrid BSL** – vylučují prahy 60 FTE / 15 M USD a zákaz komerční
@@ -154,6 +155,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
 
 ## Changelog
 - 2026-09-27: první verze; široké síto kolo 1, 10 kandidátů, LangGraph a Mastra vyřazeny na licenci.
+- 2026-09-29: ověřen durable backend MAF – `Microsoft.DurableTask.SqlServer` je cesta
+  mimo Azure, ale jen pro .NET; Netherite vyřazen. Doporučení se nemění.
 - 2026-09-29: hloubková prověrka Microsoft Agent Frameworku. Korekce: „vestavěná správa
   stavu" byla nepřesná – produkční checkpoint store je jen Azure Cosmos DB a durable
   execution má jediný produkční backend (Azure DTS). Ověřena skrytá Microsoft CLA.

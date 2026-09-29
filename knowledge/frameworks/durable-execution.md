@@ -10,6 +10,7 @@ primarni_zdroje:
   - https://github.com/aaif/project-proposals/issues/34
   - https://docs.dapr.io/concepts/dapr-services/scheduler/
   - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
+  - https://github.com/microsoft/durabletask-mssql
 ---
 
 # Durable execution
@@ -61,6 +62,7 @@ a licenční změnu, se to vyplatí.
 | **Inngest** | **SSPL** | **Ne** | Inngest, jeden vendor | Restriktivní u poskytování služby |
 | **DBOS** | ověřit | ověřit | ověřit | Postgres-native přístup |
 | **Azure Durable Task Scheduler** | SDK **MIT**, backend **proprietární Azure služba** | **Ne** (backend) | Microsoft, jeden vendor, CLA | **Uvnitř Azure služby**; emulátor jen pro vývoj |
+| **DurableTask MSSQL provider** | **MIT** | Ano | Microsoft, jeden vendor | **V tvém MS SQL** – *„cloud or your own infrastructure"*; **jen .NET** |
 
 **Pozn. Adam:** kombinace „OSI licence + nadace + graduated" má dnes jen **Dapr**.
 Temporal je licenčně čistý (MIT), ale je to jeden vendor s CLA – platí u něj riziko
@@ -77,8 +79,24 @@ Emulátor podle dokumentace *„isn't suitable for production use"*.
 **License gate to nenajde – všechno je MIT.** Odhalí se to jen tím, že si přečteš,
 na co se runtime připojuje. Detail viz čtvrtý vzorec v [licencni-vzorce.md](licencni-vzorce.md).
 
-Praktický důsledek: obranný vzor „vytlačit durable vrstvu ven" tady nepomůže, protože
-vytlačovat není kam. Buď Azure, nebo vlastní implementace `CheckpointStorage`.
+### Zpřesnění po ověření kódu (2026-09-29)
+
+Past **není ve frameworku, ale v dokumentované cestě a v Python SDK**. MAF registruje
+generické buildery `Microsoft.DurableTask` a storage provider určuje volající delegát.
+Cesta ven existuje – [`Microsoft.DurableTask.SqlServer`](https://github.com/microsoft/durabletask-mssql)
+(MIT, živý) persistuje stav do MS SQL kdekoliv – **ale jen na .NET**. Python balíček
+`durabletask` je popsaný jako *„requires Azure Durable Task Scheduler, it is not a generic
+gRPC sidecar connector"*.
+
+Netherite jako alternativa **odpadá** – podpora končí **2028-03-31**.
+
+A směr vývoje jde proti: `microsoft/durabletask-go` uvádí *„DTS is the only supported
+runtime. This SDK does not include a storage backend."* `dapr/durabletask-go` je fork,
+který si embeddable engine s vlastními backendy ponechal.
+
+**Pozn. Adam:** obranný vzor „vytlačit durable vrstvu ven" tedy platí dál, jen z jiného
+důvodu – ne že vytlačovat není kam, ale že jediná cesta ven zamyká do .NET a jede proti
+směru ekosystému.
 
 ## Vztah k agentním frameworkům
 
@@ -121,12 +139,13 @@ a zálohování podle stanoveného RPO.
 - [ ] Jak se durable execution snáší s protokolovou hranicí A2A – kde končí běh jednoho agenta.
 - [ ] Praktický dopad BUSL u Restate na dodávku produktu on-prem (otázka na právníka).
 - [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
-- [ ] Jsou MSSQL či Netherite backendy Durable Functions použitelné pro MAF mimo Azure?
 - [ ] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
       po 14 dnech. Ani jeden kandidát nemá dokumentovaný maximální horizont čekání.
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-09-29: ověřeno, že MAF backend nevynucuje; doplněn MSSQL provider jako cestu
+  mimo Azure (jen .NET) a vyřazen Netherite (konec podpory 2028-03-31).
 - 2026-09-29: doplněn Azure Durable Task Scheduler a vzorec „monetizovaný backend".
 - 2026-09-28: opraveno datum a odůvodnění zamítnutí v AAIF; doplněno, že CNCF Graduated
   se nevztahuje na Dapr Agents; přidána provozní past Scheduleru.

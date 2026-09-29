@@ -14,6 +14,10 @@ primarni_zdroje:
   - https://learn.microsoft.com/en-us/agent-framework/hosting/self-hosting
   - https://learn.microsoft.com/en-us/agent-framework/support/upgrade/python-2026-significant-changes
   - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
+  - https://github.com/microsoft/durabletask-mssql
+  - https://github.com/microsoft/durabletask-go
+  - https://pypi.org/pypi/durabletask/json
+  - https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-functions-storage-providers
 ---
 
 # Microsoft Agent Framework (MAF)
@@ -65,6 +69,41 @@ Agentní smyčka, workflow graf se supersteps, orchestrační vzory a protokolov
 Je to **vector store** (`PostgresCollection`, pgvector) ve stavu alpha. Kdo hledá
 produkční trvalost mimo Azure, musí si `CheckpointStorage` napsat sám.
 
+### Durable backend: past je v dokumentované cestě, ne ve frameworku
+*Ověřeno 2026-09-29.*
+
+`ServiceCollectionExtensions.cs` registruje **generické** buildery z `Microsoft.DurableTask`
+(`AddDurableTaskWorker`, `AddDurableTaskClient`). **Storage provider určuje volající delegát,
+ne MAF.** `UseDurableTaskScheduler(connectionString)` je v dokumentaci jen příklad, ne vynucení.
+
+Existuje tedy cesta ven – ale jen jedna a jen na .NET:
+
+| Cesta | Mimo Azure? |
+|---|---|
+| MAF .NET + [`Microsoft.DurableTask.SqlServer`](https://github.com/microsoft/durabletask-mssql) | ✅ **ano** |
+| MAF Python + `agent-framework-durabletask` | ❌ ne – `durabletask` na PyPI *„requires Azure Durable Task Scheduler, it is not a generic gRPC sidecar connector"* |
+| MAF jako tenká smyčka + cizí durable vrstva | ✅ ano |
+
+**`microsoft/durabletask-mssql`** (MIT, 105 hvězd, poslední push 2026-09-25, release v1.8.1
+z 2026-08-06, **není archivovaný**) persistuje stav task hubu do MS SQL,
+*„which can be hosted in the cloud or in your own infrastructure"*. Dodává tři NuGet balíčky
+včetně `Microsoft.DurableTask.SqlServer` pro DTFx aplikace, tedy nejen pro Azure Functions.
+
+**Tři háčky:**
+
+1. **Python cestu to nezachrání.** Mimo Azure jde MAF durable jen přes .NET – což naráží
+   na stack postavený na Pythonu.
+2. **Netherite je mrtvý směr** – podpora pro Durable Functions **končí 2028-03-31**
+   a Microsoft směruje na DTS. Pro produkt nepoužitelné.
+3. **Směr vývoje jde proti tomu.** `microsoft/durabletask-go`: *„DTS is the only supported
+   runtime. This SDK does not include a storage backend."* Microsoft zužuje out-of-process
+   SDK svět na svoji placenou službu. (`dapr/durabletask-go` je fork, který si embeddable
+   engine ponechal – což zpětně vysvětluje, proč Dapr forkoval.)
+
+**Pozn. Adam:** doporučení „durable vrstvu MAF nedávat" tím **nepadá, jen dostává lepší
+podklad**. Cesta ven existuje, ale zamkne tě do .NET a jede proti směru, kam Microsoft
+ekosystém tlačí. Varianta s cizí durable vrstvou zůstává nejlepší.
+
 ### Checkpoint je vázaný na topologii grafu
 *„A rehydrated workflow must preserve the topology and executor identities."*
 U .NET dokonce platí, že změna `Name` nebo `Id` executoru učiní checkpoint nekompatibilním
@@ -95,9 +134,9 @@ včetně AG-UI.
 breaking changes. Verzi je nutné přišpendlit a upgrade rozpočtovat jako opakovanou práci.
 
 ## Otevřené otázky
-- [ ] **Jsou MSSQL nebo Netherite backendy Durable Functions použitelné pro MAF Durable
-      Extension mimo Azure?** Zachránilo by to A4. Dokumentace ukazuje výhradně DTS,
-      ale kód `agent-framework-azurefunctions` nikdo nečetl. **Nejcennější otevřená otázka.**
+- [x] ~~Jsou MSSQL nebo Netherite backendy použitelné pro MAF mimo Azure?~~ –
+      **uzavřeno 2026-09-29: MSSQL ano, ale jen na .NET; Netherite končí 2028-03-31.**
+      Viz sekce o durable backendu výše.
 - [ ] Odhadnout práci na vlastním `CheckpointStorage` nad Postgres a `AgentSessionStore`.
       Vyhnout se pickle by zlepšilo cenu odchodu nad úroveň, kterou dodává Microsoft.
 - [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
@@ -111,3 +150,5 @@ breaking changes. Verzi je nutné přišpendlit a upgrade rozpočtovat jako opak
 
 ## Changelog
 - 2026-09-29: první verze; hloubková prověrka.
+- 2026-09-29: ověřeno, že MAF backend nevynucuje – `Microsoft.DurableTask.SqlServer` je
+  cesta mimo Azure, ale jen pro .NET. Netherite vyřazen (konec podpory 2028-03-31).
