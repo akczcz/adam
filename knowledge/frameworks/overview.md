@@ -150,6 +150,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
 - [ ] Síťový test air-gapped u obou kandidátů.
 - [x] ~~Google ADK – trvalost stavu a licence~~ – **uzavřeno 2026-09-29** jako závislost
       kagentu, ne samostatný kandidát.
+- [ ] **Získat vyjádření k support oknu ADK 1.x** – z veřejných zdrojů to zjistit nejde
+      (ověřeno 2026-09-29). Přímé provozní riziko pro doporučenou linii kagent v0.10.x.
 - [ ] CrewAI, LlamaIndex Workflows – trvalost stavu a licence.
 - [ ] Mastra – které komponenty přesně jsou pod Elastic licencí.
 - [ ] Je `langgraph` bez `langgraph-api` použitelný jako pouhá knihovna?

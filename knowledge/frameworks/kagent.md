@@ -20,6 +20,7 @@ primarni_zdroje:
   - https://raw.githubusercontent.com/google/adk-python/main/src/google/adk/apps/_configs.py
   - https://raw.githubusercontent.com/google/adk-python/main/CONTRIBUTING.md
   - https://pypi.org/pypi/google-adk/2.10.0/json
+  - https://github.com/advisories/GHSA-rg7c-g689-fr3x
 ---
 
 # kagent
@@ -163,6 +164,39 @@ bezpečnostní opravy.
 | Sandbox | **kagent** (Substrate); ADK `code_executors/` se nepoužívá |
 | **Artefakty** | **nikdo** – vždy in-memory |
 
+### Podpora ADK 1.x: nepotvrzená ani vyvrácená
+*Ověřeno 2026-09-29.*
+
+Doporučená linie kagent v0.10.x jede na ADK 1.x. Jestli ta větev dostane bezpečnostní
+opravy, **se nedá zjistit** – a ta nejistota je sama o sobě zjištění.
+
+| Co pro backport mluví | Co proti |
+|---|---|
+| Kritická [GHSA-rg7c-g689-fr3x](https://github.com/advisories/GHSA-rg7c-g689-fr3x) (4/2026) byla opravena **v obou větvích** – 1.x v 1.28.1, 2.x v 2.0.0a2 | **Žádná `SECURITY.md`** v kořeni ani v `.github/` (404), žádná support politika v README ani v migračním dokumentu |
+| Větev `v1` existuje a má vlastní release automatiku (`release-please--branches--release/v1-candidate`) | Do `v1` se **od 2026-08-27 nic nemergovalo** – poslední commit je merge releasu 1.39.1 |
+| 1.x běžel ještě **3 měsíce po GA 2.0** (GA 19. 5., poslední 1.x 27. 8.) | Od té doby **žádný release** |
+| Poslední release 1.39.1 byl celý backportový (changelog samé *„Port … to v1"*) | – |
+| **4 otevřené PR** pořád cílí na `v1`, nejnovější z 19. a 23. 9. | Žádný z nich není zmergovaný |
+
+**Pozn. Adam – závěr:** Google 1.x formálně neukončil a větev udržuje, ale měsíc se nic
+nemerguje a chybí dokument, o který by se dalo opřít. Kdyby zítra vyšla kritická
+zranitelnost, **nevíme, jestli přijde 1.39.2, nebo odpověď „upgradujte na 2.x"**.
+
+Precedent z dubna hraje pro backport, ale tehdy bylo 2.x v alfě a nebylo kam upgradovat.
+Dnes je 2.10.0 GA, takže ten argument zeslábl.
+
+Pro produkt dodávaný do regulovaného prostředí je to **provozní riziko, které nejde
+smluvně podložit**. Zároveň je to druhé místo, kde doporučená linie stojí na něčem,
+co neřídí ani Solo.io, ani CNCF.
+
+**Možnosti, seřazené podle preference:**
+
+1. **Zeptat se přímo** – issue v `google/adk-python` na support okno 1.x. Levné, odpověď
+   by věc uzavřela a vznikl by veřejný záznam do dokumentace dodávky. Mlčení je taky odpověď.
+2. **Počítat s tím, že backport nepřijde** – rozpočtovat upgrade na linii s ADK 2.x jako
+   plánovanou práci, ne jako incident.
+3. **Držet vlastní fork větve `v1`** – Apache-2.0 to umožňuje, ale je to závazek navíc.
+
 ### Co to zhoršuje
 
 1. **HITL resume je `@experimental` a at-least-once.** Docstring ADK: *„we only guarantee
@@ -201,14 +235,18 @@ a BYO harness s vlastní A2A gRPC implementací ADK vůbec nepotřebuje.
 - [ ] Podíl commitů mimo Solo.io – bus factor na úrovni maintainerů je jasný, na úrovni
       commitů nekvantifikovaný.
 - [ ] Release a support politika; dostane v0.10.x bezpečnostní opravy po GA v1.0?
-- [ ] **Dostane ADK 1.x bezpečnostní opravy?** Poslední release 1.39.1 (2026-08-27),
-      EOL nepublikované – přímé riziko pro kagent v0.10.x.
+- [ ] **Získat od Googlu vyjádření k support oknu ADK 1.x.** Ověřeno 2026-09-29, že
+      z veřejných zdrojů to zjistit nejde (viz sekce výše). Jediná cesta k jistotě je
+      dotaz maintainerům – **zatím nepoložen, je to veřejné vystoupení a chce souhlas.**
+      Do té doby počítat s variantou 2: upgrade na ADK 2.x jako plánovaná práce.
 - [ ] Otestovat, co udělá resume neidempotentního nástroje za schvalovacím bodem
       (ADK garantuje jen at-least-once).
 - [ ] Kolik práce je BYO harness bez ADK?
 
 ## Changelog
 - 2026-09-28: první verze; hloubková prověrka.
+- 2026-09-29: ověřena podpora ADK 1.x – z veřejných zdrojů nezjistitelná; větev žije,
+  ale měsíc bez merge a bez publikované politiky.
 - 2026-09-29: prověřen Google ADK jako smyčka pod kagentem. Korekce: kagentí Postgres
   nestojí na ADK `[db]`; HITL resume existuje už ve v0.10.x, ale je ADK `@experimental`
   s at-least-once; A2A i MCP jdou přes ADK jako mezičlánek; artefakty jsou vždy in-memory.
