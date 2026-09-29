@@ -1,6 +1,6 @@
 ---
 tema: Hodnoticí kritéria pro výběr agentního frameworku
-naposledy_overeno: 2026-09-28
+naposledy_overeno: 2026-09-29
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://www.cncf.io/project-metrics/
@@ -51,6 +51,7 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | Umí pozastavit běh na lidské rozhodnutí na dny až týdny? | Schvalovací body v regulovaném procesu nemají hodinový horizont |
 | Je trvalost součástí OSS části, nebo komerční? | Nejčastější místo licenční pasti |
 | **Je durable komponenta sama stavová a lze ji škálovat?** | Stavový singleton v control plane je skrytá provozní past |
+| **Má durable vrstva alespoň jeden produkční backend, který si smíme provozovat sami?** | MIT knihovna mluvící jen s hostovanou službou není přenositelná bez ohledu na licenci |
 
 ### B3. Přenositelnost a hranice
 
@@ -140,6 +141,7 @@ Tenhle benchmark veřejně nikdo neprovozuje – je to práce na vlastní harnes
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-09-29: do B2 přidána otázka na vlastní provozovatelný backend durable vrstvy.
 - 2026-09-28: do B1 přidána zralost sub-projektu, support policy, breaking changes,
   deklarace licence v registry a vlastnictví doporučovaných balíčků; do B2 škálovatelnost
   durable komponenty.

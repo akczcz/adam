@@ -1,6 +1,6 @@
 ---
 tema: Licenční vzorce a pasti v open-source AI frameworcích
-naposledy_overeno: 2026-09-28
+naposledy_overeno: 2026-09-29
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -10,6 +10,8 @@ primarni_zdroje:
   - https://pypi.org/pypi/kagent-adk/json
   - https://raw.githubusercontent.com/diagridio/python-ai/main/LICENSE.md
   - https://docs.dapr.io/developing-ai/agent-integrations/
+  - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
+  - https://github.com/microsoft/agent-framework/pull/8807
 ---
 
 # Licenční vzorce a pasti
@@ -56,6 +58,17 @@ Mírnější varianta: licence deklarovaná legacy free-textem (`"Apache License
 ale chybějící `license_expression` podle PEP 639 v SPDX tvaru (`Apache-2.0`).
 Přísný gate, který čte jen `license_expression`, uvidí prázdno. Tak to má `dapr-agents`.
 
+Tři gradace téhož symptomu, od nejhorší:
+
+| Projekt | `license` | `license_expression` | OSI classifier |
+|---|---|---|---|
+| kagent (PyPI) | `null` | `null` | ❌ chybí |
+| Microsoft Agent Framework (PyPI) | `null` u většiny | `null` u všech | ✅ přítomný |
+| Dapr Agents (PyPI) | free-text, ne SPDX | `null` | ✅ přítomný |
+
+**Hygiena se liší i mezi jazykovými SDK jednoho repozitáře:** MAF má na PyPI `license_expression: null`,
+ale jeho .NET balíček deklaruje SPDX `MIT` v nuspecu správně. Kontrolovat každý registry zvlášť.
+
 Není to licenční past, je to **hygiena**. Řeší se jedním PR – ale dokud se nevyřeší,
 je to práce pro dodavatele produktu: doložit licenci ručně.
 
@@ -86,6 +99,32 @@ ji hlásí jako `NOASSERTION`. License gate tedy uvidí *unknown*, ne *BUSL* –
 příkaz v jeho dokumentaci. Kontrolovat vlastníka **každého** balíčku ve finálním lock filu.
 Balíčky s BUSL licencí patří na deny-list v license gate, aby se nedostaly do lock filu omylem.
 
+## Čtvrtý vzorec: OSS SDK, uzavřený backend
+
+Nejzákeřnější z celé sady, protože **license gate ho nikdy nenajde** – všechno je MIT.
+
+Knihovna i SDK jsou v pořádkové licenci, ale **jediný produkční backend, na který se
+runtime umí připojit, je hostovaná služba jednoho poskytovatele**. Přenositelnost
+nezablokuje licence, zablokuje ji architektura.
+
+**Doložený případ (ověřeno 2026-09-29):** `agent-framework-durabletask` (Microsoft Agent
+Framework) je MIT, repozitář i balíček. Ale:
+
+- `durabletask-azuremanaged` je **povinná závislost**, bez extra markeru
+- všechny navazující balíčky se jmenují `*AzureManaged`
+- *„The Durable Task Scheduler **runs in Azure** as a separate resource from your app"*,
+  dvě billing SKU, endpoint `{scheduler}.{region}.durabletask.io`
+- emulátor: *„The emulator internally stores orchestration and entity state in local memory,
+  so **it isn't suitable for production use**."*
+
+Proti třem předchozím vzorcům je tu jeden podstatný rozdíl: **neexistuje alternativa**.
+U LangGraphu lze knihovnu použít a trvalost si dodat jinak. Tady žádná OSS varianta
+té vrstvy není – buď Azure, nebo vlastní implementace.
+
+**Pozn. Adam – kontrolní otázka:** *„Má tahle OSS komponenta alespoň jeden produkční
+backend, který si smíme provozovat sami?"* MIT knihovna, která umí mluvit jen s jednou
+hostovanou službou, není přenositelná bez ohledu na licenci.
+
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
 Aktuální soubor `LICENSE` říká, co platí dnes. Neříká nic o tom, co bude platit za rok.
@@ -94,6 +133,7 @@ Rozhodující je, **kdo smí licenci změnit**.
 | Struktura | Může relicencovat? | Riziko | Precedenty |
 |---|---|---|---|
 | Jeden vendor + CLA / copyright assignment | Ano, jednostranně a bez varování | **Vysoké** | HashiCorp → BUSL, Elastic → SSPL, Redis → RSAL, Sentry → BUSL |
+| Jeden vendor + CLA, **která není v `CONTRIBUTING.md`** | Ano | **Vysoké a skryté** | Microsoft Agent Framework – CLA se projeví až v PR příkazem `@microsoft-github-policy-service agree` |
 | Projekt pod nadací (CNCF, ASF, LF AI & Data) | Prakticky ne – copyright je rozptýlený mezi přispěvatele | **Nízké** | Kubernetes, Dapr, OpenTelemetry |
 | Jeden vendor + **DCO** + trademark u nadace | Jen budoucí vlastní kód; cizí příspěvky ne | **Nízké licenčně, střední směrově** | kagent (Apache-2.0 + DCO + CNCF IP Policy, ale 7/8 maintainerů od jednoho vendora) |
 
@@ -133,6 +173,8 @@ a počítat s tím, že to vyloučí model „provozujeme to jako SaaS pro víc 
    Chybějící hodnota = „unknown" v SBOM i u jinak čistě Apache-2.0 projektu.
 8. **Vlastní kdokoliv jiný balíčky, které dokumentace doporučuje instalovat?**
    Ověř owner **každého** balíčku ve finálním lock filu, ne jen hlavního repa.
+9. **Má komponenta produkční backend, který si smíme provozovat sami?** MIT knihovna,
+   která umí mluvit jen s jednou hostovanou službou, není přenositelná bez ohledu na licenci.
 
 ## Obranný vzor: vytlačit komerční vrstvu ven
 
@@ -145,5 +187,7 @@ Totéž platí pro přístup k modelům – viz model gateway v [overview.md](ov
 
 ## Changelog
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
+- 2026-09-29: přidán čtvrtý vzorec (OSS SDK, uzavřený backend – Azure DTS); doplněna
+  skrytá CLA do tabulky governance a gradace hygieny licenčních metadat.
 - 2026-09-28: přidán druhý vzorec (balíček bez licenčních metadat, kagent) a třetí
   (dokumentace jako vektor, Diagrid BSL); doplněn řádek DCO do tabulky governance.

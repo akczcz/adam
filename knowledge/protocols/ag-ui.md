@@ -35,9 +35,13 @@ AG-UI mluví. Jako runtime pro platformu nepoužitelný (osobní aplikace, viz
 [`../frameworks/overview.md`](../frameworks/overview.md#co-do-síta-nepatří-a-proč)),
 ale je to **funkční ukázka, jak AG-UI vypadá v praxi**.
 
-Má to praktickou cenu: AG-UI je díra, kterou mají oba dnešní finalisté mezi frameworky –
-kagent ji odmítl jako *not planned*, Dapr Agents ji nemají vůbec. Pokud si UI vrstvu
-postavíme sami, je OpenMuse použitelný jako referenční kód.
+Má to praktickou cenu pro dva ze tří finalistů: kagent AG-UI odmítl jako *not planned*,
+Dapr Agents ji nemají vůbec. **Výjimkou je Microsoft Agent Framework** – balíček
+`agent-framework-ag-ui` 1.4.0 je na PyPI označený jako Production/Stable, staví na oficiálním
+`ag-ui-protocol` a aktivně se vyvíjí. Ověřeno 2026-09-29.
+
+Pozn.: `ag-ui-protocol` je stále 0.x – specifikace sama je pre-1.0, takže i GA integrace
+v MAF stojí na nestabilním základu.
 
 Pozor na roztříštěnost jména: vedle `CopilotKit/OpenMuse` existuje několik dalších
 repozitářů téhož jména, z nichž část je archivovaná. Kanonický je ten od CopilotKitu.
@@ -53,4 +57,5 @@ Ověřeno 2026-09-29.
 
 ## Changelog
 - 2026-09-23: první verze.
-- 2026-09-29: doplněna referenční implementace OpenMuse.
+- 2026-09-29: doplněna referenční implementace OpenMuse; opraveno tvrzení o chybějící
+  podpoře u finalistů – Microsoft Agent Framework AG-UI má.

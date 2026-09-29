@@ -1,6 +1,6 @@
 ---
 tema: Durable execution jako samostatná vrstva pod agenty
-naposledy_overeno: 2026-09-28
+naposledy_overeno: 2026-09-29
 zralost: stable (Temporal, Dapr) / mixed (licence ostatních)
 primarni_zdroje:
   - https://github.com/temporalio/temporal/blob/main/LICENSE
@@ -9,6 +9,7 @@ primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
   - https://github.com/aaif/project-proposals/issues/34
   - https://docs.dapr.io/concepts/dapr-services/scheduler/
+  - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
 ---
 
 # Durable execution
@@ -59,11 +60,25 @@ a licenční změnu, se to vyplatí.
 | **Restate** | **BUSL** (runtime), MIT (SDK) | **Ne** (runtime) | Restate, jeden vendor | Vlastní binárník, nejmenší provozní stopa |
 | **Inngest** | **SSPL** | **Ne** | Inngest, jeden vendor | Restriktivní u poskytování služby |
 | **DBOS** | ověřit | ověřit | ověřit | Postgres-native přístup |
+| **Azure Durable Task Scheduler** | SDK **MIT**, backend **proprietární Azure služba** | **Ne** (backend) | Microsoft, jeden vendor, CLA | **Uvnitř Azure služby**; emulátor jen pro vývoj |
 
 **Pozn. Adam:** kombinace „OSI licence + nadace + graduated" má dnes jen **Dapr**.
 Temporal je licenčně čistý (MIT), ale je to jeden vendor s CLA – platí u něj riziko
 relicencování popsané v [licencni-vzorce.md](licencni-vzorce.md). Rozdíl je v tom,
 že MIT verzi už nikdo nevezme zpátky; relicencování by se týkalo budoucích verzí.
+
+## Když monetizovaná není licence, ale backend
+
+MAF Durable Extension je **celý MIT** – repozitář, PyPI i .NET balíček. Přesto je jeho
+durable execution nepřenositelná, protože jediný produkční backend, na který se SDK umí
+připojit, je **placená Azure služba** (Durable Task Scheduler, `*.durabletask.io`).
+Emulátor podle dokumentace *„isn't suitable for production use"*.
+
+**License gate to nenajde – všechno je MIT.** Odhalí se to jen tím, že si přečteš,
+na co se runtime připojuje. Detail viz čtvrtý vzorec v [licencni-vzorce.md](licencni-vzorce.md).
+
+Praktický důsledek: obranný vzor „vytlačit durable vrstvu ven" tady nepomůže, protože
+vytlačovat není kam. Buď Azure, nebo vlastní implementace `CheckpointStorage`.
 
 ## Vztah k agentním frameworkům
 
@@ -105,10 +120,13 @@ a zálohování podle stanoveného RPO.
 - [ ] Temporal: vyžaduje CLA? Jaká je struktura přispěvatelů mimo vendora?
 - [ ] Jak se durable execution snáší s protokolovou hranicí A2A – kde končí běh jednoho agenta.
 - [ ] Praktický dopad BUSL u Restate na dodávku produktu on-prem (otázka na právníka).
+- [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
+- [ ] Jsou MSSQL či Netherite backendy Durable Functions použitelné pro MAF mimo Azure?
 - [ ] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
       po 14 dnech. Ani jeden kandidát nemá dokumentovaný maximální horizont čekání.
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-09-29: doplněn Azure Durable Task Scheduler a vzorec „monetizovaný backend".
 - 2026-09-28: opraveno datum a odůvodnění zamítnutí v AAIF; doplněno, že CNCF Graduated
   se nevztahuje na Dapr Agents; přidána provozní past Scheduleru.

@@ -28,7 +28,8 @@ adam/
 │       ├── licencni-vzorce.md # Licenční pasti a jak je poznat
 │       ├── durable-execution.md
 │       ├── kagent.md
-│       └── dapr-agents.md
+│       ├── dapr-agents.md
+│       └── microsoft-agent-framework.md
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly

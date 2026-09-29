@@ -14,6 +14,8 @@ primarni_zdroje:
   - https://github.com/aaif/project-proposals/issues/34
   - https://github.com/dapr/dapr/issues/8703
   - https://www.copilotkit.ai/openmuse
+  - https://github.com/microsoft/agent-framework/blob/main/SUPPORT.md
+  - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
 ---
 
 # Mapa agentních frameworků
@@ -63,7 +65,7 @@ Vyřazovací kritéria A1–A5 z [kriteria.md](kriteria.md). Ověřeno 2026-09-2
 |---|---|---|---|---|---|
 | **[Dapr Agents](dapr-agents.md)** | Apache-2.0 | Apache-2.0, **DCO**, LF/CNCF – ale Graduated se týká **runtimu, ne sub-projektu** (repo 1/2025, graduace 10/2024) | ✅ | Ve **tvém** state storu, 28 providerů | **postupuje** |
 | **[kagent](kagent.md)** | Apache-2.0 (celý stack) | CNCF **Sandbox**; žádost o Incubating od 12/2025 bez posunu; **DCO, ne CLA** | ✅ | Postgres v runtimu (v0.10+); checkpointy a durable HITL až ve v1.0-alpha | **postupuje** |
-| **Microsoft Agent Framework** | MIT | Microsoft, jeden vendor | ✅ | Vestavěná správa stavu | **postupuje** |
+| **[Microsoft Agent Framework](microsoft-agent-framework.md)** | MIT (celý stack) | Microsoft, jeden vendor, **skrytá CLA**; žádná nadace, versioning ani support policy | ✅ | ⚠️ checkpointy v jádře, ale produkční store **jen Cosmos**; durable execution **jen přes Azure DTS** | **jen jako tenká smyčka** |
 | **Google ADK** | Apache-2.0 | Google, jeden vendor | ✅ | ověřit | postupuje s výhradou |
 | **Pydantic AI** | MIT | Pydantic, jeden vendor | ✅ | Žádná – tenká knihovna | postupuje jako „tenká smyčka" |
 | **OpenAI Agents SDK** | MIT | OpenAI, jeden vendor | ✅ | Žádná – tenká knihovna | postupuje jako „tenká smyčka" |
@@ -108,23 +110,31 @@ přesně takový případ – AG-UI dnes neumí ani jeden z finalistů.
 |---|---|---|---|
 | **1** | **[Dapr Agents](dapr-agents.md) + Dapr Workflows** | **Nejlepší cena odchodu v poli:** stav leží ve *tvém* state storu (28 providerů) v dokumentovaném append-only formátu. Durable HITL včetně checkpointu ve stavu čekání. PyPI deklaruje licenci. DCO. Air-gap doložený. Model gateway šev otevřený (`base_url`, LiteLLM je přímá závislost). | **CNCF Graduated se na sub-projekt nevztahuje.** Žádná support ani versioning policy. **Breaking change v patch releasu** měsíc po GA. Bus factor 2. **A2A ani AG-UI nepodporuje vůbec.** Vedle repa BUSL balíčky propagované z docs.dapr.io. |
 | **2** | **[kagent](kagent.md)** | Celý stack Apache-2.0, **DCO**, trademark u CNCF. **A2A v1.0 a MCP přes oficiální SDK** – nejlepší protokolový profil. Abstrakce **Harness** dělá runtime agenta vyměnitelným (ADK / Claude / Codex / BYO). Nulové phone-home. | Paralelní rewrite **v1.0-alpha bez migrační cesty a bez HA gateway**. Závislost **Substrate rozbíjí air-gap**. Bus factor 7/8 Solo.io. Žádost o Incubating leží od 12/2025. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. |
-| **3** | **Tenká smyčka + Dapr Workflow nebo Temporal + vlastní hranice** | Maximální přenositelnost. **Dapr Workflow umí být substrátem pod cizí tenkou smyčkou** – tím se varianta posouvá z „nejvíc práce" na nejlepší poměr trvalost / nulová vazba. | Nejvíc vlastního kódu. Hotová implementace té integrace je pod **BUSL** – OSS cestou je vlastní obal nad `dapr-ext-workflow`. |
+| **3** | **[MAF](microsoft-agent-framework.md) jako tenká smyčka + Dapr Workflow nebo Temporal** | **Jediná varianta, která pokrývá protokolovou hranici celou** – MAF má A2A, MCP i AG-UI přes oficiální SDK a nejlepší OTEL profil, vše MIT. Trvalost dodá cizí durable vrstva, takže Azure gravitace MAF zmizí. | Nejvíc vlastního kódu: vlastní `CheckpointStorage` a `AgentSessionStore` (Microsoft druhý nedodává vůbec). Microsoft CLA a ~16 breaking changes za 5,5 měsíce – verzi přišpendlit, upgrade rozpočtovat. |
 
-**Pozn. Adam – doporučení po hloubkovém kole (2026-09-28):** obě prověrky **snížily důvěru,
-ne zvýšily** – každá z jiného důvodu. Žádný z finalistů zároveň nepokrývá protokolovou
-hranici celou: kagent má A2A i MCP přes oficiální SDK, ale AG-UI odmítl; Dapr Agents mají
-jen MCP klienta.
+**Pozn. Adam – doporučení po hloubkovém kole (2026-09-29):** všechny tři prověrky
+**snížily důvěru**, každá jinde:
 
-Proto se těžiště posouvá k **variantě 3**: Dapr Workflow jako durable substrát pod tenkou
-vyměnitelnou smyčkou, s vlastní protokolovou hranicí nad `a2a-sdk`. Dostaneš trvalost
-v Apache-2.0 a smyčku, která se vymění za dny. Cenou je vlastní obal nad `dapr-ext-workflow`
-(hotová integrace je pod BUSL) a vlastní A2A server.
+| Kandidát | Kde to padlo |
+|---|---|
+| kagent | zralost rewritu v1.0 a Substrate rozbíjející air-gap |
+| Dapr Agents | „CNCF Graduated" se na sub-projekt nevztahuje; žádná support policy |
+| Microsoft Agent Framework | durable execution jen přes placenou Azure službu; skrytá CLA a nulová versioning policy |
+
+**Protokolovou hranici celou pokrývá jen MAF** – A2A i MCP přes oficiální SDK a AG-UI v GA.
+Těžiště proto zůstává u **varianty 3**, ale mění se její obsah: tenkou smyčkou s hranicí
+může být MAF, durable substrátem Dapr Workflow nebo Temporal. MAF se přitom nesmí dát
+durable vrstva – tím se obejde jeho jediná tvrdá vazba na Azure.
 
 ## Co ověřit dál
 
 Uzavřeno 2026-09-28: dopad sloučení AutoGenu na kagent (přechod na ADK už ve v0.5.0);
 CLA u kagentu i Dapr Agents (oba DCO).
 
+- [ ] **Jsou MSSQL či Netherite backendy Durable Functions použitelné pro MAF mimo Azure?**
+      Zachránilo by to A4. Dokumentace ukazuje jen DTS, kód nikdo nečetl.
+- [ ] Odhadnout práci na vlastním `CheckpointStorage` (Postgres) a `AgentSessionStore` pro MAF.
+- [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
 - [ ] **Právní posudek Diagrid BSL** – vylučují prahy 60 FTE / 15 M USD a zákaz komerční
       redistribuce balíčky `diagrid` i z vývoje, nebo jen z produkce? Do té doby `diagrid*`
       na deny-list v license gate.
@@ -144,6 +154,10 @@ CLA u kagentu i Dapr Agents (oba DCO).
 
 ## Changelog
 - 2026-09-27: první verze; široké síto kolo 1, 10 kandidátů, LangGraph a Mastra vyřazeny na licenci.
+- 2026-09-29: hloubková prověrka Microsoft Agent Frameworku. Korekce: „vestavěná správa
+  stavu" byla nepřesná – produkční checkpoint store je jen Azure Cosmos DB a durable
+  execution má jediný produkční backend (Azure DTS). Ověřena skrytá Microsoft CLA.
+  MAF je jediný kandidát s AG-UI; těžiště doporučení upřesněno u varianty 3.
 - 2026-09-29: přidána sekce „Co do síta nepatří a proč"; posouzen OpenMuse – osobní
   agentní aplikace, do síta nepatří, ale je referenční implementací AG-UI.
 - 2026-09-28: hloubkové prověrky kagentu a Dapr Agents. Korekce: kagent nemá MCP registry
