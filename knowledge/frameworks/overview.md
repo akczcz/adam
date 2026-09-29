@@ -64,7 +64,7 @@ Vyřazovací kritéria A1–A5 z [kriteria.md](kriteria.md). Ověřeno 2026-09-2
 | Framework | Licence (runtime) | Governance | A1 | Trvalost stavu | Výsledek |
 |---|---|---|---|---|---|
 | **[Dapr Agents](dapr-agents.md)** | Apache-2.0 | Apache-2.0, **DCO**, LF/CNCF – ale Graduated se týká **runtimu, ne sub-projektu** (repo 1/2025, graduace 10/2024) | ✅ | Ve **tvém** state storu, 28 providerů | **postupuje** |
-| **[kagent](kagent.md)** | Apache-2.0 (celý stack) | CNCF **Sandbox**; žádost o Incubating od 12/2025 bez posunu; **DCO, ne CLA** | ✅ | Postgres v runtimu (v0.10+); checkpointy a durable HITL až ve v1.0-alpha | **postupuje** |
+| **[kagent](kagent.md)** | Apache-2.0 (celý stack) | CNCF **Sandbox**; žádost o Incubating od 12/2025 bez posunu; **DCO, ne CLA** | ✅ | Postgres v runtimu (v0.10+); checkpointy a durable HITL až ve v1.0-alpha | **postupuje, ale jen linie v0.10.x** |
 | **[Microsoft Agent Framework](microsoft-agent-framework.md)** | MIT (celý stack) | Microsoft, jeden vendor, **skrytá CLA**; žádná nadace, versioning ani support policy | ✅ | ⚠️ checkpointy v jádře, ale produkční store **jen Cosmos**; durable execution **jen přes Azure DTS** | **jen jako tenká smyčka** |
 | **Google ADK** | Apache-2.0 | Google, jeden vendor | ✅ | ověřit | postupuje s výhradou |
 | **Pydantic AI** | MIT | Pydantic, jeden vendor | ✅ | Žádná – tenká knihovna | postupuje jako „tenká smyčka" |
@@ -109,7 +109,7 @@ přesně takový případ – AG-UI dnes neumí ani jeden z finalistů.
 | # | Varianta | Silné stránky | Rizika |
 |---|---|---|---|
 | **1** | **[Dapr Agents](dapr-agents.md) + Dapr Workflows** | **Nejlepší cena odchodu v poli:** stav leží ve *tvém* state storu (28 providerů) v dokumentovaném append-only formátu. Durable HITL včetně checkpointu ve stavu čekání. PyPI deklaruje licenci. DCO. Air-gap doložený. Model gateway šev otevřený (`base_url`, LiteLLM je přímá závislost). | **CNCF Graduated se na sub-projekt nevztahuje.** Žádná support ani versioning policy. **Breaking change v patch releasu** měsíc po GA. Bus factor 2. **A2A ani AG-UI nepodporuje vůbec.** Vedle repa BUSL balíčky propagované z docs.dapr.io. |
-| **2** | **[kagent](kagent.md)** | Celý stack Apache-2.0, **DCO**, trademark u CNCF. **A2A v1.0 a MCP přes oficiální SDK** – nejlepší protokolový profil. Abstrakce **Harness** dělá runtime agenta vyměnitelným (ADK / Claude / Codex / BYO). Nulové phone-home. | Paralelní rewrite **v1.0-alpha bez migrační cesty a bez HA gateway**. Závislost **Substrate rozbíjí air-gap**. Bus factor 7/8 Solo.io. Žádost o Incubating leží od 12/2025. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. |
+| **2** | **[kagent](kagent.md)** – jen linie v0.10.x | Celý stack Apache-2.0, **DCO**, trademark u CNCF. A2A v1.0 a MCP přes oficiální SDK. Abstrakce **Harness** dělá runtime agenta vyměnitelným. Nulové phone-home. **Model gateway šev otevřený** – `BaseURL` přepisuje defaulty, self-hosted vLLM funguje. | **Linie v1.0 je mimo hru:** Substrate je tam fakticky povinný (neprázdný default endpointu + nepodmíněný blokující `Dial`), čímž padá A2 i A3. Rewrite bez migrační cesty a bez HA gateway. Bus factor 7/8 Solo.io. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. |
 | **3** | **[MAF](microsoft-agent-framework.md) jako tenká smyčka + Dapr Workflow nebo Temporal** | **Jediná varianta, která pokrývá protokolovou hranici celou** – MAF má A2A, MCP i AG-UI přes oficiální SDK a nejlepší OTEL profil, vše MIT. Trvalost dodá cizí durable vrstva, takže Azure gravitace MAF zmizí. | Nejvíc vlastního kódu: vlastní `CheckpointStorage` a `AgentSessionStore` (Microsoft druhý nedodává vůbec). Microsoft CLA a ~16 breaking changes za 5,5 měsíce – verzi přišpendlit, upgrade rozpočtovat. |
 
 **Pozn. Adam – doporučení po hloubkovém kole (2026-09-29):** všechny tři prověrky
@@ -139,9 +139,10 @@ CLA u kagentu i Dapr Agents (oba DCO).
 - [ ] **Právní posudek Diagrid BSL** – vylučují prahy 60 FTE / 15 M USD a zákaz komerční
       redistribuce balíčky `diagrid` i z vývoje, nebo jen z produkce? Do té doby `diagrid*`
       na deny-list v license gate.
-- [ ] **kagent: je Substrate v linii v1.0 povinný, nebo volitelný?** Visí na tom vanilla
-      Kubernetes i air-gap. Nutno číst kód controlleru.
-- [ ] **kagent v1.0: váže `credential-injection` modely na pevný výčet DNS hostnames?**
+- [x] ~~kagent: je Substrate v linii v1.0 povinný?~~ – **uzavřeno: ano, fakticky povinný.**
+      A2 i A3 pro v1.0 padají; v0.10.x ho má opt-in.
+- [x] ~~kagent: váže `credential-injection` modely na pevný výčet DNS hostnames?~~ –
+      **uzavřeno: ne, obava vyvrácena.** Model gateway šev je otevřený.
 - [ ] **Dapr Workflow jako substrát pod tenkou smyčkou bez `diagrid`** – odhadnout práci
       na vlastním obalu nad `dapr-ext-workflow`.
 - [ ] Cena vlastního A2A serveru nad `a2a-sdk` vedle Dapr Agents.
@@ -155,6 +156,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
 
 ## Changelog
 - 2026-09-27: první verze; široké síto kolo 1, 10 kandidátů, LangGraph a Mastra vyřazeny na licenci.
+- 2026-09-29: kagent ověřen čtením kódu – Substrate je ve v1.0 fakticky povinný
+  (A2 i A3 padají), v0.10.x ho má opt-in. Obava o allowlist hostnames vyvrácena.
 - 2026-09-29: ověřen durable backend MAF – `Microsoft.DurableTask.SqlServer` je cesta
   mimo Azure, ale jen pro .NET; Netherite vyřazen. Doporučení se nemění.
 - 2026-09-29: hloubková prověrka Microsoft Agent Frameworku. Korekce: „vestavěná správa

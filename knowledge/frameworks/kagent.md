@@ -12,6 +12,9 @@ primarni_zdroje:
   - https://raw.githubusercontent.com/kagent-dev/community/main/MAINTAINERS.md
   - https://github.com/kagent-dev/kagent/issues/2932
   - https://pypi.org/pypi/kagent-adk/json
+  - https://github.com/kagent-dev/kagent/blob/main/go/core/pkg/app/app.go
+  - https://github.com/kagent-dev/kagent/blob/main/go/core/internal/substrate/client.go
+  - https://github.com/kagent-dev/kagent/blob/main/go/core/internal/translator/credentials.go
 ---
 
 # kagent
@@ -50,10 +53,11 @@ ne s jiným orchestrátorem.
 | Stupeň zralosti | ⚠️ CNCF **Sandbox**; žádost o Incubating leží ~10 měsíců bez posunu |
 | Bus factor | ⚠️ **7 z 8 maintainerů ze Solo.io** (8. je z Amdocs); 88 unikátních přispěvatelů |
 | Protokoly | ✅ **A2A v1.0 i MCP přes oficiální SDK**, ne vlastní implementace |
+| Model gateway | ✅ **šev otevřený** – `BaseURL` / `Endpoint` / `Host` přepisují defaulty; self-hosted vLLM funguje |
 | AG-UI | ❌ **nepodporuje a nebude** – issue #589 uzavřeno jako *not planned* |
 | MCP registry | ❌ **nemá** – kmcp je kagentí CRD, ne standardní `modelcontextprotocol/registry` |
 | Trvalost stavu | ⚠️ Postgres výchozí store od v0.10; checkpointy a durable HITL až ve v1.0-alpha |
-| Air-gap | ⚠️ ✅ bez Substrate; ❌ **se Substrate** – stahuje `runsc` z veřejného `gs://` bucketu ([#2932](https://github.com/kagent-dev/kagent/issues/2932)) |
+| Air-gap | ✅ v0.10.x (Substrate opt-in); ❌ **v1.0 – Substrate povinný a stahuje `runsc` z veřejného `gs://` bucketu** ([#2932](https://github.com/kagent-dev/kagent/issues/2932)) |
 | Phone-home | ✅ žádné; čistá OTLP telemetrie, výchozí vypnutá, žádný licenční klíč |
 | Licence v balíčcích | ❌ PyPI balíčky mají `license: null` – pro SBOM „unknown" |
 
@@ -66,6 +70,56 @@ durable HITL s `input-required`), ale:
 - *„Input-required and auth-required tasks … are not checkpointable or forkable"* –
   **přesně ve stavu čekání na člověka nelze checkpointovat**.
 - V `design/` **není EP dokument** pro v1.0, Substrate ani migraci z AutoGenu.
+
+### Substrate je ve v1.0 fakticky povinný
+*Ověřeno čtením kódu 2026-09-29 (`main`, v1.0-alpha).*
+
+Helm má `controller.substrate.enabled: false` a configmap je podmíněný – **ale kód to
+přebíjí**. Tři doklady:
+
+| Místo | Zjištění |
+|---|---|
+| `go/core/pkg/env/substrate.go` | `KAGENT_SUBSTRATE_ATE_API_ENDPOINT` má **neprázdný default** `dns:///api.ate-system.svc:443` |
+| `go/core/pkg/app/app.go` | `substrate.Dial(...)` je volaný **bez jakékoliv podmínky**; jediný výskyt v repu |
+| `internal/substrate/client.go` | `Dial` volá `conn.Connect()` a pak **blokuje** ve `waitConnReady` (výchozí timeout 10 s); chyba se propaguje a **shodí start controlleru** |
+
+Když configmap proměnnou nenastaví, uplatní se ten default v Go. Controller se pokusí
+spojit s `api.ate-system.svc:443`, po deseti sekundách selže a nenastartuje.
+
+Potvrzuje to i credential injection: bindingy emitují URI ve tvaru `ate-secret://k8s.io/...`.
+**Substrate není volitelný doplněk, je vpletený do celé v1.0 cesty.**
+
+#### v0.10.x to má přesně opačně
+
+| | v0.10.2 | main (v1.0-alpha) |
+|---|---|---|
+| Default endpointu | **`""`** (prázdný) | `dns:///api.ate-system.svc:443` |
+| Volání `Dial` | uvnitř `if cfg.Substrate.AteAPIEndpoint != ""` | **bez podmínky** |
+| Nápověda k přepínači | *„Enables substrate AgentHarness runtime **when set**"* | – |
+
+**v0.10.x dělá Substrate opt-in, v1.0 opt-out, který nejde vypnout.** Doporučení stavět
+na v0.10.x tím dostává tvrdý technický důvod, ne jen „je zralejší".
+
+### Model gateway: obava vyvrácená
+*Ověřeno čtením kódu 2026-09-29.*
+
+`modelCredentialTarget` v `internal/translator/credentials.go` **žádný pevný allowlist
+hostnames nemá** – dává jen defaulty per provider, a ty klíčové jdou přepsat:
+
+| Provider | Přepis endpointu |
+|---|---|
+| OpenAI | ✅ `spec.OpenAI.BaseURL` |
+| Anthropic | ✅ `spec.Anthropic.BaseURL` |
+| Azure OpenAI | ✅ celý z `spec.AzureOpenAI.Endpoint` |
+| Ollama | ✅ `spec.Ollama.Host`; self-hosted **nedostane binding vůbec** – komentář v kódu: *„no request leaves for api.ollama.com"* |
+| Gemini, Bedrock | pevné, resp. šablona podle regionu |
+
+Egress binding se odvozuje z nakonfigurovaného endpointu: `bind()` vezme URL, zvaliduje
+schéma a vyrobí `egress.Credential{Hostname: u.Hostname()}`. **Self-hosted vLLM nebo
+LiteLLM proxy tedy funguje.**
+
+„Exact DNS hostname matching" z dokumentace je **bezpečnostní kontrola**, ne allowlist –
+brání tomu, aby jeden cíl kombinoval caller-token passthrough s gateway credentials.
 
 ### AutoGen – riziko uzavřené
 kagent AutoGen **opustil už ve v0.5.0**, před sloučením do Microsoft Agent Frameworku.
@@ -83,10 +137,10 @@ existuje, ale není závislostí žádného publikovaného balíčku.
   v OSS repu. Dnes to není past, ale je to indikátor, kam může drift jít.
 
 ## Otevřené otázky
-- [ ] **Je Substrate v linii v1.0 povinný, nebo volitelný?** Dokumentace a Helm defaulty si
-      odporují. Visí na tom vanilla Kubernetes i air-gap. Nutno číst kód controlleru.
-- [ ] **Váže `credential-injection` ve v1.0 modely na pevný výčet DNS hostnames?**
-      Rozbilo by to model gateway šev. Ověřit v kódu, ne v dokumentaci.
+- [x] ~~Je Substrate v linii v1.0 povinný?~~ – **uzavřeno 2026-09-29: ano, fakticky povinný.**
+      Viz sekce výše. A2 i A3 pro v1.0 tím padají prokazatelně.
+- [x] ~~Váže `credential-injection` modely na pevný výčet DNS hostnames?~~ –
+      **uzavřeno 2026-09-29: ne, obava vyvrácena.** Šev je otevřený.
 - [ ] Kdo je upstream vlastník `agent-substrate/substrate` a jaká je jeho governance.
 - [ ] Podíl commitů mimo Solo.io – bus factor na úrovni maintainerů je jasný, na úrovni
       commitů nekvantifikovaný.
@@ -94,3 +148,5 @@ existuje, ale není závislostí žádného publikovaného balíčku.
 
 ## Changelog
 - 2026-09-28: první verze; hloubková prověrka.
+- 2026-09-29: ověřeno čtením kódu – Substrate je ve v1.0 fakticky povinný (A2 i A3 padají),
+  ve v0.10.x je opt-in. Obava o pevný allowlist hostnames v credential-injection vyvrácena.

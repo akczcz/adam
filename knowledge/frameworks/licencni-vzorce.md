@@ -126,6 +126,19 @@ persistuje do MS SQL kdekoliv), ale **jen na .NET**; Python SDK je popsané jako
 To vzorec nevyvrací, jen ukazuje, kde přesně hledat: **ne v `LICENSE`, ale v tom, jaké
 backendy SDK daného jazyka umí oslovit, a jestli je dokumentace vůbec zmiňuje.**
 
+**Zobecnění (2026-09-29):** tentýž rozpor mezi dokumentací a kódem se potvrdil u dvou
+nezávislých projektů a v obou směrech:
+
+| Projekt | Co říká dokumentace | Co říká kód |
+|---|---|---|
+| Microsoft Agent Framework | durable jen přes Azure DTS | backend nevynucuje, provider určuje volající |
+| kagent v1.0 | Substrate je volitelný (`enabled: false`) | `Dial` je nepodmíněný a blokující, default endpointu neprázdný |
+| kagent credential-injection | *„matches exact DNS hostnames"* | jen defaulty per provider, `BaseURL` je přepíše |
+
+**Pozn. Adam – poučení:** u otázek přenositelnosti je dokumentace indicie, ne důkaz.
+Rozhoduje **default hodnota konfigurace** a to, **jestli je kolem volání podmínka**.
+Obojí je otázka na půl hodiny čtení kódu a obojí může obrátit závěr.
+
 **Pozn. Adam – kontrolní otázka:** *„Má tahle OSS komponenta alespoň jeden produkční
 backend, který si smíme provozovat sami?"* MIT knihovna, která umí mluvit jen s jednou
 hostovanou službou, není přenositelná bez ohledu na licenci.
@@ -192,6 +205,8 @@ Totéž platí pro přístup k modelům – viz model gateway v [overview.md](ov
 
 ## Changelog
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
+- 2026-09-29: doplněno zobecnění – rozpor dokumentace vs. kód potvrzen na dvou projektech
+  a v obou směrech.
 - 2026-09-29: čtvrtý vzorec zpřesněn po přečtení kódu – past je v dokumentované cestě
   a v jazykovém SDK, ne ve frameworku.
 - 2026-09-29: přidán čtvrtý vzorec (OSS SDK, uzavřený backend – Azure DTS); doplněna
