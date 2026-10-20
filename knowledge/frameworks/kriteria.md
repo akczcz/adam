@@ -1,6 +1,6 @@
 ---
 tema: Hodnoticí kritéria pro výběr agentního frameworku
-naposledy_overeno: 2026-09-29
+naposledy_overeno: 2026-10-20
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://www.cncf.io/project-metrics/
@@ -42,6 +42,10 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | **Deklaruje publikovaný balíček licenci strojově čitelně?** | Registry JSON API – `license`, `license_expression` (SPDX), OSI classifier |
 | **Vlastní kdokoliv jiný balíčky, které dokumentace doporučuje instalovat?** | Owner **každého** balíčku ve finálním lock filu |
 | **Pod jakou governance je runtime závislost, která vykonává práci?** | Dependency tree finálního obrazu, ne jen hlavní repo – nadace chrání repozitář, ne `pip install` |
+| **Jsou v runtime závislostech analytické nebo telemetrické SDK, a jsou vůbec importované?** | `requires_dist` vs. `grep -r` v balíčku. Mrtvá závislost (např. `posthog` v Dapr Agents) nic neodesílá, ale pro SBOM a air-gap review je to nález |
+| **U BUSL / SSPL / ELv2: zapsat doslovně Additional Use Grant, Change Date a Change License** | Soubor `LICENSE` v repu runtimu. Teprve to je vstup pro právníka – „BUSL“ samo o sobě nerozhoduje (Restate povoluje náš scénář, Inngest konvertuje po 3 letech) |
+| **Trend breaking changes, ne jen jejich počet** | Release notes a upgrade stránka za poslední měsíc vs. od GA; **ve kterých vrstvách** (protokolová hranice, HITL, stav) – tam bolí nejvíc |
+| **Je upstream deklarovaný jako archivovaný, i když GitHub flag `archived` není nastavený?** | README a `SUPPORT.md`, ne jen metadata repa (AutoGen 10/2026) |
 
 ### B2. Trvalost stavu a odolnost
 
@@ -54,12 +58,15 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | **Je durable komponenta sama stavová a lze ji škálovat?** | Stavový singleton v control plane je skrytá provozní past |
 | **Má durable vrstva alespoň jeden produkční backend, který si smíme provozovat sami?** | MIT knihovna mluvící jen s hostovanou službou není přenositelná bez ohledu na licenci |
 | **Je obnovení běhu exactly-once, nebo at-least-once?** | At-least-once resume za schvalovacím bodem znamená riziko dvojího provedení neidempotentní akce |
+| **Přežijí uložené schvalovací transkripty a checkpointy upgrade frameworku?** | Upgrade guide: breaking změny ve formátu approval state (MAF 1.22 „typed approval controls“) zneplatní běhy, které zrovna čekají na člověka |
 
 ### B3. Přenositelnost a hranice
 
 | Co |
 |---|
 | Sedí čistě za protokolovou hranicí (A2A / MCP / AG-UI), nebo vnucuje vlastní API? |
+| **Jakou verzi protokolového SDK runtime skutečně pinuje – a liší se to mezi release liniemi?** `uv.lock` / `go.mod` per tag, ne README: kagent v0.10.x má A2A v1.0 jen na gateway a v0.3 v agentu; MAF AG-UI pinuje 0.x proti spec 1.0; Dapr Agents i MAF jsou na MCP SDK 1.x |
+| **Je agentní smyčka (executor) vyměnitelná za cizí SDK, a kdo to má first-party?** Dapr `ClaudeAgentExecutor`, kagent Harness, Temporal extras – šev, který rozhoduje o ceně odchodu od smyčky |
 | Kolik kódu agenta je na framework vázaného? |
 | Je přístup k modelům abstrahovaný, nebo natvrdo na jednoho poskytovatele? |
 | Cena odchodu: co zůstane funkční, když se framework vymění? |
@@ -109,7 +116,7 @@ Tyhle se nebodují. Kdo neprojde, nepostupuje do hloubkového kola.
 | Podporované runtimy (Python, TypeScript, Java, .NET, Go) |
 | Nativní podpora MCP jako klient i server |
 | Nativní podpora A2A |
-| Živost projektu – release kadence, otevřené issues, reálná nasazení |
+| Živost projektu – release kadence, otevřené issues, reálná nasazení; **podíl ne-botových commitů za poslední měsíc podle autora** (bus factor se mění rychleji než seznam maintainerů) |
 
 ## C. Čím se záměrně neřídit
 
@@ -148,3 +155,7 @@ Tenhle benchmark veřejně nikdo neprovozuje – je to práce na vlastní harnes
 - 2026-09-28: do B1 přidána zralost sub-projektu, support policy, breaking changes,
   deklarace licence v registry a vlastnictví doporučovaných balíčků; do B2 škálovatelnost
   durable komponenty.
+- 2026-10-20: z říjnových prověrek doplněno – B1: nepoužívané telemetrické závislosti, doslovné
+  parametry BUSL/SSPL, trend breaking changes, archivace deklarovaná v README; B2: přežití
+  approval state přes upgrade; B3: skutečně pinovaná verze protokolového SDK per linie,
+  vyměnitelnost executoru; B8: měsíční podíl commitů podle autora.
