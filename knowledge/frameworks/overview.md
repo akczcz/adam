@@ -63,7 +63,7 @@ Vyřazovací kritéria A1–A5 z [kriteria.md](kriteria.md). Ověřeno 2026-09-2
 
 | Framework | Licence (runtime) | Governance | A1 | Trvalost stavu | Výsledek |
 |---|---|---|---|---|---|
-| **[Dapr Agents](dapr-agents.md)** | Apache-2.0 | Apache-2.0, **DCO**, LF/CNCF – ale Graduated se týká **runtimu, ne sub-projektu** (repo 1/2025, graduace 10/2024) | ✅ | Ve **tvém** state storu, 28 providerů | **postupuje** |
+| **[Dapr Agents](dapr-agents.md)** | Apache-2.0 (ale `posthog` jako nepoužívaná runtime závislost) | Apache-2.0, **DCO**, LF/CNCF – ale Graduated se týká **runtimu, ne sub-projektu** (repo 1/2025, graduace 10/2024) | ✅ | Ve **tvém** state storu, 28 providerů | **postupuje** (1.0.9, 2026-10-09) |
 | **[kagent](kagent.md)** | Apache-2.0 (celý stack) | CNCF **Sandbox**; žádost o Incubating od 12/2025 bez posunu (stav 2026-10-20) | ✅ | Postgres v runtimu (v0.10+); checkpointy a durable HITL až ve v1.0-alpha | **postupuje, ale jen linie v0.10.x** (v0.10.3, 2026-10-02) |
 | **[Microsoft Agent Framework](microsoft-agent-framework.md)** | MIT (celý stack) | Microsoft, jeden vendor, **skrytá CLA**; žádná nadace, versioning ani support policy | ✅ | ⚠️ checkpointy v jádře, ale produkční store **jen Cosmos**; durable execution **jen přes Azure DTS** | **jen jako tenká smyčka** |
 | **Google ADK** | Apache-2.0 | Google, jeden vendor, **CLA**, žádná nadace ani versioning/support policy | ✅ | `DatabaseSessionService` = store konverzace, **ne durable execution**; resume `@experimental`, default off, **at-least-once** | **nehodnocen samostatně** – prověřen jako [smyčka pod kagentem](kagent.md#google-adk-pod-kapotou) |
@@ -108,7 +108,7 @@ přesně takový případ – AG-UI dnes neumí ani jeden z finalistů.
 
 | # | Varianta | Silné stránky | Rizika |
 |---|---|---|---|
-| **1** | **[Dapr Agents](dapr-agents.md) + Dapr Workflows** | **Nejlepší cena odchodu v poli:** stav leží ve *tvém* state storu (28 providerů) v dokumentovaném append-only formátu. Durable HITL včetně checkpointu ve stavu čekání. PyPI deklaruje licenci. DCO. Air-gap doložený. Model gateway šev otevřený (`base_url`, LiteLLM je přímá závislost). | **CNCF Graduated se na sub-projekt nevztahuje.** Žádná support ani versioning policy. **Breaking change v patch releasu** měsíc po GA. Bus factor 2. **A2A ani AG-UI nepodporuje vůbec.** Vedle repa BUSL balíčky propagované z docs.dapr.io. |
+| **1** | **[Dapr Agents](dapr-agents.md) + Dapr Workflows** | **Nejlepší cena odchodu v poli:** stav leží ve *tvém* state storu (28 providerů) v dokumentovaném append-only formátu. Durable HITL včetně checkpointu ve stavu čekání. PyPI deklaruje licenci. DCO. Air-gap doložený. Model gateway šev otevřený (`base_url`, LiteLLM je přímá závislost). **Od 1.0.7 first-party `ClaudeAgentExecutor`** – Claude Agent SDK jako smyčka, Dapr jako trvalost, Apache-2.0. | **CNCF Graduated se na sub-projekt nevztahuje.** Žádná support ani versioning policy. **Breaking change v patch releasu** měsíc po GA. Bus factor fakticky **1** (10/2026). **A2A ani AG-UI nepodporuje vůbec**, MCP SDK jen 1.x. `posthog` v runtime závislostech bez použití. Vedle repa BUSL balíčky propagované z docs.dapr.io. |
 | **2** | **[kagent](kagent.md)** – jen linie v0.10.x | Celý stack Apache-2.0, **DCO**, trademark u CNCF. MCP přes oficiální SDK; A2A v1.0 **jen na Go gateway** – Python runtime v0.10.x jede na `a2a-sdk` 0.3.x (strop ADK 1.x), v1.0 SDK v agentu až v linii v1.0-alpha. Abstrakce **Harness** dělá runtime agenta vyměnitelným. Nulové phone-home. **Model gateway šev otevřený** – `BaseURL` přepisuje defaulty, self-hosted vLLM funguje. | **Linie v1.0 je mimo hru:** Substrate je tam fakticky povinný (neprázdný default endpointu + nepodmíněný blokující `Dial`), čímž padá A2 i A3. Rewrite bez migrační cesty a bez HA gateway. Bus factor 7/8 Solo.io. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. Agentní smyčka je **Google ADK** – CLA, bez nadace, breaking changes v minorech; HITL resume je ADK `@experimental` s **at-least-once**; artefakty vždy in-memory; v0.10.x jede na ADK 1.x bez release od 2026-08-27. Linie v1.0-alpha má sice aktuální A2A SDK, gRPC, push notifications a usage extension, ale agent→agent delegace přes controller tam má otevřený bug #3275 (2026-10-20). |
 | **3** | **[MAF](microsoft-agent-framework.md) jako tenká smyčka + Dapr Workflow nebo Temporal** | **Jediná varianta, která pokrývá protokolovou hranici celou** – MAF má A2A, MCP i AG-UI přes oficiální SDK a nejlepší OTEL profil, vše MIT. Trvalost dodá cizí durable vrstva, takže Azure gravitace MAF zmizí. | Nejvíc vlastního kódu: vlastní `CheckpointStorage` a `AgentSessionStore` (Microsoft druhý nedodává vůbec). Microsoft CLA a ~16 breaking changes za 5,5 měsíce – verzi přišpendlit, upgrade rozpočtovat. |
 
@@ -143,8 +143,9 @@ CLA u kagentu i Dapr Agents (oba DCO).
       A2 i A3 pro v1.0 padají; v0.10.x ho má opt-in.
 - [x] ~~kagent: váže `credential-injection` modely na pevný výčet DNS hostnames?~~ –
       **uzavřeno: ne, obava vyvrácena.** Model gateway šev je otevřený.
-- [ ] **Dapr Workflow jako substrát pod tenkou smyčkou bez `diagrid`** – odhadnout práci
-      na vlastním obalu nad `dapr-ext-workflow`.
+- [~] **Dapr Workflow jako substrát pod tenkou smyčkou bez `diagrid`** – pro Claude Agent SDK
+      to od dapr-agents 1.0.7 existuje first-party (`ClaudeAgentExecutor`, Apache-2.0); pro jiné
+      smyčky dál odhadnout práci na vlastním obalu nad `dapr-ext-workflow`.
 - [ ] Cena vlastního A2A serveru nad `a2a-sdk` vedle Dapr Agents.
 - [ ] Změřit harnessem: pozastavení HITL → restart clusteru → obnovení po 14 dnech.
 - [ ] Síťový test air-gapped u obou kandidátů.
@@ -162,6 +163,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
 - 2026-09-27: první verze; široké síto kolo 1, 10 kandidátů, LangGraph a Mastra vyřazeny na licenci.
 - 2026-10-20: kagent – A2A verze per linie (v0.10.x Python na 0.3.x, v1.0-alpha na v1.0 SDK), bug #3275,
   v0.10.3; MAF – AG-UI balíček pinuje 0.x proti spec 1.0.
+- 2026-10-20: Dapr Agents 1.0.9 – `ClaudeAgentExecutor`, bus factor 1, mrtvá závislost `posthog`,
+  A2A/AG-UI/Temporal stále nic.
 - 2026-09-29: prověřen Google ADK jako smyčka pod kagentem. Korekce v `kagent.md`:
   kagentí Postgres nestojí na ADK `[db]`, HITL resume je už ve v0.10.x, ale at-least-once.
 - 2026-09-29: kagent ověřen čtením kódu – Substrate je ve v1.0 fakticky povinný
