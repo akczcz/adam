@@ -1,6 +1,6 @@
 ---
 tema: Mapa agentních frameworků pro přenositelné multiagentní platformy
-naposledy_overeno: 2026-09-29
+naposledy_overeno: 2026-10-20
 zralost: n/a (přehled)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -64,7 +64,7 @@ Vyřazovací kritéria A1–A5 z [kriteria.md](kriteria.md). Ověřeno 2026-09-2
 | Framework | Licence (runtime) | Governance | A1 | Trvalost stavu | Výsledek |
 |---|---|---|---|---|---|
 | **[Dapr Agents](dapr-agents.md)** | Apache-2.0 | Apache-2.0, **DCO**, LF/CNCF – ale Graduated se týká **runtimu, ne sub-projektu** (repo 1/2025, graduace 10/2024) | ✅ | Ve **tvém** state storu, 28 providerů | **postupuje** |
-| **[kagent](kagent.md)** | Apache-2.0 (celý stack) | CNCF **Sandbox**; žádost o Incubating od 12/2025 bez posunu; **DCO, ne CLA** | ✅ | Postgres v runtimu (v0.10+); checkpointy a durable HITL až ve v1.0-alpha | **postupuje, ale jen linie v0.10.x** |
+| **[kagent](kagent.md)** | Apache-2.0 (celý stack) | CNCF **Sandbox**; žádost o Incubating od 12/2025 bez posunu (stav 2026-10-20) | ✅ | Postgres v runtimu (v0.10+); checkpointy a durable HITL až ve v1.0-alpha | **postupuje, ale jen linie v0.10.x** (v0.10.3, 2026-10-02) |
 | **[Microsoft Agent Framework](microsoft-agent-framework.md)** | MIT (celý stack) | Microsoft, jeden vendor, **skrytá CLA**; žádná nadace, versioning ani support policy | ✅ | ⚠️ checkpointy v jádře, ale produkční store **jen Cosmos**; durable execution **jen přes Azure DTS** | **jen jako tenká smyčka** |
 | **Google ADK** | Apache-2.0 | Google, jeden vendor, **CLA**, žádná nadace ani versioning/support policy | ✅ | `DatabaseSessionService` = store konverzace, **ne durable execution**; resume `@experimental`, default off, **at-least-once** | **nehodnocen samostatně** – prověřen jako [smyčka pod kagentem](kagent.md#google-adk-pod-kapotou) |
 | **Pydantic AI** | MIT | Pydantic, jeden vendor | ✅ | Žádná – tenká knihovna | postupuje jako „tenká smyčka" |
@@ -109,7 +109,7 @@ přesně takový případ – AG-UI dnes neumí ani jeden z finalistů.
 | # | Varianta | Silné stránky | Rizika |
 |---|---|---|---|
 | **1** | **[Dapr Agents](dapr-agents.md) + Dapr Workflows** | **Nejlepší cena odchodu v poli:** stav leží ve *tvém* state storu (28 providerů) v dokumentovaném append-only formátu. Durable HITL včetně checkpointu ve stavu čekání. PyPI deklaruje licenci. DCO. Air-gap doložený. Model gateway šev otevřený (`base_url`, LiteLLM je přímá závislost). | **CNCF Graduated se na sub-projekt nevztahuje.** Žádná support ani versioning policy. **Breaking change v patch releasu** měsíc po GA. Bus factor 2. **A2A ani AG-UI nepodporuje vůbec.** Vedle repa BUSL balíčky propagované z docs.dapr.io. |
-| **2** | **[kagent](kagent.md)** – jen linie v0.10.x | Celý stack Apache-2.0, **DCO**, trademark u CNCF. A2A v1.0 a MCP přes oficiální SDK. Abstrakce **Harness** dělá runtime agenta vyměnitelným. Nulové phone-home. **Model gateway šev otevřený** – `BaseURL` přepisuje defaulty, self-hosted vLLM funguje. | **Linie v1.0 je mimo hru:** Substrate je tam fakticky povinný (neprázdný default endpointu + nepodmíněný blokující `Dial`), čímž padá A2 i A3. Rewrite bez migrační cesty a bez HA gateway. Bus factor 7/8 Solo.io. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. Agentní smyčka je **Google ADK** – CLA, bez nadace, breaking changes v minorech; HITL resume je ADK `@experimental` s **at-least-once**; artefakty vždy in-memory; v0.10.x jede na ADK 1.x bez release od 2026-08-27. |
+| **2** | **[kagent](kagent.md)** – jen linie v0.10.x | Celý stack Apache-2.0, **DCO**, trademark u CNCF. MCP přes oficiální SDK; A2A v1.0 **jen na Go gateway** – Python runtime v0.10.x jede na `a2a-sdk` 0.3.x (strop ADK 1.x), v1.0 SDK v agentu až v linii v1.0-alpha. Abstrakce **Harness** dělá runtime agenta vyměnitelným. Nulové phone-home. **Model gateway šev otevřený** – `BaseURL` přepisuje defaulty, self-hosted vLLM funguje. | **Linie v1.0 je mimo hru:** Substrate je tam fakticky povinný (neprázdný default endpointu + nepodmíněný blokující `Dial`), čímž padá A2 i A3. Rewrite bez migrační cesty a bez HA gateway. Bus factor 7/8 Solo.io. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. Agentní smyčka je **Google ADK** – CLA, bez nadace, breaking changes v minorech; HITL resume je ADK `@experimental` s **at-least-once**; artefakty vždy in-memory; v0.10.x jede na ADK 1.x bez release od 2026-08-27. Linie v1.0-alpha má sice aktuální A2A SDK, gRPC, push notifications a usage extension, ale agent→agent delegace přes controller tam má otevřený bug #3275 (2026-10-20). |
 | **3** | **[MAF](microsoft-agent-framework.md) jako tenká smyčka + Dapr Workflow nebo Temporal** | **Jediná varianta, která pokrývá protokolovou hranici celou** – MAF má A2A, MCP i AG-UI přes oficiální SDK a nejlepší OTEL profil, vše MIT. Trvalost dodá cizí durable vrstva, takže Azure gravitace MAF zmizí. | Nejvíc vlastního kódu: vlastní `CheckpointStorage` a `AgentSessionStore` (Microsoft druhý nedodává vůbec). Microsoft CLA a ~16 breaking changes za 5,5 měsíce – verzi přišpendlit, upgrade rozpočtovat. |
 
 **Pozn. Adam – doporučení po hloubkovém kole (2026-09-29):** všechny tři prověrky
@@ -121,7 +121,7 @@ přesně takový případ – AG-UI dnes neumí ani jeden z finalistů.
 | Dapr Agents | „CNCF Graduated" se na sub-projekt nevztahuje; žádná support policy |
 | Microsoft Agent Framework | durable execution jen přes placenou Azure službu; skrytá CLA a nulová versioning policy |
 
-**Protokolovou hranici celou pokrývá jen MAF** – A2A i MCP přes oficiální SDK a AG-UI v GA.
+**Protokolovou hranici celou pokrývá jen MAF** – A2A i MCP přes oficiální SDK a AG-UI v GA (pozor: `agent-framework-ag-ui` pinuje `ag-ui-protocol<0.2`, spec AG-UI je od 2026-09-17 na 1.0 – viz [`../protocols/ag-ui.md`](../protocols/ag-ui.md)).
 Těžiště proto zůstává u **varianty 3**, ale mění se její obsah: tenkou smyčkou s hranicí
 může být MAF, durable substrátem Dapr Workflow nebo Temporal. MAF se přitom nesmí dát
 durable vrstva – tím se obejde jeho jediná tvrdá vazba na Azure.
@@ -160,6 +160,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
 
 ## Changelog
 - 2026-09-27: první verze; široké síto kolo 1, 10 kandidátů, LangGraph a Mastra vyřazeny na licenci.
+- 2026-10-20: kagent – A2A verze per linie (v0.10.x Python na 0.3.x, v1.0-alpha na v1.0 SDK), bug #3275,
+  v0.10.3; MAF – AG-UI balíček pinuje 0.x proti spec 1.0.
 - 2026-09-29: prověřen Google ADK jako smyčka pod kagentem. Korekce v `kagent.md`:
   kagentí Postgres nestojí na ADK `[db]`, HITL resume je už ve v0.10.x, ale at-least-once.
 - 2026-09-29: kagent ověřen čtením kódu – Substrate je ve v1.0 fakticky povinný

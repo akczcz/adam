@@ -1,7 +1,7 @@
 ---
 tema: kagent – Kubernetes-nativní control plane pro agenty
-naposledy_overeno: 2026-09-29
-zralost: preview (v0.10.x) / experimental (v1.0.0-alpha)
+naposledy_overeno: 2026-10-20
+zralost: preview (v0.10.3) / experimental (v1.0.0-alpha16)
 primarni_zdroje:
   - https://github.com/kagent-dev/kagent/blob/main/LICENSE
   - https://raw.githubusercontent.com/kagent-dev/kagent/main/CONTRIBUTING.md
@@ -21,6 +21,13 @@ primarni_zdroje:
   - https://raw.githubusercontent.com/google/adk-python/main/CONTRIBUTING.md
   - https://pypi.org/pypi/google-adk/2.10.0/json
   - https://github.com/advisories/GHSA-rg7c-g689-fr3x
+  - https://github.com/kagent-dev/kagent/releases
+  - https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.2/go/go.mod
+  - https://raw.githubusercontent.com/kagent-dev/kagent/main/go/go.mod
+  - https://raw.githubusercontent.com/kagent-dev/kagent/main/python/packages/kagent-adk/pyproject.toml
+  - https://github.com/kagent-dev/kagent/pull/2461
+  - https://github.com/kagent-dev/kagent/issues/3275
+  - https://github.com/kagent-dev/kagent/blob/main/go/core/pkg/config/defaults.go
 ---
 
 # kagent
@@ -31,8 +38,11 @@ kompilaci do neměnné revize, autorizaci na hranici a protokolové rozhraní ve
 
 ## Aktuální stav
 - Open-sourcoval Solo.io (3/2025), **CNCF Sandbox od 2025-05-22**.
-- **Žádost o Incubating podána 2025-12-02, k 2026-09-28 stále otevřená** bez TOC sponzora.
-- Dvě paralelní release linie: **v0.10.x** (použitelná) a **v1.0.0-alpha** (rewrite).
+- **Žádost o Incubating podána 2025-12-02, k 2026-10-20 stále otevřená** bez TOC sponzora
+  (cncf/toc#1978, poslední aktivita 2026-09-24, jeden komentář).
+- Dvě paralelní release linie: **v0.10.x** (použitelná; poslední **v0.10.3 z 2026-10-02**, jen oprava
+  runtime image a bump kagent-tools) a **v1.0.0-alpha** (rewrite; **alpha9 až alpha16 mezi 7. a 19. 10.**,
+  tj. 8 alph za dva týdny; milník v1.0.0 bez data). Ověřeno 2026-10-20 na GitHub releases.
 - Licence **Apache-2.0 napříč celým nasazovaným stackem** – controller, kmcp, substrate,
   agentgateway. Žádný BUSL, ELv2 ani SSPL.
 
@@ -58,7 +68,7 @@ ne s jiným orchestrátorem.
 | Governance | ✅ **DCO, ne CLA** – Solo.io nemůže jednostranně relicencovat cizí příspěvky; trademark darovaný CNCF, projekt se řídí CNCF IP Policy |
 | Stupeň zralosti | ⚠️ CNCF **Sandbox**; žádost o Incubating leží ~10 měsíců bez posunu |
 | Bus factor | ⚠️ **7 z 8 maintainerů ze Solo.io** (8. je z Amdocs); 88 unikátních přispěvatelů |
-| Protokoly | ✅ A2A i MCP přes oficiální SDK, ale **přes ADK jako mezičlánek** – kagent subclassuje `A2aAgentExecutor` (ten je `@a2a_experimental`) a `McpToolset` |
+| Protokoly | ⚠️ A2A i MCP přes oficiální SDK, ale **přes ADK jako mezičlánek** – kagent subclassuje `A2aAgentExecutor` (ten je `@a2a_experimental`) a `McpToolset`. **Verze A2A se liší podle linie:** v0.10.x má v1.0 jen na Go gateway, Python runtime jede na `a2a-sdk` 0.3.x; v1.0 SDK v obou jazycích až v linii v1.0-alpha. Viz sekce „A2A: která verze v které linii“ |
 | Model gateway | ✅ **šev otevřený** – `BaseURL` / `Endpoint` / `Host` přepisují defaulty; self-hosted vLLM funguje |
 | AG-UI | ❌ **nepodporuje a nebude** – issue #589 uzavřeno jako *not planned* |
 | MCP registry | ❌ **nemá** – kmcp je kagentí CRD, ne standardní `modelcontextprotocol/registry` |
@@ -68,6 +78,39 @@ ne s jiným orchestrátorem.
 | Air-gap | ✅ v0.10.x (Substrate opt-in); ❌ **v1.0 – Substrate povinný a stahuje `runsc` z veřejného `gs://` bucketu** ([#2932](https://github.com/kagent-dev/kagent/issues/2932)) |
 | Phone-home | ✅ žádné; čistá OTLP telemetrie, výchozí vypnutá, žádný licenční klíč |
 | Licence v balíčcích | ❌ PyPI balíčky mají `license: null` – pro SBOM „unknown" |
+
+## A2A: která verze protokolu v které linii
+*Ověřeno 2026-10-20 čtením `go.mod`, `pyproject.toml`, `uv.lock` a importů v tarballech v0.10.2 a `main`.*
+
+Odpověď na otázku „umí kagent novější A2A?“ zní: **v linii v1.0-alpha ano, v doporučené linii v0.10.x
+jen napůl.** A2A v1.1 zatím nevyšla (jen větev `dev-1.1`, viz [`../protocols/a2a.md`](../protocols/a2a.md)),
+takže „novější“ dnes znamená SDK linie v1.0.
+
+| | v0.10.2 / v0.10.3 | main (v1.0.0-alpha16) |
+|---|---|---|
+| Go gateway / controller (`go/core`) | `a2a-go/v2` **2.3.1** = protokol v1.0, s kompat vrstvou `a2acompat/a2av0` pro v0.3 klienty | `a2a-go/v2` **2.6.0** (aktuální; podpis Agent Card), navíc `a2agrpc/v1` → gRPC binding |
+| Go ADK runtime (`go/adk`) | `a2a-go` **v0.3.15** = protokol **v0.3** | `a2a-go/v2` 2.6.0; v0.3 SDK z repa zmizel |
+| Python runtime (`kagent-adk`, `kagent-core`) | pin `a2a-sdk>=0.3.23` bez horní meze, ale **ADK 1.39.1 pinuje `a2a-sdk<0.4`** → lock **0.3.26** = protokol **v0.3** | pin `a2a-sdk>=1.1.5,<2`, lock **1.1.5** (PyPI má 1.2.3 s cluster mode); `google-adk[a2a,db]>=2.12.0,<3` |
+| Agent Card `protocolVersion` | testovací fixtures nesou **obě** hodnoty, 0.3 i 1.0 | 1.0 |
+
+Co z toho plyne:
+- **v0.10.x navenek mluví v1.0** (gateway), **dovnitř v0.3** (agent). Funguje to díky kompat vrstvě,
+  ale cokoli z v1.0 nad rámec v0.3 (signed cards, sjednocené Part typy, nové chybové kódy dle RFC 9457)
+  agent sám nevidí. Dřívější zápis „A2A v1.0 přes oficiální SDK“ platil jen pro gateway.
+- **Na v0.10.x se to nedá zvednout** – strop drží ADK 1.x (`a2a-sdk<0.4`) a ADK 1.x nemá release
+  od 2026-08-27. Jediná cesta k A2A v1.0 SDK v agentu je linie v1.0-alpha s ADK 2.x.
+- **Linie v1.0-alpha je na A2A nejdál z celého síta:** aktuální Go i Python SDK, gRPC binding, A2A push
+  notifications (alpha10, PR #3036), `UpstreamAuth` zná autorizovanou A2A metodu (alpha14, PR #3178) a
+  **token usage jako verzovaná A2A extension** `https://kagent.dev/extensions/usage/v1` – metadata
+  závěrečného status update nesou input/output/reasoning/cached tokeny per model (alpha15, PR #2461,
+  spec v `docs/architecture/usage-extension.md`). To je přesně FinOps hook, který A2A spec sama nemá.
+- PR #2461 zároveň potvrzuje, že **oba executory byly přepsány na delegaci do ADK A2A executoru** –
+  ADK jako mezičlánek v1.0 nesnímá, naopak prohlubuje.
+- **Otevřený bug vysoké závažnosti** [#3275](https://github.com/kagent-dev/kagent/issues/3275)
+  (2026-10-19, alpha13–alpha16 i `main`): remote A2A tool volající **jiného kagent agenta přes controller
+  selže** – Agent Card se stahuje bez tokenu volajícího (401) a propaguje se tenant volajícího
+  („tenant does not match“). Opravné PR #3276 a #3219 otevřené. Agent→agent delegace, tedy hlavní
+  důvod pro A2A, v alfě dnes nefunguje přes `propagateToken=true`.
 
 ### Rewrite v1.0-alpha
 Durable model ve v1.0 je ambiciózní (append-only event log, named checkpointy, forky,
@@ -108,6 +151,12 @@ Potvrzuje to i credential injection: bindingy emitují URI ve tvaru `ate-secret:
 **v0.10.x dělá Substrate opt-in, v1.0 opt-out, který nejde vypnout.** Doporučení stavět
 na v0.10.x tím dostává tvrdý technický důvod, ne jen „je zralejší".
 
+*Re-ověřeno 2026-10-20 na `main` (alpha16):* beze změny v podstatě. Default endpointu se přestěhoval
+z `pkg/env/substrate.go` do `go/core/pkg/config/defaults.go:39`
+(`ApiEndpoint: "dns:///api.ate-system.svc:443"`, k tomu `RouterUrl`), `substrate.Dial` v `app.go`
+je dál volaný bez podmínky. Substrate mezitím bumpnut na v0.6.0-alpha3 (alpha15) a dostal vlastní
+ServiceAccount pro workery (alpha12) – integrace se prohlubuje, ne uvolňuje.
+
 ### Model gateway: obava vyvrácená
 *Ověřeno čtením kódu 2026-09-29.*
 
@@ -143,7 +192,7 @@ Piny se ale mezi liniemi liší, což je důležitější, než vypadá:
 | Linie | Pin |
 |---|---|
 | v0.10.2 | `google-adk>=1.38.0,<2` – **bez extras** |
-| main (v1.0-alpha) | `google-adk[a2a,db]>=2.9.2,<3` |
+| main (v1.0-alpha16) | `google-adk[a2a,db]>=2.12.0,<3` (dependabot zvedá pin s každým minorem ADK; 2026-10-20) |
 
 **ADK 1.x nemá release od 2026-08-27** (poslední 1.39.1) a EOL publikované není.
 Doporučená linie v0.10.x tedy jede na větvi, u které nevíme, jestli dostane
@@ -242,6 +291,12 @@ a BYO harness s vlastní A2A gRPC implementací ADK vůbec nepotřebuje.
 - [ ] Otestovat, co udělá resume neidempotentního nástroje za schvalovacím bodem
       (ADK garantuje jen at-least-once).
 - [ ] Kolik práce je BYO harness bez ADK?
+- [ ] Sledovat opravu #3275 (agent→agent přes controller s propagací tokenu) – bez ní je A2A delegace
+      v linii v1.0-alpha nepoužitelná.
+- [ ] Kdy linie v1.0 zvedne `a2a-sdk` na 1.2.x (cluster mode, caching headers na kartě) a zda převezme
+      A2A v1.1 (`dev-1.1`), až vyjde.
+- [ ] Usage extension `kagent.dev/extensions/usage/v1` – ověřit, zda projde i přes cizí A2A klient
+      (metadata jsou volitelná, neměla by rozbít interoperabilitu), a zda jde použít jako vstup FinOps.
 
 ## Changelog
 - 2026-09-28: první verze; hloubková prověrka.
@@ -252,3 +307,7 @@ a BYO harness s vlastní A2A gRPC implementací ADK vůbec nepotřebuje.
   s at-least-once; A2A i MCP jdou přes ADK jako mezičlánek; artefakty jsou vždy in-memory.
 - 2026-09-29: ověřeno čtením kódu – Substrate je ve v1.0 fakticky povinný (A2 i A3 padají),
   ve v0.10.x je opt-in. Obava o pevný allowlist hostnames v credential-injection vyvrácena.
+- 2026-10-20: A2A verze per linie ověřena z go.mod/pyproject/uv.lock – v0.10.x má v1.0 jen na gateway,
+  Python runtime na a2a-sdk 0.3.x (strop ADK 1.x); v1.0-alpha na aktuálních v1.0 SDK + gRPC, push
+  notifications a usage extension. Otevřený bug #3275 (agent→agent přes controller). Substrate na main
+  re-ověřen jako povinný. v0.10.3 (2026-10-02), alpha9–16 (10/2026), Incubating stále bez posunu.

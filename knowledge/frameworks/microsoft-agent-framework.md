@@ -50,9 +50,9 @@ Agentní smyčka, workflow graf se supersteps, orchestrační vzory a protokolov
 | Support policy | ❌ žádná OSS; komerční podpora **jen s Unified smlouvou a jen když problém vzniká z použití Azure AI services** |
 | Breaking changes po GA | ❌ **~16 za 5,5 měsíce**, z toho **2 v patch releasech**, 11 dalších ve frontě |
 | Kadence | ⚠️ 19 minor releasů za 5,5 měsíce |
-| **A2A** | ✅ oficiální `a2a-sdk` – klient i server; balíčky **prerelease** |
+| **A2A** | ✅ oficiální `a2a-sdk` (`agent-framework-a2a` pinuje `a2a-sdk>=1.0.0,<2`, tj. protokol v1.0) – klient i server; balíček **stále Beta** (1.0.0b261015, 2026-10-15; ověřeno 2026-10-20 na PyPI) |
 | **MCP** | ✅ klient nativně; server `hosting-mcp` **prerelease, jen Python** |
-| **AG-UI** | ✅ **`agent-framework-ag-ui` 1.4.0, GA** – jediný kandidát v sítu, který AG-UI má |
+| **AG-UI** | ✅ **`agent-framework-ag-ui` 1.6.0 (2026-10-15), GA** – jediný kandidát v sítu, který AG-UI má. ⚠️ Pinuje `ag-ui-protocol<0.2,>=0.1.19`, zatímco spec AG-UI je od 2026-09-17 na **1.0** (ověřeno 2026-10-20 na PyPI; viz [`../protocols/ag-ui.md`](../protocols/ag-ui.md)) |
 | Observabilita | ✅ **nejlepší v sítu** – OTEL GenAI semconv, Jaeger/Langfuse/MLflow, propagace trace do MCP přes `_meta` |
 | Model gateway | ✅ **šev plně otevřený** – `base_url` na vLLM či LiteLLM; .NET: *„any `IChatClient`"* |
 | Trvalost – jádro | ⚠️ `InMemory` / `File` / **`Cosmos` jako jediný produkční store**; protokol otevřený, ale Postgres store neexistuje |
