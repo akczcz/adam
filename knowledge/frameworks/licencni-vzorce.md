@@ -1,6 +1,6 @@
 ---
 tema: Licenční vzorce a pasti v open-source AI frameworcích
-naposledy_overeno: 2026-09-29
+naposledy_overeno: 2026-10-20
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -12,6 +12,11 @@ primarni_zdroje:
   - https://docs.dapr.io/developing-ai/agent-integrations/
   - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
   - https://github.com/microsoft/agent-framework/pull/8807
+  - https://github.com/mastra-ai/mastra/blob/main/packages/connect/LICENSE-ELv2.txt
+  - https://raw.githubusercontent.com/restatedev/restate/main/LICENSE
+  - https://raw.githubusercontent.com/inngest/inngest/main/LICENSE.md
+  - https://raw.githubusercontent.com/dapr/dapr-agents/main/pyproject.toml
+  - https://raw.githubusercontent.com/microsoft/autogen/main/README.md
 ---
 
 # Licenční vzorce a pasti
@@ -29,20 +34,22 @@ modely se teprve usazují.
 Prototyp proto projde bez problému a licenční problém se objeví až ve chvíli, kdy se řeší
 škálování a provoz. V té fázi je přepis drahý – to je na tom to nebezpečné.
 
-**Doložený případ (ověřeno 2026-09-27):**
+**Doložený případ (ověřeno 2026-09-27, re-ověřeno 2026-10-20):**
 
 | Balíček | Licence | Co obsahuje |
 |---|---|---|
-| `langgraph` | MIT | graf, uzly, hrany – vývojová smyčka |
-| `langchain-core` | MIT | základní abstrakce |
-| **`langgraph-api`** | **Elastic License 2.0** | **HTTP, persistence, fronty úloh, streaming** |
+| `langgraph` 1.2.16 | MIT | graf, uzly, hrany – vývojová smyčka |
+| `langchain-core` 1.6.12 | MIT | základní abstrakce |
+| **`langgraph-api`** 0.16.2 | **Elastic License 2.0** (`license: Elastic-2.0`) | **HTTP, persistence, fronty úloh, streaming** |
 
 `langgraph-api` se aktivuje příkazy `langgraph dev` i `langgraph build`. ELv2 není OSI open source –
 zakazuje mimo jiné poskytovat produkt jako řízenou službu třetím stranám a obcházet licenční klíče.
 Pro produkční self-hosted provoz serverové části je potřeba komerční klíč.
 
-Stejný vzorec jinde: **Mastra** má jádro Apache-2.0, ale některé komponenty pod Elastic licencí.
-**LiteLLM** má SDK i proxy MIT, ale adresář `enterprise/` je licencovaný zvlášť.
+Stejný vzorec jinde: **Mastra** má `@mastra/core` 1.78.0 Apache-2.0, ale `packages/connect/`
+nese `LICENSE-ELv2.txt` (repo jako celek GitHub hlásí `NOASSERTION`; ověřeno 2026-10-20).
+**LiteLLM** 1.106.1 má SDK i proxy MIT (`license_expression: MIT`), ale `enterprise/LICENSE.md`
+je *„BerriAI Enterprise license“* (ověřeno 2026-10-20).
 
 ## Druhý vzorec: publikovaný artefakt bez licenčních metadat
 
@@ -50,9 +57,10 @@ Repozitář je Apache-2.0, ale **publikovaný balíček nedeklaruje licenci vůb
 Pro SBOM, license gate v CI a compliance review zákazníka to není „Apache-2.0",
 ale **„unknown"** – a to bývá v enterprise politikách horší než permisivní licence.
 
-**Doložený případ (ověřeno 2026-09-28):** balíčky kagentu na PyPI – `kagent-adk`,
-`kagent-core`, `kagent-langgraph`, `agentsts-core` – mají `license: null`,
-`license_expression: null` a žádný license classifier. Repozitář přitom Apache-2.0 je.
+**Doložený případ (ověřeno 2026-09-28, trvá k 2026-10-20 v obou liniích, 0.10.3 i 1.0.0a16):**
+balíčky kagentu na PyPI – `kagent-adk`, `kagent-core`, `kagent-langgraph`, `agentsts-core` –
+mají `license: null`, `license_expression: null` a žádný license classifier. Repozitář přitom
+Apache-2.0 je.
 
 Mírnější varianta: licence deklarovaná legacy free-textem (`"Apache License 2.0"`),
 ale chybějící `license_expression` podle PEP 639 v SPDX tvaru (`Apache-2.0`).
@@ -60,12 +68,16 @@ Přísný gate, který čte jen `license_expression`, uvidí prázdno. Tak to m�
 
 Tři gradace téhož symptomu, od nejhorší:
 
-| Projekt | `license` | `license_expression` | OSI classifier |
+| Projekt (stav 2026-10-20) | `license` | `license_expression` | OSI classifier |
 |---|---|---|---|
-| kagent (PyPI) | `null` | `null` | ❌ chybí |
-| Microsoft Agent Framework (PyPI) | `null` u většiny | `null` u všech | ✅ přítomný |
-| Dapr Agents (PyPI) | free-text, ne SPDX | `null` | ✅ přítomný |
-| Google ADK (PyPI) | `null` | `null` | ✅ přítomný |
+| kagent (PyPI, obě linie) | `null` | `null` | ❌ chybí |
+| `diagrid` (PyPI 0.5.3) | `null` | `null` | ❌ chybí – a licence je BUSL |
+| Microsoft Agent Framework (PyPI 1.22) | `null` | `null` | ✅ přítomný |
+| Google ADK (PyPI 2.12) | `null` | `null` | ✅ přítomný |
+| Dapr Agents (PyPI 1.0.9) | free-text, ne SPDX | `null` | ✅ přítomný |
+| `langgraph-api` (PyPI 0.16.2) | `Elastic-2.0` free-text | `null` | ❌ (správně – není OSI) |
+| `langgraph` (PyPI 1.2.16) | prázdné | ✅ `MIT` | ❌ chybí – opačná mezera: gate čtoucí jen classifier uvidí prázdno |
+| LiteLLM (PyPI 1.106) | prázdné | ✅ `MIT` | – |
 
 **Hygiena se liší i mezi jazykovými SDK jednoho repozitáře:** MAF má na PyPI `license_expression: null`,
 ale jeho .NET balíček deklaruje SPDX `MIT` v nuspecu správně. Kontrolovat každý registry zvlášť.
@@ -78,9 +90,9 @@ je to práce pro dodavatele produktu: doložit licenci ručně.
 Šev nemusí být v repu. Může být **vedle něj** – a odkazovat na něj oficiální dokumentace
 nadačního projektu.
 
-**Doložený případ (ověřeno 2026-09-28):** stránka `docs.dapr.io/developing-ai/agent-integrations/`
-na doméně CNCF projektu nabízí durable execution pro 11 agentních frameworků instalací
-`pip install diagrid[...]`. Ty balíčky pocházejí z `github.com/diagridio/python-ai` –
+**Doložený případ (ověřeno 2026-09-28, trvá k 2026-10-20 – 9 instalačních příkazů na stránce):**
+stránka `docs.dapr.io/developing-ai/agent-integrations/` na doméně CNCF projektu nabízí durable
+execution pro agentní frameworky instalací `pip install diagrid[...]`. Ty balíčky pocházejí z `github.com/diagridio/python-ai` –
 repozitáře firmy, ne dapr orgu – a jsou pod **Diagrid Business Source License 1.1**:
 
 | Omezení | |
@@ -88,13 +100,13 @@ repozitáře firmy, ne dapr orgu – a jsou pod **Diagrid Business Source Licens
 | Produkční použití zdarma | jen organizace pod **60 FTE a 15 M USD obratu** |
 | Zákaz | SaaS, konkurenční infrastruktura (agent runtime, durable execution) |
 | Zákaz | **komerční redistribuce a sublicencování za úplatu** |
-| Change Date | 2030-03-01 → Apache-2.0 |
+| Change Date | 2030-03-01 → Apache-2.0, **nebo čtvrté výročí první distribuce dané verze, co nastane dřív**; platí per verze (ověřeno v LICENSE.md 2026-10-20) |
 
 Třetí řádek míří přesně na model *dodáváme produkt do prostředí zákazníka*.
 **Otázka na právníka.**
 
-Zákeřné je, že PyPI balíček `diagrid` **licenci v metadatech neuvádí vůbec** a GitHub
-ji hlásí jako `NOASSERTION`. License gate tedy uvidí *unknown*, ne *BUSL* – a pustí to dál.
+Zákeřné je, že PyPI balíček `diagrid` (0.5.3, 2026-10-02) **licenci v metadatech neuvádí vůbec**
+a GitHub ji hlásí jako `NOASSERTION` (stav 2026-10-20 beze změny). License gate tedy uvidí *unknown*, ne *BUSL* – a pustí to dál.
 
 **Pozn. Adam – poučení:** „projekt je pod nadací" chrání **repozitář**, ne `pip install`
 příkaz v jeho dokumentaci. Kontrolovat vlastníka **každého** balíčku ve finálním lock filu.
@@ -111,7 +123,8 @@ nezablokuje licence, zablokuje ji architektura.
 **Doložený případ (ověřeno 2026-09-29):** `agent-framework-durabletask` (Microsoft Agent
 Framework) je MIT, repozitář i balíček. Ale:
 
-- `durabletask-azuremanaged` je **povinná závislost**, bez extra markeru
+- `durabletask-azuremanaged` je **povinná závislost**, bez extra markeru (trvá k 2026-10-20,
+  balíček 1.0.0b260922 bez nového vydání)
 - všechny navazující balíčky se jmenují `*AzureManaged`
 - *„The Durable Task Scheduler **runs in Azure** as a separate resource from your app"*,
   dvě billing SKU, endpoint `{scheduler}.{region}.durabletask.io`
@@ -163,6 +176,39 @@ release ani publikované EOL.
 projektu reálně vykonává práci?"* Nadační odznak na repozitáři neříká nic o tom, kdo
 vlastní dependency tree.
 
+## Šestý vzorec: mrtvá telemetrická závislost
+
+Ani licence, ani phone-home – a přesto nález. **Runtime závislost na analytickém SDK, kterou
+kód nikde neimportuje.** License gate ji pustí (bývá MIT), síťový audit nic nenajde (nic se
+neodesílá), ale SBOM ji vykáže a každý air-gap review se na ni zeptá. Je to supply-chain plocha
+navíc a zároveň signál o hygieně dependency managementu.
+
+**Doložený případ (ověřeno 2026-10-20):** `dapr-agents` 1.0.9 má v `pyproject.toml`
+`posthog<8.0.0` mezi runtime závislostmi od 2025-07-07 (PR #139). V `dapr_agents/` ani nikde
+v repu není `import posthog`; od té doby ho jen dependabot bumpuje (naposledy 7.60.0, 2026-10-01).
+
+**Pozn. Adam – kontrolní otázka:** *„Které runtime závislosti se reálně importují?“*
+`requires_dist` proti `grep -r` v balíčku. Půl hodiny práce, a u telemetrických SDK
+(posthog, segment, sentry, mixpanel) to patří do checklistu před dodávkou.
+
+## Sedmý vzorec: konec života deklarovaný mimo metadata
+
+Automatika čte GitHub flag `archived` a datum posledního releasu. **Upstream ale může být
+prohlášen za mrtvý v README nebo v `SUPPORT.md`, zatímco repo zůstává „živé“** – a naopak
+větev může být bez releasu měsíce, aniž by kdo řekl, že skončila.
+
+**Doložené případy (ověřeno 2026-10-20):**
+
+| Projekt | Co říkají metadata | Co říká text |
+|---|---|---|
+| Microsoft AutoGen | `archived: false`, push 2026-10-16 | README od 2026-10-16: *„archived and no longer maintained … not providing bug fixes, security fixes … advise against production use“* |
+| Google ADK 1.x | větev `v1` existuje, otevřené PR | žádný release od 2026-08-27, žádné publikované EOL ani `SECURITY.md` |
+| MAF Go SDK | aktivní repo, v0.2.0 | README: *„public preview … evolving outside the core upstream codebase“* |
+
+**Pozn. Adam – kontrolní otázka:** *„Kde je napsáno, že tahle linie dostane bezpečnostní
+opravy, a kdo to podepsal?“* Když to nikde napsáno není, odpověď je „nevíme“ a do dodávky
+patří jako riziko, ne jako předpoklad.
+
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
 Aktuální soubor `LICENSE` říká, co platí dnes. Neříká nic o tom, co bude platit za rok.
@@ -170,7 +216,8 @@ Rozhodující je, **kdo smí licenci změnit**.
 
 | Struktura | Může relicencovat? | Riziko | Precedenty |
 |---|---|---|---|
-| Jeden vendor + CLA / copyright assignment | Ano, jednostranně a bez varování | **Vysoké** | HashiCorp → BUSL, Elastic → SSPL, Redis → RSAL, Sentry → BUSL |
+| Jeden vendor + CLA / copyright assignment | Ano, jednostranně a bez varování | **Vysoké** | HashiCorp → BUSL, Elastic → SSPL, Redis → RSAL, Sentry → BUSL; **Temporal** (MIT + povinná CLA, ověřeno 2026-10-20), Google ADK |
+| Jeden vendor **bez CLA**, ale prakticky všichni přispěvatelé zaměstnanci | Formálně jen se souhlasem přispěvatelů; fakticky ano, když jsou všichni z jedné firmy | **Střední až vysoké** | DBOS (MIT, bez CLA, jeden autor ≈ 65 % commitů) |
 | Jeden vendor + CLA, **která není v `CONTRIBUTING.md`** | Ano | **Vysoké a skryté** | Microsoft Agent Framework – CLA se projeví až v PR příkazem `@microsoft-github-policy-service agree` |
 | Projekt pod nadací (CNCF, ASF, LF AI & Data) | Prakticky ne – copyright je rozptýlený mezi přispěvatele | **Nízké** | Kubernetes, Dapr, OpenTelemetry |
 | Jeden vendor + **DCO** + trademark u nadace | Jen budoucí vlastní kód; cizí příspěvky ne | **Nízké licenčně, střední směrově** | kagent (Apache-2.0 + DCO + CNCF IP Policy, ale 7/8 maintainerů od jednoho vendora) |
@@ -186,15 +233,20 @@ Neumí říct „tenhle projekt má CLA a jednoho vlastníka, takže může kdyk
 | MIT, Apache-2.0, BSD | Ano | Bez omezení | Apache-2.0 navíc řeší patenty |
 | MPL-2.0, LGPL | Ano | Prakticky bez omezení | Copyleft na úrovni souboru/knihovny |
 | GPL-3.0, AGPL-3.0 | Ano | **Pozor** | AGPL se vztahuje i na síťové použití |
-| **BUSL** (Business Source License) | **Ne** | Self-hosting obvykle ano, konkurenční služba ne | Po ~4 letech typicky konvertuje na Apache-2.0 |
+| **BUSL** (Business Source License) | **Ne** | Self-hosting obvykle ano, konkurenční služba ne | Po ~4 letech typicky konvertuje na Apache-2.0. **Rozhoduje Additional Use Grant, ne název licence:** Restate 1.8 výslovně povoluje produkční nasazení s vlastními workflow i interní managed platformu, zakazuje jen veřejnou „Restate Platform Service“ (ověřeno 2026-10-20) |
 | **ELv2** (Elastic License 2.0) | **Ne** | Zákaz řízené služby, zákaz obcházení licenčních klíčů | |
-| **SSPL** | **Ne** | Velmi restriktivní u poskytování služby | |
+| **SSPL** | **Ne** | Velmi restriktivní u poskytování služby | Může být dočasná: Inngest přidává *Grant of Future License* – každá verze je **Apache-2.0 tři roky po zpřístupnění** (ověřeno 2026-10-20) |
 | Vlastní „enterprise" licence | Ne | Podle smlouvy | Typicky adresář `enterprise/` v jinak MIT repu |
-| **Diagrid BSL** (BUSL 1.1 s prahy FTE a obratu) | **Ne** | **Otázka na právníka** – zákaz komerční redistribuce míří přímo na dodávku produktu | Change Date 2030-03-01 |
+| **Diagrid BSL** (BUSL 1.1 s prahy FTE a obratu) | **Ne** | **Otázka na právníka** – zákaz komerční redistribuce míří přímo na dodávku produktu | Change Date 2030-03-01 nebo 4. výročí verze, co dřív |
 
 BUSL a ELv2 **nejsou fatální** pro produkt nasazovaný u zákazníka on-prem – bývají mířené
 na konkurenční poskytovatele cloudu. Je ale nutné si to nechat potvrdit právníkem, ne architektem,
 a počítat s tím, že to vyloučí model „provozujeme to jako SaaS pro víc zákazníků".
+
+**Pozn. Adam (2026-10-20):** „BUSL“ a „SSPL“ jsou rodiny, ne verdikty. Tři BUSL/SSPL projekty
+v našem poli mají tři různé grant klauzule: Restate povoluje náš scénář výslovně, Diagrid ho
+výslovně zakazuje, Inngest ho po třech letech uvolňuje. Právníkovi se posílá **doslovný text
+Additional Use Grant, Change Date a Change License**, ne název licence.
 
 ## Kontrolní otázky před volbou frameworku
 
@@ -215,6 +267,12 @@ a počítat s tím, že to vyloučí model „provozujeme to jako SaaS pro víc 
    která umí mluvit jen s jednou hostovanou službou, není přenositelná bez ohledu na licenci.
 10. **Pod jakou governance jsou runtime závislosti, které dělají tu podstatnou práci?**
     Nadace chrání repozitář, ne dependency tree finálního obrazu.
+11. **Které runtime závislosti se reálně importují?** Telemetrické SDK deklarované, ale nepoužité
+    (`posthog` v Dapr Agents) projdou license gate i síťovým auditem, a přesto jsou nález v SBOM.
+12. **Kde je napsáno, že tahle linie dostane bezpečnostní opravy?** README a `SUPPORT.md`, ne GitHub
+    flag `archived` (AutoGen) ani existence větve (ADK 1.x).
+13. **U BUSL / SSPL / ELv2: co doslova říká Additional Use Grant, Change Date a Change License?**
+    Tři projekty, tři různé odpovědi na tentýž scénář.
 
 ## Obranný vzor: vytlačit komerční vrstvu ven
 
@@ -227,6 +285,12 @@ Totéž platí pro přístup k modelům – viz model gateway v [overview.md](ov
 
 ## Changelog
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
+- 2026-10-20: re-verifikace všech doložených případů (verze a metadata k 2026-10-20); Mastra a
+  LiteLLM doloženy konkrétním souborem; hygienická tabulka rozšířena (diagrid, langgraph-api,
+  langgraph, LiteLLM); Diagrid Change Date per verze; přidán šestý vzorec (mrtvá telemetrická
+  závislost, Dapr Agents `posthog`) a sedmý (EOL mimo metadata – AutoGen, ADK 1.x, MAF Go);
+  governance tabulka o řádek „vendor bez CLA“ (DBOS) a příklad Temporal; stupnice licencí
+  o grant klauzule Restate a Inngest; kontrolní otázky 11–13.
 - 2026-09-29: přidán pátý vzorec (governance tranzitivní závislosti, doloženo na
   kagent → Google ADK) a kontrolní otázka 10.
 - 2026-09-29: doplněno zobecnění – rozpor dokumentace vs. kód potvrzen na dvou projektech
