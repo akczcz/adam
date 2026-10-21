@@ -112,6 +112,15 @@ přesně takový případ – AG-UI dnes neumí ani jeden z finalistů.
 | **2** | **[kagent](kagent.md)** – jen linie v0.10.x | Celý stack Apache-2.0, **DCO**, trademark u CNCF. MCP přes oficiální SDK; A2A v1.0 **jen na Go gateway** – Python runtime v0.10.x jede na `a2a-sdk` 0.3.x (strop ADK 1.x), v1.0 SDK v agentu až v linii v1.0-alpha. Abstrakce **Harness** dělá runtime agenta vyměnitelným. Nulové phone-home. **Model gateway šev otevřený** – `BaseURL` přepisuje defaulty, self-hosted vLLM funguje. | **Linie v1.0 je mimo hru:** Substrate je tam fakticky povinný (neprázdný default endpointu + nepodmíněný blokující `Dial`), čímž padá A2 i A3. Rewrite bez migrační cesty a bez HA gateway. Bus factor 7/8 Solo.io. **Žádná podpora AG-UI.** PyPI balíčky bez licenčních metadat. Agentní smyčka je **Google ADK** – CLA, bez nadace, breaking changes v minorech; HITL resume je ADK `@experimental` s **at-least-once**; artefakty vždy in-memory; v0.10.x jede na ADK 1.x bez release od 2026-08-27. Linie v1.0-alpha má sice aktuální A2A SDK, gRPC, push notifications a usage extension, ale agent→agent delegace přes controller tam má otevřený bug #3275 (2026-10-20). |
 | **3** | **[MAF](microsoft-agent-framework.md) jako tenká smyčka + Dapr Workflow nebo Temporal** | **Jediná varianta, která pokrývá protokolovou hranici celou** – MAF má A2A, MCP i AG-UI přes oficiální SDK a nejlepší OTEL profil, vše MIT. Trvalost dodá cizí durable vrstva, takže Azure gravitace MAF zmizí. Od 10/2026 i `agent-framework-claude` (Claude Agent SDK jako smyčka). | Nejvíc vlastního kódu: vlastní `CheckpointStorage` a `SessionStore` (Microsoft druhý nedodává, historii zpráv nově Redis beta). Microsoft CLA a zrychlující tempo breaking changes – **31 🔴 od GA, ~13 jen v říjnu 2026**, včetně AG-UI a HITL schvalování – verzi přišpendlit, upgrade rozpočtovat. AutoGen od 2026-10-16 oficiálně archivován. |
 
+**Rozhodnutí (Adam, 2026-10-21): Claude Agent SDK je kandidát na agentní smyčku platformy.**
+Z toho plyne preference pro variantu 1 – Dapr Agents mají od 1.0.7 first-party
+`ClaudeAgentExecutor` + `DaprSessionStore`, tedy hotovou trvalou cestu pro tuhle smyčku.
+Varianta 3 (MAF) by pro stejnou smyčku vyžadovala vlastní `CheckpointStorage`; hotové
+first-party řešení má přednost před vlastním vývojem. Otevřené srovnání obou cest tím odpadá,
+zbývá **ověřit zvolenou cestu v harnessu** (restart podu uprostřed schvalování), ne ji porovnávat.
+Rizika, která tím Adam vědomě přijímá: executor je tři týdny starý, repo drží fakticky jeden
+člověk, `claude-agent-sdk` je pinnutý na 0.2.x.
+
 **Pozn. Adam – doporučení po hloubkovém kole (2026-09-29):** všechny tři prověrky
 **snížily důvěru**, každá jinde:
 
@@ -143,9 +152,12 @@ CLA u kagentu i Dapr Agents (oba DCO).
       A2 i A3 pro v1.0 padají; v0.10.x ho má opt-in.
 - [x] ~~kagent: váže `credential-injection` modely na pevný výčet DNS hostnames?~~ –
       **uzavřeno: ne, obava vyvrácena.** Model gateway šev je otevřený.
-- [~] **Dapr Workflow jako substrát pod tenkou smyčkou bez `diagrid`** – pro Claude Agent SDK
-      to od dapr-agents 1.0.7 existuje first-party (`ClaudeAgentExecutor`, Apache-2.0); pro jiné
-      smyčky dál odhadnout práci na vlastním obalu nad `dapr-ext-workflow`.
+- [x] ~~Dapr Workflow jako substrát pod tenkou smyčkou bez `diagrid`~~ – **rozhodnuto 2026-10-21:**
+      smyčka = Claude Agent SDK, substrát = Dapr Agents `ClaudeAgentExecutor` (first-party, Apache-2.0).
+      Vlastní obal nad `dapr-ext-workflow` pro jiné smyčky není potřeba, dokud se smyčka nezmění.
+- [ ] **Ověřit zvolenou cestu v harnessu:** `ClaudeAgentExecutor` + `DaprSessionStore`, restart podu
+      uprostřed schvalování → obnoví se Claude session beze ztráty transcriptu a bez dvojího
+      provedení nástroje? (přesun z `dapr-agents.md`, teď s prioritou)
 - [ ] Cena vlastního A2A serveru nad `a2a-sdk` vedle Dapr Agents.
 - [ ] Změřit harnessem: pozastavení HITL → restart clusteru → obnovení po 14 dnech.
 - [ ] Síťový test air-gapped u obou kandidátů.
@@ -167,6 +179,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
   A2A/AG-UI/Temporal stále nic.
 - 2026-10-20: MAF hloubkově – Python 1.22 / .NET 1.25, ~13 🔴 za tři týdny, AutoGen archivován,
   Go SDK preview, `agent-framework-claude`, Redis history provider, MCP SDK 1.x.
+- 2026-10-21: rozhodnutí – Claude Agent SDK jako smyčka, Dapr Agents preferované pro hotovou
+  first-party trvalou cestu; srovnání s MAF odpadá, zbývá ověření v harnessu.
 - 2026-09-29: prověřen Google ADK jako smyčka pod kagentem. Korekce v `kagent.md`:
   kagentí Postgres nestojí na ADK `[db]`, HITL resume je už ve v0.10.x, ale at-least-once.
 - 2026-09-29: kagent ověřen čtením kódu – Substrate je ve v1.0 fakticky povinný

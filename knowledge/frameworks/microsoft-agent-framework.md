@@ -168,7 +168,12 @@ hygiena, je to podmínka provozu.
 **Nový argument pro variantu 3:** MAF má od 10/2026 `agent-framework-claude` (Claude Agent SDK jako
 smyčka) i `RedisHistoryProvider`. S Dapr Agents 1.0.7 (`ClaudeAgentExecutor`) tak existují **dvě
 Apache-2.0/MIT cesty, jak dát Claude Agent SDK durable běh** – MAF přes vlastní `CheckpointStorage`,
-Dapr přes `DaprSessionStore`. Dapr má trvalost hotovou, MAF má protokolovou hranici. Srovnat v harnessu.
+Dapr přes `DaprSessionStore`. Dapr má trvalost hotovou, MAF má protokolovou hranici.
+
+**Rozhodnutí (Adam, 2026-10-21):** pro Claude Agent SDK jako smyčku je **preferovaná cesta Dapr**,
+protože je hotová first-party; cesta přes MAF by znamenala vlastní `CheckpointStorage`. MAF tím
+z varianty 3 nevypadává, ale jeho argument se zužuje na protokolovou hranici (A2A, AG-UI, MCP server)
+– tedy na vrstvu, kterou Dapr Agents nemají. Srovnání obou cest v harnessu odpadá.
 
 ## Otevřené otázky
 - [x] ~~Jsou MSSQL nebo Netherite backendy použitelné pro MAF mimo Azure?~~ –
@@ -188,7 +193,10 @@ Dapr přes `DaprSessionStore`. Dapr má trvalost hotovou, MAF má protokolovou h
 - [ ] Kdy jádro přejde na `mcp` 2.x (éra 2026-07-28) – dnes `mcp<2`.
 - [ ] Ověřit dopad 🔴 „Persisted approval transcripts must use typed approval controls“ na checkpointy
       uložené před upgradem (migrace, nebo zahození čekajících schválení?).
-- [ ] Srovnat `agent-framework-claude` + vlastní `CheckpointStorage` proti Dapr `ClaudeAgentExecutor`.
+- [x] ~~Srovnat `agent-framework-claude` + vlastní `CheckpointStorage` proti Dapr `ClaudeAgentExecutor`.~~
+      → rozhodnuto 2026-10-21: Dapr preferován, srovnání odpadá.
+- [ ] Jak dát Dapr Agents protokolovou hranici, kterou mají jen MAF – vlastní A2A server nad `a2a-sdk`,
+      nebo MAF jen jako hranice před Dapr smyčkou? (navazuje na otázku v `dapr-agents.md`)
 
 ## Changelog
 - 2026-09-29: první verze; hloubková prověrka.

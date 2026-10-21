@@ -97,6 +97,8 @@ cyklem to je zajímavé jen tehdy, když uneseme tříletý skluz za upstreamem.
 **Pozn. Adam:** vzor „durable vrstva ven, smyčka cizí“ přestal být teoretický. Pro Anthropic stack
 je dnes jediná hotová OSS cesta Dapr; Temporal pokrývá OpenAI, LangGraph, ADK a Strands, ne Claude.
 Kdo chce Temporal + Claude Agent SDK, píše adaptér sám.
+**Rozhodnutí (Adam, 2026-10-21):** Claude Agent SDK je kandidát na smyčku platformy a Dapr je pro něj
+preferovaný substrát, protože je cesta hotová. Viz [`overview.md`](overview.md).
 
 ## Když monetizovaná není licence, ale backend
 

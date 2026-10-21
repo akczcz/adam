@@ -145,12 +145,16 @@ A2A (`dapr/dapr#8703` dál *not planned*) ani AG-UI se neobjevily.
 - [ ] Otevřít upstream issue na odstranění nepoužívané závislosti `posthog` (nebo ověřit, zda ji
       nepotřebuje tranzitivně něco z `[dev]`) – veřejné vystoupení, chce souhlas.
 - [ ] Kdy dapr-agents zvedne pin na Dapr 1.19 a na `mcp` 2.x.
-- [ ] Vyzkoušet `ClaudeAgentExecutor` + `DaprSessionStore` v harnessu: restart podu uprostřed
-      schvalování → obnoví se Claude session beze ztráty transcriptu?
+- [ ] **Priorita (rozhodnutí Adam 2026-10-21):** ověřit `ClaudeAgentExecutor` + `DaprSessionStore`
+      v harnessu – restart podu uprostřed schvalování → obnoví se Claude session beze ztráty
+      transcriptu a bez dvojího provedení nástroje? Je to zvolená cesta pro smyčku platformy,
+      ne jedna ze dvou k porovnání.
 - [ ] Síťový test air-gapped: potvrdit nulový egress (40+ tranzitivních závislostí).
 
 ## Changelog
 - 2026-09-28: první verze; hloubková prověrka.
+- 2026-10-21: rozhodnutí Adam – `ClaudeAgentExecutor` je preferovaná cesta pro Claude Agent SDK jako
+  smyčku platformy (hotové first-party řešení před vlastním vývojem v MAF); harness test má prioritu.
 - 2026-10-20: 1.0.7–1.0.9; first-party `ClaudeAgentExecutor` nad Claude Agent SDK; bus factor fakticky 1;
   `posthog` jako mrtvá runtime závislost; MCP server ne; MCP SDK 1.x; A2A/AG-UI/Temporal stále nic;
   AAIF bez resubmise; Conversation API dál jen `echo` Stable; Dapr 1.19 v RC.
