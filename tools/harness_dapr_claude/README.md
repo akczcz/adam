@@ -22,6 +22,10 @@ po restartu jde spočítat skutečná provedení.
 | T6 | Zamítnutí: nástroj neproběhne, Claude to neopakuje | `deny` | ledger prázdný, `COMPLETED` |
 | T7 | Dlouhá pauza s restartem uprostřed (minuty až dny) | `long-pause` | jako T2–T4 s `--pause-seconds` |
 
+Stav 2026-10-21 (dapr-agents 1.0.9, Dapr 1.18.7, lokálně): T1–T4, T6 ✅, T7 ✅ pro 180 s,
+T5 **at-least-once** – nástroj spuštěn 2×, nové schválení nevzniklo. Detail v
+`knowledge/frameworks/dapr-agents.md`.
+
 T5 je informativní. Dapr Workflow aktivity jsou at-least-once a dapr-agents nic
 jiného neslibují; harness jen změří, jak to vypadá v praxi a zda si Claude po
 restartu vyžádá **nové** schválení (to by byl zajímavý nález sám o sobě).
@@ -29,7 +33,9 @@ restartu vyžádá **nové** schválení (to by byl zajímavý nález sám o sob
 ## Prerekvizity
 
 - Python 3.11 až 3.13 a `uv`
-- Dapr CLI s `dapr init` (spustí Redis v Dockeru na `localhost:6379`)
+- Dapr CLI s `dapr init` (spustí Redis v Dockeru na `localhost:6379`). S Docker Desktop
+  na macOS nejdřív `export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`, jinak
+  Dapr CLI socket nenajde.
 - Docker Desktop běžící
 - Claude přístup: `ANTHROPIC_API_KEY` v `.env`, nebo přihlášený Claude Code CLI
   (`claude` → `/login`); `claude-agent-sdk` nese vlastní CLI, Node.js netřeba
@@ -57,8 +63,11 @@ cp .env.example .env           # doplň ANTHROPIC_API_KEY, nebo nech prázdné p
 ```
 
 Harness sám spouští `dapr run -- python app.py`, čeká na health obou procesů,
-volá HTTP rozhraní agenta a při restartu posílá **SIGKILL celé procesní skupině**
-(aplikace i daprd naráz). Logy každé generace procesu jsou v `logs/app-genN.log`,
+volá HTTP rozhraní agenta a při restartu posílá **SIGKILL celému stromu procesů**
+(aplikace i daprd naráz). Pozor: `dapr run` dává daprd i aplikaci vlastní procesní
+skupinu, takže `killpg` na skupinu CLI je nezabije – první verze harnessu tím
+hlásila falešný restart za 0 s. Teď se strom zabíjí po pidech a před startem další
+generace se kontroluje, že porty 3500 a 8001 nikdo neobsluhuje. Logy každé generace procesu jsou v `logs/app-genN.log`,
 výsledky v `results/<scenario>-<timestamp>.json`, ledger v `results/ledger.jsonl`.
 
 Vícedenní test: `--pause-seconds 1209600` (14 dní) s `APPROVAL_TIMEOUT_SECONDS`

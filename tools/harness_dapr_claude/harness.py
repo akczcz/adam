@@ -133,8 +133,36 @@ class Ledger:
 # ----------------------------------------------------------------------------
 
 
+def _process_tree(root: int) -> List[int]:
+    """root + všichni potomci (přes `ps`, bez psutil)."""
+    out = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True).stdout
+    children: Dict[int, List[int]] = {}
+    for line in out.splitlines():
+        try:
+            pid, ppid = (int(x) for x in line.split())
+        except ValueError:
+            continue
+        children.setdefault(ppid, []).append(pid)
+    tree, stack = [], [root]
+    while stack:
+        pid = stack.pop()
+        tree.append(pid)
+        stack.extend(children.get(pid, []))
+    return tree
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class AgentProcess:
-    """Spouští a zabíjí aplikaci i sidecar jako jednu procesní skupinu."""
+    """Spouští a zabíjí aplikaci i sidecar jako jeden strom procesů."""
 
     def __init__(self, env: Dict[str, str]) -> None:
         self.env = env
@@ -182,13 +210,24 @@ class AgentProcess:
         raise SystemExit(f"aplikace nenaběhla do {READY_TIMEOUT} s ({last})")
 
     def kill(self) -> None:
-        """SIGKILL na celou skupinu – aplikace i daprd umřou naráz (restart podu)."""
+        """SIGKILL na celý strom procesů – aplikace i daprd umřou naráz (restart podu).
+
+        `dapr run` spouští daprd i aplikaci každý ve vlastní procesní skupině,
+        takže killpg na skupinu CLI je nezabije (ověřeno 2026-10-21, Dapr CLI 1.18.0).
+        """
         assert self.proc is not None
-        pgid = os.getpgid(self.proc.pid)
-        note(f"SIGKILL procesní skupiny {pgid} (gen{self.generation})")
-        os.killpg(pgid, signal.SIGKILL)
+        tree = _process_tree(self.proc.pid)
+        note(f"SIGKILL stromu procesů {tree} (gen{self.generation})")
+        for pid in tree:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         self.proc.wait(timeout=30)
         self._wait_ports_free()
+        alive = [pid for pid in tree if _pid_alive(pid)]
+        if alive:
+            raise SystemExit(f"po SIGKILL stále žijí procesy {alive} – restart by byl falešný")
 
     def stop(self) -> None:
         if self.proc is None or self.proc.poll() is not None:
@@ -203,11 +242,17 @@ class AgentProcess:
     def _wait_ports_free(self) -> None:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            try:
-                httpx.get(f"{SIDECAR}/v1.0/healthz", timeout=1)
-            except httpx.HTTPError:
+            busy = []
+            for url in (f"{SIDECAR}/v1.0/healthz", f"{BASE}/hitl/approvals"):
+                try:
+                    httpx.get(url, timeout=1)
+                    busy.append(url)
+                except httpx.HTTPError:
+                    pass
+            if not busy:
                 return
             time.sleep(0.5)
+        raise SystemExit(f"porty stále obsluhuje starý proces: {busy}")
 
     def restart(self) -> float:
         t0 = time.monotonic()
@@ -348,6 +393,7 @@ class Ctx:
         self.env = env
         self.proc = AgentProcess(env)
         self.agent = Agent()
+        self.asked_weather = False
 
     def run_turn(self, task: str, label: str) -> str:
         iid = self.agent.start_run(task, self.session_id)
@@ -363,6 +409,7 @@ class Ctx:
 def scenario_smoke(ctx: Ctx) -> None:
     section("S0 smoke: nástroj + obnovení session (T1)")
     t1 = ctx.run_turn(TASK_WEATHER, "turn1")
+    ctx.asked_weather = True
     verdict("T0 nástroj", "22" in t1 or "sunny" in t1.lower(), f"odpověď zmiňuje počasí: {t1[:80]!r}")
     t2 = ctx.run_turn(TASK_RESUME, "turn2")
     verdict("T1 session resume", "paris" in t2.lower(), f"druhý běh si pamatuje Paříž: {t2[:80]!r}")
@@ -426,10 +473,12 @@ def scenario_restart_while_waiting(ctx: Ctx, pause_seconds: int = 0) -> None:
 
     recall = ctx.run_turn(TASK_RECALL, "recall-after-restart")
     low = recall.lower()
+    remembers_transfer = "alice" in low or "25" in low
+    remembers_paris = "paris" in low
     verdict(
         "T4 transcript drží historii",
-        "paris" in low and ("alice" in low or "25" in low),
-        f"follow-up: {recall[:120]!r}",
+        remembers_transfer and (remembers_paris or not ctx.asked_weather),
+        f"follow-up (Paříž v této session: {ctx.asked_weather}): {recall[:120]!r}",
     )
     evidence["redis_after_restart"] = redis_session_keys(ctx.session_id)
 
