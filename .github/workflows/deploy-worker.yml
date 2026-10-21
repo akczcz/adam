@@ -1,0 +1,75 @@
+# Automatický deploy MCP serveru (worker/) na Cloudflare Workers.
+#
+# Spouští se po pushi do main, když se změní knowledge/ nebo worker/, a ručně
+# z karty Actions. Worker nese znalosti jako build artefakt, takže bez redeploye
+# servíruje starou verzi – tohle to hlídá za nás.
+#
+# Potřebuje dva repository secrets (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN   – token s oprávněním "Workers Scripts: Edit"
+#                            (šablona "Edit Cloudflare Workers" v Cloudflare dashboardu)
+#   CLOUDFLARE_ACCOUNT_ID  – ID účtu z `npx wrangler whoami`
+# MCP_BEARER_TOKEN zůstává jako Worker secret, deploy se ho nedotýká.
+
+name: Deploy MCP Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "knowledge/**"
+      - "worker/**"
+      - ".github/workflows/deploy-worker.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - run: npm ci
+
+      - name: Build knowledge bundle and deploy
+        id: deploy
+        run: |
+          npm run deploy 2>&1 | tee deploy.log
+          url="$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)"
+          [ -n "$url" ] || { echo "::error::wrangler nevypsal URL Workeru"; exit 1; }
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify /health reports this build
+        run: |
+          url="${{ steps.deploy.outputs.url }}/health"
+          for i in 1 2 3 4 5 6; do
+            body="$(curl -sf "$url" || true)"
+            built="$(printf '%s' "$body" | sed -n 's/.*"knowledge_built_at":"\([^"]*\)".*/\1/p')"
+            echo "pokus $i: $body"
+            # Bundle vznikl v tomhle jobu, takže datum musí být dnešní (UTC).
+            if [ "${built%%T*}" = "$(date -u +%F)" ]; then
+              echo "OK: nasazený bundle je z $built"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::/health nehlásí dnešní build – deploy se neprojevil"
+          exit 1

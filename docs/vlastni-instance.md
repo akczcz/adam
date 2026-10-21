@@ -168,13 +168,27 @@ Postup je stejný jako pro cizí instanci, jen s tvojí URL a tvým tokenem:
 
 ### Změna znalostní báze
 
-`knowledge.generated.ts` je build artefakt mimo git. Po každé změně v `knowledge/`:
+`knowledge.generated.ts` je build artefakt mimo git. Bez redeploye server pořád servíruje
+starou verzi. `/health` vrací `knowledge_built_at`, podle toho se pozná, co je nasazené.
+
+**Automaticky:** workflow `.github/workflows/deploy-worker.yml` po každém pushi do `main`
+se změnou v `knowledge/` nebo `worker/` přegeneruje bundle, nasadí Worker a ověří, že
+`/health` hlásí dnešní build. Jednorázově mu dej dva repository secrets
+(Settings → Secrets and variables → Actions):
+
+| Secret | Odkud |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → šablona „Edit Cloudflare Workers“; stačí oprávnění *Workers Scripts: Edit* na tvůj účet |
+| `CLOUDFLARE_ACCOUNT_ID` | `npx wrangler whoami` |
+
+`MCP_BEARER_TOKEN` zůstává jako Worker secret, deploy ho nemění. Workflow jde spustit
+i ručně z karty Actions (*Run workflow*).
+
+**Ručně** (první nasazení, nebo když Action zrovna neběží):
 
 ```bash
 cd worker && npm run deploy
 ```
-
-Bez redeploye server pořád servíruje starou verzi. `/health` vrací `knowledge_built_at`, podle toho se pozná, co je nasazené.
 
 ### Přidání kolegy
 
