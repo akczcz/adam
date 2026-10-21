@@ -1,6 +1,6 @@
 ---
 tema: Mapa agentních frameworků pro přenositelné multiagentní platformy
-naposledy_overeno: 2026-10-20
+naposledy_overeno: 2026-10-21
 zralost: n/a (přehled)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -118,6 +118,9 @@ Z toho plyne preference pro variantu 1 – Dapr Agents mají od 1.0.7 first-part
 Varianta 3 (MAF) by pro stejnou smyčku vyžadovala vlastní `CheckpointStorage`; hotové
 first-party řešení má přednost před vlastním vývojem. Otevřené srovnání obou cest tím odpadá,
 zbývá **ověřit zvolenou cestu v harnessu** (restart podu uprostřed schvalování), ne ji porovnávat.
+→ **Ověřeno 2026-10-21** (`tools/harness_dapr_claude/`): restart při čekání na schválení přežije beze
+ztráty transcriptu a nástroj proběhne přesně jednou; restart *během* běhu nástroje je at-least-once
+bez nového schválení → idempotency key na naší straně. Detail v [dapr-agents.md](dapr-agents.md).
 Rizika, která tím Adam vědomě přijímá: executor je tři týdny starý, repo drží fakticky jeden
 člověk, `claude-agent-sdk` je pinnutý na 0.2.x.
 
@@ -155,9 +158,9 @@ CLA u kagentu i Dapr Agents (oba DCO).
 - [x] ~~Dapr Workflow jako substrát pod tenkou smyčkou bez `diagrid`~~ – **rozhodnuto 2026-10-21:**
       smyčka = Claude Agent SDK, substrát = Dapr Agents `ClaudeAgentExecutor` (first-party, Apache-2.0).
       Vlastní obal nad `dapr-ext-workflow` pro jiné smyčky není potřeba, dokud se smyčka nezmění.
-- [ ] **Ověřit zvolenou cestu v harnessu:** `ClaudeAgentExecutor` + `DaprSessionStore`, restart podu
-      uprostřed schvalování → obnoví se Claude session beze ztráty transcriptu a bez dvojího
-      provedení nástroje? (přesun z `dapr-agents.md`, teď s prioritou)
+- [x] ~~**Ověřit zvolenou cestu v harnessu:** `ClaudeAgentExecutor` + `DaprSessionStore`~~ →
+      **změřeno 2026-10-21**, lokálně přes `dapr run`: ano pro čekání na člověka; během nástroje
+      at-least-once. Zbývá opakovat na `kind` a 14denní pauza.
 - [ ] Cena vlastního A2A serveru nad `a2a-sdk` vedle Dapr Agents.
 - [ ] Změřit harnessem: pozastavení HITL → restart clusteru → obnovení po 14 dnech.
 - [ ] Síťový test air-gapped u obou kandidátů.
@@ -181,6 +184,8 @@ CLA u kagentu i Dapr Agents (oba DCO).
   Go SDK preview, `agent-framework-claude`, Redis history provider, MCP SDK 1.x.
 - 2026-10-21: rozhodnutí – Claude Agent SDK jako smyčka, Dapr Agents preferované pro hotovou
   first-party trvalou cestu; srovnání s MAF odpadá, zbývá ověření v harnessu.
+- 2026-10-21: harness `tools/harness_dapr_claude/` změřen – zvolená cesta restart při schvalování zvládá,
+  během nástroje at-least-once.
 - 2026-09-29: prověřen Google ADK jako smyčka pod kagentem. Korekce v `kagent.md`:
   kagentí Postgres nestojí na ADK `[db]`, HITL resume je už ve v0.10.x, ale at-least-once.
 - 2026-09-29: kagent ověřen čtením kódu – Substrate je ve v1.0 fakticky povinný

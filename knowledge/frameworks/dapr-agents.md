@@ -1,6 +1,6 @@
 ---
 tema: Dapr Agents – durable agenti nad Dapr Workflow
-naposledy_overeno: 2026-10-20
+naposledy_overeno: 2026-10-21
 zralost: GA 1.0.9, ale bez support policy, s breaking change v patch releasu a PyPI classifierem Pre-Alpha
 primarni_zdroje:
   - https://github.com/dapr/dapr-agents
@@ -83,6 +83,43 @@ si dřív musel představovat jako vlastní obal – teď je first-party, Apache
 Dvě výhrady: `claude-agent-sdk` je 0.2.x s pinem `<0.3`, a maintainer je tentýž jeden člověk jako u zbytku
 repa. Ale ukazuje, že executor šev je reálný, ne jen deklarovaný.
 
+### Harness: restart uprostřed schvalování (2026-10-21, změřeno)
+*Zdroj: `tools/harness_dapr_claude/`, výsledky v `results/all-20261021T073302Z.json`; dapr-agents 1.0.9,
+claude-agent-sdk 0.2.170, Dapr CLI 1.18.0 / runtime 1.18.7, model claude-haiku-4-5, lokální `dapr run`
+s Redis, SIGKILL aplikace i daprd naráz.*
+
+| # | Tvrzení | Výsledek |
+|---|---|---|
+| T1 | Druhý běh se stejnou `session_id` navazuje na transcript | ✅ |
+| T2 | Čekající schválení přežije SIGKILL aplikace i sidecaru | ✅ stejné `approval_request_id` po restartu |
+| T3 | Po restartu lze schválit přes HTTP, běh doběhne, nástroj proběhne **přesně jednou** | ✅ ledger start=1 end=1, restart 3,2 s |
+| T4 | Transcript po restartu drží celou historii (Paříž i převod) | ✅ |
+| T5 | SIGKILL **uprostřed běhu schváleného nástroje** | ⚠️ **at-least-once**: nástroj spuštěn 2×, dokončen 1×, **nové schválení nevzniklo** |
+| T6 | Zamítnutí: nástroj neproběhne, Claude neopakuje | ✅ |
+| T7 | Dlouhá pauza s restartem uprostřed | ✅ pro 180 s (restart v polovině pauzy, 14 dní neměřeno) |
+
+Co z toho plyne:
+- **Restart při čekání na člověka je bezpečný.** Schválení i transcript leží mimo proces
+  (klíče `claude-session:<agent>/<session_id>` v Redisu, ~100 KB po čtyřech tazích), HTTP endpoint
+  `/hitl/approvals/{id}/respond` funguje i v nové generaci procesu – `_restore_pending_approvals`
+  dělá, co slibuje. Fallback na sidecar `raiseEvent` nebyl potřeba.
+- **Restart při běhu nástroje = opakování aktivity `run_executor` s již schváleným rozhodnutím.**
+  U Claude executoru neběží nástroj v aktivitě `run_tool`, ale uvnitř Claude session jako in-process
+  MCP tool. Po restartu Dapr Workflow spustí `run_executor` znovu, session se obnoví z Redisu
+  a `ToolGate` pustí volání se stejným `tool_use_id` rovnou, protože rozhodnutí už má. Člověk se
+  podruhé neptá. Je to **dokumentované** chování (docstring `durable_executor.py`: *„tools that ran
+  inside the failed attempt may run again“*), ne chyba.
+- **Idempotency key v 1.0.9 do nástroje nedostaneš čistě.** Stabilní klíč je `tool_use_id`
+  (`toolu_…`); hook `before_tool_call` ho v `ToolHookContext.tool_call_id` má, ale na obnovené
+  cestě gate hooky vůbec nevolá (rozhodnutí má přednost) a argumenty hlídá digestem proti
+  schválené podobě – injektovat klíč do argumentů tedy nejde. Zbývá: klíč odvozovat v nástroji
+  z argumentů + session, nebo upstream žádost o předání `tool_use_id` nástrojům.
+- Harness měl vlastní chybu: `dapr run` spouští daprd i aplikaci každý ve vlastní procesní
+  skupině, takže `killpg` na skupinu CLI nic nezabije a „restart“ vypadá jako průchod za 0 s.
+  Opraveno na SIGKILL celého stromu procesů s kontrolou, že porty opravdu uvolnil starý proces.
+- Limity měření: jeden stroj, `dapr run` místo Kubernetes podu, Redis lokální, 14denní horizont
+  neměřen.
+
 ### Co přinesla 1.0.6 (GH release 2026-09-28, mohlo uniknout)
 HITL governance: `Deny` s `code`/`details`, **approver authz pole a approver token v eventech**,
 caller headers na trigger akci; LiteLLM provider; streaming agent; Drasi extension (reakce na změny dat).
@@ -138,6 +175,7 @@ A2A (`dapr/dapr#8703` dál *not planned*) ani AG-UI se neobjevily.
 - [ ] Cena vlastního A2A serveru nad `a2a-sdk` vedle `AgentRunner.serve()`.
 - [ ] Změřit harnessem: pozastavení HITL → restart clusteru → obnovení po 14 dnech.
       Dokumentace uvádí „seconds, hours, or days", **maximální horizont nikde není**.
+      → 2026-10-21: harness umí `--scenario long-pause --pause-seconds 1209600`, zbývá nechat běžet.
 - [ ] Kolik breaking changes bylo po GA celkem – doložen jeden, API diff neproveden.
 - [ ] Složení týmů `@dapr/maintainers-dapr-agents` – není veřejné; seznam maintainerů
       pochází z návrhu psaného CTO Diagridu, tedy zainteresovanou stranou.
@@ -145,14 +183,19 @@ A2A (`dapr/dapr#8703` dál *not planned*) ani AG-UI se neobjevily.
 - [ ] Otevřít upstream issue na odstranění nepoužívané závislosti `posthog` (nebo ověřit, zda ji
       nepotřebuje tranzitivně něco z `[dev]`) – veřejné vystoupení, chce souhlas.
 - [ ] Kdy dapr-agents zvedne pin na Dapr 1.19 a na `mcp` 2.x.
-- [ ] **Priorita (rozhodnutí Adam 2026-10-21):** ověřit `ClaudeAgentExecutor` + `DaprSessionStore`
-      v harnessu – restart podu uprostřed schvalování → obnoví se Claude session beze ztráty
-      transcriptu a bez dvojího provedení nástroje? Je to zvolená cesta pro smyčku platformy,
-      ne jedna ze dvou k porovnání.
+- [x] ~~**Priorita (rozhodnutí Adam 2026-10-21):** ověřit `ClaudeAgentExecutor` + `DaprSessionStore`
+      v harnessu~~ → **změřeno 2026-10-21**, viz sekce *Harness*: čekání na člověka restart přežije beze
+      ztráty a bez dvojího provedení; restart *během* nástroje je at-least-once bez nového schválení.
+- [ ] Idempotency key za schvalovacím bodem: v 1.0.9 se `tool_use_id` k nástroji nedostane
+      (gate na obnovené cestě hooky přeskakuje, argumenty jsou digestované). Upstream issue, nebo
+      klíč odvozovat v nástroji z argumentů – veřejné vystoupení chce souhlas.
+- [ ] Zopakovat harness na `kind` + `dapr init -k` s `kubectl delete pod` místo SIGKILL.
 - [ ] Síťový test air-gapped: potvrdit nulový egress (40+ tranzitivních závislostí).
 
 ## Changelog
 - 2026-09-28: první verze; hloubková prověrka.
+- 2026-10-21: harness T1–T7 změřen – restart při čekání na schválení beze ztráty a exactly-once,
+  restart během nástroje at-least-once bez nového schválení; idempotency key jako otevřená otázka.
 - 2026-10-21: rozhodnutí Adam – `ClaudeAgentExecutor` je preferovaná cesta pro Claude Agent SDK jako
   smyčku platformy (hotové first-party řešení před vlastním vývojem v MAF); harness test má prioritu.
 - 2026-10-20: 1.0.7–1.0.9; first-party `ClaudeAgentExecutor` nad Claude Agent SDK; bus factor fakticky 1;

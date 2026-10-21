@@ -1,6 +1,6 @@
 ---
 tema: Durable execution jako samostatná vrstva pod agenty
-naposledy_overeno: 2026-10-20
+naposledy_overeno: 2026-10-21
 zralost: stable (Temporal, Dapr, DBOS) / mixed (licence ostatních)
 primarni_zdroje:
   - https://github.com/temporalio/temporal/blob/main/LICENSE
@@ -184,6 +184,11 @@ na naší straně**. Neidempotentní akce za schvalovacím bodem se při obnoven
 provést podruhé. Je to zároveň dobrá připomínka, že „přežije restart" a „obnoví se
 korektně" jsou dvě různá tvrzení.
 
+→ **Změřeno 2026-10-21 na Dapr Agents 1.0.9** (`tools/harness_dapr_claude/`): přesně tohle.
+Restart při *čekání* na schválení je exactly-once, restart *během* schváleného nástroje
+spustí nástroj podruhé bez nové otázky člověku. Platí tedy pro Dapr Workflow stejně jako
+pro ADK; rozdíl je jen v tom, že u Dapru je to dokumentovaná vlastnost aktivit.
+
 ## Otevřené otázky
 - [~] DBOS – licence, governance, provozní model. → 2026-10-20: MIT, DBOS Inc., bez CLA, bus factor ~1,
       stav v Postgresu. **Zbývá:** role hostovaného Conductoru (je nutný pro HA/recovery, nebo jen
@@ -199,11 +204,13 @@ korektně" jsou dvě různá tvrzení.
 - [ ] ADK resume: chová se kagentí `KAgentSessionService` při at-least-once obnovení
       stejně jako `DatabaseSessionService`? Netestováno.
 - [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
-- [ ] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
+- [~] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
       po 14 dnech. Ani jeden kandidát nemá dokumentovaný maximální horizont čekání.
+      → 2026-10-21: Dapr Agents změřeno pro krátkou pauzu (viz dapr-agents.md), 14 dní zbývá.
 
 ## Changelog
 - 2026-09-27: první verze.
+- 2026-10-21: harness na Dapr Agents potvrdil at-least-once při restartu během nástroje.
 - 2026-09-29: doplněn Google ADK – store konverzace není durable execution, resume je
   experimentální a at-least-once.
 - 2026-09-29: ověřeno, že MAF backend nevynucuje; doplněn MSSQL provider jako cestu
