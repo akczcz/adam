@@ -3,7 +3,8 @@ tema: Hodnoticí kritéria pro výběr model gateway
 naposledy_overeno: 2026-10-22
 zralost: n/a (metodika)
 primarni_zdroje:
-  - https://docs.anthropic.com/en/api/messages
+  - https://code.claude.com/docs/en/llm-gateway-protocol
+  - https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry
   - https://platform.openai.com/docs/api-reference/chat
 ---
 
@@ -35,9 +36,15 @@ Agentní smyčka platformy je **Claude Agent SDK** (rozhodnutí 2026-10-21, viz
 [`../frameworks/overview.md`](../frameworks/overview.md)). Gateway, která umí jen OpenAI-kompatibilní
 `chat/completions`, proto nestačí.
 
+Referenční kontrakt publikuje Anthropic: [LLM gateway protocol](https://code.claude.com/docs/en/llm-gateway-protocol)
+(ověřeno 2026-10-22). Gateway, která ho nesplní, rozbije Agent SDK tiše – ztrátou cache nebo nových beta funkcí.
+
 | Co | Jak se to zjistí |
 |---|---|
 | **Nativní průchod Anthropic Messages API** (`/v1/messages`), ne překlad přes OpenAI formát | Dokumentace proxy, endpoint `/anthropic/*` nebo ekvivalent; test s `ANTHROPIC_BASE_URL` |
+| **`anthropic-beta` a `anthropic-version` forwardovány jako otevřený seznam**, ne allowlist | Docs gateway; harness s neznámou beta hlavičkou. Bifrost ji by default blokuje |
+| `system` pole nepřeskládané, `ping` eventy nebufferované, chybová těla upstreamu neobalená | Kontrakt výše; harness |
+| Atribuční hlavičky `x-claude-code-session-id` / `-agent-id` / `-parent-agent-id` dostupné jako dimenze útraty | Docs gateway: lze z hlaviček dělat labely metrik a klíče rozpočtů? |
 | Zachová **prompt caching** (`cache_control`, `cache_read_input_tokens` v usage) | Bez toho platforma platí násobně víc za každý turn agenta |
 | Zachová **tool use** beze ztráty – `tool_use`/`tool_result` bloky, paralelní volání, `input_schema` | Překlad OpenAI ↔ Anthropic tool formátů je nejčastější místo tiché ztráty |
 | Streaming (SSE) beze změny semantiky eventů | Agent SDK streamuje vždy |
@@ -114,3 +121,4 @@ Agentní smyčka platformy je **Claude Agent SDK** (rozhodnutí 2026-10-21, viz
 ## Changelog
 - 2026-10-22: první verze; odvozeno z `frameworks/kriteria.md`, specializováno na Anthropic Messages passthrough,
   FinOps a propagaci identity.
+- 2026-10-22: G1 doplněno o kontrakt z code.claude.com (beta hlavičky, system, ping, chybová těla, atribuční hlavičky).

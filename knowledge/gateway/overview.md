@@ -84,12 +84,77 @@ to ale je **SDK (MIT)**, ne proxy. Volba proxy tím není vynucená.
 
 ## Kolo 2 – protokolová věrnost a FinOps
 
-*(doplní se z druhé rešerše)*
+Ověřeno 2026-10-22 ze zdrojových repozitářů dokumentace (commit uveden v souborech kandidátů)
+a z code.claude.com / platform.claude.com. **Nic z toho není změřeno harnessem** – jsou to
+dokumentované vlastnosti, ne naměřené.
+
+### Kontrakt, který gateway musí splnit
+
+Anthropic publikuje pro gateway pod Claude Code a Claude Agent SDK **explicitní kontrakt**
+([code.claude.com/docs/en/llm-gateway-protocol](https://code.claude.com/docs/en/llm-gateway-protocol), ověřeno 2026-10-22):
+
+- `POST /v1/messages` (+ volitelně `/v1/messages/count_tokens`, `GET /v1/models`).
+- Hlavičky `anthropic-beta` a `anthropic-version` **forwardovat beze změny jako otevřený seznam** – gateway s allowlistem beta hlaviček rozbije nové funkce SDK.
+- `cache_control` forwardovat všude; jinak tichá ztráta cache a násobná cena.
+- Pole `system` nepřeskládávat (nese atribuční blok).
+- Streaming včetně `ping` eventů **nebufferovat**; chybová těla upstreamu neobalovat (retry logika SDK matchuje text).
+- Hlavičky `x-claude-code-session-id`, `x-claude-code-agent-id`, `x-claude-code-parent-agent-id` pro atribuci útraty na agenta.
+
+Agent SDK nemá vlastní gateway volby – předává `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (→ `Authorization: Bearer`)
+a `ANTHROPIC_CUSTOM_HEADERS` procesu Claude Code. Past: v TypeScript SDK `options.env` prostředí **nahrazuje**,
+v Pythonu `ClaudeAgentOptions(env=…)` **merguje**. Anthropic žádný gateway produkt nedoporučuje ani neaudituje
+(dřívější sekce o LiteLLM v docs už není).
+
+**Claude v Azure AI Foundry** ([platform.claude.com](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry), ověřeno 2026-10-22):
+endpoint `https://{resource}.services.ai.azure.com/anthropic/v1/messages` je **nativní Anthropic Messages API**;
+auth API key nebo Entra ID Bearer (scope `https://ai.azure.com/.default`); `model` = deployment name;
+nepodporováno Batches, Models API, Admin API. Microsoft Learn se z prostředí nepodařilo načíst – fakta o Foundry
+jsou ověřena jen z Anthropic docs.
+
+### G1 – úroveň podpory Anthropic Messages API
+
+| Kandidát | Úroveň + endpoint | Prompt caching | Tools / thinking / streaming | Azure OpenAI / Foundry | Bedrock / Vertex / vLLM |
+|---|---|---|---|---|---|
+| **LiteLLM** v1.106.x | **Nativní** `/v1/messages` (rozpočty, logging, fallback, LB nad ním) pro `anthropic/`, `bedrock/`, `vertex_ai/`, `azure_ai/`; pro ostatní providery **překlad** (cache_control se zahodí). Navíc **passthrough** `/anthropic/*` bez překladu s cost trackingem | ✅ nativní providery forward „as sent“, usage vč. cache polí; ceník má cache sazby per deployment | ✅ streaming, tools, thinking; denně generovaná matice kompatibility Claude Code × provider | ✅ `azure/` + Entra ID (`DefaultAzureCredential`, managed identity); **Claude přes Foundry `azure_ai/claude-…`** s Bearer | ✅ všechny čtyři |
+| **Agent Router** v1.2.0 | **Nativní** `/anthropic/v1/messages` (+ `count_tokens`, `models`), backend Anthropic bez překladu; Bedrock/Vertex Claude **překlad**; od v1.2.0 per-backend **filtr `anthropic-beta`** jen pro GCP/AWS Anthropic | ✅ jednotné `cache_control`, usage cache pole jako `llmRequestCosts` | ✅ streaming, function calling, extended thinking dle tabulky endpointů | ⚠️ Azure OpenAI ano (client secret / OIDC); **managed identity nedokumentováno; Claude přes Foundry nedokumentováno** | ✅ `AWSAnthropic` nativní, `GCPAnthropic`, vLLM přes OpenAI schema |
+| **agentgateway** v1.6 | **Nativní** route `Messages` na `/v1/messages`; parser **passthrough** (neznámá pole drží a posílá dál), ke stejnému formátu providera beze změny | ✅ `policies.ai.promptCaching` (auto-inject), usage normalizace vč. cache, katalog s `cacheRead`/`cacheWrite` sazbami | ⚠️ streaming/tools/thinking v přečtených stránkách explicitně nepotvrzeno; Claude Code integrace dokumentována (rada vypnout experimentální bety při chybě `context_management`) | ✅ provider `azure` s `resourceType: foundry`, **`DefaultAzureCredential` + managed/workload identity**; **Claude na Foundry auto-routing na `/anthropic/v1/messages`** | ✅ `bedrock` (IRSA, guardrails), `vertex`, vLLM/Ollama přes OpenAI provider |
+| **Bifrost** v2.3 | **Překlad** („protocol adaptation“ přes interní pipeline); **`anthropic-beta` ve výchozím stavu blokována** (allowlist v UI) | ⚠️ `cache_control` klienta forward; cache čítače dokumentovány jen v OpenAI tvaru | ⚠️ thinking přes konverzi `reasoning` ↔ `thinking`; po sobě jdoucí tool zprávy se **slučují** | ✅ Entra SP i `DefaultAzureCredential`; Claude přes Azure ano | ✅ |
+| Portkey OSS 1.15.2 | Nativní s **allowlistem parametrů** – `context_management`, `output_config` v OSS chybí | ✅ | ✅ | ⚠️ managed/workload identity jen enterprise | ✅ |
+| TensorZero 2026.6 | **Jen překlad**, žádný `/v1/messages` | ⚠️ jen přes `extra_body` JSON pointer | ✅ | ⚠️ Entra ID nedokumentováno | ✅ |
+
+### G2 / G4 / G5 – FinOps, observabilita, identita
+
+| Kandidát | Rozpočty (OSS vs. placené) | Úložiště útraty + vlastní ceník | Při vyčerpání | OTEL + Prometheus | Logování promptů default | Identita uživatele |
+|---|---|---|---|---|---|---|
+| **LiteLLM** | OSS: globální, tým, člen týmu, uživatel, klíč, end-user, org. **Enterprise:** tag budgets, `model_max_budget` per klíč, soft alerty, spend reports. Bez Postgres **fail open** | Postgres (Prisma, denní agregace per user/team/org/tag/end-user/agent); ceník per deployment vč. cache; **offline mapa jen s `LITELLM_LOCAL_MODEL_COST_MAP=True`** | Hard stop (400) nebo **`budget_fallbacks`** na levnější model | OTEL callback, inbound `traceparent` respektován; Prometheus s labely end_user/key/team/model (end_user off by default) | **Vypnuto** (opt-in `store_prompts_in_spend_logs`) | `x-litellm-end-user-id` / `user` → Anthropic `metadata[user_id]` dokumentováno |
+| **Agent Router** | **Žádné USD rozpočty.** Tokenové limity přes Envoy `BackendTrafficPolicy` + `llmRequestCosts` (CEL), `QuotaPolicy` v1alpha1 | Redis čítače; **žádná spend DB ani USD katalog** | 429, běžící stream se nepřeruší | OTLP jen s endpointem, OpenInference default; Prometheus `gen_ai.*` + custom labely z hlaviček | **Traces OpenInference default obsahují plný request i response** (`OPENINFERENCE_HIDE_INPUTS/OUTPUTS`) | jen mapování hlaviček na atributy |
+| **agentgateway** | OSS: `apiKey.keys[].budgets[]` **USD nebo tokeny**, rolling okno 1h/24h/30d, `Audit|Block`; `localRateLimit` tokens s CEL klíčem (`jwt.sub`, `jwt.team`, model → tenant→tým→agent); remote RLS. Enterprise hranice nenalezena | Inline katalog cen vč. cache a reasoning sazeb; metrika `…cost_usd_total`; request log Postgres/SQLite; **persistence USD rozpočtů mezi replikami neověřena** | `Block` (429) nebo `Audit` | OTLP + CEL atributy, navazuje na inbound trace; Prometheus gen_ai + cost USD + CEL labely | Default jen metadata, DB log opt-in | `metadata.user_id` per klíč; **invoice-grade atribuce na Bedrocku** (STS session tags) |
+| **Bifrost** | OSS: Customer → Team → Virtual Key → Provider, každá úroveň budget + limit. **Enterprise:** business units, access profiles, RBAC. **„Multiple OSS nodes with Postgres is not supported“** – stav v paměti, HA enterprise | SQLite/Postgres/ClickHouse; `pricing_url` vč. `file://`; overrides per scope | Block, provider vyřazen z routingu | OTLP, inbound `traceparent` přednost; Prometheus `x-bf-dim-*` | **Zapnuto**, dokud není `disable_content_logging: true` | `x-bf-customer-id` enterprise; propagace k provideru neověřena |
+
+### Co z kola 2 plyne
+
+**Pozn. Adam (předběžné doporučení, ne rozhodnutí):**
+
+| Varianta | Pro | Proti |
+|---|---|---|
+| **agentgateway** (primární kandidát) | Apache-2.0 pod LF bez enterprise hranice; nativní passthrough `/v1/messages`; USD rozpočty per klíč v OSS; Claude na Foundry s managed identity bez konfigurace; Rust L7; cost metrika; cesta k MCP/A2A ve stejné vrstvě | Bus factor: jeden člověk 51 % commitů; ani CLA ani DCO; docs rozbité podle verzí; FinOps dimenze tenčí než LiteLLM (týmové rozpočty jen přes CEL rate limit, ne ledger); persistence rozpočtů mezi replikami neověřena |
+| **LiteLLM** (záloha) | Nejúplnější FinOps a nejširší Claude pokrytí vč. Foundry; dokumentovaná propagace identity; `budget_fallbacks`; denní matice kompatibility s Claude Code | Proprietární balíček v závislostech proxy (A1 s výhradou); CLA, jeden vendor, 81 % commitů vendor+bot; tag budgets, RBAC a audit log za licencí; ceník z GitHubu by default; Python app server |
+| Agent Router | Nejčistší governance (AAIF, DCO, rozložený bus factor); Envoy | FinOps nulový – rozpočty by se stavěly celé; Foundry Claude a managed identity nedokumentované |
+| Bifrost | Bohatá hierarchie rozpočtů v OSS | Překlad místo passthrough, blokuje `anthropic-beta` by default, slučuje tool zprávy – **porušuje kontrakt Anthropic**; HA jen enterprise |
+
+Rozhodnutí padne až po harnessu G1 (viz níže). Pokud agentgateway v harnessu neprojde nebo se ukáže, že
+rozpočty bez ledgeru nestačí, zbývá LiteLLM s vědomě přijatou výhradou k A1.
 
 ## Co ověřit dál
 
-- [ ] **Harness G1:** `ANTHROPIC_BASE_URL` na každou z top gateway, jeden turn Claude Agent SDK s nástrojem
-      a `cache_control`; porovnat `usage` s přímým voláním. Bez toho je „podporuje Anthropic“ jen marketing.
+- [ ] **Harness G1:** `ANTHROPIC_BASE_URL` na agentgateway a LiteLLM, jeden turn Claude Agent SDK s nástrojem
+      a `cache_control`; porovnat `usage` s přímým voláním; ověřit forward `anthropic-beta`, `ping` eventy a chybová těla
+      podle kontraktu z code.claude.com. Bez toho je „podporuje Anthropic“ jen marketing.
+- [ ] agentgateway: persistence USD rozpočtů mezi replikami; explicitní potvrzení thinking a paralelních tool calls
+      na `/v1/messages`; aktuální číslo verze (tagy v1.6 vs. docs mluvící o 2.x).
+- [ ] Forward `traceparent` z gateway **k poskytovateli** – u žádného kandidáta nedoloženo.
+- [ ] Propagace identity koncového uživatele k poskytovateli u Agent Routeru a Bifrostu.
+- [ ] Microsoft Learn stránky o Claude ve Foundry (nebyly z prostředí dostupné) – potvrdit Entra ID a deployment names.
 - [ ] LiteLLM: je blok s `litellm-enterprise` v `pyproject.toml` základní závislost, nebo extra `proxy`?
       Lze proxy nainstalovat a provozovat bez něj?
 - [ ] agentgateway: obsah `crates/pool/LICENSE`; komerční nabídka Solo.io a její hranice vůči OSS; air-gapped návod.
@@ -99,6 +164,8 @@ to ale je **SDK (MIT)**, ne proxy. Volba proxy tím není vynucená.
 - [ ] Změřit režii gateway P50/P95 vs. přímé volání (harness, ne marketing).
 
 ## Changelog
+- 2026-10-22: kolo 2 – G1 a FinOps ze zdrojů docs; kontrakt gateway z code.claude.com; Claude ve Foundry nativní API;
+  předběžně agentgateway primární, LiteLLM záloha, Bifrost porušuje kontrakt (beta hlavičky, slučování tool zpráv).
 - 2026-10-22: první verze; široké síto kolo 1, 10 kandidátů. Vyřazeni Kong (CE zamrzlé na 3.9), Portkey
   (stav v hostovaném control plane, stagnace), TensorZero (archivován 2026-06-12), Helicone (GPL/Apache rozpor,
   bez commitů), kgateway (mimo síto). Postupují agentgateway, Agent Router, s výhradou LiteLLM a Bifrost,

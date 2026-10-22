@@ -33,8 +33,16 @@ Pro gateway navíc:
 | Passthrough | `/v1/messages` proxy beze změny těla | Stačí, pokud zachová streaming a usage |
 | Nativní | Gateway rozumí Anthropic formátu, umí na něm budgety, fallback, logging | Ideál |
 
+Referenční kontrakt je [code.claude.com/docs/en/llm-gateway-protocol](https://code.claude.com/docs/en/llm-gateway-protocol):
+forward `anthropic-beta` jako otevřený seznam, `cache_control` všude, `system` nepřeskládávat, `ping` nebufferovat,
+chybová těla neobalovat. Pasti z kola 2 (2026-10-22): Bifrost blokuje `anthropic-beta` by default a slučuje
+po sobě jdoucí tool zprávy; Portkey OSS má allowlist parametrů; LiteLLM při překladu na ne-Anthropic providera
+`cache_control` zahodí.
+
 Ověř v dokumentaci a changelogu, nikdy z blogů. Pokud to jde, ověř harnessem:
 `ANTHROPIC_BASE_URL` na gateway, jeden turn s nástrojem a `cache_control`, porovnat `usage` s přímým voláním.
+Weby dokumentace bývají z prostředí nedostupné – čti **zdrojové repozitáře docs** na GitHubu (stejný obsah
+před renderem) a uváděj commit.
 
 ## 4. Prověř podle kritérií
 `knowledge/gateway/kriteria.md`: nejdřív vyřazovací A1–A5, pak G1–G7.
