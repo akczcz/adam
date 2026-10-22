@@ -1,6 +1,6 @@
 ---
 tema: Licenční vzorce a pasti v open-source AI frameworcích
-naposledy_overeno: 2026-10-20
+naposledy_overeno: 2026-10-22
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -209,6 +209,17 @@ větev může být bez releasu měsíce, aniž by kdo řekl, že skončila.
 opravy, a kdo to podepsal?“* Když to nikde napsáno není, odpověď je „nevíme“ a do dodávky
 patří jako riziko, ne jako předpoklad.
 
+## Vzorce doplněné z vrstev gateway a identity (2026-10-22)
+
+| Vzorec | Doložený případ | Jak poznat |
+|---|---|---|
+| **Osmý: proprietární balíček jako povinná závislost OSS proxy** | LiteLLM: `litellm-enterprise` (`LicenseRef-Proprietary`) v závislostech `litellm[proxy]`; potvrzeno instalací (0.1.76.post1 vedle 1.106.2) | Projít `requires_dist` / lock file **proxy**, ne jen `LICENSE` v rootu |
+| **Devátý: rozpor LICENSE vs. metadata** | Helicone `ai-gateway`: `LICENSE` GPL-3.0, `Cargo.toml` a README Apache-2.0 | Porovnat soubor `LICENSE` s registry metadaty a README; při rozporu otázka na právníka |
+| **Desátý: OSS linie bez nových minorů při živém enterprise produktu** | Kong: CE končí 3.9.x, EE na 3.16 | Matice verzí v docs vendora vs. tagy v OSS repu |
+| **Jedenáctý: funkce odemykané server-side flagy s online validací klíče** | Infisical: `getDefaultOnPremFeatures()` – SSO, RBAC, audit log `false` bez klíče; licence validována proti license serveru (IP allowlist) | Hledat v kódu výčet feature flagů per licence; v docs „allow outbound connections to…“ |
+| **Dvanáctý: inbound Apache bez CLA = CLA jinými slovy** | Zitadel: AGPL-3.0 runtime, příspěvky **povinně Apache-2.0** – vendor drží právo relicencovat celek | `LICENSING.md` / CONTRIBUTING: licence příspěvků ≠ licence projektu |
+| **Třináctý: telemetrie opt-out u policy/authz komponenty** | SpiceDB: hodinový remote write na `telemetry.authzed.com`; Ory: Segment `sqa`; OPA: version check na api.github.com | Hledat `telemetry`, `sqa`, `version check` v konfiguraci; v air-gapu musí být vypnutelné **bez** změny kódu |
+
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
 Aktuální soubor `LICENSE` říká, co platí dnes. Neříká nic o tom, co bude platit za rok.
@@ -284,6 +295,7 @@ a licenční past přestává být existenční.
 Totéž platí pro přístup k modelům – viz model gateway v [overview.md](overview.md).
 
 ## Changelog
+- 2026-10-22: osmý až třináctý vzorec z vrstev gateway a identity (LiteLLM, Helicone, Kong, Infisical, Zitadel, SpiceDB).
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
 - 2026-10-20: re-verifikace všech doložených případů (verze a metadata k 2026-10-20); Mastra a
   LiteLLM doloženy konkrétním souborem; hygienická tabulka rozšířena (diagrid, langgraph-api,

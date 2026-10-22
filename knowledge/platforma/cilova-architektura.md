@@ -22,7 +22,7 @@ Detail a zdroje jsou vždy ve složce dané vrstvy, tady je jen výsledek.
 | Agentní smyčka | **Claude Agent SDK** | 2026-10-21 | `claude-agent-sdk` pinnutý na 0.2.x v Dapr Agents | [`../frameworks/overview.md`](../frameworks/overview.md) |
 | Orchestrace a durable execution | **Dapr Agents** (`ClaudeAgentExecutor` + `DaprSessionStore`) nad Dapr Workflows | 2026-10-21 | Bus factor 1, žádná support policy, A2A/AG-UI nepodporuje – nutný vlastní A2A server; obnovení během nástroje at-least-once → idempotency key | [`../frameworks/dapr-agents.md`](../frameworks/dapr-agents.md) |
 | Model gateway a FinOps | **agentgateway** (LF, Apache-2.0, nativní `/v1/messages`, USD rozpočty v OSS); LiteLLM záloha | **2026-10-22 (rozhodnuto, Adam)** – po harnessu G1: mock 21/21, live 2/2 | bus factor 1 (51 % commitů), bez CLA/DCO, rozpočty jen per API klíč (klíč per agent/tým jako pracovní model), persistence rozpočtů mezi replikami neověřena | [`../gateway/overview.md`](../gateway/overview.md) |
-| Identita, autorizace, governance | – | – | – | – |
+| Identita, autorizace, governance | *návrh po sítu kola 1:* identita uživatele = OAuth z IdP zákazníka přes **Keycloak** (federace na Entra); identita agenta = **SPIRE** SVID; token exchange (RFC 8693 s `act`) **v agentgateway**; PDP = **OPA** (extAuthz + Agent SDK hook) s decision logem; tajemství **OpenBao**, injekce credentialů v gateway | 2026-10-22 (návrh, čeká na kolo 2 a harness I2) | Keycloak exchange umí upscoping bez enforceru; SPIRE ↔ Dapr sentry neověřeno; OPA maintaineři 7/10 Apple; A2A delegace není standard → vlastní extension | [`../identity/overview.md`](../identity/overview.md) |
 | Observabilita a evaluace | – | – | – | – |
 | Paměť a znalosti | – | – | – | – |
 | Sandboxy a pracovní prostředí | – | – | – | – |
@@ -54,8 +54,13 @@ Z hypotézy plynou tři požadavky, které se zatím opakují napříč vrstvami
    (Dapr Workflows), ne instrukce modelu.
 3. **Paměť je firemní, ne agentní.** Co se agent naučí o zákazníkovi nebo o kódu, patří firmě
    a řídí se oprávněním, ne instancí agenta.
+4. **Agent se představí.** Čl. 50 AI Act platí od 2.8.2026: každý kanál k lidem (chat, e-mail, PR komentář,
+   ticket) architektonicky oznamuje „jsem AI, jednám za X“ (viz [`../identity/regulace.md`](../identity/regulace.md), T7).
+5. **Klasifikační brána při onboardingu.** Přidělování práce lidem nebo provoz u kritické infrastruktury
+   překlopí use case zákazníka do přílohy III; platforma se počítá jako jeden systém (T9).
 
 ## Changelog
+- 2026-10-22: identity – návrh SPIRE + Keycloak + OPA + OpenBao, exchange v gateway; do hypotézy přidány požadavky čl. 50 a klasifikační brána.
 - 2026-10-22: gateway – **rozhodnuto (Adam): agentgateway**, LiteLLM záloha; po harnessu G1 mock 21/21 a live 2/2.
 - 2026-10-22: první verze – přeneseno pět rozhodnutí z `protocols/` a `frameworks/`, prázdné řádky
   pro zbylé vrstvy, pracovní hypotéza organizační vrstvy.

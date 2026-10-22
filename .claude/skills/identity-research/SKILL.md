@@ -48,7 +48,16 @@ Postup v `framework-research` sekce 2 a vzorce v `knowledge/frameworks/licencni-
 - Návrh úprav `knowledge/identity/` jako diff; rozhodnutí do `knowledge/platforma/cilova-architektura.md`.
 - Soubory měň až po Adamově souhlasu.
 
-## 7. Čemu se vyhni
+## 7. Pasti z kola 1 (2026-10-22)
+- „Podporuje token exchange“ má tři úrovně: bez `actor_token` (Dex), s `actor_token` jako preview (Keycloak
+  26.8), downscope-only s RFC 8707 (Zitadel). Ověř **v kterém releasu** a zda exchange umí i **upscoping**
+  (Keycloak bez `downscope-assertion-grant-enforcer` ano).
+- Policy engine ≠ PDP: Cedar a Casbin jsou knihovny bez serveru a decision logu; pro I4 musí logovat PEP.
+- Secret manager ≠ credential injection: ESO dá tajemství do K8s Secret, agent ho **vidí**. Injekce patří do gateway.
+- Weby docs a registry quay/ghcr bývají nedostupné – čti zdrojové repozitáře docs a uváděj commit; OCI
+  labely ověř, kde to jde.
+
+## 8. Čemu se vyhni
 - Netvrď nic o termínech AI Actu z paměti – harmonogram se v roce 2026 měnil. Vždy ověř.
 - Nezaměňuj „guardrails“ (filtrování obsahu) za autorizaci.
 - Nehodnoť IdP podle počtu konektorů.

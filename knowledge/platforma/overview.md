@@ -58,7 +58,7 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 1 | Protokoly (MCP, A2A, AG-UI, A2UI) | `protocols/` | `protocol-research` / `protocol-scout` | ✅ hotovo, ověřeno 2026-10-20 |
 | 2 | Frameworky, orchestrace, durable execution | `frameworks/` | `framework-research` / `framework-scout` | ✅ rozhodnuto 2026-10-21 (Claude Agent SDK + Dapr Agents), otevřené položky v `frameworks/overview.md` |
 | 3 | **Model gateway a FinOps** | `gateway/` | `gateway-research` / `gateway-scout` | ✅ rozhodnuto 2026-10-22 (agentgateway) po sítu, kole 2 a harnessu G1 mock + live |
-| 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | 🟡 otevřeno 2026-10-22, síto kolo 1 běží |
+| 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | 🟡 síto, standardy i regulace hotové 2026-10-22; návrh SPIRE + Keycloak + OPA + OpenBao; čeká na kolo 2 a harness I2 |
 | 5 | Observabilita a evaluace | `observability/` | – | ⬜ čeká |
 | 6 | Paměť a znalosti | `memory/` | – | ⬜ čeká |
 | 7 | Sandboxy a pracovní prostředí | `sandbox/` | – | ⬜ čeká |

@@ -63,7 +63,7 @@ Soubory kandidátů v hranatých závorkách vzniknou v hloubkovém kole.
 
 ### Tři nové licenční vzorce z tohoto síta
 
-Doplnit do [`../frameworks/licencni-vzorce.md`](../frameworks/licencni-vzorce.md) (návrh, čeká na schválení):
+Doplněno do [`../frameworks/licencni-vzorce.md`](../frameworks/licencni-vzorce.md) jako osmý až desátý vzorec (2026-10-22):
 
 | Vzorec | Doložený případ | Jak poznat |
 |---|---|---|
