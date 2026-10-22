@@ -48,7 +48,10 @@ jinak je chyba v harnessu, ne v gateway.
 | **agentgateway 1.6.0** | **21** | **0** | – ; `traceparent` propagován jako child span (stejné trace id, nový span id); latence p50 +0,7 ms proti direct |
 | LiteLLM 1.106.2 (nativní `/v1/messages`) | 16 | 5 | K2a beta hlavička **přeuspořádána a doplněna** o `context-management-2025-06-27` (neznámá beta zachována); K2c atribuční hlavičky **zahozeny**; K4a vlastní `ping` před `message_start`; K5a tělo 400 obaleno textem `litellm.BadRequestError: AnthropicException - {...}`; K5b **529 → 500 `api_error`**; `traceparent` k upstreamu zahozen; hlavičky odpovědi (`request-id`) nepropagovány; latence p50 +13 ms |
 
-Detail v `results/*.json`. Live režim (L1) v tomto běhu **neproveden** – prostředí nemělo `ANTHROPIC_API_KEY`.
+Live režim (macOS, 2026-10-22, `claude-haiku-4-5`): **agentgateway L1 PASS** (přímo i přes gateway
+2. volání `cache_read_input_tokens > 0`, 1. volání `cache_creation_input_tokens` 7 602) a **A1 PASS**
+(3 kola, `ToolSearch` → `mcp__harness__lookup_ticket` proveden 1×, `cache_read_input_tokens` 41 890).
+Detail v `results/*.json`.
 
 ## Prerekvizity
 

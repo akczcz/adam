@@ -149,18 +149,18 @@ rozpočty bez ledgeru nestačí, zbývá LiteLLM s vědomě přijatou výhradou 
 
 `tools/harness_gateway_g1/` – mock upstream jako záznamník, 21 kontrol kontraktu z code.claude.com
 plus Claude Agent SDK (bundlované Claude Code CLI 2.1.308) přes gateway s MCP nástrojem.
-Live část (prompt cache přes gateway proti api.anthropic.com) **neproveden** – prostředí bez klíče.
+Live část proběhla na Adamově stroji (macOS, 2026-10-22 20:39) proti api.anthropic.com.
 
 | Cesta | PASS/FAIL | Porušení kontraktu |
 |---|---|---|
 | direct (kontrola) | 21/0 | – |
-| **agentgateway 1.6.0** | **21/0** | žádné; `traceparent` propagován jako child span; latence p50 +0,7 ms; Agent SDK turn s nástrojem doběhl (3 requesty: ToolSearch → MCP nástroj → odpověď) |
+| **agentgateway 1.6.0** | **21/0** (mock) + **2/0** (live) | žádné; `traceparent` propagován jako child span; latence p50 +0,7 ms; Agent SDK turn s nástrojem doběhl (3 requesty: ToolSearch → MCP nástroj → odpověď). **Live:** prompt cache přes gateway funguje (1. volání `cache_creation_input_tokens` 7 602, 2. volání `cache_read > 0`, shodně s přímým voláním); Agent SDK přes gateway proti skutečnému Claude: 3 kola, MCP nástroj proveden 1×, `cache_read_input_tokens` 41 890, bez chyby |
 | LiteLLM 1.106.2, nativní `/v1/messages` | 16/5 | `anthropic-beta` přeuspořádán a doplněn (neznámá beta ale **zachována**); `x-claude-code-*` atribuční hlavičky **zahozeny**; vlastní `ping` před `message_start`; chybová těla **obalena** textem `litellm.BadRequestError: AnthropicException - {...}`; **529 overloaded → 500 api_error**; `traceparent` a `request-id` zahozeny; latence p50 +13 ms; Agent SDK turn doběhl |
 
 Co z toho plyne:
 
-- **agentgateway kontrakt splňuje beze zbytku.** Tělo, hlavičky, stream i chybová těla projdou nezměněné.
-  Zbývá live potvrzení cache (L1), což je formalita, pokud tělo prochází beze změny.
+- **agentgateway kontrakt splňuje beze zbytku** a live běh to potvrdil: cache i Agent SDK s nástrojem
+  přes gateway fungují stejně jako napřímo. G1 je pro agentgateway uzavřené.
 - **LiteLLM kontrakt porušuje na čtyřech místech**, z toho dvě jsou pro Agent SDK reálný problém:
   ztráta atribučních hlaviček znemožňuje účtovat útratu na agenta/session z hlaviček (musí se
   řešit přes virtuální klíče per agent) a **překlad 529 na 500** mění retry chování SDK
@@ -178,8 +178,9 @@ porušením kontraktu (passthrough režim) a výhradou k A1.
 
 ## Co ověřit dál
 
-- [x] ~~**Harness G1** – přenos podle kontraktu z code.claude.com~~ – **změřeno 2026-10-22** (mock): agentgateway 21/21,
-      LiteLLM 16/21. Zbývá **live L1** (`--mode live` s `ANTHROPIC_API_KEY`): cache_read přes gateway > 0.
+- [x] ~~**Harness G1** – přenos podle kontraktu z code.claude.com~~ – **změřeno 2026-10-22**: mock agentgateway 21/21,
+      LiteLLM 16/21; **live agentgateway 2/2** (cache_read přes gateway > 0, Agent SDK s nástrojem doběhl).
+- [ ] Live běh LiteLLM (`--gateway litellm --mode live`) pro úplnost srovnání.
 - [ ] LiteLLM passthrough `/anthropic/*` změřit stejným harnessem (očekávání: lepší přenos, bez rozpočtů).
 - [ ] Harness na Azure Foundry upstream (`--upstream https://<res>.services.ai.azure.com/anthropic`, Entra ID).
 - [ ] agentgateway: persistence USD rozpočtů mezi replikami; explicitní potvrzení thinking a paralelních tool calls
@@ -196,6 +197,7 @@ porušením kontraktu (passthrough režim) a výhradou k A1.
 - [x] ~~Změřit režii gateway P50/P95 vs. přímé volání~~ – mock, non-stream, n=20: agentgateway +0,7 ms, LiteLLM +13 ms p50.
 
 ## Changelog
+- 2026-10-22: harness G1 live na Adamově stroji – agentgateway 2/2 (cache, Agent SDK s nástrojem); G1 uzavřeno.
 - 2026-10-22: kolo 3 – harness G1 změřen (mock): agentgateway splňuje kontrakt beze zbytku, LiteLLM porušuje
   na čtyřech místech (atribuční hlavičky, obalená chybová těla, 529→500, ping); doporučení agentgateway.
 - 2026-10-22: kolo 2 – G1 a FinOps ze zdrojů docs; kontrakt gateway z code.claude.com; Claude ve Foundry nativní API;
