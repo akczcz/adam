@@ -37,8 +37,13 @@ adam/
 │   │   ├── overview.md        # Síto kandidátů, kolo 2, harness G1
 │   │   └── kriteria.md        # Hodnoticí rubrika (Anthropic passthrough, rozpočty, identita)
 │   └── identity/              # Vrstva 4: Identita, autorizace a governance
-│       ├── overview.md        # Tok identity, síto, standardy, regulace
-│       └── kriteria.md        # Čtyři otázky I1–I4, kritéria N1–N6
+│       ├── overview.md        # Tok identity, síto, kolo 2, harness I2
+│       ├── kriteria.md        # Čtyři otázky I1–I4, kritéria N1–N6
+│       ├── standardy.md       # MCP auth, A2A, ID-JAG, Entra Agent ID
+│       ├── regulace.md        # AI Act po Omnibusu, ISO 42001, NIST – požadavky T1–T15
+│       ├── keycloak.md        # Token exchange V2 změřený harnessem
+│       ├── agentgateway-identity.md  # Gateway jako PEP: jwtAuth, extAuthz, exchange
+│       └── spire.md           # Workload identita vs. Dapr sentry
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly
@@ -51,7 +56,7 @@ adam/
 │       ├── gateway-scout.md    # Podagent na gateway, Anthropic passthrough a FinOps
 │       └── identity-scout.md   # Podagent na identitu agentů, policy a regulaci
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
-├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1)
+├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2)
 ├── docs/                      # Architektura a postupy
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```

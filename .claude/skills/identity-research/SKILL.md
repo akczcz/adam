@@ -57,6 +57,13 @@ Postup v `framework-research` sekce 2 a vzorce v `knowledge/frameworks/licencni-
 - Weby docs a registry quay/ghcr bývají nedostupné – čti zdrojové repozitáře docs a uváděj commit; OCI
   labely ověř, kde to jde.
 
+## 7b. Pasti z kola 2 a harnessu I2 (2026-10-22)
+- Keycloak: realm import s `clientScopes` **nevytvoří** `basic`/`profile`/`email` – token pak nemá `sub`. `audience` parametr
+  exchange jen filtruje; subject token musí mít requester v `aud`; upscope je default; enforcer kontroluje i audience.
+- agentgateway standalone: `jwtAuth` (ne `jwtAuthentication`), default `mode: optional`, token po validaci zmizí z hlavičky.
+- OPA-Envoy 1.21: input camelCase (`metadataContext`), Rego s `object.get` defaulty, jinak „undefined decision“ = 503.
+- Měř harnessem `tools/harness_identity_i2/` – tvrzení o `act`, downscope a fail-closed se bez něj nedají ověřit.
+
 ## 8. Čemu se vyhni
 - Netvrď nic o termínech AI Actu z paměti – harmonogram se v roce 2026 měnil. Vždy ověř.
 - Nezaměňuj „guardrails“ (filtrování obsahu) za autorizaci.

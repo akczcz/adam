@@ -1,0 +1,73 @@
+# agentgateway 1.6.0 – harness I2, varianta authz=cel (bez OPA).
+# Názvy polí podle schema/config.md (main @bf1032b9, ověřeno na tagu v1.6.0) – viz knowledge/identity/agentgateway-identity.md.
+# {{PORT}}, {{ISSUER}}, {{TOKEN_URL}}, {{MCP_PORT}}, {{SCOPE}} doplní harness.py.
+config:
+  enableIpv6: false
+  readinessAddr: 127.0.0.1:19001
+  statsAddr: 127.0.0.1:19002
+  adminAddr: "off"
+  logging:
+    format: json
+    level: info
+    fields:
+      add:
+        user.sub: jwt.sub
+        user.azp: jwt.azp
+        user.scope: jwt.scope
+        route: proxy.route.name
+        status: response.code
+        error: proxy.error.reason
+
+binds:
+- port: {{PORT}}
+  listeners:
+  - name: default
+    protocol: HTTP
+    routes:
+    - name: mcp
+      matches:
+      - path:
+          exact: /mcp
+        method: POST
+      policies:
+        jwtAuth:
+          mode: strict                       # default je optional = pustí request bez JWT
+          issuer: {{ISSUER}}
+          audiences: [gateway]
+          jwks:
+            url: {{ISSUER}}/protocol/openid-connect/certs
+          jwtValidationOptions:
+            requiredClaims: [exp, sub, aud]
+        authorization:
+          rules:
+          - require: 'has(jwt.sub) && jwt.sub != ""'
+          # per nástroj z JSON-RPC těla (ODHAD z rešerše: request.body spustí buffering)
+          - require: 'json(request.body).method != "tools/call" || json(request.body).params.name in ["lookup_ticket"]'
+      backends:
+      - host: 127.0.0.1:{{MCP_PORT}}
+        policies:
+          backendAuth:
+            oauthTokenExchange:
+              host: 127.0.0.1:8080
+              path: /realms/platform/protocol/openid-connect/token
+              grantType: tokenExchange
+              clientAuth:
+                clientId: gateway
+                clientSecret: gateway-secret
+                method: clientSecretBasic
+              subjectToken:
+                source:
+                  expression: jwt.rawToken.unredacted()   # jwtAuth token z hlavičky odstranil
+                tokenType: urn:ietf:params:oauth:token-type:access_token
+              actorToken:
+                source:
+                  header:
+                    name: x-agent-token
+                tokenType: urn:ietf:params:oauth:token-type:access_token
+                enforceMayAct: false
+              audiences: [mcp-tickets]
+              scopes: [{{SCOPE}}]
+              requestedTokenType: urn:ietf:params:oauth:token-type:access_token
+              cache:
+                maxEntries: 1024
+                defaultTtl: 60s

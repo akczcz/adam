@@ -74,16 +74,35 @@ for internal purposes within an organization is not considered a competitive off
 publikace verze; Change License: MPL 2.0. **Otázka na právníka:** „dodáváme produkt zákazníkovi s podporou“ vs.
 „paid support arrangements“. Do té doby OpenBao.
 
-### Co ze síta plyne (Pozn. Adam – návrh, ne rozhodnutí)
+### Co ze síta a kola 2 plyne (Pozn. Adam – návrh k rozhodnutí)
 
-| Otázka | Komponenta | Proč | Riziko |
+| Otázka | Komponenta | Proč | Riziko / co zbývá |
 |---|---|---|---|
-| I1 workload identita | **SPIRE** vedle Dapr sentry | SVID per agent instance, JWT-SVID + OIDC discovery → jedna identita vůči Dapr, agentgateway, MCP serveru i Entra (FIC); CNCF graduated, bez vendora | Dapr sentry vydává jen X.509 per App ID – vztah sentry ↔ SPIRE zbývá ověřit |
-| I2 uživatelé + delegace | **Keycloak** jako platformní AS, federovaný na Entra ID zákazníka | RFC 8693 V2 default on; `actor_token` delegace na main (release neověřen); CNCF incubating | Exchange umí **i upscoping**, dokud není zapnutý `downscope-assertion-grant-enforcer`; de facto IBM projekt. Zitadel má čistší RFC 8693 (downscope-only, RFC 8707), ale AGPL → alternativa po právním posudku |
-| I3 + I4 | **OPA** jako PDP (sidecar u agentgateway přes `extAuthz`, Agent SDK `PreToolUse` hook), decision log → audit; **OpenFGA** až při reálné ReBAC potřebě | „agent X smí nástroj Y pro tenanta Z“ je ABAC nad JWT claims; decision log zadarmo; CNCF graduated | Maintaineři 7/10 Apple (směrové, ne licenční riziko); version check vypnout v air-gapu. SpiceDB silnější engine, ale telemetrie opt-out + placený audit log |
-| N4 tajemství | **OpenBao** + ESO jen pro statická tajemství infrastruktury | MPL-2.0, namespaces v OSS, drop-in za Vault API, OpenSSF | Credential k MCP nástrojům **injektuje agentgateway**, ne env var přes ESO |
+| I1 workload identita | **SPIRE** vedle Dapr sentry (dvě trust domény) | SVID per instance, JWT-SVID + OIDC discovery; Dapr sentry JWT umí, ale aplikace k němu nemá API | neměřeno v harnessu; společný root = rozhodnutí |
+| I2 uživatelé + delegace | **Keycloak** jako platformní AS, federovaný na Entra ID; **exchange v agentgateway** | V2 exchange změřen: aud, sub, azp, downscope fungují | upscope je default → enforcer **nepoužívat** s per-MCP audience, scope hlídá konfigurace gateway; `act` delegace preview → identita agenta jako druhý credential |
+| I3 + I4 | **OPA-Envoy** za `extAuthz` v gateway + stejná Rego politika z `PreToolUse` hooku; decision log | změřeno: per-tool deny před MCP, 503 při výpadku, decision log | input camelCase; CEL v gateway stačí pro jednoduchá pravidla |
+| N4 tajemství | **OpenBao**; credential k nástrojům injektuje gateway | MPL-2.0, OpenSSF | neměřeno |
 
 Čtyři komponenty, čtyři nadace (CNCF ×3, OpenSSF), žádný vendor s právem relicencovat.
+
+## Kolo 2 a harness I2 (změřeno 2026-10-22)
+
+Hloubkové kolo pro Keycloak ([keycloak.md](keycloak.md)), agentgateway jako PEP ([agentgateway-identity.md](agentgateway-identity.md))
+a SPIRE vs. Dapr sentry ([spire.md](spire.md)). Harness `tools/harness_identity_i2/`: Keycloak 26.8.1 + mock MCP resource
+server + agentgateway 1.6.0 + OPA-Envoy 1.21.2, lokálně bez Dockeru.
+
+| Cesta | PASS/FAIL | Nálezy |
+|---|---|---|
+| direct (harness = gateway) | 4/1 | passthrough uživatelského tokenu MCP odmítne (aud); exchange dá `aud=mcp-tickets`, `sub`, `azp=gateway`; **upscope bez enforceru potvrzen**; enforcer odmítá i audience mimo subject token; **`act` nevzniká** |
+| **agentgateway + CEL** | 6/1 | exchange v gateway funguje; CEL nad JSON-RPC tělem blokuje `delete_ticket` před MCP; audit log nese `sub` a 403; p50 81 ms |
+| **agentgateway + OPA** | 8/1 | totéž + OPA decision log s `dynamic_metadata` v gateway logu; **výpadek OPA → 503** (fail-closed, odlišitelný); p50 71 ms |
+
+Jediné selhání všude: **`act` claim** – Keycloak 26.8 má delegaci jako preview s interaktivním souhlasem a FGAP V2,
+pro autonomní agenty nepoužitelnou. Identita agenta tedy dnes putuje jako **druhý credential** (SVID v hlavičce),
+který gateway loguje a OPA vyhodnocuje – ne uvnitř uživatelova tokenu.
+
+Pasti z harnessu: Keycloak realm import s `clientScopes` nevytvoří `basic` (token bez `sub`); OPA-Envoy input je camelCase;
+agentgateway `jwtAuth` default `optional` a odstraní token z hlavičky. Vše v README harnessu.
 
 ## Standardy a co z nich plyne
 
@@ -114,17 +133,20 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
 ## Co ověřit dál
 
 - [x] ~~Síto kolo 1 – OSS kandidáti pro I1–I4 a N4~~ – 2026-10-22, 15 kandidátů.
-- [ ] **Kolo 2:** Keycloak – v kterém releasu je `actor_token` delegace; chování `downscope-assertion-grant-enforcer`; federace na Entra ID.
-- [ ] Kolo 2: agentgateway `extAuthz` → OPA – latence sidecar vs. embedded; nebo jen CEL?
-- [ ] Kolo 2: SPIRE vedle Dapr sentry – lze SPIRE jako upstream CA, nebo dvě identity?
+- [x] ~~Kolo 2: Keycloak – `actor_token`, enforcer~~ → [keycloak.md](keycloak.md) (změřeno); federace na Entra ID zbývá.
+- [x] ~~Kolo 2: agentgateway `extAuthz` → OPA, nebo CEL~~ → obojí změřeno, [agentgateway-identity.md](agentgateway-identity.md).
+- [x] ~~Kolo 2: SPIRE vedle Dapr sentry~~ → [spire.md](spire.md): dvě trust domény, upstream nejde.
 - [ ] Právní posudek: Zitadel AGPL + inbound Apache; Vault BUSL „paid support arrangements“.
 - [ ] OpenFGA: existuje decision/audit log v OSS? (nenalezen, docs neprohledány celé)
 - [ ] OCI labely obrazů Keycloak (quay.io), SPIRE, Zitadel (ghcr) – registry byly nedostupné.
-- [ ] Harness I2: user token → agentgateway `oauthTokenExchange` (Keycloak) → MCP server ověří `aud`; změřit, že `act` claim nese agenta a scope se jen zužuje.
+- [x] ~~Harness I2~~ → změřeno 2026-10-22: scope se zužuje, aud ověřeno, **`act` nevzniká**.
+- [ ] Harness I2 rozšířit: SPIRE JWT-SVID jako actor/druhý credential; cache exchange v gateway; Keycloak delegace přes browser flow (pro úplnost).
+- [ ] Jak nést identitu agenta, když `act` není: hlavička + OPA, nebo Zitadel – rozhodnutí Adam.
 - [x] ~~Stav MCP authorization, A2A auth, IETF drafty, Entra Agent ID~~ → [standardy.md](standardy.md), 2026-10-22.
 - [x] ~~Aktuální harmonogram EU AI Act a technické požadavky na audit a lidský dohled~~ → [regulace.md](regulace.md), 2026-10-22; text OJ zbývá ověřit.
 
 ## Changelog
+- 2026-10-22: kolo 2 + harness I2 – Keycloak, agentgateway PEP, SPIRE; `act` nevzniká, upscope potvrzen, OPA 503 při výpadku.
 - 2026-10-22: síto kolo 1 – 15 kandidátů; Vault (BUSL), Infisical, Ory Hydra vyřazeni; návrh SPIRE + Keycloak + OPA + OpenBao.
 - 2026-10-22: standardy – MCP auth, A2A, ID-JAG, Entra Agent ID, co řeší Dapr/agentgateway/Agent SDK (standardy.md).
 - 2026-10-22: regulace – harmonogram po Omnibusu, požadavky T1–T15 (regulace.md).

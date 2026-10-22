@@ -122,8 +122,8 @@ nic kromě hooks a statických hlaviček – je to PEP pro lokální rozhodnutí
 
 | Komponenta | Identita (I1) | Delegace (I2) | Autorizace (I3) | Audit (I4) |
 |---|---|---|---|---|
-| **Dapr 1.18.9** | sentry CA, mTLS default v K8s, `spiffe://<td>/ns/<ns>/<appid>`, Ed25519; **identita per App ID, ne per instance**; jen X.509, ne JWT-SVID | – | `accessControl` App-ID → App-ID + operace; per-tool jen **OPA middleware**; `WorkflowAccessPolicy`; secret scopes (OpenBao, Vault, Key Vault) | workflow history |
-| **agentgateway 1.6** | `apiKeyAuthentication`, `jwtAuthentication` (multi-provider), MCP auth s PRM/AS metadata za gateway (Keycloak, Entra, Okta…) | **`oauthTokenExchange`** (RFC 8693 i RFC 7523, `actorToken`), **`crossAppAccess`** (ID-JAG; demo jen s patchovaným Keycloakem); past: client-auth stripuje token → `preserveToken` | CEL `traffic/backend/backend.mcp.authorization` (`mcp.tool.name`, **argumenty ne**); `extAuthz` gRPC (BYO PDP) | request log, cost, CEL labely |
+| **Dapr 1.18.9** | sentry CA, mTLS default v K8s, `spiffe://<td>/ns/<ns>/<appid>`, Ed25519; **identita per App ID, ne per instance**; **JWT-SVID a OIDC od 1.16**, ale **bez API pro aplikaci** (jen daprd: Azure FIC, `MCPServer` CRD) – oprava 2026-10-22, viz [spire.md](spire.md) | – | `accessControl` App-ID → App-ID + operace; per-tool jen **OPA middleware**; `WorkflowAccessPolicy`; secret scopes (OpenBao, Vault, Key Vault) | workflow history |
+| **agentgateway 1.6** | `apiKey`, `jwtAuth` (standalone název; CRD `jwtAuthentication`), MCP auth s PRM/AS metadata za gateway (Keycloak, Entra, Okta…) | **`oauthTokenExchange`** (RFC 8693 i RFC 7523, `actorToken` jen z requestu), **`crossAppAccess`** (ID-JAG; demo jen s patchovaným Keycloakem); past: `jwtAuth` token z hlavičky odstraní → `subjectToken.source.expression: jwt.rawToken.unredacted()` | CEL `authorization` (i nad JSON tělem – změřeno), `mcpAuthorization` (`mcp.tool.name` **i `mcp.tool.arguments`** – oprava 2026-10-22); `extAuthz` gRPC/HTTP (BYO PDP, fail-closed) | JSON log s CEL poli (`jwt.sub`, `extauthz.*`), cost |
 | **Claude Agent SDK** | nic | nic (statické `headers` pro MCP, při 401 stav `needs-auth`) | hooks → deny → ask → mode → allow → `canUseTool`; `PreToolUse` i v `bypassPermissions`, `updatedInput`; matcher `^mcp__` | hook input `session_id`, `agent_id`, `tool_use_id` |
 
 ## F. SPIFFE/SPIRE pro agenty
@@ -135,8 +135,9 @@ nic kromě hooks a statických hlaviček – je to PEP pro lokální rozhodnutí
   („Signed JWT issued by an Identity Provider“ s use case SPIFFE JWT SVIDs; SPIFFE identity provider tech preview;
   Standard Token Exchange od 26.2; ID-JAG jen přijímající strana experimental 26.7; delegace `actor_token`/`may_act`
   **preview 26.8**).
-- Dapr sentry vydává jen X.509 per App ID → pro OAuth client credentials agenta buď **SPIRE vedle Dapru**, nebo
-  Entra sidecar/FIC. SPIRE jako upstream CA pro sentry v Dapr docs nenalezeno.
+- Dapr sentry vydává od 1.16 i JWT-SVID, ale **aplikace k němu nemá API** (jen daprd) → pro agenta, který má svou
+  identitu *předložit*, zůstává **SPIRE Workload API**. SPIRE jako upstream sentry nejde (sentry chce klíč issueru na disku);
+  společný root jen jako offline root + dva intermediates. Detail [spire.md](spire.md). (Oprava 2026-10-22.)
 
 ## Tok identity podle toho, co standardy umožňují
 
@@ -190,9 +191,10 @@ tokenu = „kdo smí který server“), OPA/AuthZEN (per tool/argument), Dapr Co
 - [ ] Text RFC 8693 a stav draftů na datatrackeru (identity-chaining RFC Ed Queue?).
 - [ ] MCP SEP-1933 Workload Identity Federation – obsah PR.
 - [ ] Entra: chování `resource` (MS docs vs. agentgateway docs) – test s v2 tokeny.
-- [ ] Dapr sentry se SPIRE jako upstream CA; JWT-SVID.
+- [x] ~~Dapr sentry se SPIRE jako upstream CA; JWT-SVID~~ → [spire.md](spire.md): JWT od 1.16 bez app API; upstream SPIRE nejde.
 - [ ] agentgateway `crossAppAccess` s produkčním IdP (ne patchovaný Keycloak).
 - [ ] AuthZEN Authorization API 1.0 Final – potvrdit; COAZ-MCP implementace.
 
 ## Changelog
+- 2026-10-22: opravy z kola 2 – Dapr sentry JWT-SVID (bez app API), agentgateway `jwtAuth`, `mcp.tool.arguments`, stripování tokenu.
 - 2026-10-22: první verze z rešerše.
