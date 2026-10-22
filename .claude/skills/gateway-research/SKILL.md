@@ -39,8 +39,10 @@ chybová těla neobalovat. Pasti z kola 2 (2026-10-22): Bifrost blokuje `anthrop
 po sobě jdoucí tool zprávy; Portkey OSS má allowlist parametrů; LiteLLM při překladu na ne-Anthropic providera
 `cache_control` zahodí.
 
-Ověř v dokumentaci a changelogu, nikdy z blogů. Pokud to jde, ověř harnessem:
-`ANTHROPIC_BASE_URL` na gateway, jeden turn s nástrojem a `cache_control`, porovnat `usage` s přímým voláním.
+Ověř v dokumentaci a changelogu, nikdy z blogů. Pak **změř harnessem** `tools/harness_gateway_g1/`
+(mock režim nic nestojí; `--gateway direct` je kontrola harnessu). Dokumentace LiteLLM říká „nativní
+`/v1/messages`“, harness ukázal zahozené atribuční hlavičky, obalená chybová těla a 529 → 500 –
+tvrzení z docs bez měření do znalostní báze nepatří.
 Weby dokumentace bývají z prostředí nedostupné – čti **zdrojové repozitáře docs** na GitHubu (stejný obsah
 před renderem) a uváděj commit.
 

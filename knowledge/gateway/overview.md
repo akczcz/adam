@@ -145,11 +145,43 @@ jsou ověřena jen z Anthropic docs.
 Rozhodnutí padne až po harnessu G1 (viz níže). Pokud agentgateway v harnessu neprojde nebo se ukáže, že
 rozpočty bez ledgeru nestačí, zbývá LiteLLM s vědomě přijatou výhradou k A1.
 
+## Kolo 3 – harness G1 (změřeno 2026-10-22)
+
+`tools/harness_gateway_g1/` – mock upstream jako záznamník, 21 kontrol kontraktu z code.claude.com
+plus Claude Agent SDK (bundlované Claude Code CLI 2.1.308) přes gateway s MCP nástrojem.
+Live část (prompt cache přes gateway proti api.anthropic.com) **neproveden** – prostředí bez klíče.
+
+| Cesta | PASS/FAIL | Porušení kontraktu |
+|---|---|---|
+| direct (kontrola) | 21/0 | – |
+| **agentgateway 1.6.0** | **21/0** | žádné; `traceparent` propagován jako child span; latence p50 +0,7 ms; Agent SDK turn s nástrojem doběhl (3 requesty: ToolSearch → MCP nástroj → odpověď) |
+| LiteLLM 1.106.2, nativní `/v1/messages` | 16/5 | `anthropic-beta` přeuspořádán a doplněn (neznámá beta ale **zachována**); `x-claude-code-*` atribuční hlavičky **zahozeny**; vlastní `ping` před `message_start`; chybová těla **obalena** textem `litellm.BadRequestError: AnthropicException - {...}`; **529 overloaded → 500 api_error**; `traceparent` a `request-id` zahozeny; latence p50 +13 ms; Agent SDK turn doběhl |
+
+Co z toho plyne:
+
+- **agentgateway kontrakt splňuje beze zbytku.** Tělo, hlavičky, stream i chybová těla projdou nezměněné.
+  Zbývá live potvrzení cache (L1), což je formalita, pokud tělo prochází beze změny.
+- **LiteLLM kontrakt porušuje na čtyřech místech**, z toho dvě jsou pro Agent SDK reálný problém:
+  ztráta atribučních hlaviček znemožňuje účtovat útratu na agenta/session z hlaviček (musí se
+  řešit přes virtuální klíče per agent) a **překlad 529 na 500** mění retry chování SDK
+  (SDK matchuje chybová těla upstreamu – viz kontrakt). Přeuspořádání bet a vlastní ping
+  jsou kosmetické. Passthrough `/anthropic/*` nebyl měřen – pravděpodobně dopadne lépe,
+  ale ztrácí rozpočty nad `/v1/messages`.
+- `litellm[proxy]` **skutečně instaluje `litellm-enterprise` (`LicenseRef-Proprietary`)** jako
+  závislost – potvrzeno `importlib.metadata` v harnessu (0.1.76.post1 vedle 1.106.2).
+
+**Pozn. Adam – doporučení k rozhodnutí:** agentgateway jako model gateway platformy. Přijatá rizika:
+bus factor (jeden člověk 51 % commitů), bez CLA/DCO, FinOps bez ledgeru per tým (rozpočty jen per
+API klíč → klíč per agent/tým jako pracovní model), persistence rozpočtů mezi replikami neověřena.
+LiteLLM zůstává záloha pro případ, že FinOps bez ledgeru nebude stačit – pak s vědomým
+porušením kontraktu (passthrough režim) a výhradou k A1.
+
 ## Co ověřit dál
 
-- [ ] **Harness G1:** `ANTHROPIC_BASE_URL` na agentgateway a LiteLLM, jeden turn Claude Agent SDK s nástrojem
-      a `cache_control`; porovnat `usage` s přímým voláním; ověřit forward `anthropic-beta`, `ping` eventy a chybová těla
-      podle kontraktu z code.claude.com. Bez toho je „podporuje Anthropic“ jen marketing.
+- [x] ~~**Harness G1** – přenos podle kontraktu z code.claude.com~~ – **změřeno 2026-10-22** (mock): agentgateway 21/21,
+      LiteLLM 16/21. Zbývá **live L1** (`--mode live` s `ANTHROPIC_API_KEY`): cache_read přes gateway > 0.
+- [ ] LiteLLM passthrough `/anthropic/*` změřit stejným harnessem (očekávání: lepší přenos, bez rozpočtů).
+- [ ] Harness na Azure Foundry upstream (`--upstream https://<res>.services.ai.azure.com/anthropic`, Entra ID).
 - [ ] agentgateway: persistence USD rozpočtů mezi replikami; explicitní potvrzení thinking a paralelních tool calls
       na `/v1/messages`; aktuální číslo verze (tagy v1.6 vs. docs mluvící o 2.x).
 - [ ] Forward `traceparent` z gateway **k poskytovateli** – u žádného kandidáta nedoloženo.
@@ -161,9 +193,11 @@ rozpočty bez ledgeru nestačí, zbývá LiteLLM s vědomě přijatou výhradou 
 - [ ] Bifrost: licenční mechanismus Enterprise bináru (kontrola klíče přes síť?); co přesně zůstává v OSS governance pluginu.
 - [ ] Docker image labels (`org.opencontainers.image.licenses`) u všech postupujících.
 - [ ] Higress a Agent Router: hlubší grep kódu na telemetrii; air-gapped provoz Wasm registry (Higress).
-- [ ] Změřit režii gateway P50/P95 vs. přímé volání (harness, ne marketing).
+- [x] ~~Změřit režii gateway P50/P95 vs. přímé volání~~ – mock, non-stream, n=20: agentgateway +0,7 ms, LiteLLM +13 ms p50.
 
 ## Changelog
+- 2026-10-22: kolo 3 – harness G1 změřen (mock): agentgateway splňuje kontrakt beze zbytku, LiteLLM porušuje
+  na čtyřech místech (atribuční hlavičky, obalená chybová těla, 529→500, ping); doporučení agentgateway.
 - 2026-10-22: kolo 2 – G1 a FinOps ze zdrojů docs; kontrakt gateway z code.claude.com; Claude ve Foundry nativní API;
   předběžně agentgateway primární, LiteLLM záloha, Bifrost porušuje kontrakt (beta hlavičky, slučování tool zpráv).
 - 2026-10-22: první verze; široké síto kolo 1, 10 kandidátů. Vyřazeni Kong (CE zamrzlé na 3.9), Portkey

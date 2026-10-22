@@ -1,0 +1,15 @@
+# agentgateway – harness G1. {{UPSTREAM}} a {{PORT}} doplní harness.py.
+# Zdroj schématu: schema/config.md v repu agentgateway (llm.models[].params.baseUrl).
+config:
+  enableIpv6: false   # kontejnery bez IPv6: jinak bind [::]:port selže (os error 97)
+  readinessAddr: 127.0.0.1:19001
+  statsAddr: 127.0.0.1:19002
+
+llm:
+  port: {{PORT}}
+  models:
+  - name: '*'
+    provider: anthropic
+    params:
+      baseUrl: {{UPSTREAM}}/v1   # bez /v1 agentgateway volá /messages místo /v1/messages (ověřeno 2026-10-22)
+      apiKey: $ANTHROPIC_API_KEY
