@@ -16,27 +16,35 @@ adam/
 ├── CLAUDE.md                  # Kdo je Adam – identita, principy, pravidla práce
 ├── knowledge/                 # Verzovaná znalostní báze (Markdown) – zdroj pravdy
 │   ├── README.md              # Konvence pro znalostní soubory
-│   ├── protocols/             # Oblast 1: AI protokoly pro multiagentní platformy
+│   ├── platforma/             # Mapa vrstev platformy, pořadí otevírání, cílová architektura
+│   │   ├── overview.md        # Které vrstvy, v jakém stavu, společný postup
+│   │   └── cilova-architektura.md  # Živý soubor rozhodnutí po vrstvách
+│   ├── protocols/             # Vrstva 1: AI protokoly pro multiagentní platformy
 │   │   ├── overview.md        # Mapa vrstev a vztahů mezi protokoly
 │   │   ├── a2a.md
 │   │   ├── mcp.md
 │   │   ├── a2ui.md
 │   │   └── ag-ui.md
-│   └── frameworks/            # Oblast 2: Agentní frameworky a runtimy
-│       ├── overview.md        # Mapa vrstev, široké síto kandidátů, top 3
-│       ├── kriteria.md        # Hodnoticí rubrika
-│       ├── licencni-vzorce.md # Licenční pasti a jak je poznat
-│       ├── durable-execution.md
-│       ├── kagent.md
-│       ├── dapr-agents.md
-│       └── microsoft-agent-framework.md
+│   ├── frameworks/            # Vrstva 2: Agentní frameworky a runtimy
+│   │   ├── overview.md        # Mapa vrstev, široké síto kandidátů, top 3
+│   │   ├── kriteria.md        # Hodnoticí rubrika
+│   │   ├── licencni-vzorce.md # Licenční pasti a jak je poznat
+│   │   ├── durable-execution.md
+│   │   ├── kagent.md
+│   │   ├── dapr-agents.md
+│   │   └── microsoft-agent-framework.md
+│   └── gateway/               # Vrstva 3: Model gateway a FinOps
+│       ├── overview.md        # Síto kandidátů
+│       └── kriteria.md        # Hodnoticí rubrika (Anthropic passthrough, rozpočty, identita)
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly
-│   │   └── framework-research/ # Postup, jak prověřovat frameworky a licence
+│   │   ├── framework-research/ # Postup, jak prověřovat frameworky a licence
+│   │   └── gateway-research/   # Postup, jak prověřovat model gateway a FinOps
 │   └── agents/
 │       ├── protocol-scout.md   # Podagent na novinky v protokolech
-│       └── framework-scout.md  # Podagent na licenční a governance prověrku
+│       ├── framework-scout.md  # Podagent na licenční a governance prověrku
+│       └── gateway-scout.md    # Podagent na gateway, Anthropic passthrough a FinOps
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
 ├── tools/                     # Smoke testy proti MCP serverům
 ├── docs/                      # Architektura a postupy
@@ -77,6 +85,9 @@ npm run dev
 Nasazení a připojení klientů popisuje [docs/vlastni-instance.md](docs/vlastni-instance.md).
 
 ## Jak Adam roste
+
+Vrstvy platformy se otevírají postupně – pořadí, stav a společný postup jsou
+v [knowledge/platforma/overview.md](knowledge/platforma/overview.md).
 
 1. Nová oblast zájmu → nová složka v `knowledge/`.
 2. Opakující se postup → nový skill v `.claude/skills/`.
