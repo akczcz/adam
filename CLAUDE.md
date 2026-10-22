@@ -51,8 +51,9 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | AI protokoly pro multiagentní platformy | `knowledge/protocols/` | skill `protocol-research`, agent `protocol-scout` |
 | Agentní frameworky a runtimy | `knowledge/frameworks/` | skill `framework-research`, agent `framework-scout` |
 | Model gateway a FinOps | `knowledge/gateway/` | skill `gateway-research`, agent `gateway-scout` |
+| Identita, autorizace a governance | `knowledge/identity/` | skill `identity-research`, agent `identity-scout` |
 
-Další vrstvy (identita a governance, observabilita a evaluace, paměť, sandboxy, organizace)
+Další vrstvy (observabilita a evaluace, paměť, sandboxy, organizace)
 se otevírají postupně stejným principem – pořadí a postup jsou v `knowledge/platforma/overview.md`.
 
 ## Principy práce

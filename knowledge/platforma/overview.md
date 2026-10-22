@@ -58,7 +58,7 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 1 | Protokoly (MCP, A2A, AG-UI, A2UI) | `protocols/` | `protocol-research` / `protocol-scout` | ✅ hotovo, ověřeno 2026-10-20 |
 | 2 | Frameworky, orchestrace, durable execution | `frameworks/` | `framework-research` / `framework-scout` | ✅ rozhodnuto 2026-10-21 (Claude Agent SDK + Dapr Agents), otevřené položky v `frameworks/overview.md` |
 | 3 | **Model gateway a FinOps** | `gateway/` | `gateway-research` / `gateway-scout` | 🟢 síto, kolo 2 i harness G1 (mock + live) hotové 2026-10-22; agentgateway navržen k rozhodnutí |
-| 4 | Identita, autorizace, governance | `identity/` | – | ⬜ čeká |
+| 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | 🟡 otevřeno 2026-10-22, síto kolo 1 běží |
 | 5 | Observabilita a evaluace | `observability/` | – | ⬜ čeká |
 | 6 | Paměť a znalosti | `memory/` | – | ⬜ čeká |
 | 7 | Sandboxy a pracovní prostředí | `sandbox/` | – | ⬜ čeká |
@@ -108,4 +108,5 @@ metoda (jak role odvodit z procesů, jak nastavit hranice autonomie), ne licenč
   bude za dva měsíce k přeověření.
 
 ## Changelog
+- 2026-10-22: otevřena vrstva identity (kritéria, skill, agent, kostra přehledu).
 - 2026-10-22: první verze – osm vrstev, pořadí, společný postup, otevřena vrstva gateway.

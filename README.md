@@ -33,20 +33,25 @@ adam/
 │   │   ├── kagent.md
 │   │   ├── dapr-agents.md
 │   │   └── microsoft-agent-framework.md
-│   └── gateway/               # Vrstva 3: Model gateway a FinOps
-│       ├── overview.md        # Síto kandidátů
-│       └── kriteria.md        # Hodnoticí rubrika (Anthropic passthrough, rozpočty, identita)
+│   ├── gateway/               # Vrstva 3: Model gateway a FinOps
+│   │   ├── overview.md        # Síto kandidátů, kolo 2, harness G1
+│   │   └── kriteria.md        # Hodnoticí rubrika (Anthropic passthrough, rozpočty, identita)
+│   └── identity/              # Vrstva 4: Identita, autorizace a governance
+│       ├── overview.md        # Tok identity, síto, standardy, regulace
+│       └── kriteria.md        # Čtyři otázky I1–I4, kritéria N1–N6
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly
 │   │   ├── framework-research/ # Postup, jak prověřovat frameworky a licence
-│   │   └── gateway-research/   # Postup, jak prověřovat model gateway a FinOps
+│   │   ├── gateway-research/   # Postup, jak prověřovat model gateway a FinOps
+│   │   └── identity-research/  # Postup pro identitu, autorizaci, audit a AI Act
 │   └── agents/
 │       ├── protocol-scout.md   # Podagent na novinky v protokolech
 │       ├── framework-scout.md  # Podagent na licenční a governance prověrku
-│       └── gateway-scout.md    # Podagent na gateway, Anthropic passthrough a FinOps
+│       ├── gateway-scout.md    # Podagent na gateway, Anthropic passthrough a FinOps
+│       └── identity-scout.md   # Podagent na identitu agentů, policy a regulaci
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
-├── tools/                     # Smoke testy proti MCP serverům
+├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1)
 ├── docs/                      # Architektura a postupy
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```
