@@ -47,7 +47,17 @@ flowchart LR
 
 ## Standardy a co z nich plyne
 
-*(doplní se z rešerše 2026-10-22)*
+Detail v [standardy.md](standardy.md). Jedna věta: **standardizovaný je jen hop uživatel → agent → MCP server**
+(OAuth 2.1, RFC 9728, RFC 8707 – vše MUST). Delegace mezi agenty (A2A), token k downstream API a identita
+k modelu jsou platformní konvence. Z toho plyne:
+
+- Identita uživatele = OAuth token z IdP zákazníka (Entra / Keycloak); identita agenta = SPIFFE SVID
+  (Dapr sentry intra, SPIRE JWT-SVID extra); **spojení obou se dělá token exchange v agentgateway**
+  (`oauthTokenExchange` s `actorToken`, RFC 8693), ne v agentním kódu.
+- Claude Agent SDK je jen lokální PEP (`PreToolUse` hook), nosičem identity není.
+- Per-tool autorizaci umí agentgateway (`mcp.tool.name`, ne argumenty); per-argument až AuthZEN COAZ-MCP (Draft 1).
+- Entra Agent ID je GA a funguje i pro workloady mimo Azure (sidecar nebo WIF přes SPIFFE) – jako **integrace**
+  s IdP zákazníka, ne jádro platformy.
 
 ## Regulace a governance
 
@@ -64,9 +74,10 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
 ## Co ověřit dál
 
 - [ ] Síto kolo 1 – OSS kandidáti pro I1–I4 a N4.
-- [ ] Stav MCP authorization, A2A auth, IETF drafty, Entra Agent ID.
+- [x] ~~Stav MCP authorization, A2A auth, IETF drafty, Entra Agent ID~~ → [standardy.md](standardy.md), 2026-10-22.
 - [x] ~~Aktuální harmonogram EU AI Act a technické požadavky na audit a lidský dohled~~ → [regulace.md](regulace.md), 2026-10-22; text OJ zbývá ověřit.
 
 ## Changelog
+- 2026-10-22: standardy – MCP auth, A2A, ID-JAG, Entra Agent ID, co řeší Dapr/agentgateway/Agent SDK (standardy.md).
 - 2026-10-22: regulace – harmonogram po Omnibusu, požadavky T1–T15 (regulace.md).
 - 2026-10-22: první verze – kostra, diagram toku identity, otevřeno síto.
