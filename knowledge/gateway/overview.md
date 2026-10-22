@@ -170,7 +170,7 @@ Co z toho plyne:
 - `litellm[proxy]` **skutečně instaluje `litellm-enterprise` (`LicenseRef-Proprietary`)** jako
   závislost – potvrzeno `importlib.metadata` v harnessu (0.1.76.post1 vedle 1.106.2).
 
-**Pozn. Adam – doporučení k rozhodnutí:** agentgateway jako model gateway platformy. Přijatá rizika:
+**Rozhodnutí (Adam, 2026-10-22): agentgateway jako model gateway platformy.** Přijatá rizika:
 bus factor (jeden člověk 51 % commitů), bez CLA/DCO, FinOps bez ledgeru per tým (rozpočty jen per
 API klíč → klíč per agent/tým jako pracovní model), persistence rozpočtů mezi replikami neověřena.
 LiteLLM zůstává záloha pro případ, že FinOps bez ledgeru nebude stačit – pak s vědomým
@@ -197,6 +197,7 @@ porušením kontraktu (passthrough režim) a výhradou k A1.
 - [x] ~~Změřit režii gateway P50/P95 vs. přímé volání~~ – mock, non-stream, n=20: agentgateway +0,7 ms, LiteLLM +13 ms p50.
 
 ## Changelog
+- 2026-10-22: rozhodnuto (Adam) – agentgateway, LiteLLM záloha.
 - 2026-10-22: harness G1 live na Adamově stroji – agentgateway 2/2 (cache, Agent SDK s nástrojem); G1 uzavřeno.
 - 2026-10-22: kolo 3 – harness G1 změřen (mock): agentgateway splňuje kontrakt beze zbytku, LiteLLM porušuje
   na čtyřech místech (atribuční hlavičky, obalená chybová těla, 529→500, ping); doporučení agentgateway.

@@ -21,7 +21,7 @@ Detail a zdroje jsou vždy ve složce dané vrstvy, tady je jen výsledek.
 | Agent ↔ uživatel | **AG-UI** (vlastní frontend) + **A2UI** jako payload; MCP Apps jen uvnitř cizího hostitele | 2026-09-23 | AG-UI 1.0 čerstvé, ekosystém v migraci; A2UI bez v1.0 rendererů | [`../protocols/overview.md`](../protocols/overview.md) |
 | Agentní smyčka | **Claude Agent SDK** | 2026-10-21 | `claude-agent-sdk` pinnutý na 0.2.x v Dapr Agents | [`../frameworks/overview.md`](../frameworks/overview.md) |
 | Orchestrace a durable execution | **Dapr Agents** (`ClaudeAgentExecutor` + `DaprSessionStore`) nad Dapr Workflows | 2026-10-21 | Bus factor 1, žádná support policy, A2A/AG-UI nepodporuje – nutný vlastní A2A server; obnovení během nástroje at-least-once → idempotency key | [`../frameworks/dapr-agents.md`](../frameworks/dapr-agents.md) |
-| Model gateway a FinOps | **agentgateway** (LF, Apache-2.0, nativní `/v1/messages`, USD rozpočty v OSS) – navrženo k rozhodnutí po harnessu G1 (mock 21/21, live 2/2), LiteLLM záloha | 2026-10-22 (návrh, čeká na Adamovo potvrzení) | bus factor 1 (51 % commitů), bez CLA/DCO, rozpočty jen per API klíč (klíč per agent/tým), persistence rozpočtů mezi replikami neověřena | [`../gateway/overview.md`](../gateway/overview.md) |
+| Model gateway a FinOps | **agentgateway** (LF, Apache-2.0, nativní `/v1/messages`, USD rozpočty v OSS); LiteLLM záloha | **2026-10-22 (rozhodnuto, Adam)** – po harnessu G1: mock 21/21, live 2/2 | bus factor 1 (51 % commitů), bez CLA/DCO, rozpočty jen per API klíč (klíč per agent/tým jako pracovní model), persistence rozpočtů mezi replikami neověřena | [`../gateway/overview.md`](../gateway/overview.md) |
 | Identita, autorizace, governance | – | – | – | – |
 | Observabilita a evaluace | – | – | – | – |
 | Paměť a znalosti | – | – | – | – |
@@ -56,6 +56,6 @@ Z hypotézy plynou tři požadavky, které se zatím opakují napříč vrstvami
    a řídí se oprávněním, ne instancí agenta.
 
 ## Changelog
-- 2026-10-22: gateway – harness G1 změřen, agentgateway navržen k rozhodnutí, LiteLLM záloha.
+- 2026-10-22: gateway – **rozhodnuto (Adam): agentgateway**, LiteLLM záloha; po harnessu G1 mock 21/21 a live 2/2.
 - 2026-10-22: první verze – přeneseno pět rozhodnutí z `protocols/` a `frameworks/`, prázdné řádky
   pro zbylé vrstvy, pracovní hypotéza organizační vrstvy.
