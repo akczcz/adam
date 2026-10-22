@@ -55,7 +55,9 @@ Detail v `results/*.json`. Live režim (L1) v tomto běhu **neproveden** – pro
 - Python 3.11–3.13, `uv`
 - binárka `agentgateway` (GitHub releases, `agentgateway-linux-amd64` / `-darwin-arm64`) – cesta v `AGENTGATEWAY_BIN`
 - volné porty 9777 (mock), 4100 (agentgateway), 4200 (LiteLLM), 19001–19002 (agentgateway readiness/stats)
-- live: `ANTHROPIC_API_KEY`
+- live: `ANTHROPIC_API_KEY` – workspace klíč (`sk-ant-api03-…`). Uživatelský klíč (`sk-ant-usr-…`) API
+  odmítne s „not scoped to a workspace“; pak navíc `ANTHROPIC_WORKSPACE_ID=wrkspc_…` (harness přidá
+  hlavičku `anthropic-workspace-id` klientovi i Agent SDK přes `ANTHROPIC_CUSTOM_HEADERS`).
 
 ```bash
 cd tools/harness_gateway_g1

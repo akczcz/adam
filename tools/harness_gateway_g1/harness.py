@@ -312,6 +312,9 @@ async def check_agent_sdk(base: str, api_key: str, model: str, rep: Report, live
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "DISABLE_TELEMETRY": "1",
     }
+    if os.environ.get("ANTHROPIC_WORKSPACE_ID"):
+        # Uživatelský klíč (sk-ant-usr-…) bez vazby na workspace: API vyžaduje anthropic-workspace-id.
+        env["ANTHROPIC_CUSTOM_HEADERS"] = f"anthropic-workspace-id: {os.environ['ANTHROPIC_WORKSPACE_ID']}"
     if os.environ.get("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"):
         # Claude Code v hostovaném prostředí (claude.ai cloud) ignoruje ANTHROPIC_API_KEY a posílá
         # OAuth token relace jako Bearer. CLAUDE_CODE_OAUTH_TOKEN ho přebije – ověřeno 2026-10-22.
@@ -361,7 +364,10 @@ def check_live(base: str, api_key: str, model: str, rep: Report, direct_base: st
 
     big = ("Interní směrnice č. 42 o zpracování ticketů. " * 400)  # ~4–5k tokenů, nad minimem pro cache
     def run(b):
-        c = Anthropic(base_url=b, api_key=api_key, default_headers=ATTRIB)
+        hdrs = dict(ATTRIB)
+        if os.environ.get("ANTHROPIC_WORKSPACE_ID"):
+            hdrs["anthropic-workspace-id"] = os.environ["ANTHROPIC_WORKSPACE_ID"]
+        c = Anthropic(base_url=b, api_key=api_key, default_headers=hdrs)
         out = []
         for _ in range(2):
             m = c.messages.create(model=model, max_tokens=16, system=[{"type": "text", "text": big, "cache_control": {"type": "ephemeral"}}], messages=[{"role": "user", "content": "Odpověz jedním slovem: OK"}])
