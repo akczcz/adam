@@ -1,6 +1,6 @@
 ---
 tema: Licenční vzorce a pasti v open-source AI frameworcích
-naposledy_overeno: 2026-10-22
+naposledy_overeno: 2026-10-23
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -219,6 +219,10 @@ patří jako riziko, ne jako předpoklad.
 | **Jedenáctý: funkce odemykané server-side flagy s online validací klíče** | Infisical: `getDefaultOnPremFeatures()` – SSO, RBAC, audit log `false` bez klíče; licence validována proti license serveru (IP allowlist) | Hledat v kódu výčet feature flagů per licence; v docs „allow outbound connections to…“ |
 | **Dvanáctý: inbound Apache bez CLA = CLA jinými slovy** | Zitadel: AGPL-3.0 runtime, příspěvky **povinně Apache-2.0** – vendor drží právo relicencovat celek | `LICENSING.md` / CONTRIBUTING: licence příspěvků ≠ licence projektu |
 | **Třináctý: telemetrie opt-out u policy/authz komponenty** | SpiceDB: hodinový remote write na `telemetry.authzed.com`; Ory: Segment `sqa`; OPA: version check na api.github.com | Hledat `telemetry`, `sqa`, `version check` v konfiguraci; v air-gapu musí být vypnutelné **bez** změny kódu |
+| **Čtrnáctý: telemetrie, kterou EE licence zakazuje vypnout** | Langfuse: OSS `TELEMETRY_ENABLED=false`, s EE klíčem „cannot be disabled“; SigNoz statsreporter sbírá e-maily; ClickHouse `send_crash_reports` v dodávaném configu | Číst stránku telemetry **pro EE režim**, ne jen pro OSS; kontrolovat dodávaný default config |
+| **Patnáctý: AI bot nebo jeden člověk jako hlavní committer** | Jaeger: 137/300 commitů bot jednoho maintainera; MLflow: Copilot 96/300; Phoenix a OpenInference: jeden autor ~45 % | Podíl commitů podle autora za 300 commitů vč. botů – bot jako top autor znamená, že lidská kapacita je jeden člověk |
+| **Šestnáctý: vertikální vlastnictví úložiště i platformy** | ClickHouse Inc. vlastní ClickHouse (CLA) i Langfuse (CLA, od 2026-01-16) | Když jeden vendor s CLA drží dvě vrstvy stacku, relicence jedné zasáhne obě – držet data v otevřeném schématu (OTLP), ne ve formátu platformy |
+| **Sedmnáctý: „self-hosted“ = enterprise smlouva** | Logfire, LangSmith, Traceloop: SDK MIT/Apache, backend jen privátní image za smlouvou | Hledat Helm chart: `pullSecret`, „contact sales“, `LICENSE_KEY` v values |
 
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
@@ -295,6 +299,7 @@ a licenční past přestává být existenční.
 Totéž platí pro přístup k modelům – viz model gateway v [overview.md](overview.md).
 
 ## Changelog
+- 2026-10-23: čtrnáctý až sedmnáctý vzorec z vrstvy observability (Langfuse EE telemetrie, AI bot committer, ClickHouse+Langfuse, self-hosted = smlouva).
 - 2026-10-22: osmý až třináctý vzorec z vrstev gateway a identity (LiteLLM, Helicone, Kong, Infisical, Zitadel, SpiceDB).
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
 - 2026-10-20: re-verifikace všech doložených případů (verze a metadata k 2026-10-20); Mastra a

@@ -48,6 +48,15 @@ Postup `framework-research` sekce 2, vzorce v `knowledge/frameworks/licencni-vzo
 - Návrh úprav `knowledge/observability/` jako diff; rozhodnutí do `knowledge/platforma/cilova-architektura.md`.
 - Soubory měň až po Adamově souhlasu.
 
+## 7b. Pasti z kola 1 (2026-10-23)
+- GenAI semconv jsou v repu `semantic-conventions-genai`, vše Development, bez release – verze cituj commitem.
+- `genainormalizerprocessor` v Collector contrib převádí OpenInference/OpenLLMetry → GenAI; vendor backend kvůli konvenci není potřeba.
+- Claude Code přes vlastní `ANTHROPIC_BASE_URL` neposílá `traceparent` bez `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1`;
+  traces CLI jsou beta za `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`. Dapr `samplingRate` default 0.0001.
+- U LLM platforem čti stránku telemetry pro **EE režim** (Langfuse EE nelze vypnout) a hledej „authentication available on Enterprise“ (Opik).
+- Judge, který vidí jen jednu observaci (Langfuse), trajektorii nehodnotí; red-team pluginy `REMOTE_ONLY` (promptfoo) v air-gapu nejsou.
+- Měř harnessem: G1 `HARNESS_TRACE=1` ověřil propagaci CLI → gateway; O1 end-to-end a O2 zbývají.
+
 ## 8. Čemu se vyhni
 - Nehodnoť podle dashboardu hostované verze ani podle počtu integrací.
 - Neber veřejné benchmarky jako evaluaci platformy.

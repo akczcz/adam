@@ -35,7 +35,43 @@ flowchart LR
 
 ## Široké síto – kolo 1
 
-*(doplní se z rešerše 2026-10-23)*
+Ověřeno 2026-10-23 z blob-less klonů (commit v souborech), PyPI/npm JSON API, Docker Hub OCI labelů; weby docs,
+cncf.io, artifacthub a GHCR labely nedostupné (nadační stupně neověřeny). Sloupec „Řeší“: O1 tracing · O2 evaluace · O3 metriky/alerty.
+
+**Dva průřezové nálezy:** OTEL GenAI semconv se přestěhovaly do `semantic-conventions-genai` (vše Development, bez tagu);
+**Collector contrib má `genainormalizerprocessor`** (alpha) – přepisuje OpenInference/OpenLLMetry atributy na GenAI semconv.
+Tím padá argument „vendor backend je nutný kvůli konvenci“: převod patří do Collectoru.
+
+| Kandidát | Řeší | Licence backendu | Enterprise hranice | Governance / telemetrie nástroje | OTLP / semconv | Úložiště | Release | Výsledek |
+|---|---|---|---|---|---|---|---|---|
+| **OTEL Collector + contrib** | O1 transport, O3 (spanmetrics) | Apache-2.0 (OCI label Apache-2.0) | žádná | CNCF, EasyCLA; široká základna; bez phone-home | OTLP; `genainormalizer`, `redaction` (traces beta), `transform`, `routingconnector` per tenant, `clickhouseexporter`, `azuremonitorexporter` | bezstavový | 0.163.2 (2026-10-21) | **postupuje – povinná vrstva** |
+| Jaeger v2 | O1 | Apache-2.0 | žádná | CNCF, DCO; **137/300 commitů jeden maintainer (AI bot)**; ClickHouse storage **experimental** (feature gate) | OTLP (je Collector distribuce); bez GenAI UI | Cassandra/ES/Badger/ClickHouse exp.; multi-tenancy `x-tenant` | 2.22.0 (2026-10-06) | s výhradou |
+| Grafana Tempo + Loki + Mimir (+ Grafana) | O1 + O3 + logy | **AGPL-3.0** všechny čtyři | Grafana Enterprise: RBAC, SAML, reporting, caching, usage insights | Tempo DCO, **Grafana CLA** (precedens relicence 2021); Loki/Mimir CLA neověřeno; **4× telemetrie default on** | Tempo OTLP; Loki/Mimir neověřeno | objektové úložiště; **multi-tenancy a retence per tenant nativně** | Tempo 3.1.1, Loki 3.7.9, Mimir 3.2.3, Grafana 13.2.4 (10/2026) | s výhradou – AGPL → právník |
+| **Prometheus** | O3 | Apache-2.0 (OCI label) | žádná | CNCF, DCO; široká základna | OTLP ingest neověřen | TSDB single-tenant | 3.15.1 (2026-10-21) | **postupuje** (jen metriky) |
+| SigNoz | O1 + O3 | MIT + **`ee/`, `cmd/enterprise/`** (SigNoz Enterprise license) | v `ee/`: SAML/OIDC SSO, **authz OpenFGA, auditor, anomaly, licensing, metering**; IAM role za licencí | SigNoz Inc.; bez CLA/DCO; **statsreporter default on, sbírá i e-maily**; licence online | OTLP; AI dashboard čte GenAI vč. cache tokenů | ClickHouse; multi-tenancy OSS neověřena | v0.147.0 (2026-10-22) | s výhradou |
+| **ClickHouse** | úložiště | Apache-2.0 | žádná v OSS | ClickHouse Inc., **CLA**; **`send_crash_reports.enabled=true` v dodávaném configu** | n/a (`clickhouseexporter`) | sloupcové, RBAC, kvóty | 26.9; LTS 26.3/26.8 | **postupuje** (crash reports vypnout) |
+| **Langfuse** | O1 + O2 + O3 | MIT + `ee/` (copyright **ClickHouse, Inc.** – akvizice 2026-01-16) | za klíčem doslovně: „Project-level RBAC Roles, Protected Prompt Labels, **Data Retention Policies, Audit Logs, Server-Side Data Masking**, UI Customization, Organization Creators, Org Management API and SCIM, Instance Management API“ | CLA; PostHog default on, OSS vypne `TELEMETRY_ENABLED=false`, **EE nelze vypnout**; update check nekonfigurovatelný; air-gap doložen | OTLP **jen HTTP** (`/api/public/otel`); mapuje `gen_ai.*`, OpenInference, MLflow | Postgres + ClickHouse + Redis + S3; org/projekty v OSS; retence bez EE neomezená | v4.68.0 (2026-10-22); Helm zaostává (4.63) | **postupuje s výhradou** |
+| Arize Phoenix | O1 + O2 | **Elastic-2.0** + `IP_NOTICE` (patenty) | žádné gates; SAML, multi-tenancy jen Arize AX | CLA; 1 autor 136/305; telemetrie default on (`PHOENIX_TELEMETRY_ENABLED`), air-gap dokumentován | OTLP gRPC+HTTP; OpenInference nativně, gen_ai → OI auto; **cache tokeny Anthropic nemapuje** | SQLite/Postgres; single-tenant per instance | 20.25.0 (2026-10-23) | **vyřazen A1** |
+| OpenLLMetry / Traceloop | O1 (SDK) | SDK Apache-2.0; **backend není OSS** (privátní image) | celý backend | 2 maintaineři; SDK default endpoint api.traceloop.com, `telemetry_enabled=True` | emituje `gen_ai.*` + `llm.*`/`traceloop.*` | n/a | SDK 0.62.4 | **vyřazen A2 jako backend**; instrumentace přes Collector |
+| Opik | O1 + O2 + O3 | Apache-2.0 celá platforma | **žádná autentizace v OSS** („Authentication features are available on Enterprise plans“) | Comet, CLA; usage report default on | OTLP HTTP; semconv neověřeno | ClickHouse (Altinity operator) + MySQL + Redis + MinIO | 2.2.117 (2026-10-22) | s výhradou – auth jen přes proxy |
+| MLflow | O1 + O2 | Apache-2.0 | žádná | LF (stupeň neověřen), DCO; **Copilot 96/300 commitů**; telemetrie default on (`MLFLOW_DISABLE_TELEMETRY`), auto off v CI | OTLP ingest `/v1/traces`; export GenAI semconv vč. cache tokenů | **SQL store pro spany** (Postgres); workspaces | 3.17.2 (2026-10-21) | s výhradou (telemetrie, SQL pro spany) |
+| Pydantic Logfire | – | SDK MIT; **backend enterprise, smlouva** | celý backend | – | SDK OTLP kamkoliv | n/a | SDK 5.2.0 | **vyřazen A2** |
+| LangSmith | – | SDK MIT; **self-hosted = Enterprise add-on**, licenční klíč | celý backend | `beacon.langchain.com` usage | OTLP | ClickHouse + Postgres | 0.17.52 | **vyřazen A1/A2** |
+| Laminar | O1 + O2 + O3 | Apache-2.0 | za klíčem: Signals, alerty e-mail/Slack | CLA; 2 zakladatelé ≈ 900/2086; PostHog default off | OTLP gRPC+HTTP; konvence OpenLLMetry | Postgres + ClickHouse + Quickwit (+RabbitMQ, Valkey); Helm `appVersion: latest` | 0.8.0 (2026-10-16) | s výhradou (tým, chart) |
+| OpenInference | vrstva O1 | Apache-2.0 | žádná | Arize, CLA; stejný autor jako Phoenix | vlastní konvence; `annotations` ↔ `gen_ai.evaluation.result` | n/a | 0.1.41 (2026-10-01) | jen jako vstup do `genainormalizer` |
+
+### Co ze síta plyne (Pozn. Adam – návrh k rozhodnutí)
+
+| Otázka | Komponenta | Proč | Riziko / co zbývá |
+|---|---|---|---|
+| O1 + O3 transport | **OTEL Collector contrib** s `genainormalizer` (jedna konvence na drátě), `redaction` před exportem, `routingconnector` per tenant, `spanmetrics` | Apache-2.0, CNCF, bez phone-home; jediný bod, kde se dá maskovat a normalizovat | `genainormalizer` alpha |
+| O1 úložiště traces + logů | **ClickHouse** přes `clickhouseexporter`; retence = ClickHouse TTL per tenant | Apache-2.0, LTS; stejné úložiště, jaké používá každá LLM platforma v sítu | CLA; crash reports vypnout; **ClickHouse Inc. vlastní i Langfuse** (jeden vendor + CLA = vzorec vysokého rizika) |
+| O3 metriky | **Prometheus** (Mimir jen po právním posudku AGPL) | Apache-2.0, CNCF | single-tenant; agentgateway a Dapr už exportují |
+| UI | Grafana jen jako **vyměnitelné UI** nad ClickHouse/Prometheus (AGPL – data nikdy v jejím formátu) | – | AGPL + Grafana CLA → právník |
+| O2 + agentní pohled | **Langfuse jako druhý konzument téhož OTLP streamu** z Collectoru (ne primární backend) | MIT jádro, OTLP, ClickHouse, air-gap doložen; datasety z trace, anotace, judge přes `base_url`, agent graphs | retence, audit log, masking a project RBAC za EE klíčem → řešit v Collectoru, ClickHouse TTL, gateway/OPA; EE telemetrie nelze vypnout; OTLP jen HTTP; judge nevidí trajektorii ([evaluace.md](evaluace.md)) |
+| O2 evaluace rolí | **Inspect AI** + **promptfoo** (CI gate), **MLflow** pro L4/L5 | viz [evaluace.md](evaluace.md) | – |
+
+Cena odchodu: data jsou OTLP v ClickHouse a JSONL datasety; Langfuse i Grafana jsou vyměnitelné UI.
 
 ## Standard na drátě a co emitují komponenty
 
@@ -63,11 +99,17 @@ Nikdo nedodává konvertor trace → eval případ ani role-specifické gradery 
 
 ## Co ověřit dál
 
-- [ ] Síto kolo 1 – backendy a LLM observability platformy.
+- [x] ~~Síto kolo 1 – backendy a LLM observability platformy~~ – 2026-10-23, 15 kandidátů.
+- [ ] **Kolo 2:** Collector + ClickHouse – schéma `clickhouseexporter`, TTL per tenant, `genainormalizer` nad spany z agentgateway a Claude Code; Langfuse – co z O3 (alerty) je v OSS, OTLP HTTP z Collectoru.
+- [ ] Nadační stupně (OTEL, Jaeger, Prometheus CNCF; MLflow LF AI) – weby nedostupné.
+- [ ] Právní posudek AGPL (Tempo/Loki/Mimir/Grafana) a Grafana CLA.
+- [ ] **Harness O1 end-to-end:** Agent SDK (OTLP) → agentgateway (tracing) → Collector (genainormalizer, redaction) → ClickHouse; jeden `trace_id` od `invoke_agent` po `execute_tool`; Dapr Agents executor v řetězu.
+- [ ] **Harness O2:** Inspect AI + Claude Agent SDK přes agentgateway, scorer nad trajektorií, approval policy; promptfoo `trajectory:*` nad spany z Collectoru.
 - [x] ~~Stav OTEL GenAI semconv, co emitují komponenty, kde se trace přeruší~~ → [standardy.md](standardy.md), 2026-10-23.
 - [x] ~~Evaluační frameworky pro trajektorie agentů, metodika~~ → [evaluace.md](evaluace.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-23: síto kolo 1 – 15 backendů; návrh Collector + ClickHouse + Prometheus, Langfuse jako druhý konzument, Grafana jen UI.
 - 2026-10-23: evaluace – síto 15 kandidátů, vrstvy L0–L5, metriky čl. 15 (evaluace.md).
 - 2026-10-23: standardy – semconv Development, přerušení trace CLI → gateway, Dapr aktivity, Foundry bez spanů.
 - 2026-10-23: první verze – kostra, tok dat, otevřeno síto.
