@@ -62,7 +62,7 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 5 | Observabilita a evaluace | `observability/` | `observability-research` / `observability-scout` | ✅ rozhodnuto 2026-10-23 (Collector + ClickHouse + Prometheus, Langfuse, Inspect AI + promptfoo + MLflow) po sítu a harnessech O1/O2 |
 | 6 | Paměť a znalosti | `memory/` | `memory-research` / `memory-scout` | ✅ rozhodnuto 2026-10-23 (vlastní tenký MCP server s PEP nad Postgres + pgvector, fakt s původem, žádný framework) po sítu, modelu paměti a harnessu M1 |
 | 7 | **Sandboxy a pracovní prostředí** | `sandbox/` | `sandbox-research` / `sandbox-scout` | ✅ rozhodnuto 2026-10-23 (Kata na AKS Pod Sandboxing / gVisor + sandbox-runtime + agentgateway egress + devcontainer + Playwright MCP + wasmtime; evaly inspect_k8s_sandbox) po sítu, kole 2 a harnessu S1; microVM měření na AKS otevřené |
-| 8 | **Organizační vrstva** | `organization/` | `organization-design` / `organization-designer` | 🟡 otevřeno 2026-10-23 – **návrhová**: kritéria O1–O4, skill (metoda), agent, kostra návrhu v1 |
+| 8 | **Organizační vrstva** | `organization/` | `organization-design` / `organization-designer` | 🟡 kolo 1 návrhu hotové 2026-10-23 (procesy P1–P5/X1–X2, nevratné akce N1–N10, role YAML, metriky, registr agentů); čeká na harness O-1 a rozhodnutí |
 
 ## Pořadí a proč
 
@@ -108,6 +108,7 @@ metoda (jak role odvodit z procesů, jak nastavit hranice autonomie), ne licenč
   bude za dva měsíce k přeověření.
 
 ## Changelog
+- 2026-10-23: organization – kolo 1 návrhu hotové; čeká na harness O-1.
 - 2026-10-23: sandbox rozhodnuto; otevřena organizační vrstva (poslední).
 - 2026-10-23: sandbox – kolo 2 a harness S1 hotové; vrstva čeká na rozhodnutí.
 - 2026-10-23: sandbox – síto kolo 1 hotové, návrh zapsán.

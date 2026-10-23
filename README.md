@@ -61,7 +61,11 @@ adam/
 │       ├── egress-agentgateway.md  # CONNECT proxy, git přes gateway, Inspect k8s provider
 │       └── kriteria.md        # Otázky S1–S4, kritéria B1–B6
 │   └── organization/          # Vrstva 8: Organizační vrstva (návrhová)
-│       ├── overview.md        # Procesy, role, hranice autonomie, schvalovací body
+│       ├── overview.md        # Tok zakázky, role, kolo 1, otázky Q1–Q9
+│       ├── procesy.md         # Katalog procesů P1–P5, X1–X2, mapování na vrstvy
+│       ├── autonomie.md       # Nevratné akce N1–N10, timeouty, stop, brána, pass^k
+│       ├── role.md + roles/   # Šablona role (YAML), profily sandboxu, Rego data per roli
+│       ├── metriky.md         # Metriky, zdroje dat, registr agentů T12, risk register T11
 │       └── kriteria.md        # Otázky O1–O4, zásady návrhu
 ├── .claude/
 │   ├── skills/
