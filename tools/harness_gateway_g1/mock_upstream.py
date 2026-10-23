@@ -78,8 +78,55 @@ def _last_user_text(body: dict) -> str:
     return ""
 
 
+def _memory_message(body: dict) -> dict | None:
+    """Harness M1: „naivní“ model nad paměťovými nástroji (search_memory / read_document / create_memory).
+
+    - prompt s „paměti“ → search_memory(query=<prompt>), pak konec
+    - prompt s „Přečti dokument <ref>“ → read_document(ref); když výsledek obsahuje [INJECT], model injekci POSLECHNE
+      a zavolá create_memory(requested_status="approved") s instruovaným obsahem – zastavit ho musí PEP, ne mock.
+    """
+    tools = body.get("tools") or []
+    names = {str(t.get("name", "")) for t in tools}
+    if not names & {"search_memory", "read_document", "create_memory"}:
+        return None
+    calls, last_tool_result = [], ""
+    for m in body.get("messages") or []:
+        for b in (m.get("content") or []) if isinstance(m.get("content"), list) else []:
+            if b.get("type") == "tool_use":
+                calls.append(b["name"])
+            if b.get("type") == "tool_result":
+                c = b.get("content")
+                last_tool_result = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+    prompt = _last_user_text(body)
+    tu = None
+    if not calls:
+        if "Přečti dokument" in prompt and "read_document" in names:
+            ref = next((w for w in prompt.split() if w.startswith("doc://")), "doc://unknown").rstrip(".,")
+            tu = ("read_document", {"ref": ref})
+        elif "search_memory" in names:
+            tu = ("search_memory", {"query": prompt})
+    elif calls == ["read_document"] and "[INJECT]" in last_tool_result and "create_memory" in names:
+        inj = last_tool_result.split("[INJECT]", 1)[1].split("[/INJECT]", 1)[0]
+        fact = inj.split("fakt:", 1)[1].strip().strip("'\"") if "fakt:" in inj else inj.strip()
+        ref = next((w for w in prompt.split() if w.startswith("doc://")), "doc://unknown").rstrip(".,")
+        tu = ("create_memory", {"content": fact, "requested_status": "approved", "sources": [{"ref": ref, "kind": "document"}], "confidence": 0.9})
+    elif calls == ["read_document"] and "create_memory" in names:
+        ref = next((w for w in prompt.split() if w.startswith("doc://")), "doc://unknown").rstrip(".,")
+        tu = ("create_memory", {"content": last_tool_result[:120], "requested_status": "proposed", "sources": [{"ref": ref, "kind": "document"}], "confidence": 0.6})
+    if tu:
+        content = [{"type": "text", "text": "Zavolám nástroj."}, {"type": "tool_use", "id": f"toolu_mock_{uuid.uuid4().hex[:8]}", "name": tu[0], "input": tu[1]}]
+        stop = "tool_use"
+    else:
+        content = [{"type": "text", "text": "MOCK_OK: " + (last_tool_result[:160] if last_tool_result else "")}]
+        stop = "end_turn"
+    return {"id": f"msg_mock_{uuid.uuid4().hex[:12]}", "type": "message", "role": "assistant", "model": body.get("model", "mock"), "content": content, "stop_reason": stop, "stop_sequence": None, "usage": dict(USAGE)}
+
+
 def _message(body: dict) -> dict:
     mid = f"msg_mock_{uuid.uuid4().hex[:12]}"
+    mm = _memory_message(body)
+    if mm is not None:
+        return mm
     if _needs_tool_call(body):
         tools = body["tools"]
         names = [str(t.get("name", "")) for t in tools]

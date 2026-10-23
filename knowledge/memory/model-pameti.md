@@ -164,7 +164,8 @@ Benchmarky LongMemEval (kategorie `knowledge-update`, `temporal-reasoning`, abst
 | **M-E5** cena tokenů paměti per úkol | tytéž úkoly s/bez paměti | `gen_ai.usage.input_tokens` spanů `search_memory` + delta ceny přes gateway | governance |
 | **M-E6** destilace je správná | trace → navržené fakty | judge + lidský label (Langfuse datasety); precision, podíl odmítnutých HITL | governance |
 
-Všechny evaly přes agentgateway a MCP server paměti, aby se měřil PEP, ne model.
+Všechny evaly přes agentgateway a MCP server paměti, aby se měřil PEP, ne model. **M-E3 a M-E4 změřeny harnessem M1**
+(2026-10-23, 3 epochy, oba gate 100 %); M-E4 ukázal, že naivní model injekci poslechne a zastaví ho až PEP.
 
 ## F. Co role potřebují z paměti
 
@@ -192,7 +193,8 @@ schvalování dávkově.
 ## Co ověřit dál
 - [ ] MINJA, Prompt Infection, AgentPoison, Zep paper, PROV-DM, OWASP ASI06 z primárních zdrojů.
 - [ ] Letta memory blocks (core vs. archival) z docs; mem0 paper 2025 vs. README 4/2026.
-- [ ] **Harness M1:** MCP server paměti (Postgres + pgvector) s PEP: tenant filter z tokenu, `proposed`/`approved`, původ povinný, OPA, spany `search_memory`; evaly M-E3 a M-E4 v Inspect.
+- [x] ~~Harness M1~~ – 2026-10-23, 11/11 PASS ([overview.md](overview.md#harness-m1--pep-a-datový-model-2026-10-23)). Poučení: `as_of` dotaz musí zahrnout `superseded` záznamy (platnost drží `valid_from/to`, ne `status`); `CHECK` na `sources[]` musí povolit `tombstoned` řádky; RLS bez `WHERE tenant_id` v aplikaci je ověřitelná druhá obrana.
 
 ## Changelog
+- 2026-10-23: harness M1 potvrdil schéma (B), obrany (C: tenant filter, karanténa, původ), životní cyklus (D: supersede, tombstone) a evaly M-E3/M-E4 (E).
 - 2026-10-23: první verze z rešerše.

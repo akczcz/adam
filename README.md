@@ -50,7 +50,9 @@ adam/
 │       ├── standardy.md       # GenAI semconv, co emitují komponenty, kde se trace přeruší
 │       └── evaluace.md        # Síto eval frameworků, vrstvy L0–L5, metriky čl. 15
 │   └── memory/                # Vrstva 6: Paměť a znalosti
-│       ├── overview.md        # Čtyři druhy paměti, síto, model původu
+│       ├── overview.md        # Čtyři druhy paměti, síto, model původu, harness M1
+│       ├── nativni-schopnosti.md  # Co dává Claude, Dapr, MCP a OTEL
+│       ├── model-pameti.md    # Schéma záznamu s původem, poisoning, životní cyklus, evaly
 │       └── kriteria.md        # Otázky M1–M4, kritéria B1–B6
 ├── .claude/
 │   ├── skills/
@@ -68,7 +70,7 @@ adam/
 │       ├── observability-scout.md  # Podagent na OTEL, backendy a evaluaci
 │       └── memory-scout.md     # Podagent na memory frameworky, DB a původ faktů
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
-├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2)
+├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1)
 ├── docs/                      # Architektura a postupy
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```

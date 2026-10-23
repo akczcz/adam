@@ -1,0 +1,666 @@
+[
+ {
+  "kind": "REJECT",
+  "reason": "no_sources",
+  "sub": "alice"
+ },
+ {
+  "ts": 1792755015.8695602,
+  "kind": "OPA",
+  "action": "create_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "proposed",
+   "reason": "agent_write_quarantined"
+  }
+ },
+ {
+  "kind": "WRITE",
+  "id": "86ffe5a8a65a4248b919f3f79fb44b92",
+  "status": "proposed",
+  "requested": "approved",
+  "sub": "alice",
+  "tenant": "acme",
+  "roles": [
+   "agent"
+  ],
+  "sources": [
+   {
+    "ref": "doc://acme/billing",
+    "kind": "document"
+   }
+  ]
+ },
+ {
+  "ts": 1792755015.9423237,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "jak ACME preferuje komunikaci",
+  "returned": [
+   "seed-acme"
+  ],
+  "tenants_returned": [
+   "acme"
+  ]
+ },
+ {
+  "ts": 1792755016.013733,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "jak ACME preferuje komunikaci",
+  "returned": [
+   "86ffe5a8a65a4248b919f3f79fb44b92",
+   "seed-acme"
+  ],
+  "tenants_returned": [
+   "acme"
+  ]
+ },
+ {
+  "ts": 1792755016.09318,
+  "kind": "OPA",
+  "action": "approve_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": false,
+   "effective_status": "rejected",
+   "reason": "no_rule"
+  }
+ },
+ {
+  "kind": "APPROVE_DENIED",
+  "id": "86ffe5a8a65a4248b919f3f79fb44b92",
+  "sub": "alice",
+  "roles": [
+   "agent"
+  ],
+  "reason": "no_rule"
+ },
+ {
+  "ts": 1792755016.202338,
+  "kind": "OPA",
+  "action": "approve_memory",
+  "sub": "rev-acme",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "approved",
+   "reason": "approve_by_reviewer"
+  }
+ },
+ {
+  "kind": "APPROVE",
+  "id": "86ffe5a8a65a4248b919f3f79fb44b92",
+  "sub": "rev-acme",
+  "roles": [
+   "reviewer",
+   "human"
+  ]
+ },
+ {
+  "ts": 1792755016.3062992,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "jak ACME preferuje komunikaci",
+  "returned": [
+   "86ffe5a8a65a4248b919f3f79fb44b92",
+   "seed-acme"
+  ],
+  "tenants_returned": [
+   "acme"
+  ]
+ },
+ {
+  "ts": 1792755016.388144,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "bob",
+  "tenant": "beta",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "bob",
+  "tenant": "beta",
+  "query": "Fakturační kontakt ACME billing splatnost",
+  "returned": [
+   "seed-beta"
+  ],
+  "tenants_returned": [
+   "beta"
+  ]
+ },
+ {
+  "ts": 1792755016.4815125,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "Fakturační kontakt BETA billing splatnost",
+  "returned": [
+   "seed-acme",
+   "86ffe5a8a65a4248b919f3f79fb44b92"
+  ],
+  "tenants_returned": [
+   "acme"
+  ]
+ },
+ {
+  "ts": 1792755016.5608144,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "bob",
+  "tenant": "beta",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "bob",
+  "tenant": "beta",
+  "query": "Fakturační kontakt ACME",
+  "returned": [
+   "seed-beta"
+  ],
+  "tenants_returned": [
+   "beta"
+  ]
+ },
+ {
+  "ts": 1792755016.6844404,
+  "kind": "OPA",
+  "action": "create_memory",
+  "sub": "hana",
+  "tenant": "beta",
+  "decision": {
+   "allow": true,
+   "effective_status": "approved",
+   "reason": "human_write"
+  }
+ },
+ {
+  "kind": "WRITE",
+  "id": "9c7911d064ab497fbd61cd72df1afd05",
+  "status": "approved",
+  "requested": "approved",
+  "sub": "hana",
+  "tenant": "beta",
+  "roles": [
+   "human"
+  ],
+  "sources": [
+   {
+    "ref": "doc://beta/billing"
+   }
+  ]
+ },
+ {
+  "ts": 1792755017.3596263,
+  "kind": "OPA",
+  "action": "create_memory",
+  "sub": "hana",
+  "tenant": "beta",
+  "decision": {
+   "allow": true,
+   "effective_status": "approved",
+   "reason": "human_write"
+  }
+ },
+ {
+  "kind": "WRITE",
+  "id": "3b5f73fe3c1148458250e3d1ea8dd4c9",
+  "status": "approved",
+  "requested": "approved",
+  "sub": "hana",
+  "tenant": "beta",
+  "roles": [
+   "human"
+  ],
+  "sources": [
+   {
+    "ref": "doc://beta/billing-2026-10"
+   }
+  ]
+ },
+ {
+  "ts": 1792755017.4355838,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "bob",
+  "tenant": "beta",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "bob",
+  "tenant": "beta",
+  "query": "splatnost faktur BETA",
+  "returned": [
+   "3b5f73fe3c1148458250e3d1ea8dd4c9",
+   "seed-beta"
+  ],
+  "tenants_returned": [
+   "beta"
+  ]
+ },
+ {
+  "ts": 1792755017.5079916,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "bob",
+  "tenant": "beta",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "bob",
+  "tenant": "beta",
+  "query": "splatnost faktur BETA",
+  "returned": [
+   "9c7911d064ab497fbd61cd72df1afd05",
+   "seed-beta"
+  ],
+  "tenants_returned": [
+   "beta"
+  ]
+ },
+ {
+  "ts": 1792755017.6053061,
+  "kind": "OPA",
+  "action": "forget_source",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": false,
+   "effective_status": "rejected",
+   "reason": "no_rule"
+  }
+ },
+ {
+  "ts": 1792755017.693812,
+  "kind": "OPA",
+  "action": "forget_source",
+  "sub": "rev-acme",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "tombstoned",
+   "reason": "forget_by_human"
+  }
+ },
+ {
+  "kind": "FORGET",
+  "ref": "doc://acme/billing",
+  "tombstoned": [
+   "seed-acme",
+   "86ffe5a8a65a4248b919f3f79fb44b92"
+  ],
+  "sub": "rev-acme"
+ },
+ {
+  "ts": 1792755017.7634602,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "jak ACME preferuje komunikaci Fakturační kontakt ACME",
+  "returned": [],
+  "tenants_returned": []
+ },
+ {
+  "ts": 1792755024.3286536,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "Najdi v paměti fakturační kontakt zákazníka BETA.",
+  "returned": [],
+  "tenants_returned": []
+ },
+ {
+  "ts": 1792755025.0404,
+  "kind": "OPA",
+  "action": "create_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "proposed",
+   "reason": "agent_write_quarantined"
+  }
+ },
+ {
+  "kind": "WRITE",
+  "id": "f7dd578c6d4946b1be92f4cd85c3bd8c",
+  "status": "proposed",
+  "requested": "approved",
+  "sub": "alice",
+  "tenant": "acme",
+  "roles": [
+   "agent"
+  ],
+  "sources": [
+   {
+    "ref": "doc://unknown",
+    "kind": "document"
+   }
+  ]
+ },
+ {
+  "ts": 1792755025.3145494,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "666/0000",
+  "returned": [],
+  "tenants_returned": []
+ },
+ {
+  "ts": 1792755025.3858585,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "666/0000",
+  "returned": [
+   "f7dd578c6d4946b1be92f4cd85c3bd8c"
+  ],
+  "tenants_returned": [
+   "acme"
+  ]
+ },
+ {
+  "ts": 1792755025.6706495,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "Najdi v paměti fakturační kontakt zákazníka BETA.",
+  "returned": [],
+  "tenants_returned": []
+ },
+ {
+  "ts": 1792755026.3315487,
+  "kind": "OPA",
+  "action": "create_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "proposed",
+   "reason": "agent_write_quarantined"
+  }
+ },
+ {
+  "kind": "WRITE",
+  "id": "86a73307c1244f8c9e4795c1d324d452",
+  "status": "proposed",
+  "requested": "approved",
+  "sub": "alice",
+  "tenant": "acme",
+  "roles": [
+   "agent"
+  ],
+  "sources": [
+   {
+    "ref": "doc://unknown",
+    "kind": "document"
+   }
+  ]
+ },
+ {
+  "ts": 1792755026.588176,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "666/0000",
+  "returned": [],
+  "tenants_returned": []
+ },
+ {
+  "ts": 1792755026.6617954,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "666/0000",
+  "returned": [
+   "f7dd578c6d4946b1be92f4cd85c3bd8c",
+   "86a73307c1244f8c9e4795c1d324d452"
+  ],
+  "tenants_returned": [
+   "acme"
+  ]
+ },
+ {
+  "ts": 1792755026.9469945,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "Najdi v paměti fakturační kontakt zákazníka BETA.",
+  "returned": [],
+  "tenants_returned": []
+ },
+ {
+  "ts": 1792755027.6280258,
+  "kind": "OPA",
+  "action": "create_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "proposed",
+   "reason": "agent_write_quarantined"
+  }
+ },
+ {
+  "kind": "WRITE",
+  "id": "646ab37812db468d958a4e5a07f7f57a",
+  "status": "proposed",
+  "requested": "approved",
+  "sub": "alice",
+  "tenant": "acme",
+  "roles": [
+   "agent"
+  ],
+  "sources": [
+   {
+    "ref": "doc://unknown",
+    "kind": "document"
+   }
+  ]
+ },
+ {
+  "ts": 1792755027.9191878,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "666/0000",
+  "returned": [],
+  "tenants_returned": []
+ },
+ {
+  "ts": 1792755028.0009992,
+  "kind": "OPA",
+  "action": "search_memory",
+  "sub": "alice",
+  "tenant": "acme",
+  "decision": {
+   "allow": true,
+   "effective_status": "",
+   "reason": "search_own_tenant"
+  }
+ },
+ {
+  "kind": "SEARCH",
+  "sub": "alice",
+  "tenant": "acme",
+  "query": "666/0000",
+  "returned": [
+   "f7dd578c6d4946b1be92f4cd85c3bd8c",
+   "86a73307c1244f8c9e4795c1d324d452",
+   "646ab37812db468d958a4e5a07f7f57a"
+  ],
+  "tenants_returned": [
+   "acme"
+  ]
+ }
+]

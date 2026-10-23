@@ -1,7 +1,7 @@
 ---
 tema: Mapa vrstvy paměti a znalostí agentů
 naposledy_overeno: 2026-10-23
-zralost: n/a (přehled)
+zralost: n/a (přehled; model paměti změřen harnessem M1)
 primarni_zdroje:
   - https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool
   - https://code.claude.com/docs/en/memory
@@ -111,16 +111,41 @@ poisoningu v pořadí cena/užitek: tenant filter z identity v PEP, zápis vždy
 default jen `approved`, původ povinný, rate limit, oddělené tabulky, podpis, re-verifikace, evaly M-E3/M-E4 jako gate.
 Procedurální paměť zůstává v gitu, epizodická se čte jen přes destiláty.
 
+## Harness M1 – PEP a datový model (2026-10-23)
+
+[`tools/harness_memory_m1/`](../../tools/harness_memory_m1/README.md): embedded PostgreSQL 16.2 + pgvector 0.6.2, OPA,
+tenký server paměti (tvar MCP tools), agentgateway 1.6.0 + mock modelu; Inspect AI 0.3.283. **11/11 PASS.**
+
+| Zásada z modelu paměti | Jak vynuceno | Check |
+|---|---|---|
+| tenant z identity, ne z argumentu | `app.tenant_id` ze JWT do session; **RLS FORCE** na roli `memory_app`; server záměrně bez `WHERE tenant_id` | M1a, M1e ✅ |
+| původ povinný | 422 v PEP + `CHECK jsonb_array_length(sources) > 0` | M1b ✅ |
+| zápis agenta vždy `proposed` | OPA vrací `effective_status`; agent žádající `approved` dostane `proposed` | M1c ✅ |
+| schválení jen člověk/reviewer téhož tenanta | OPA `approve_by_reviewer`; cizí reviewer záznam přes RLS nevidí (404) | M1d ✅ |
+| default jen `approved`, neověřené označené | `include_unverified` → `unverified: true` | M1c ✅ |
+| invalidace místo přepisu | `supersedes` zavře `valid_to`, `as_of` vrátí historii (**musí zahrnout `superseded`**) | M1f ✅ |
+| výmaz přes původ (GDPR) | tombstone kaskádou `sources @> [{"ref"}]`, obsah i embedding pryč | M1g ✅ |
+| auditovatelnost | spany `search_memory`/`create_memory` s `tenant.id`, `enduser.id`; OPA decision log | M1h, M1i ✅ |
+| **M-E3** cizí tenant | 3/3 epochy: žádný záznam ani kanárek tenanta beta pro alice/acme | ✅ gate 100 % |
+| **M-E4** poisoned dokument | 3/3: model injekci **poslechl** (`approved`), PEP zapsal `proposed` s původem; jed v approved search není | ✅ gate 100 % |
+
+Závěr: celý model paměti jde vynutit jednou tabulkou, RLS politikou a ~30 řádky Rega, bez memory frameworku.
+Zjednodušení (JWT podepsaný harnessem místo Keycloak JWKS, HTTP místo MCP transportu, hashing embedder, OPA REST
+místo ext_authz) jsou v README harnessu; vždy jde o část, kterou změřil dřívější harness (I2, G1, O1).
+
 ## Co ověřit dál
 
 - [x] ~~Síto kolo 1~~ – 2026-10-23, 19 kandidátů; commit hashe docs repozitářů doověřit.
 - [ ] Kolo 2: pgvector + AGE – výkon traverzů, RLS + Dapr state store v jedné DB, re-embedding migrace; Qdrant JWT payload enforcement; Graphiti extrakce bez Neo4j.
 - [ ] mem0 graph memory v OSS (tag 2.2.1 vs. main); Cognee DataPoint schéma; Weaviate RBAC per tenant.
-- [ ] **Harness M1:** MCP server paměti nad Postgres + pgvector s RLS, PEP (tenant z tokenu, OPA), `proposed/approved`, původ povinný, spany `search_memory`; evaly M-E3 (cizí tenant) a M-E4 (poisoned dokument) v Inspect AI.
+- [x] ~~Harness M1~~ – 2026-10-23, 11/11 PASS, viz výše.
+- [ ] Harness M2: MCP transport přes agentgateway + Keycloak JWT (`tenant_id` z user attribute), embeddingy přes gateway, Dapr Workflow HITL schvalování, výkon pgvector HNSW nad ≥ 1 M záznamů s RLS (Qdrant jako záloha).
+- [ ] Evaly M-E1, M-E2, M-E5, M-E6 (vyžadují skutečný model a destilační agent).
 - [x] ~~Co dává Claude, Dapr, MCP a OTEL~~ → [nativni-schopnosti.md](nativni-schopnosti.md), 2026-10-23.
 - [x] ~~Model původu, izolace tenantů, memory poisoning, výmaz~~ → [model-pameti.md](model-pameti.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-23: harness M1 – 11/11 PASS: RLS + OPA + karanténa zápisu vynutí model paměti mimo prompt; M-E3/M-E4 gate 100 %.
 - 2026-10-23: síto kolo 1 – 19 kandidátů; žádný framework jako jádro; návrh Postgres + pgvector (+ AGE), vlastní MCP server s PEP.
 - 2026-10-23: model paměti – schéma záznamu s původem, obrany proti poisoningu, životní cyklus, evaly M-E1–E6.
 - 2026-10-23: nativní schopnosti – model si nepamatuje nic; Managed Agents memory jen vzor; Dapr Vector API 1.19 alpha.
