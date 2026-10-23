@@ -1,6 +1,6 @@
 ---
 tema: Mapa vrstvy identity, autorizace a governance agentů
-naposledy_overeno: 2026-10-22
+naposledy_overeno: 2026-10-23
 zralost: n/a (přehled)
 primarni_zdroje:
   - https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization
@@ -74,7 +74,7 @@ for internal purposes within an organization is not considered a competitive off
 publikace verze; Change License: MPL 2.0. **Otázka na právníka:** „dodáváme produkt zákazníkovi s podporou“ vs.
 „paid support arrangements“. Do té doby OpenBao.
 
-### Co ze síta a kola 2 plyne (Pozn. Adam – návrh k rozhodnutí)
+### Rozhodnutí (Adam, 2026-10-23) – co ze síta a kola 2 plyne
 
 | Otázka | Komponenta | Proč | Riziko / co zbývá |
 |---|---|---|---|
@@ -146,6 +146,7 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
 - [x] ~~Aktuální harmonogram EU AI Act a technické požadavky na audit a lidský dohled~~ → [regulace.md](regulace.md), 2026-10-22; text OJ zbývá ověřit.
 
 ## Changelog
+- 2026-10-23: rozhodnuto (Adam): SPIRE + Keycloak + exchange v agentgateway + OPA-Envoy + OpenBao; agent jako druhý credential.
 - 2026-10-22: kolo 2 + harness I2 – Keycloak, agentgateway PEP, SPIRE; `act` nevzniká, upscope potvrzen, OPA 503 při výpadku.
 - 2026-10-22: síto kolo 1 – 15 kandidátů; Vault (BUSL), Infisical, Ory Hydra vyřazeni; návrh SPIRE + Keycloak + OPA + OpenBao.
 - 2026-10-22: standardy – MCP auth, A2A, ID-JAG, Entra Agent ID, co řeší Dapr/agentgateway/Agent SDK (standardy.md).

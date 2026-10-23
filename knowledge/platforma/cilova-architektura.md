@@ -1,6 +1,6 @@
 ---
 tema: Cílová architektura autonomní multiagentní platformy – živý soubor rozhodnutí
-naposledy_overeno: 2026-10-22
+naposledy_overeno: 2026-10-23
 zralost: experimental
 primarni_zdroje:
   - https://github.com/akczcz/adam/tree/main/knowledge
@@ -22,7 +22,7 @@ Detail a zdroje jsou vždy ve složce dané vrstvy, tady je jen výsledek.
 | Agentní smyčka | **Claude Agent SDK** | 2026-10-21 | `claude-agent-sdk` pinnutý na 0.2.x v Dapr Agents | [`../frameworks/overview.md`](../frameworks/overview.md) |
 | Orchestrace a durable execution | **Dapr Agents** (`ClaudeAgentExecutor` + `DaprSessionStore`) nad Dapr Workflows | 2026-10-21 | Bus factor 1, žádná support policy, A2A/AG-UI nepodporuje – nutný vlastní A2A server; obnovení během nástroje at-least-once → idempotency key | [`../frameworks/dapr-agents.md`](../frameworks/dapr-agents.md) |
 | Model gateway a FinOps | **agentgateway** (LF, Apache-2.0, nativní `/v1/messages`, USD rozpočty v OSS); LiteLLM záloha | **2026-10-22 (rozhodnuto, Adam)** – po harnessu G1: mock 21/21, live 2/2 | bus factor 1 (51 % commitů), bez CLA/DCO, rozpočty jen per API klíč (klíč per agent/tým jako pracovní model), persistence rozpočtů mezi replikami neověřena | [`../gateway/overview.md`](../gateway/overview.md) |
-| Identita, autorizace, governance | *návrh po kole 2 a harnessu I2:* identita uživatele = OAuth z IdP zákazníka přes **Keycloak**; identita agenta = **SPIRE** SVID jako druhý credential (ne `act` v tokenu); **token exchange v agentgateway** (RFC 8693, scope hlídá config gateway, enforcer ne); PDP = **OPA-Envoy** za `extAuthz` + stejná Rego z hooku Agent SDK, decision log; tajemství **OpenBao** | 2026-10-22 (návrh, čeká na Adamovo rozhodnutí) | Keycloak upscope je default (gateway = plně důvěryhodný PEP); `act` delegace v Keycloaku preview → agent v tokenu uživatele není; SPIRE neměřen; A2A delegace není standard | [`../identity/overview.md`](../identity/overview.md) |
+| Identita, autorizace, governance | Identita uživatele = OAuth z IdP zákazníka přes **Keycloak**; identita agenta = **SPIRE** SVID jako druhý credential (ne `act` v tokenu); **token exchange v agentgateway** (RFC 8693, scope hlídá config gateway, enforcer ne); PDP = **OPA-Envoy** za `extAuthz` + stejná Rego z hooku Agent SDK, decision log; tajemství **OpenBao** | **2026-10-23 (rozhodnuto, Adam)** – po sítu, kole 2 a harnessu I2 | Keycloak upscope je default (gateway = plně důvěryhodný PEP); `act` delegace v Keycloaku preview → agent v tokenu uživatele není; SPIRE neměřen; A2A delegace není standard → vlastní extension | [`../identity/overview.md`](../identity/overview.md) |
 | Observabilita a evaluace | – | – | – | – |
 | Paměť a znalosti | – | – | – | – |
 | Sandboxy a pracovní prostředí | – | – | – | – |
@@ -60,6 +60,7 @@ Z hypotézy plynou tři požadavky, které se zatím opakují napříč vrstvami
    překlopí use case zákazníka do přílohy III; platforma se počítá jako jeden systém (T9).
 
 ## Changelog
+- 2026-10-23: identity – **rozhodnuto (Adam)** podle návrhu z kola 2 a harnessu I2.
 - 2026-10-22: identity – po harnessu I2 upřesněno: exchange v gateway změřen, `act` nevzniká → SVID jako druhý credential, OPA-Envoy fail-closed.
 - 2026-10-22: identity – návrh SPIRE + Keycloak + OPA + OpenBao, exchange v gateway; do hypotézy přidány požadavky čl. 50 a klasifikační brána.
 - 2026-10-22: gateway – **rozhodnuto (Adam): agentgateway**, LiteLLM záloha; po harnessu G1 mock 21/21 a live 2/2.

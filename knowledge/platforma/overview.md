@@ -58,8 +58,8 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 1 | Protokoly (MCP, A2A, AG-UI, A2UI) | `protocols/` | `protocol-research` / `protocol-scout` | ✅ hotovo, ověřeno 2026-10-20 |
 | 2 | Frameworky, orchestrace, durable execution | `frameworks/` | `framework-research` / `framework-scout` | ✅ rozhodnuto 2026-10-21 (Claude Agent SDK + Dapr Agents), otevřené položky v `frameworks/overview.md` |
 | 3 | **Model gateway a FinOps** | `gateway/` | `gateway-research` / `gateway-scout` | ✅ rozhodnuto 2026-10-22 (agentgateway) po sítu, kole 2 a harnessu G1 mock + live |
-| 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | 🟢 síto, standardy, regulace, kolo 2 i harness I2 hotové 2026-10-22; návrh SPIRE + Keycloak + OPA-Envoy + OpenBao čeká na rozhodnutí |
-| 5 | Observabilita a evaluace | `observability/` | – | ⬜ čeká |
+| 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | ✅ rozhodnuto 2026-10-23 (SPIRE + Keycloak + exchange v agentgateway + OPA-Envoy + OpenBao) po sítu, kole 2 a harnessu I2 |
+| 5 | Observabilita a evaluace | `observability/` | `observability-research` / `observability-scout` | 🟡 otevřeno 2026-10-23, síto kolo 1 běží |
 | 6 | Paměť a znalosti | `memory/` | – | ⬜ čeká |
 | 7 | Sandboxy a pracovní prostředí | `sandbox/` | – | ⬜ čeká |
 | 8 | Organizační vrstva | `organization/` | – | ⬜ čeká – **návrhová**, ne rešeršní (viz níže) |
@@ -108,5 +108,6 @@ metoda (jak role odvodit z procesů, jak nastavit hranice autonomie), ne licenč
   bude za dva měsíce k přeověření.
 
 ## Changelog
+- 2026-10-23: identity rozhodnuto; otevřena vrstva observabilita a evaluace.
 - 2026-10-22: otevřena vrstva identity (kritéria, skill, agent, kostra přehledu).
 - 2026-10-22: první verze – osm vrstev, pořadí, společný postup, otevřena vrstva gateway.
