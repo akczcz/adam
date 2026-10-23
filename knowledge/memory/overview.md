@@ -37,7 +37,13 @@ flowchart LR
 
 ## Nativní schopnosti a standardy
 
-*(doplní se z rešerše 2026-10-23)*
+Detail v [nativni-schopnosti.md](nativni-schopnosti.md). **Model si nepamatuje nic.** Anthropic dává memory tool
+(client-side soubory bez modelu dat), compaction a context editing (beta, optimalizace jednoho běhu), CLAUDE.md
+(procedurální, git) a Managed Agents memory stores s dreams (verzování, redakce, destilace – ale jen Anthropic cloud /
+AWS / GCP, **ne Azure**, ne ZDR → pro nás jen vzor). Dapr Agents v platformě auto memory i CLAUDE.md **vypínají**.
+Dapr dává state (tx, ETag, TTL, AES-GCM) a od 1.19 Vector API (alpha, jen Meilisearch), dapr-agents na 1.19 ještě
+nejsou. MCP dává `lastModified` a `ttlMs`, per-resource autorizace je jen SHOULD. Benchmarky MemLeak a PiSAs ukazují, že
+**izolace tenantů v promptu nefunguje** – filtr musí být vynucený v DB nebo PEP.
 
 ## Model původu a životní cyklus
 
@@ -46,8 +52,9 @@ flowchart LR
 ## Co ověřit dál
 
 - [ ] Síto kolo 1 – memory frameworky, vektorové a grafové DB, licence.
-- [ ] Co dává Claude (memory tool, CLAUDE.md, kompakce), Dapr (state, Conversation API), MCP (resources) a OTEL (memory spany).
+- [x] ~~Co dává Claude, Dapr, MCP a OTEL~~ → [nativni-schopnosti.md](nativni-schopnosti.md), 2026-10-23.
 - [ ] Model původu, izolace tenantů, memory poisoning, výmaz (GDPR čl. 17) – metodika.
 
 ## Changelog
+- 2026-10-23: nativní schopnosti – model si nepamatuje nic; Managed Agents memory jen vzor; Dapr Vector API 1.19 alpha.
 - 2026-10-23: první verze – kostra, čtyři druhy paměti, otevřeno síto.
