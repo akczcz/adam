@@ -54,8 +54,9 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | Identita, autorizace a governance | `knowledge/identity/` | skill `identity-research`, agent `identity-scout` |
 | Observabilita a evaluace | `knowledge/observability/` | skill `observability-research`, agent `observability-scout` |
 | Paměť a znalosti | `knowledge/memory/` | skill `memory-research`, agent `memory-scout` |
+| Sandboxy a pracovní prostředí | `knowledge/sandbox/` | skill `sandbox-research`, agent `sandbox-scout` |
 
-Další vrstvy (sandboxy, organizace)
+Další vrstvy (organizace)
 se otevírají postupně stejným principem – pořadí a postup jsou v `knowledge/platforma/overview.md`.
 
 ## Principy práce

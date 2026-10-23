@@ -145,6 +145,7 @@ místo ext_authz) jsou v README harnessu; vždy jde o část, kterou změřil d�
 - [x] ~~Model původu, izolace tenantů, memory poisoning, výmaz~~ → [model-pameti.md](model-pameti.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-23: **rozhodnuto (Adam)** podle návrhu – zapsáno v `platforma/cilova-architektura.md`.
 - 2026-10-23: harness M1 – 11/11 PASS: RLS + OPA + karanténa zápisu vynutí model paměti mimo prompt; M-E3/M-E4 gate 100 %.
 - 2026-10-23: síto kolo 1 – 19 kandidátů; žádný framework jako jádro; návrh Postgres + pgvector (+ AGE), vlastní MCP server s PEP.
 - 2026-10-23: model paměti – schéma záznamu s původem, obrany proti poisoningu, životní cyklus, evaly M-E1–E6.

@@ -60,8 +60,8 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 3 | **Model gateway a FinOps** | `gateway/` | `gateway-research` / `gateway-scout` | ✅ rozhodnuto 2026-10-22 (agentgateway) po sítu, kole 2 a harnessu G1 mock + live |
 | 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | ✅ rozhodnuto 2026-10-23 (SPIRE + Keycloak + exchange v agentgateway + OPA-Envoy + OpenBao) po sítu, kole 2 a harnessu I2 |
 | 5 | Observabilita a evaluace | `observability/` | `observability-research` / `observability-scout` | ✅ rozhodnuto 2026-10-23 (Collector + ClickHouse + Prometheus, Langfuse, Inspect AI + promptfoo + MLflow) po sítu a harnessech O1/O2 |
-| 6 | Paměť a znalosti | `memory/` | `memory-research` / `memory-scout` | 🟡 síto, model paměti a harness M1 (11/11) hotové 2026-10-23; návrh Postgres + pgvector, vlastní tenký server s PEP; **čeká na rozhodnutí** |
-| 7 | Sandboxy a pracovní prostředí | `sandbox/` | – | ⬜ čeká |
+| 6 | Paměť a znalosti | `memory/` | `memory-research` / `memory-scout` | ✅ rozhodnuto 2026-10-23 (vlastní tenký MCP server s PEP nad Postgres + pgvector, fakt s původem, žádný framework) po sítu, modelu paměti a harnessu M1 |
+| 7 | **Sandboxy a pracovní prostředí** | `sandbox/` | `sandbox-research` / `sandbox-scout` | 🟡 otevřeno 2026-10-23: kritéria, skill, agent, kostra přehledu; síto kolo 1 běží |
 | 8 | Organizační vrstva | `organization/` | – | ⬜ čeká – **návrhová**, ne rešeršní (viz níže) |
 
 ## Pořadí a proč
@@ -108,6 +108,7 @@ metoda (jak role odvodit z procesů, jak nastavit hranice autonomie), ne licenč
   bude za dva měsíce k přeověření.
 
 ## Changelog
+- 2026-10-23: memory rozhodnuto; otevřena vrstva sandboxy a pracovní prostředí.
 - 2026-10-23: memory – harness M1 potvrdil návrh; vrstva čeká na rozhodnutí.
 - 2026-10-23: observability rozhodnuto; otevřena vrstva paměť a znalosti.
 - 2026-10-23: identity rozhodnuto; otevřena vrstva observabilita a evaluace.
