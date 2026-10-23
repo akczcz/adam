@@ -226,6 +226,10 @@ patří jako riziko, ne jako předpoklad.
 | **Osmnáctý: licence je čistá, past je v povinném backendu** | Graphiti (Apache-2.0) umí jen Neo4j (GPL/EE), FalkorDB (SSPL), Neptune; Cognee default Kuzu (archivovaný) | Projít `pyproject` závislosti a podporované backendy – vrstva pod knihovnou musí projít stejným sítem |
 | **Devatenáctý: telemetrie odesílá identifikátory cloudového účtu** | Weaviate od 1.33: AWS Account ID / GCP Project ID / Azure Subscription ID, „may use this data to identify potential customers“ | Číst stránku telemetry **doslovně**, ne jen „anonymní“; v dodávaném configu vypnout a doložit |
 | **Dvacátý: OSS je ukázka, hostovaná platforma má „proprietary optimizations“** | mem0: benchmarky „reflect Mem0's managed platform… not available in the open-source SDK“; MCP jen hostovaný, OSS MCP archivován | Hledat v README a benchmark stránkách formulace o „platform“ vs. „open-source“; archivovaná OSS repa integrací |
+| **Dvacátý první: OSS runtime zamrzne, SDK na registru žije dál** | Daytona: `main` jen README „moved to a private codebase“ (06/2026), poslední tag v0.190.0 AGPL; PyPI `daytona` 0.226.0 vydáno 2026-10-22 z privátní codebase | Porovnat datum posledního tagu runtime repa s datem posledního balíčku SDK; velký rozdíl = runtime už není OSS |
+| **Dvacátý druhý: root `LICENSE` ≠ licence publikovaného balíčku v monorepu** | E2B: root Apache-2.0, `packages/python-sdk/LICENSE` a `js-sdk/LICENSE` MIT, PyPI `license_expression: MIT` | Číst `LICENSE` v adresáři publikovaného balíčku, ne v rootu; do SBOM patří licence balíčku |
+| **Dvacátý třetí: closed-source telemetrický klient v GPL repu, default on** | Judge0 `TELEMETRY.md`: „close-source telemetry client … every 12 hours“, opt-out `JUDGE0_TELEMETRY_ENABLE=false` | Hledat `TELEMETRY.md`, binárky bez zdroje v jinak OSS repu |
+| **Dvacátý čtvrtý: orchestrátor pod nadací, jehož příklady montují tajemství do podu** | `kubernetes-sigs/agent-sandbox` příklad `claude-code-sandbox` montuje `ANTHROPIC_API_KEY` ze Secretu; egress a identita per claim jen v roadmapě | Číst `examples/` jako výpověď o zamýšleném modelu provozu, ne jen CRD; chybějící S2 v roadmapě = platforma si ho staví sama |
 
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
@@ -302,6 +306,7 @@ a licenční past přestává být existenční.
 Totéž platí pro přístup k modelům – viz model gateway v [overview.md](overview.md).
 
 ## Changelog
+- 2026-10-23: dvacátý první až dvacátý čtvrtý vzorec z vrstvy sandboxů (Daytona zamrzlé OSS, E2B monorepo licence, Judge0 telemetrie, agent-sandbox příklady).
 - 2026-10-23: osmnáctý až dvacátý vzorec z vrstvy paměti (Graphiti backendy, Weaviate telemetrie cloud ID, mem0 platform-only).
 - 2026-10-23: čtrnáctý až sedmnáctý vzorec z vrstvy observability (Langfuse EE telemetrie, AI bot committer, ClickHouse+Langfuse, self-hosted = smlouva).
 - 2026-10-22: osmý až třináctý vzorec z vrstev gateway a identity (LiteLLM, Helicone, Kong, Infisical, Zitadel, SpiceDB).

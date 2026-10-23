@@ -49,6 +49,22 @@ Postup `framework-research` sekce 2, vzorce v `knowledge/frameworks/licencni-vzo
 - Návrh úprav `knowledge/sandbox/` jako diff; rozhodnutí do `knowledge/platforma/cilova-architektura.md`.
 - Soubory měň až po Adamově souhlasu.
 
+## 7b. Pasti z kola 1 (2026-10-23)
+- **Weby docs blokované** (gvisor.dev, learn.microsoft.com, e2b.dev, modal.com, containers.dev, inspect.aisi.org.uk) – čti zdrojové
+  repozitáře docs: `MicrosoftDocs/azure-aks-docs`, `MicrosoftDocs/azure-compute-docs` (nested virt per SKU v `sizes/*.md`),
+  `google/gvisor/g3doc`, `UKGovernmentBEIS/inspect_k8s_sandbox/docs`.
+- **Root `LICENSE` ≠ licence balíčku v monorepu** (E2B: root Apache-2.0, SDK MIT). **OSS runtime zamrzne, SDK na registru žije**
+  (Daytona: `main` jen README od 06/2026, PyPI dál vydává). **Closed-source telemetrie default on v GPL repu** (Judge0).
+- **srt je beta a sdílený kernel** – nikdy jediná hranice; deny list na Linuxu se staví při startu; TLS proxy neterminuje;
+  v neprivilegovaném kontejneru jen `enableWeakerNestedSandbox`; Claude Code sandbox nekryje MCP, hooky, Read/Edit.
+- **Firecracker nemá K8s runtime** (fc-containerd bez releasů, bez CRI); Kata GPU jen QEMU; NC SKU bez nested virt.
+- **agent-sandbox**: stateful PVC model, egress a identita per claim jen v roadmapě, příklad montuje API klíč ze Secretu.
+- **Playwright MCP `--allowed-origins` není bezpečnostní hranice**; obraz Playwright je „testing only“, root = Chromium sandbox off.
+- **AGPL u DX nástrojů** (Coder, Gitpod/Ona, Lightpanda, Daytona OSS, Arrakis); telemetrie default on u browser-use, DevPod, Coder, Lightpanda.
+- **Env `HTTPS_PROXY` agent odstraní** – vynucení egressu musí být síťové (CNP) a v proxy, ne v proměnné.
+- **Managed Agents**: request bez `networking` = `unrestricted`; allow-list je per host, ne per operace.
+- **`inspect_k8s_sandbox` s `networkPolicy.enabled: false`** nic neomezuje; bez Cilia nutná vlastní NetworkPolicy.
+
 ## 8. Čemu se vyhni
 - Nevybírej podle DX nebo počtu jazyků – vybírej podle izolace, egressu a provozu na K8s zákazníka.
 - Nezaměňuj „kontejner“ za sandbox pro neověřený kód.

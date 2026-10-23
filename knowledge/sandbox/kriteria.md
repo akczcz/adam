@@ -44,7 +44,7 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | # | Kritérium | Co to znamená tady |
 |---|---|---|
 | A1 | OSI licence produkčního runtimu | **Pozor:** Daytona, Coder, Gitpod/Ona AGPL (ověř doslovně); Judge0 GPL; hostované sandboxy (E2B Cloud, Modal, Browserbase) mají SDK Apache, ale runtime je služba |
-| A2 | Kontejnery na Kubernetes | runtime sandboxu musí běžet na K8s zákazníka (RuntimeClass gVisor/Kata, Firecracker vyžaduje bare-metal/nested virt – zapiš požadavky) |
+| A2 | Kontejnery na Kubernetes | runtime sandboxu musí běžet na K8s zákazníka přes RuntimeClass; **Firecracker nemá K8s runtime** (jen přes Kata `kata-fc`); Kata na Azure = nested virt (gen2 Dsv3/Dsv5/Ddsv5/Dasv5/Esv5/Fsv2) nebo `/dev/mshv` (AKS Pod Sandboxing); gVisor `systrap` nested virt nepotřebuje (ověřeno 2026-10-23) |
 | A3 | Air-gapped | obrazy a závislosti z interního registru/cache; žádný „pull při startu z internetu“; model jen přes gateway |
 | A4 | Bez řízené služby jednoho cloudu | Azure Container Apps dynamic sessions / ACI smí být **backend za abstrakcí** (Dapr? CRD?), ne formát prostředí |
 | A5 | Stav mimo runtime | definice prostředí (devcontainer.json, Dockerfile, Nix) a výsledky (git, artefakty, trace) žijí mimo sandbox; sandbox je zahoditelný |
@@ -58,6 +58,7 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | Hranice: kernel sdílený (seccomp, namespaces, bwrap) / user-space kernel (gVisor) / microVM (Kata, Firecracker) | docs runtimu, CVE historie, threat model |
 | Start sandboxu, hustota na uzel, podpora GPU, nested virtualizace (Azure: které SKU) | benchmark v harnessu, docs cloudu |
 | Řízení zdrojů (CPU, RAM, disk, čas) a kill při překročení | cgroups, limity runtimu |
+| Cloud metadata endpointy blokované (Azure `168.63.129.16`, `169.254.169.254`), loopback a link-local z proxy nedostupné | config proxy (srt `resolved-address check`), CNP |
 | Snapshot / obnova / fork (paralelní větve téhož úkolu) | Firecracker snapshot, CRIU, overlay |
 
 ### B2. Síť, tajemství a identita (S2)
@@ -74,7 +75,7 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | Co | Jak se to zjistí |
 |---|---|
 | Co dává **Anthropic nativně**: Claude Code sandboxing (`sandbox-runtime`: bwrap/seatbelt, network proxy), Agent SDK, Managed Agents sandbox (hostovaný – jen vzor), MCP servery uvnitř sandboxu | docs code.claude.com, repo sandbox-runtime, changelog |
-| **Devcontainer** jako definice prostředí (spec, features, prebuild); Nix jako alternativa | spec devcontainers, co z toho umí zvolený runtime |
+| **Devcontainer** jako definice prostředí (spec, features, prebuild); Nix jako alternativa | spec devcontainers; pozor: `devcontainer up` běží s `seccomp=unconfined` + `SYS_PTRACE` → jen `build` v CI, ne runtime |
 | Předpřipravené obrazy per role (vývojář, SRE, QA) a cache závislostí (npm, pip, uv) v air-gapped režimu | praxe, harness |
 | Prohlížeč v sandboxu (Playwright/Chromium headless), code interpreter bez kontejneru (Wasm/Pyodide, Deno) | kandidáti |
 | Orchestrace: kdo sandbox zakládá a ruší (Dapr workflow aktivita? K8s CRD `agent-sandbox`?), paralelní sandboxy per úkol, fronta | docs kandidátů |
@@ -112,4 +113,5 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | Persistentní „agentův počítač“ | stav patří do gitu, artefaktů a paměti; persistentní sandbox je neauditovatelný a neopakovatelný |
 
 ## Changelog
+- 2026-10-23: po sítu zpřesněno A2 (Firecracker, nested virt, mshv), B1 (metadata endpointy), B3 (devcontainer up).
 - 2026-10-23: první verze; druhy prostředí, otázky S1–S4, kritéria B1–B6.
