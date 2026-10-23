@@ -60,7 +60,7 @@ Tím padá argument „vendor backend je nutný kvůli konvenci“: převod pat�
 | Laminar | O1 + O2 + O3 | Apache-2.0 | za klíčem: Signals, alerty e-mail/Slack | CLA; 2 zakladatelé ≈ 900/2086; PostHog default off | OTLP gRPC+HTTP; konvence OpenLLMetry | Postgres + ClickHouse + Quickwit (+RabbitMQ, Valkey); Helm `appVersion: latest` | 0.8.0 (2026-10-16) | s výhradou (tým, chart) |
 | OpenInference | vrstva O1 | Apache-2.0 | žádná | Arize, CLA; stejný autor jako Phoenix | vlastní konvence; `annotations` ↔ `gen_ai.evaluation.result` | n/a | 0.1.41 (2026-10-01) | jen jako vstup do `genainormalizer` |
 
-### Co ze síta plyne (Pozn. Adam – návrh k rozhodnutí)
+### Rozhodnutí (Adam, 2026-10-23) – co ze síta a harnessů plyne
 
 | Otázka | Komponenta | Proč | Riziko / co zbývá |
 |---|---|---|---|
@@ -122,6 +122,7 @@ Dapr Workflow v řetězu, LLM-as-judge a kalibrace (L2/L5), Langfuse jako druhý
 - [x] ~~Evaluační frameworky pro trajektorie agentů, metodika~~ → [evaluace.md](evaluace.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-23: rozhodnuto (Adam): Collector + ClickHouse + Prometheus, Langfuse druhý konzument, Inspect AI + promptfoo + MLflow.
 - 2026-10-23: harnessy O1 (9/9) a O2 (6/6) změřeny.
 - 2026-10-23: síto kolo 1 – 15 backendů; návrh Collector + ClickHouse + Prometheus, Langfuse jako druhý konzument, Grafana jen UI.
 - 2026-10-23: evaluace – síto 15 kandidátů, vrstvy L0–L5, metriky čl. 15 (evaluace.md).
