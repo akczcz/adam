@@ -63,6 +63,8 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | **Trajektorie, ne jen odpověď:** správný nástroj, pořadí, argumenty, počet kroků, cena, dokončení úkolu | Podporuje framework eval nad trace/trajektorií (agent evals), nebo jen input→output |
 | **Datasety z provozu:** trace → eval případ jedním krokem; anotace lidí (HITL rozhodnutí jako label) | Integrace tracing ↔ eval v jednom nástroji vs. dva nástroje |
 | **LLM-as-judge** přes naši gateway, s pinnutým modelem a verzí; kalibrace proti lidským labelům | Lze nastavit `base_url`; jak se měří shoda judge ↔ člověk |
+| **Judge vidí celý trace / trajektorii**, ne jednu observaci | Langfuse judge nevidí sourozence ani děti observace (2026-10-23) – pak nejde hodnotit trajektorii |
+| **Bezpečnostní (red-team) generátory běží offline** | promptfoo má 26 agentních pluginů `REMOTE_ONLY` (cloud) – v air-gapu nepoužitelné |
 | **Regrese v CI:** změna modelu / promptu / nástroje / politiky → eval suite jako quality gate (ADLC) | CLI, exit code, prahy, porovnání běhů |
 | Reprodukovatelnost: seed, pinned model, deterministické nástroje (mock) | Lze běh přehrát z trace |
 | Bezpečnostní evaly: prompt injection, nesankcionované akce (AISI 8/2026), únik tajemství | Jsou k dispozici sady, nebo vlastní |
@@ -95,4 +97,5 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | „Automatické evaly“ bez lidských labelů | Judge bez kalibrace je jen další model s názorem |
 
 ## Changelog
+- 2026-10-23: B3 doplněno o „judge vidí celý trace“ a „red-team offline“ (ze síta evaluace).
 - 2026-10-23: první verze; tři otázky O1–O3, kritéria B1–B5.

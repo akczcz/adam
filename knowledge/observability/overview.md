@@ -54,14 +54,20 @@ Detail v [standardy.md](standardy.md). Pět věcí, které mění návrh (2026-1
 
 ## Evaluace
 
-*(doplní se z rešerše 2026-10-23)*
+Detail v [evaluace.md](evaluace.md). Do kola 2 postupují **Inspect AI** (MIT, UK AISI, bez telemetrie, trajektorie
+a approval policy), **promptfoo** (OTLP receiver + trajektorové asserce, CI gate; red-team pluginy pro agenty jen cloud),
+**MLflow 3** (OTLP ingest, trace scorery, judge alignment, DCO), **Opik** a **DeepEval**. Vyřazen Phoenix (Elastic-2.0
+i evals balíček), Braintrust a LangSmith (hostované), OpenAI Evals, Ragas. Metodika: šest vrstev L0–L5 (unit nástrojů,
+trajektorie, výsledek úkolu s pass^k, bezpečnost, provozní drift, kalibrace judge) a šest metrik k evidenci pro čl. 15.
+Nikdo nedodává konvertor trace → eval případ ani role-specifické gradery – to je naše práce.
 
 ## Co ověřit dál
 
 - [ ] Síto kolo 1 – backendy a LLM observability platformy.
 - [x] ~~Stav OTEL GenAI semconv, co emitují komponenty, kde se trace přeruší~~ → [standardy.md](standardy.md), 2026-10-23.
-- [ ] Evaluační frameworky pro trajektorie agentů, metodika pro role virtuální firmy.
+- [x] ~~Evaluační frameworky pro trajektorie agentů, metodika~~ → [evaluace.md](evaluace.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-23: evaluace – síto 15 kandidátů, vrstvy L0–L5, metriky čl. 15 (evaluace.md).
 - 2026-10-23: standardy – semconv Development, přerušení trace CLI → gateway, Dapr aktivity, Foundry bez spanů.
 - 2026-10-23: první verze – kostra, tok dat, otevřeno síto.
