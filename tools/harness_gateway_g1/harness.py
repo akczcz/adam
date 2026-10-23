@@ -312,6 +312,18 @@ async def check_agent_sdk(base: str, api_key: str, model: str, rep: Report, live
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "DISABLE_TELEMETRY": "1",
     }
+    if os.environ.get("HARNESS_TRACE") == "1":
+        # O1: Claude Code posílá traceparent na vlastní ANTHROPIC_BASE_URL jen s PROPAGATE_TRACEPARENT=1
+        # (code.claude.com/docs/en/monitoring-usage, ověřeno 2026-10-23). Traces CLI jsou beta za dalšími env.
+        env.update({
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+            "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+            "OTEL_TRACES_EXPORTER": "console",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_LOGS_EXPORTER": "none",
+            "CLAUDE_CODE_PROPAGATE_TRACEPARENT": "1",
+            "TRACEPARENT": TRACEPARENT,
+        })
     if os.environ.get("ANTHROPIC_WORKSPACE_ID"):
         # Uživatelský klíč (sk-ant-usr-…) bez vazby na workspace: API vyžaduje anthropic-workspace-id.
         env["ANTHROPIC_CUSTOM_HEADERS"] = f"anthropic-workspace-id: {os.environ['ANTHROPIC_WORKSPACE_ID']}"
@@ -356,6 +368,10 @@ async def check_agent_sdk(base: str, api_key: str, model: str, rep: Report, live
         rec = mock_requests()
         betas = sorted({r["headers"].get("anthropic-beta", "") for r in rec if r["path"] == "/v1/messages"})
         rep.add("A2", "Agent SDK: requesty doručené upstream (mock)", "INFO", {"count": len(rec), "paths": sorted({r["path"] for r in rec}), "anthropic-beta_seen_upstream": betas, "user_agent": sorted({r["headers"].get("user-agent", "") for r in rec})[:2]})
+        if os.environ.get("HARNESS_TRACE") == "1":
+            tps = [r["headers"].get("traceparent") for r in rec if r["path"] == "/v1/messages"]
+            same = [tp for tp in tps if tp and tp.split("-")[1] == TRACEPARENT.split("-")[1]]
+            rep.add("A3", "O1: Claude Code posílá traceparent přes gateway k modelu (CLAUDE_CODE_PROPAGATE_TRACEPARENT=1) a navazuje na TRACEPARENT z env", "PASS" if tps and all(tps) and len(same) == len(tps) else ("INFO" if any(tps) else "FAIL"), {"traceparents_upstream": tps[:3], "same_trace_id_as_env": len(same), "of": len(tps)})
 
 
 def check_live(base: str, api_key: str, model: str, rep: Report, direct_base: str):

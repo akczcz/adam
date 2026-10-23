@@ -1,0 +1,366 @@
+{
+ "meta": {
+  "gateway": "direct",
+  "mode": "mock",
+  "model": "claude-haiku-4-5",
+  "upstream": "http://127.0.0.1:9777",
+  "started": "2026-10-23T06:38:33"
+ },
+ "checks": [
+  {
+   "id": "K1",
+   "name": "Tělo requestu doručeno beze změny",
+   "status": "PASS",
+   "detail": {
+    "diff": []
+   }
+  },
+  {
+   "id": "K1a",
+   "name": "cache_control zachován (system i messages)",
+   "status": "PASS",
+   "detail": {}
+  },
+  {
+   "id": "K1b",
+   "name": "system: pořadí a počet bloků zachován",
+   "status": "PASS",
+   "detail": {
+    "got": [
+     {
+      "type": "text",
+      "text": "Jsi harness. Odpovídej stručně."
+     },
+     {
+      "type": "text",
+      "text": "Druhý blok – dlouhý kontext, který se cachuje. Druhý blok – dlouhý kontext, který se cachuje. Druhý blok – dlouhý kontext, který se cachuje. Druhý blok – dlouhý kontext, který se cachuje. Druhý blok – dlouhý kontext, který se cachuje. Druhý blok – dlouhý kontext, který se cachuje. Druhý blok – dlouhý kontext, který se cachuje. Druhý blok – dlouhý kontext, který se cachuje. ",
+      "cache_control": {
+       "type": "ephemeral"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "K1c",
+   "name": "tools + input_schema beze změny",
+   "status": "PASS",
+   "detail": {}
+  },
+  {
+   "id": "K1d",
+   "name": "Neznámé pole (context_management) forwardováno",
+   "status": "PASS",
+   "detail": {
+    "got": {
+     "edits": [
+      {
+       "type": "clear_tool_uses_20250919"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "K1e",
+   "name": "metadata.user_id forwardován",
+   "status": "PASS",
+   "detail": {
+    "got": {
+     "user_id": "harness-user-42"
+    }
+   }
+  },
+  {
+   "id": "K1f",
+   "name": "model beze změny",
+   "status": "PASS",
+   "detail": {
+    "got": "claude-haiku-4-5"
+   }
+  },
+  {
+   "id": "K2a",
+   "name": "anthropic-beta forwardován jako otevřený seznam",
+   "status": "PASS",
+   "detail": {
+    "got": "prompt-caching-2024-07-31,harness-unknown-beta-2099-01-01"
+   }
+  },
+  {
+   "id": "K2b",
+   "name": "anthropic-version forwardován",
+   "status": "PASS",
+   "detail": {
+    "got": "2023-06-01"
+   }
+  },
+  {
+   "id": "K2c",
+   "name": "Atribuční hlavičky x-claude-code-* forwardovány",
+   "status": "PASS",
+   "detail": {
+    "got": {
+     "x-claude-code-session-id": "sess-harness-001",
+     "x-claude-code-agent-id": "agent-harness-001",
+     "x-claude-code-parent-agent-id": "agent-harness-000"
+    }
+   }
+  },
+  {
+   "id": "K2d",
+   "name": "traceparent k upstreamu",
+   "status": "INFO",
+   "detail": {
+    "got": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+    "same_trace_id": true,
+    "unchanged": true
+   }
+  },
+  {
+   "id": "K2e",
+   "name": "Autentizace k upstreamu",
+   "status": "INFO",
+   "detail": {
+    "x-api-key": "present",
+    "authorization": "absent"
+   }
+  },
+  {
+   "id": "K2f",
+   "name": "Hlavičky navíc od gateway",
+   "status": "INFO",
+   "detail": {
+    "extra": []
+   }
+  },
+  {
+   "id": "K3a",
+   "name": "usage vč. cache polí doručeno klientovi",
+   "status": "PASS",
+   "detail": {
+    "usage": {
+     "input_tokens": 11,
+     "cache_creation_input_tokens": 2048,
+     "cache_read_input_tokens": 4096,
+     "output_tokens": 7,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 2048,
+      "ephemeral_1h_input_tokens": 0
+     },
+     "service_tier": "standard"
+    }
+   }
+  },
+  {
+   "id": "K3b",
+   "name": "Odpověď: id, stop_reason, content beze změny",
+   "status": "PASS",
+   "detail": {
+    "id": "msg_mock_bdef3f8ec2c2",
+    "stop_reason": "tool_use"
+   }
+  },
+  {
+   "id": "K3c",
+   "name": "Hlavičky odpovědi upstreamu (request-id, x-mock-upstream)",
+   "status": "INFO",
+   "detail": {
+    "request-id": "req_mock_bb241c251d",
+    "x-mock-upstream": "1"
+   }
+  },
+  {
+   "id": "K4a",
+   "name": "Stream: status 200 a pořadí eventů",
+   "status": "PASS",
+   "detail": {
+    "status": 200,
+    "events": [
+     "message_start",
+     "ping",
+     "content_block_start",
+     "content_block_delta",
+     "content_block_delta",
+     "content_block_stop",
+     "content_block_start",
+     "content_block_delta",
+     "content_block_stop",
+     "ping",
+     "message_delta",
+     "message_stop"
+    ]
+   }
+  },
+  {
+   "id": "K4b",
+   "name": "Stream: ping eventy propuštěny",
+   "status": "PASS",
+   "detail": {
+    "pings": 2
+   }
+  },
+  {
+   "id": "K4c",
+   "name": "Stream: nebufferováno (první event dorazí dřív než celek)",
+   "status": "PASS",
+   "detail": {
+    "t_first_s": 0.085,
+    "t_total_s": 2.091
+   }
+  },
+  {
+   "id": "K4d",
+   "name": "Stream: usage v message_delta vč. cache polí",
+   "status": "PASS",
+   "detail": {
+    "usage": {
+     "input_tokens": 11,
+     "cache_creation_input_tokens": 2048,
+     "cache_read_input_tokens": 4096,
+     "output_tokens": 7,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 2048,
+      "ephemeral_1h_input_tokens": 0
+     },
+     "service_tier": "standard"
+    }
+   }
+  },
+  {
+   "id": "K4e",
+   "name": "Stream: tělo doručeno upstream beze změny",
+   "status": "PASS",
+   "detail": {
+    "diff": []
+   }
+  },
+  {
+   "id": "K5a",
+   "name": "Chybové tělo 400 invalid_request_error neobaleno",
+   "status": "PASS",
+   "detail": {
+    "status": 400,
+    "status_and_type_preserved": true,
+    "message_unchanged": true,
+    "body": {
+     "type": "error",
+     "error": {
+      "type": "invalid_request_error",
+      "message": "mock: deliberately invalid request"
+     },
+     "request_id": "req_mock_bb71253757"
+    }
+   }
+  },
+  {
+   "id": "K5b",
+   "name": "Chybové tělo 529 overloaded_error neobaleno",
+   "status": "PASS",
+   "detail": {
+    "status": 529,
+    "status_and_type_preserved": true,
+    "message_unchanged": true,
+    "body": {
+     "type": "error",
+     "error": {
+      "type": "overloaded_error",
+      "message": "Overloaded"
+     },
+     "request_id": "req_mock_2a1f2e0f2b"
+    }
+   }
+  },
+  {
+   "id": "K6",
+   "name": "count_tokens passthrough",
+   "status": "PASS",
+   "detail": {
+    "status": 200,
+    "body": "{\"input_tokens\":4242}"
+   }
+  },
+  {
+   "id": "K7",
+   "name": "Latence non-stream přes tuto cestu (ms)",
+   "status": "INFO",
+   "detail": {
+    "n": 3,
+    "p50": 1.53,
+    "p95": 1.53
+   }
+  },
+  {
+   "id": "A1",
+   "name": "Claude Agent SDK přes gateway: turn s nástrojem doběhl",
+   "status": "PASS",
+   "detail": {
+    "seconds": 24.2,
+    "error": null,
+    "tool_uses": [
+     "ToolSearch",
+     "mcp__harness__lookup_ticket"
+    ],
+    "tool_calls_executed": 1,
+    "num_turns": 3,
+    "is_error": false,
+    "usage": {
+     "input_tokens": 33,
+     "cache_creation_input_tokens": 6144,
+     "cache_read_input_tokens": 12288,
+     "output_tokens": 21,
+     "output_tokens_details": {
+      "thinking_tokens": 0
+     },
+     "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+     },
+     "service_tier": "standard",
+     "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 6144
+     },
+     "inference_geo": "",
+     "iterations": [],
+     "speed": "standard",
+     "fallback_credit": null
+    },
+    "total_cost_usd": 0.009046799999999999
+   }
+  },
+  {
+   "id": "A2",
+   "name": "Agent SDK: requesty doručené upstream (mock)",
+   "status": "INFO",
+   "detail": {
+    "count": 4,
+    "paths": [
+     "/v1/code/agent-proxy/ca-cert",
+     "/v1/messages"
+    ],
+    "anthropic-beta_seen_upstream": [
+     "oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,claude-code-20250219,advanced-tool-use-2025-11-20,thinking-display-updates-2026-08-18,extended-cache-ttl-2025-04-11"
+    ],
+    "user_agent": [
+     "Bun/1.4.4",
+     "claude-cli/2.1.308 (external, sdk-py, agent-sdk/0.2.172)"
+    ]
+   }
+  },
+  {
+   "id": "A3",
+   "name": "O1: Claude Code posílá traceparent přes gateway k modelu (CLAUDE_CODE_PROPAGATE_TRACEPARENT=1) a navazuje na TRACEPARENT z env",
+   "status": "PASS",
+   "detail": {
+    "traceparents_upstream": [
+     "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+     "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+     "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+    ],
+    "same_trace_id_as_env": 3,
+    "of": 3
+   }
+  }
+ ]
+}

@@ -178,7 +178,7 @@ sequenceDiagram
 | a2a-python 1.2.3 | spany bez propagace | generické | žádná | – |
 
 ## Co ověřit dál
-- [ ] **Harness O1:** `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` přes agentgateway (mock zachytí `traceparent` z CLI) – doplnit do G1 A1.
+- [x] ~~Harness O1: `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` přes agentgateway~~ – **změřeno 2026-10-23** (G1 `HARNESS_TRACE=1`, A3 PASS): CLI 2.1.308 posílá `traceparent` se stejným trace id jako env `TRACEPARENT`, agentgateway přidá child span. CLI vlastní span nevytvořil (console exporter) – ověřit s OTLP.
 - [ ] Dapr Agents + `ClaudeAgentExecutor` end-to-end (SDK injekce → CLI child span) – neměřeno.
 - [ ] agentgateway `tracing.fields.add` s `jwt.sub` na spanu (I2 měřil jen logy).
 - [ ] AG-UI spec – trace pole.

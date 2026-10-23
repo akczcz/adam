@@ -53,6 +53,11 @@ Live režim (macOS, 2026-10-22, `claude-haiku-4-5`): **agentgateway L1 PASS** (p
 (3 kola, `ToolSearch` → `mcp__harness__lookup_ticket` proveden 1×, `cache_read_input_tokens` 41 890).
 Detail v `results/*.json`.
 
+**O1 doplněk (2026-10-23, `HARNESS_TRACE=1`):** s `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` posílá Claude Code CLI 2.1.308
+`traceparent` i na vlastní `ANTHROPIC_BASE_URL`; trace id navazuje na `TRACEPARENT` z prostředí (3/3 requesty), přes
+agentgateway dorazí k modelu s novými child span id (A3 PASS, direct i agentgateway 22/0). CLI přitom předal `traceparent`
+z env **beze změny** (vlastní span `claude_code.llm_request` s `OTEL_TRACES_EXPORTER=console` nevznikl) – ověřit s OTLP exportérem.
+
 ## Prerekvizity
 
 - Python 3.11–3.13, `uv`
