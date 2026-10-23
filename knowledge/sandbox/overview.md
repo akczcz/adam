@@ -1,10 +1,10 @@
 ---
 tema: Mapa vrstvy sandboxů a pracovního prostředí agentů
 naposledy_overeno: 2026-10-23
-zralost: n/a (přehled; síto kolo 1 hotové, čeká na kolo 2 a harness S1)
+zralost: n/a (přehled; síto kolo 1, kolo 2 a harness S1 hotové 2026-10-23; čeká na rozhodnutí a měření na AKS)
 primarni_zdroje:
   - https://code.claude.com/docs/en/sandboxing
-  - https://github.com/anthropic-experimental/sandbox-runtime
+  - https://github.com/anthropics/sandbox-runtime
   - https://github.com/kubernetes-sigs/agent-sandbox
   - https://gvisor.dev/docs/
   - https://katacontainers.io/
@@ -152,30 +152,42 @@ Zdroje: `LICENSE` (raw, větev/tag), PyPI/npm metadata, zdrojové repozitáře d
 | modal/daytona/e2b `inspect-sandboxes` | MIT, Meridian Labs | účet služby | ne | 0.6.1 (2026-10-09) | A4 záloha |
 | vlastní | `SandboxEnvironment` + `@sandboxenv` + entry point `inspect_ai` | – | ano | – | cesta pro CRD/Dapr sandbox |
 
-### Co ze síta plyne (Pozn. Adam – návrh k rozhodnutí, čeká na kolo 2 a harness S1)
+## Kolo 2 a harness S1 (2026-10-23)
+
+| Hloubka | Soubor | Hlavní nález |
+|---|---|---|
+| Azure, Kata, gVisor | [azure-kata-gvisor.md](azure-kata-gvisor.md) | AKS Pod Sandboxing **GA bez flagu** (docs 10/2026), Hyper-V `/dev/mshv` + Cloud Hypervisor + Kata 4.1.0 (MS fork); pod VM = memory limit (default 512Mi, +88Mi), CPU nahoru; guest `kernel-uvm` bez Landlock, `seccompProfile` podu se v guestu neaplikuje, `hostUsers: false` ani Kata ani gVisor; gVisor na AKS jen vlastní DaemonSet; FQDN egress jen ACNS (placené) → stačí CNP L3/L4 na gateway |
+| srt, Claude Code, Agent SDK | [anthropic-sandboxing.md](anthropic-sandboxing.md) | repo `anthropics/sandbox-runtime`; v neprivilegovaném podu s `RuntimeDefault` seccomp bwrap nestartuje (containerd blokuje `unshare`/`clone` s ns flagy bez `CAP_SYS_ADMIN`), root potřebuje `CAP_SETFCAP` → non-root + vlastní profil (v Kata guestu se profil podu stejně neaplikuje); **Agent SDK má `sandbox` option** (oprava síta), Python default běží nesandboxovaně; `parentProxy` = objekt `{http, https}` |
+| agentgateway egress, Inspect | [egress-agentgateway.md](egress-agentgateway.md) | CONNECT + SNI allow-list dialuje SNI přes DNS gateway (IP z CONNECT zahozena); `backendAuth` jen na terminované routě; **1.6.0 bez loopback/link-local ochrany dynamic backendu** (PR #3889 až 1.7) → CNP na gateway podu; `inspect_k8s_sandbox` bez Cilia odmítá `allowDomains`; approval = fnmatch |
+| **Harness S1** | [`tools/harness_sandbox_s1/`](../../tools/harness_sandbox_s1/README.md) | **11/11 PASS, 1 SKIP** (microVM bez KVM – skript `aks/`): srt vlastní netns + seccomp, default-deny egress, metadata blokovaná, `.git/hooks` deny, srt → gateway CONNECT dvě vrstvy allow-listu, git bez tokenu v sandboxu (gateway vloží Bearer), push do main 403 na gateway; evaly S-E1 exfil / S-E2 push bez approval / S-E3 metadata **3/3 gate 100 %** |
+
+### Co ze síta a kola 2 plyne (Pozn. Adam – návrh k rozhodnutí)
 
 | Vrstva | Návrh | Proč |
 |---|---|---|
 | **S1 hranice** | **Kata Containers přes AKS Pod Sandboxing** (`kata-vm-isolation`, Azure Linux, gen2 SKU s nested virt: Dsv3/Dsv5/Ddsv5/Dasv5/Esv5/Fsv2); mimo Azure Kata `kata-deploy`; **gVisor `systrap`** jako přenositelná záloha (bez nested virt, jediný s GPU na běžných SKU) | microVM pro cizí kód; oba Apache-2.0, GA, RuntimeClass = standardní šev; Firecracker jen jako hypervisor pod Katou (bare-metal) |
-| **S2 uvnitř podu** | **Anthropic `sandbox-runtime` (srt)**: bwrap + seccomp, síťový namespace odstraněn, proxy přes Unix socket; `srt proxy` s externím deciderem → **OPA**; pod síťově jen na kube-dns a **agentgateway** (Cilium CNP / NetworkPolicy default-deny) | dvě vrstvy se stejným modelem „ven jen přes proxy“; srt je beta a sdílený kernel → nikdy jediná hranice |
-| **S2 egress** | **agentgateway 1.6.0 jako forward proxy** (`tunnelProtocol: connect`, SNI allow-list, terminace TLS jen pro vybrané hosty: modely, git s `backendAuth`) – žádný Squid/Envoy navíc | ověřeno v `examples/traffic-egress-proxy`; jedno místo pro tokeny i log; vynucení síťové (CNP), ne env `HTTPS_PROXY` |
+| **S2 uvnitř podu** | **Anthropic `sandbox-runtime` (srt)** ve wrapper módu: bwrap + seccomp, síťový namespace odstraněn, `parentProxy` → agentgateway, `strictAllowlist`, `credentials.deny`; **non-root**, vlastní seccomp profil podu (v Kata guestu se stejně neaplikuje); OPA jen v gateway, **ne** `srt proxy` decider (proxy-only mód nemá parent proxy a odmítá privátní cíle); pod síťově jen na kube-dns a gateway (CNP default-deny) | S1a–S1e změřeno; srt beta a sdílený kernel → nikdy jediná hranice; Claude Code sandbox nekryje MCP/hooky → `srt claude` nebo celý pod za S1 |
+| **S2 egress** | **agentgateway 1.6.0 jako forward proxy** (`tunnelProtocol: connect`, SNI allow-list, terminace TLS jen pro git a modely, `backendAuth.key` z watched souboru, per-repo CEL/OPA, 403 na `git-receive-pack` mimo schválený kanál) – žádný Squid/Envoy ani ACNS | S1e–S1g změřeno; jedno místo pro tokeny i log; **CNP na gateway podu** (1.6.0 bez loopback/link-local ochrany dynamic backendu); vynucení síťové, ne env |
 | **S2 identita a tajemství** | SVID per pod (SPIRE `k8s:pod-label`/`pod-uid`/`container-image`), SA token automount off, žádný credential v podu (token vkládá gateway); pod per úkol, ne sdílený SA | vzor AISI chartu a Managed Agents (per-session secret); warm pool sdílí identitu podu |
 | **S3 prostředí** | **devcontainer.json jako formát + `devcontainer build` v CI** → obrazy rolí v interním registru; prohlížeč = **Playwright/Chromium headless v podu + Playwright MCP** (`--isolated`); krátké výpočty = **wasmtime / Pyodide** (bez VM, síťově němé); Deno jen uvnitř S1 | Coder/Gitpod/Daytona/Lightpanda AGPL nebo mrtvé OSS; `devcontainer up` běží s `seccomp=unconfined` → jen build |
-| **S3 orchestrace** | **Dapr aktivita zakládá Pod/Job s RuntimeClass** (vlastní, tenké); `kubernetes-sigs/agent-sandbox` sledovat (v1beta1, warm pool, identita a egress per claim jen v roadmapě, stateful PVC model proti A5) | OpenHands `AgentSandboxWorkspace` potvrzuje CRD jako průmyslový směr; dnes ale přidává lock-in bez S2 |
-| **S4 evaly** | **`inspect_k8s_sandbox`** s vlastním Helm chartem = týž pod (RuntimeClass, CNP, obraz) jako produkce; `networkPolicy.enabled: false` nikdy | MIT, AISI; default gVisor + CNP default-deny + `allowDomains` |
+| **S3 orchestrace** | **Dapr aktivita zakládá Pod/Job s RuntimeClass** (vlastní, tenké; `automountServiceAccountToken: false`, non-root, `capabilities drop ALL`, limity = RAM VM); `kubernetes-sigs/agent-sandbox` sledovat | OpenHands potvrzuje CRD jako směr; dnes lock-in bez S2 a identity per claim |
+| **S4 evaly** | **`inspect_k8s_sandbox`** s vlastním chartem = týž pod (`runtimeClassName: kata-vm-isolation`, CNP na gateway, CA v obrazu, `HTTPS_PROXY`); approval policy na `*git-receive-pack*` / `*git push*` = táž Rego jako hook Agent SDK | S-E1–S-E3 změřeno lokálně; chart bez Cilia nic nevynucuje → CNP vlastní |
 | **Vyřazeno** | Sysbox (sdílený kernel), Edera (proprietární), Firecracker samostatně (bez K8s runtime), E2B (K8s jen single-node privileged – stavební blok, ne jádro), Daytona/Modal/Azure dynamic sessions/Browserbase (A4 – Azure sessions jen záložní backend), Arrakis/Judge0/Piston/SWE-ReX (licence, privileged, stagnace), browser-use (telemetrie, duplikuje Agent SDK), DevPod (neaktivní) | |
 
-**Přijatá rizika (návrh):** nested virt na AKS = dražší gen2 SKU a bez GPU (NC SKU nemají nested virt → gVisor `nvproxy`); srt beta s breaking changes a deny-list stavěný při startu; Claude Code sandbox nekryje MCP servery, hooky a Read/Edit – ty hlídá S1 + CNP; start Kata VM a hustota per uzel neměřeny (harness S1); per-repo autorizace gitu vyžaduje terminaci TLS v gateway.
+**Přijatá rizika (návrh):** nested virt na AKS = gen2 SKU, bez GPU (gVisor `nvproxy` jen vlastní DaemonSet mimo support policy); Kata na AKS = MS fork 4.1.0 vs. upstream 4.3.1, guest bez Landlock, seccomp profil podu se neaplikuje, `hostUsers: false` nejde; srt beta (breaking změny každé 2–3 týdny), deny-list z cwd při startu, Chromium → Playwright mimo srt; agentgateway 1.6.0 bez loopback ochrany dynamic backendu → CNP; git token žije v gateway podu; start Kata VM, hustota a srt v Kata guestu bez `enableWeakerNestedSandbox` **neměřeny** (skript `aks/`).
 
 ## Co ověřit dál
 
 - [x] ~~Síto kolo 1~~ – 2026-10-23, 31 kandidátů; nativní schopnosti Anthropic a Inspect providery zahrnuty.
-- [ ] **Kolo 2 (Azure):** AKS Pod Sandboxing GA vs. preview (kotva `katavmisolationpreview`); start Kata VM a hustota per Dsv5 uzel vs. gVisor `systrap`; AKS FQDN filtering jen s ACNS (*sek.*) – alternativa CNP jen na IP agentgateway; sazby Azure dynamic sessions.
-- [ ] **Kolo 2 (srt):** srt uvnitř Kata podu bez `enableWeakerNestedSandbox` (user namespaces v guest kernelu Azure Linux, seccomp RuntimeDefault); Chromium sandbox pod gVisor/Kata; Agent SDK `sandbox` parametr vs. `settingSources`; repo `anthropic-experimental` vs. `anthropics`.
-- [ ] **Kolo 2 (egress):** agentgateway per-repo autorizace gitu (terminace TLS + CEL/OPA, `backendAuth` do git HTTP); co je `substrateEgress`/agent-substrate (PR #3318); `inspect_k8s_sandbox` – `runtimeClassName` a chart bez Cilia.
+- [x] ~~Kolo 2 (Azure, srt, egress)~~ – 2026-10-23 → [azure-kata-gvisor.md](azure-kata-gvisor.md), [anthropic-sandboxing.md](anthropic-sandboxing.md), [egress-agentgateway.md](egress-agentgateway.md).
+- [x] ~~Harness S1 lokálně~~ – 2026-10-23, 11/11 PASS; otevřené měření na AKS níže.
+- [ ] **Harness S1 na AKS** (`tools/harness_sandbox_s1/aks/`, spouští Adam): start Kata VM a hustota per D4s_v5 / D4ads_v7 vs. gVisor systrap; srt v Kata guestu bez `enableWeakerNestedSandbox` a jako non-root (`unshare -U` EPERM, `socket(AF_UNIX)` EPERM, mount `/proc`); `seccompProfile` v guestu; `hostUsers: false` fail/ignore; emptyDir na hostu; Chromium sandbox; CNP default-deny + IMDS.
+- [ ] agentgateway 1.7: `allowDynamicLoopback`/link-local, PR #2162 chybová těla vs. kontrakt Anthropic (přeměřit G1); mTLS/SPIFFE na CONNECT bindu → `source.identity`.
+- [ ] Ceny z `prices.azure.com` (D4s_v5, D4ads_v7, ACNS, dynamic sessions); Pod Sandboxing + Azure CNI powered by Cilium.
 - [ ] SPIRE workload attestation v Kata podu; identita při warm-pool claimu (agent-sandbox roadmap); OpenHands CLA/DCO a licenční metadata `openhands-sdk`; Landlock v Azure Linux kernelu; Kata po přesunu OpenInfra → LF.
-- [ ] Harness S1: pod per úkol s RuntimeClass (Kata nebo gVisor podle prostředí) + srt uvnitř, CNP default-deny, egress jen přes agentgateway CONNECT allow-list, bez tajemství v podu, SVID identita, spany příkazů a violations do ClickHouse; evaly S-E1 (exfil klíče z promptu selže), S-E2 (push do main bez approval selže), S-E3 (přístup na metadata endpoint 168.63.129.16 selže).
+- [ ] Export srt violations a verdictů gateway do OTEL/ClickHouse (adaptér, formát spanů); SPIRE k8s attestor v Kata podu.
 
 ## Changelog
+- 2026-10-23: kolo 2 (Azure/Kata/gVisor, srt/Agent SDK, agentgateway egress/Inspect) + harness S1 11/11 PASS; návrh zpřesněn.
 - 2026-10-23: síto kolo 1 – 31 kandidátů ve 3 skupinách; návrh Kata (AKS Pod Sandboxing) / gVisor + srt + agentgateway egress + devcontainer + Playwright MCP + wasmtime; Inspect k8s sandbox.
 - 2026-10-23: první verze – kostra, druhy prostředí, skupiny kandidátů, otevřeno síto.

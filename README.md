@@ -55,7 +55,10 @@ adam/
 │       ├── model-pameti.md    # Schéma záznamu s původem, poisoning, životní cyklus, evaly
 │       └── kriteria.md        # Otázky M1–M4, kritéria B1–B6
 │   └── sandbox/               # Vrstva 7: Sandboxy a pracovní prostředí
-│       ├── overview.md        # Co se izoluje, síto kandidátů
+│       ├── overview.md        # Co se izoluje, síto kandidátů, kolo 2, harness S1
+│       ├── azure-kata-gvisor.md   # AKS Pod Sandboxing, gVisor na AKS, egress a cena
+│       ├── anthropic-sandboxing.md # sandbox-runtime, Claude Code a Agent SDK sandbox
+│       ├── egress-agentgateway.md  # CONNECT proxy, git přes gateway, Inspect k8s provider
 │       └── kriteria.md        # Otázky S1–S4, kritéria B1–B6
 ├── .claude/
 │   ├── skills/
@@ -75,7 +78,7 @@ adam/
 │       ├── memory-scout.md     # Podagent na memory frameworky, DB a původ faktů
 │       └── sandbox-scout.md    # Podagent na izolaci, egress a pracovní prostředí
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
-├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1)
+├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1, sandbox S1)
 ├── docs/                      # Architektura a postupy
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```

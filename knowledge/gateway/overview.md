@@ -177,6 +177,7 @@ LiteLLM zůstává záloha pro případ, že FinOps bez ledgeru nebude stačit �
 porušením kontraktu (passthrough režim) a výhradou k A1.
 
 ## Co ověřit dál
+- [ ] agentgateway 1.7: PR #2162 (generická chybová těla klientům) vs. kontrakt Claude Code (chybová těla neobalovat) – přeměřit G1 na 1.7; egress proxy (CONNECT) viz `../sandbox/egress-agentgateway.md`.
 
 - [x] ~~**Harness G1** – přenos podle kontraktu z code.claude.com~~ – **změřeno 2026-10-22**: mock agentgateway 21/21,
       LiteLLM 16/21; **live agentgateway 2/2** (cache_read přes gateway > 0, Agent SDK s nástrojem doběhl).

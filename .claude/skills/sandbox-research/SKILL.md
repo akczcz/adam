@@ -1,6 +1,6 @@
 ---
 name: sandbox-research
-description: Postup pro průzkum a prověrku vrstvy sandboxů a pracovního prostředí multiagentní platformy (gVisor, Kata Containers, Firecracker, Sysbox, Kubernetes agent-sandbox, Anthropic sandbox-runtime a Claude Code sandboxing, nsjail, bubblewrap, E2B, Daytona, Modal, microsandbox, OpenHands runtime, SWE-ReX, Pyodide/Wasm, Deno, Jupyter, Playwright, Steel, browser-use, devcontainer, DevPod, Nix, Coder, Azure Container Apps dynamic sessions) a pro aktualizaci knowledge/sandbox/. Použij vždy, když Adam řeší, kde agent spouští kód, testy nebo prohlížeč, izolaci neověřeného kódu, egress a tajemství v sandboxu, devcontainery a předpřipravená prostředí rolí, snapshoty a paralelní běhy, cenu sandboxů na Azure, nebo schvalování nevratných akcí – i když slovo "sandbox" výslovně nezazní.
+description: Postup pro průzkum a prověrku vrstvy sandboxů a pracovního prostředí multiagentní platformy (gVisor, Kata Containers, Firecracker, Sysbox, Kubernetes agent-sandbox, Anthropic sandbox-runtime (anthropics/sandbox-runtime) a Claude Code sandboxing, nsjail, bubblewrap, E2B, Daytona, Modal, microsandbox, OpenHands runtime, SWE-ReX, Pyodide/Wasm, Deno, Jupyter, Playwright, Steel, browser-use, devcontainer, DevPod, Nix, Coder, Azure Container Apps dynamic sessions) a pro aktualizaci knowledge/sandbox/. Použij vždy, když Adam řeší, kde agent spouští kód, testy nebo prohlížeč, izolaci neověřeného kódu, egress a tajemství v sandboxu, devcontainery a předpřipravená prostředí rolí, snapshoty a paralelní běhy, cenu sandboxů na Azure, nebo schvalování nevratných akcí – i když slovo "sandbox" výslovně nezazní.
 ---
 
 # Průzkum sandboxů a pracovního prostředí
@@ -63,7 +63,21 @@ Postup `framework-research` sekce 2, vzorce v `knowledge/frameworks/licencni-vzo
 - **AGPL u DX nástrojů** (Coder, Gitpod/Ona, Lightpanda, Daytona OSS, Arrakis); telemetrie default on u browser-use, DevPod, Coder, Lightpanda.
 - **Env `HTTPS_PROXY` agent odstraní** – vynucení egressu musí být síťové (CNP) a v proxy, ne v proměnné.
 - **Managed Agents**: request bez `networking` = `unrestricted`; allow-list je per host, ne per operace.
-- **`inspect_k8s_sandbox` s `networkPolicy.enabled: false`** nic neomezuje; bez Cilia nutná vlastní NetworkPolicy.
+- **`inspect_k8s_sandbox` s `networkPolicy.enabled: false`** nic neomezuje a `allowDomains` odmítá; bez Cilia nutná vlastní NetworkPolicy.
+
+## 7c. Pasti z kola 2 a harnessu S1 (2026-10-23)
+- **Zdroje místo blokovaných webů:** Azure docs = `MicrosoftDocs/azure-aks-docs`, `azure-compute-docs`, `azure-docs` (raw, `ms.date`; diff přes
+  `github.com/…/commit/<sha>.diff`); verze Azure Linux balíčků = `microsoft/azurelinux/3.0/SPECS/*`; gVisor syscall tabulka =
+  `pkg/sentry/syscalls/linux/linux64.go`; AKS release notes `github.com/Azure/AKS/releases?q=`; ceny (`prices.azure.com`, agregátory) blokované → jen *sek.*
+- **srt v K8s:** containerd `RuntimeDefault` seccomp blokuje `unshare`/`clone` s ns flagy bez `CAP_SYS_ADMIN` → bwrap nestartuje; `enableWeakerNestedSandbox`
+  mění jen `--proc` → `--bind /proc`; root potřebuje `CAP_SETFCAP` → non-root; bez seccomp helperu tichá degradace; `parentProxy` je objekt `{http, https}`
+  a vypíná resolved-address check; CLI loguje odmítnutí jen pod `SRT_DEBUG`; mandatory deny z cwd při startu; `NO_PROXY` s RFC1918/link-local → IP literály mimo proxy.
+- **Kata na AKS:** `seccompProfile` podu se v guestu neaplikuje (`disable_guest_seccomp` default true), guest `kernel-uvm` bez Landlock, `hostUsers: false` nejde (#8170),
+  na Pod Sandboxing poolu není `/dev/kvm` (kernel-mshv) → upstream `kata-qemu`/`kata-clh` tam nepoběží.
+- **agentgateway egress:** `backendAuth` jen na terminované HTTPS routě, ne na TLS passthrough; nepovolené SNI = TLS EOF (curl exit 35), ne 403;
+  1.6.0 bez loopback/link-local ochrany dynamic backendu (PR #3889 až 1.7) → CNP na gateway podu; bez nameserverů fallback na Google DNS (A3).
+- **Inspect approval** = fnmatch nad `tool(arg='…` (prefix glob), ne regex; `auto_approver("reject")` v Python API.
+- **Agent SDK `sandbox` option existuje** (Py i TS) – Python default bez `failIfUnavailable` běží nesandboxovaně.
 
 ## 8. Čemu se vyhni
 - Nevybírej podle DX nebo počtu jazyků – vybírej podle izolace, egressu a provozu na K8s zákazníka.

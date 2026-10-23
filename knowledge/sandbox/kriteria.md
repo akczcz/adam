@@ -58,7 +58,8 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | Hranice: kernel sdílený (seccomp, namespaces, bwrap) / user-space kernel (gVisor) / microVM (Kata, Firecracker) | docs runtimu, CVE historie, threat model |
 | Start sandboxu, hustota na uzel, podpora GPU, nested virtualizace (Azure: které SKU) | benchmark v harnessu, docs cloudu |
 | Řízení zdrojů (CPU, RAM, disk, čas) a kill při překročení | cgroups, limity runtimu |
-| Cloud metadata endpointy blokované (Azure `168.63.129.16`, `169.254.169.254`), loopback a link-local z proxy nedostupné | config proxy (srt `resolved-address check`), CNP |
+| Cloud metadata endpointy blokované (Azure `168.63.129.16`, `169.254.169.254`), loopback a link-local nedostupné **v proxy i v CNP** (agentgateway 1.6.0 dynamic backend nekontroluje) | srt `resolved-address check` (jen bez `parentProxy`), CNP na sandbox i gateway podu |
+| seccomp profil podu (`RuntimeDefault` blokuje bwrap bez `CAP_SYS_ADMIN`; v Kata guestu se profil podu neaplikuje), `hostUsers`/`procMount` – infra požadavky procesového sandboxu uvnitř S1 | containerd `seccomp_default.go`, Kata `disable_guest_seccomp`, harness |
 | Snapshot / obnova / fork (paralelní větve téhož úkolu) | Firecracker snapshot, CRIU, overlay |
 
 ### B2. Síť, tajemství a identita (S2)
@@ -113,5 +114,6 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | Persistentní „agentův počítač“ | stav patří do gitu, artefaktů a paměti; persistentní sandbox je neauditovatelný a neopakovatelný |
 
 ## Changelog
+- 2026-10-23: po kole 2 doplněno B1 (metadata i v CNP, seccomp/hostUsers uvnitř S1).
 - 2026-10-23: po sítu zpřesněno A2 (Firecracker, nested virt, mshv), B1 (metadata endpointy), B3 (devcontainer up).
 - 2026-10-23: první verze; druhy prostředí, otázky S1–S4, kritéria B1–B6.
