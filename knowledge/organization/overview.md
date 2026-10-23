@@ -1,7 +1,7 @@
 ---
 tema: Organizační vrstva virtuální IT firmy – procesy, role, hranice autonomie, schvalovací body (návrh)
 naposledy_overeno: 2026-10-23
-zralost: n/a (návrh v0 – kostra; čeká na Adamovy odpovědi na otázky níže a na kolo 1 návrhu)
+zralost: n/a (návrh v0 – kostra s rozhodnutými výchozími volbami; kolo 1 návrhu běží)
 primarni_zdroje:
   - knowledge/platforma/cilova-architektura.md
   - knowledge/identity/regulace.md
@@ -16,18 +16,13 @@ Návrhová vrstva nad sedmi rozhodnutými. Zásada z [kriteria.md](kriteria.md):
 odvozené.** Tento soubor nahrazuje pracovní hypotézu v
 [`../platforma/cilova-architektura.md`](../platforma/cilova-architektura.md) a bude se přepisovat po každém kole návrhu.
 
-## Co firma dodává (v0 – k potvrzení Adamem)
+## Co firma dodává (v0 – rozhodnuto Adamem 2026-10-23: výchozí volby)
 
-Výchozí předpoklad: zákaznické **AI/softwarové zakázky end-to-end** – od poptávky přes návrh, implementaci, review
-a nasazení po provoz a podporu; typicky v prostředí zákazníka (Azure výchozí). Tři otázky, bez kterých návrh nejde
-uzavřít:
-
-1. **Které služby firma prodává v první verzi?** (a) vývoj a dodání na zakázku, (b) provoz a podpora dodaného,
-   (c) konzultace/architektura bez kódu – nebo jen (a)?
-2. **Kde je člověk povinně?** jen na nevratných krocích (push do main, deploy, komunikace k zákazníkovi, platba),
-   nebo i na vstupu každé zakázky (přijetí) a výstupu (předání)?
-3. **Kdo je zákazník první zakázky?** reálný klient, nebo interní dogfooding (platforma staví sama sebe)?
-   To určuje tenant model, klasifikační bránu AI Act a první harness.
+| Otázka | Rozhodnutí v0 | Důsledek pro návrh |
+|---|---|---|
+| Služby v první verzi | **jen vývoj a dodání na zakázku**; provoz a podpora až po harnessu O-1, konzultace bez kódu později | katalog procesů v0 končí předáním a nasazením do prostředí zákazníka; role SRE je v procesu Nasazení, ne v trvalém provozu |
+| Kde je člověk povinně | **nevratné kroky + vstup a výstup zakázky** (přijetí zadání, předání výsledku); hranice se posouvá podle pass^k rolí | každá zakázka má ≥ 2 HITL body navíc k nevratným krokům; autonomie uvnitř (návrh → implementace → review) |
+| První zákazník | **dogfooding** – platforma staví sama sebe (jeden tenant, bez přílohy III AI Act) | tenant model jednoduchý, klasifikační brána zatím jen jako proces bez reálného use casu; harness O-1 bez cizích dat |
 
 ## Tok zakázky (v0)
 
@@ -77,10 +72,11 @@ ven (čl. 50 disclosure), platba, smazání dat – všechny kryté approval pol
 
 ## Co ověřit dál
 
-- [ ] Adamovy odpovědi na tři otázky výše (služby, kde je člověk povinně, první zákazník).
+- [x] ~~Adamovy odpovědi na tři otázky~~ – 2026-10-23 výchozí volby (jen vývoj, člověk na nevratných krocích + vstup/výstup, dogfooding).
 - [ ] Kolo 1 návrhu: `procesy.md`, `role.md` + `roles/*.yaml`, `autonomie.md`, `metriky.md`.
 - [ ] Harness O-1 (Dapr Workflow s HITL, mock role; vyžaduje Dapr lokálně – smoke test v `tools/` existuje).
 - [ ] Mapování na AI Act T1–T15 per proces (klasifikační brána, čl. 14, čl. 50).
 
 ## Changelog
+- 2026-10-23: rozhodnuty výchozí volby (služby, člověk, první zákazník); kolo 1 návrhu spuštěno.
 - 2026-10-23: první verze – kostra: tok zakázky v0, role v0, plán kola 1, tři otázky pro Adama.
