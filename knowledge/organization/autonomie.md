@@ -189,6 +189,7 @@ L4 alert, jedno nesankcionované jednání, pass^3 pod práh, nebo incident X1 s
 Retence ≥ 6 měsíců, per tenant výš (T4); append-only + podpis pro high-risk profil (T2).
 
 ## Co ověřit dál
+- [x] ~~Stop a HITL změřeny harnessem O-1~~ (2026-10-23): pause → SUSPENDED; **schválení vyvolané během stopu se neztratí a uplatní se po resume** → resume smí jen člověk s důvodem a token zůstává vázán na hash artefaktu; timeout → Pozastaveno bez schválení; token agenta odmítnut (`approval_not_by_human`).
 
 - [ ] Harness O-1: nevratný krok bez `approval_id` → 403/deny ve **všech** primárních PEP (gateway git, extAuthz deploy, PEP paměti), timeout → `Pozastaveno` bez schválení, stop během běhu sandboxu zachová commit na větvi, cena zakázky v logu.
 - [ ] Dapr Workflow pause/resume (T5) v docs 1.18 a chování child workflow při pause rodiče.
@@ -199,4 +200,5 @@ Retence ≥ 6 měsíců, per tenant výš (T4); append-only + podpis pro high-ri
 - [ ] Právní posouzení profilu `nejasne` – kdo je „právník“ v dogfoodingu.
 
 ## Changelog
+- 2026-10-23: nálezy harnessu O-1 (stop neruší čekající schválení; executor s tokenem).
 - 2026-10-23: první verze – stupnice A0–A4, katalog N1–N10 s vynucením a logováním, Rego kostra, timeouty, stop tlačítko, klasifikační brána, pravidlo pass^k (kolo 1, část A).

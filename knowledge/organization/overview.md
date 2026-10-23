@@ -1,7 +1,7 @@
 ---
 tema: Organizační vrstva virtuální IT firmy – procesy, role, hranice autonomie, schvalovací body (návrh)
 naposledy_overeno: 2026-10-23
-zralost: n/a (návrh v1 po kole 1 – procesy, autonomie, role, metriky; harnessem O-1 neměřeno)
+zralost: n/a (návrh v1 po kole 1; jádro změřeno harnessem O-1 9/9 PASS 2026-10-23)
 primarni_zdroje:
   - knowledge/platforma/cilova-architektura.md
   - knowledge/identity/regulace.md
@@ -75,6 +75,20 @@ ven (čl. 50 disclosure), platba, smazání dat – všechny kryté approval pol
 | [role.md](role.md), [`roles/*.yaml`](roles/) | šablona role se sedmi bloky (identity, authz, budget, memory, sandbox, evals, escalation/disclosure), profily sandboxu, jedna Rego s daty per roli; plné YAML Vývojář a Reviewer | **nevratné kroky vykonává deterministická Dapr aktivita s podepsaným approval tokenem** – žádná role agenta nemá scope merge/deploy |
 | [metriky.md](metriky.md) | zdroje dat (ClickHouse, gateway log, OPA log, ledger paměti, Inspect), metriky per proces a role, schéma `org.*` (registr agentů T12, risk register T11, approvals, eval gates), odpovědnost, úrovně autonomie A0–A3 | registr a risk register = tabulky v platformním Postgresu s RLS, ne dokument |
 
+### Harness O-1 (2026-10-23) – 9/9 PASS
+
+[`tools/harness_org_o1/`](../../tools/harness_org_o1/README.md): Dapr 1.18.9 bez Dockeru (SQLite actor state store), OPA, mock role.
+
+| Tvrzení návrhu | Výsledek |
+|---|---|
+| předání mezi rolemi nese artefakt s hashem (zadání → ADR → PR → review) | ✅ O1b |
+| injekce v zadání: agentní role se pokusí o merge → PDP odmítne; merge/deploy jen executor s tokenem, 1× | ✅ O1c |
+| approval token vázaný na artefakt (hash), akci, zakázku a člověka; jiný hash → Pozastaveno; agent jako schvalovatel → Zamitnuto | ✅ O1d, O1h |
+| timeout HITL nikdy neschvaluje → Pozastaveno | ✅ O1e |
+| stop = `pause_workflow`, resume jen člověk s důvodem; **schválení během stopu se neztratí, uplatní se po resume** | ✅ O1f (vlastnost k zapsání do autonomie.md) |
+| SIGKILL daprd + app uprostřed HITL: stav přežije, schválení po restartu doběhne, executor 1× | ✅ O1g |
+| každé PDP rozhodnutí má důvod; OPA decision log; cena per zakázka z ledgeru | ✅ O1i, O1h |
+
 ### Otázky z kola 1 – výchozí odpovědi (použity v návrhu, Adam může změnit)
 
 | # | Otázka | Výchozí odpověď |
@@ -93,11 +107,13 @@ ven (čl. 50 disclosure), platba, smazání dat – všechny kryté approval pol
 
 - [x] ~~Adamovy odpovědi na tři otázky~~ – 2026-10-23 výchozí volby (jen vývoj, člověk na nevratných krocích + vstup/výstup, dogfooding).
 - [x] ~~Kolo 1 návrhu~~ – 2026-10-23: `procesy.md`, `autonomie.md`, `role.md` + `roles/`, `metriky.md`.
-- [ ] **Harness O-1**: jedna zakázka end-to-end s mock rolemi přes Dapr Workflow (HITL `when_any`, timeout → Pozastaveno), merge-executor s approval tokenem, gateway rozpočet per zakázka, paměť `proposed`, sandbox S1; tvrzení: nevratný krok bez schválení neprojde (ani přes injection), timeout neschvaluje, stop zmrazí rozpočet, předání nesou artefakty, cena per zakázka v logu. Lokálně vyžaduje `daprd` + placement + scheduler bez Dockeru (harness_dapr_claude běžel s Redisem v Dockeru).
+- [x] ~~Harness O-1~~ – 2026-10-23, 9/9 PASS (viz výše); otevřené: skutečné role přes Agent SDK v sandboxu, AG-UI, OpenBao transit, gateway rozpočet.
+- [ ] ~~Harness O-1 původní zadání:~~ jedna zakázka end-to-end s mock rolemi přes Dapr Workflow (HITL `when_any`, timeout → Pozastaveno), merge-executor s approval tokenem, gateway rozpočet per zakázka, paměť `proposed`, sandbox S1; tvrzení: nevratný krok bez schválení neprojde (ani přes injection), timeout neschvaluje, stop zmrazí rozpočet, předání nesou artefakty, cena per zakázka v logu. Lokálně vyžaduje `daprd` + placement + scheduler bez Dockeru (harness_dapr_claude běžel s Redisem v Dockeru).
 - [ ] Role Account, Architekt, SRE, Governance jako plné YAML (zatím zkrácené v `role.md`); Dapr Workflow pause/resume jako T5 mechanismus ověřit v docs 1.18.
 - [ ] Mapování na AI Act T1–T15 per proces (klasifikační brána, čl. 14, čl. 50).
 
 ## Changelog
+- 2026-10-23: harness O-1 9/9 PASS – executor s approval tokenem, fail-closed timeout, stop/resume, restart.
 - 2026-10-23: kolo 1 návrhu – procesy, autonomie, role, metriky; diagram doplněn o Eskalaci, Předání, Post-mortem a Pozastaveno; otázky Q1–Q9 s výchozími odpověďmi.
 - 2026-10-23: rozhodnuty výchozí volby (služby, člověk, první zákazník); kolo 1 návrhu spuštěno.
 - 2026-10-23: první verze – kostra: tok zakázky v0, role v0, plán kola 1, tři otázky pro Adama.

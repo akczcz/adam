@@ -87,7 +87,7 @@ adam/
 │       ├── sandbox-scout.md    # Podagent na izolaci, egress a pracovní prostředí
 │       └── organization-designer.md # Podagent na návrh rolí, procesů a schvalovacích bodů
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
-├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1, sandbox S1)
+├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1, sandbox S1, organizace O-1)
 ├── docs/                      # Architektura a postupy
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```
