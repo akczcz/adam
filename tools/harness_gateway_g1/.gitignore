@@ -1,0 +1,6 @@
+.venv/
+logs/
+.env
+# binárka agentgateway stažená do adresáře harnessu (jen kořen, ne results/)
+/agentgateway
+/agentgateway-*

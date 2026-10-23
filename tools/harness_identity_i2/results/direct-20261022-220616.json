@@ -1,0 +1,129 @@
+{
+ "meta": {
+  "path": "direct",
+  "authz": null,
+  "kc_features": "",
+  "started": "2026-10-22T22:05:49",
+  "keycloak": "26.8.1"
+ },
+ "checks": [
+  {
+   "id": "I0",
+   "name": "Subject token uživatele (frontend) nemá audience MCP serveru",
+   "status": "PASS",
+   "detail": {
+    "sub": "1ca56e1d-3c7b-4ef2-ba41-d7c0a8bb79e9",
+    "azp": "frontend",
+    "aud": "gateway",
+    "scope": "openid tickets:read profile",
+    "preferred_username": "alice"
+   }
+  },
+  {
+   "id": "I2a",
+   "name": "Passthrough uživatelského tokenu MCP server odmítne (RFC 8707 aud)",
+   "status": "PASS",
+   "detail": {
+    "status": 401,
+    "verdict": "aud_mismatch: Audience doesn't match",
+    "www-authenticate": "Bearer resource_metadata=\"http://127.0.0.1:9800/.well-known/oauth-protected-resource\", error=\"invalid_token\", error_desc"
+   }
+  },
+  {
+   "id": "I2b",
+   "name": "Exchange: aud=mcp-tickets, sub=uživatel, azp=gateway; MCP přijme",
+   "status": "PASS",
+   "detail": {
+    "exchange_status": 200,
+    "token": {
+     "sub": "1ca56e1d-3c7b-4ef2-ba41-d7c0a8bb79e9",
+     "azp": "gateway",
+     "aud": "mcp-tickets",
+     "scope": "tickets:read profile",
+     "preferred_username": "alice"
+    },
+    "mcp_status": 200,
+    "mcp_saw": {
+     "iss": "http://127.0.0.1:8080/realms/platform",
+     "sub": "1ca56e1d-3c7b-4ef2-ba41-d7c0a8bb79e9",
+     "aud": "mcp-tickets",
+     "azp": "gateway",
+     "scope": "tickets:read profile",
+     "preferred_username": "alice",
+     "typ": "Bearer",
+     "exp": 1792707373
+    }
+   }
+  },
+  {
+   "id": "I2c",
+   "name": "Bez enforceru: exchange vydá scope, který uživatel neměl (UPSCOPE = past)",
+   "status": "INFO",
+   "detail": {
+    "status": 200,
+    "scope": "tickets:write profile",
+    "upscoped": true
+   }
+  },
+  {
+   "id": "I2e",
+   "name": "Delegace: `act` claim nese agenta (actor_token)",
+   "status": "FAIL",
+   "detail": {
+    "status": 200,
+    "act": null,
+    "response": "ok, ale bez act",
+    "note": "Keycloak 26.8: delegace je preview feature (token-exchange-delegation) a vyžaduje souhlas uživatele v prohlížeči + FGAP V2 permission"
+   }
+  },
+  {
+   "id": "I2d",
+   "name": "S downscope-assertion-grant-enforcer je upscope odmítnut",
+   "status": "PASS",
+   "detail": {
+    "status": 400,
+    "body": {
+     "error": "invalid_scope",
+     "error_description": "Scopes [tickets:write] not present in the initial access token [tickets:read, openid, profile]"
+    }
+   }
+  },
+  {
+   "id": "I2d'",
+   "name": "S enforcerem: exchange na audience, kterou subject token nemá (mcp-tickets)",
+   "status": "INFO",
+   "detail": {
+    "status": 400,
+    "body": {
+     "error": "invalid_request",
+     "error_description": "Requested audience not available: mcp-tickets"
+    },
+    "note": "enforcer kontroluje i audience → buď user token nese aud každého MCP serveru (koliduje s I2a), nebo enforcer vypnout a upscope hlídat jinde"
+   }
+  },
+  {
+   "id": "I2d''",
+   "name": "S enforcerem: exchange bez audience parametru",
+   "status": "INFO",
+   "detail": {
+    "status": 200,
+    "token": {
+     "sub": "1ca56e1d-3c7b-4ef2-ba41-d7c0a8bb79e9",
+     "azp": "gateway",
+     "scope": "tickets:read profile",
+     "preferred_username": "alice"
+    }
+   }
+  },
+  {
+   "id": "I2h",
+   "name": "Latence exchange u Keycloaku (ms, bez cache)",
+   "status": "INFO",
+   "detail": {
+    "first_ms": 233.1,
+    "p50": 83.5,
+    "p95": 101.1
+   }
+  }
+ ]
+}

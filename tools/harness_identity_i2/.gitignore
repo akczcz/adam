@@ -1,0 +1,9 @@
+.venv/
+logs/
+.env
+/agentgateway
+/agentgateway-*
+/opa
+/opa-*
+/keycloak*
+/opa-envoy

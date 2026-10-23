@@ -1,0 +1,222 @@
+{
+  "realm": "platform",
+  "enabled": true,
+  "accessTokenLifespan": 600,
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Harness",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "basic",
+      "protocol": "openid-connect",
+      "description": "Keycloak 25+: claim sub. Při importu realmu s clientScopes se vestavěné scopes NEVYTVOŘÍ – musí být v JSON (ověřeno 2026-10-22)",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "profile",
+      "protocol": "openid-connect",
+      "description": "preferred_username",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "tickets:read",
+      "protocol": "openid-connect",
+      "description": "Čtení ticketů",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "tickets:write",
+      "protocol": "openid-connect",
+      "description": "Zápis ticketů",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "aud-gateway",
+      "protocol": "openid-connect",
+      "description": "Subject token musí mít requester client (gateway) v aud – Keycloak V2 jinak exchange odmítne",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-gateway",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "frontend",
+      "name": "AG-UI frontend (harness: direct grant)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://127.0.0.1/*"
+      ],
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "aud-gateway",
+        "tickets:read"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent",
+      "name": "Agent (service account = actor)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "agent-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "profile"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "gateway",
+      "name": "agentgateway (requester – standard token exchange)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "gateway-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "attributes": {
+        "standard.token.exchange.enabled": "true"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile"
+      ],
+      "optionalClientScopes": [
+        "tickets:read",
+        "tickets:write"
+      ],
+      "protocolMappers": [
+        {
+          "name": "aud-mcp-tickets",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "mcp-tickets",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "description": "Audience mcp-tickets přidává mapper na gateway clientu, ne na scope – subject token uživatele tak MCP audience nemá a passthrough musí selhat"
+    },
+    {
+      "clientId": "mcp-tickets",
+      "name": "MCP server tickets (resource)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "mcp-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": []
+    }
+  ],
+  "clientProfiles": {
+    "profiles": [
+      {
+        "name": "downscope-only",
+        "description": "Token exchange smí scope jen zužovat",
+        "executors": [
+          {
+            "executor": "downscope-assertion-grant-enforcer",
+            "configuration": {}
+          }
+        ]
+      }
+    ]
+  },
+  "clientPolicies": {
+    "policies": [
+      {
+        "name": "exchange-downscope-only",
+        "description": "Harness přepíná enabled přes admin API",
+        "enabled": false,
+        "conditions": [
+          {
+            "condition": "any-client",
+            "configuration": {}
+          }
+        ],
+        "profiles": [
+          "downscope-only"
+        ]
+      }
+    ]
+  }
+}

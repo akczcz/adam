@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: s1-gvisor
+  labels: { app: s1-sandbox, task: harness-s1 }
+spec:
+  runtimeClassName: runsc                  # gVisor – jen pokud je nainstalovaný shim runsc na uzlech (AKS nativně ne)
+  automountServiceAccountToken: false      # žádná identita K8s v sandboxu (vzor AISI chartu)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+  - name: sandbox
+    image: node:22-bookworm
+    command: ["bash", "-lc"]
+    args:
+    - |
+      set -e
+      apt-get update -qq && apt-get install -y -qq bubblewrap socat ripgrep curl >/dev/null
+      npm i -g --silent @anthropic-ai/sandbox-runtime@0.0.81
+      cat > /tmp/srt.json <<'J'
+      {"network":{"allowedDomains":["pkg.harness.test"],"deniedDomains":[],"parentProxy":{"http":"http://agentgateway.platform.svc:3128","https":"http://agentgateway.platform.svc:3128"}},
+       "filesystem":{"denyRead":[],"allowRead":[],"allowWrite":["/tmp"],"denyWrite":[]},"enableWeakerNestedSandbox":false,"allowNestedUserNamespaces":false}
+      J
+      echo "guest-kernel=$(uname -r)"
+      SRT_DEBUG=1 srt -s /tmp/srt.json -c 'tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; echo; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo' 2>/tmp/srt.err || true
+      grep -i "weaker\|EPERM\|mount" /tmp/srt.err | head -5 || true
+      sleep 3600
+    resources:
+      requests: { cpu: "500m", memory: "1Gi" }
+      limits: { cpu: "2", memory: "2Gi" }        # Kata: limit = RAM VM
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities: { drop: ["ALL"] }

@@ -47,8 +47,18 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 
 | Oblast | Znalosti | Skill / agent |
 |---|---|---|
+| Mapa vrstev platformy a cílová architektura | `knowledge/platforma/` | – (rozcestník a živý soubor rozhodnutí) |
 | AI protokoly pro multiagentní platformy | `knowledge/protocols/` | skill `protocol-research`, agent `protocol-scout` |
 | Agentní frameworky a runtimy | `knowledge/frameworks/` | skill `framework-research`, agent `framework-scout` |
+| Model gateway a FinOps | `knowledge/gateway/` | skill `gateway-research`, agent `gateway-scout` |
+| Identita, autorizace a governance | `knowledge/identity/` | skill `identity-research`, agent `identity-scout` |
+| Observabilita a evaluace | `knowledge/observability/` | skill `observability-research`, agent `observability-scout` |
+| Paměť a znalosti | `knowledge/memory/` | skill `memory-research`, agent `memory-scout` |
+| Sandboxy a pracovní prostředí | `knowledge/sandbox/` | skill `sandbox-research`, agent `sandbox-scout` |
+| Organizační vrstva (role, procesy, hranice autonomie) | `knowledge/organization/` | skill `organization-design`, agent `organization-designer` |
+
+Všech osm vrstev je rozhodnuto (2026-10-23); stav, celkový diagram a fáze produktu P0–P3 jsou
+v `knowledge/platforma/cilova-architektura.md`, postup a pořadí v `knowledge/platforma/overview.md`.
 
 ## Principy práce
 

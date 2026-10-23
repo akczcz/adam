@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# S1 na AKS: Kata Pod Sandboxing + srt uvnitř. Spouští se ručně (vyžaduje az, kubectl, jq). Výstup: results/aks-<datum>.json
+set -euo pipefail
+RG=${RG:-rg-harness-s1}; LOC=${LOC:-westeurope}; CLUSTER=${CLUSTER:-aks-harness-s1}; SKU=${SKU:-Standard_D4s_v5}
+HERE=$(cd "$(dirname "$0")" && pwd); OUT="$HERE/../results/aks-$(date +%Y%m%d-%H%M%S).json"
+case "${1:-}" in
+  create)
+    az group create -n "$RG" -l "$LOC" -o none
+    az aks create -g "$RG" -n "$CLUSTER" --node-count 1 --node-vm-size "$SKU" --os-sku AzureLinux --network-plugin azure --generate-ssh-keys -o none
+    # Pod Sandboxing: node pool s Katou (Azure Linux, gen2 SKU s nested virt). Ověř aktuální stav GA/preview v docs:
+    # MicrosoftDocs/azure-aks-docs articles/aks/use-pod-sandboxing.md
+    az aks nodepool add -g "$RG" --cluster-name "$CLUSTER" -n kata --node-count 1 --node-vm-size "$SKU" --os-sku AzureLinux --workload-runtime KataVmIsolation -o none
+    az aks get-credentials -g "$RG" -n "$CLUSTER" --overwrite-existing
+    kubectl get runtimeclass ;;
+  run)
+    kubectl apply -f "$HERE/networkpolicy.yaml"
+    kubectl apply -f "$HERE/pod-kata.yaml"
+    kubectl get runtimeclass runsc >/dev/null 2>&1 && kubectl apply -f "$HERE/pod-gvisor.yaml" || echo "RuntimeClass runsc není – gVisor přeskočen"
+    kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s
+    NODE_KERNEL=$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.kernelVersion}')
+    GUEST=$(kubectl logs s1-kata | grep guest-kernel | cut -d= -f2)
+    SRTLINE=$(kubectl logs s1-kata | sed -n '2,3p' | tr '\n' ' ')
+    T=(); for i in $(seq 1 5); do kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null; S=$(date +%s%N); kubectl apply -f "$HERE/pod-kata.yaml" >/dev/null; kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s >/dev/null; T+=($(( ($(date +%s%N)-S)/1000000 ))); done
+    jq -n --arg nk "$NODE_KERNEL" --arg gk "$GUEST" --arg srt "$SRTLINE" --argjson t "[$(IFS=,; echo "${T[*]}")]" \
+      '{meta:{cluster:env.CLUSTER,sku:env.SKU,date:(now|todate)},checks:[
+        {id:"S1h-1",name:"Kata pod má vlastní guest kernel",status:(if $nk!=$gk then "PASS" else "FAIL" end),detail:{node_kernel:$nk,guest_kernel:$gk}},
+        {id:"S1h-2",name:"start Kata podu (apply→Ready) ms, 5×",status:"INFO",detail:{ms:$t}},
+        {id:"S1h-3",name:"srt uvnitř Kata podu: lo-only netns, seccomp, bez enableWeakerNestedSandbox",status:(if ($srt|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srt}}]}' | tee "$OUT"
+    echo "zapsáno $OUT – přidej S1h-4 (egress přes NetworkPolicy) po nasazení agentgateway do ns platform" ;;
+  destroy) az group delete -n "$RG" --yes --no-wait ;;
+  *) echo "použití: $0 create|run|destroy"; exit 2 ;;
+esac

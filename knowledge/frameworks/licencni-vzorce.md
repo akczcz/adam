@@ -1,6 +1,6 @@
 ---
 tema: Licenční vzorce a pasti v open-source AI frameworcích
-naposledy_overeno: 2026-10-20
+naposledy_overeno: 2026-10-23
 zralost: n/a (metodika)
 primarni_zdroje:
   - https://pypi.org/project/langgraph-api/
@@ -209,6 +209,28 @@ větev může být bez releasu měsíce, aniž by kdo řekl, že skončila.
 opravy, a kdo to podepsal?“* Když to nikde napsáno není, odpověď je „nevíme“ a do dodávky
 patří jako riziko, ne jako předpoklad.
 
+## Vzorce doplněné z vrstev gateway a identity (2026-10-22)
+
+| Vzorec | Doložený případ | Jak poznat |
+|---|---|---|
+| **Osmý: proprietární balíček jako povinná závislost OSS proxy** | LiteLLM: `litellm-enterprise` (`LicenseRef-Proprietary`) v závislostech `litellm[proxy]`; potvrzeno instalací (0.1.76.post1 vedle 1.106.2) | Projít `requires_dist` / lock file **proxy**, ne jen `LICENSE` v rootu |
+| **Devátý: rozpor LICENSE vs. metadata** | Helicone `ai-gateway`: `LICENSE` GPL-3.0, `Cargo.toml` a README Apache-2.0 | Porovnat soubor `LICENSE` s registry metadaty a README; při rozporu otázka na právníka |
+| **Desátý: OSS linie bez nových minorů při živém enterprise produktu** | Kong: CE končí 3.9.x, EE na 3.16 | Matice verzí v docs vendora vs. tagy v OSS repu |
+| **Jedenáctý: funkce odemykané server-side flagy s online validací klíče** | Infisical: `getDefaultOnPremFeatures()` – SSO, RBAC, audit log `false` bez klíče; licence validována proti license serveru (IP allowlist) | Hledat v kódu výčet feature flagů per licence; v docs „allow outbound connections to…“ |
+| **Dvanáctý: inbound Apache bez CLA = CLA jinými slovy** | Zitadel: AGPL-3.0 runtime, příspěvky **povinně Apache-2.0** – vendor drží právo relicencovat celek | `LICENSING.md` / CONTRIBUTING: licence příspěvků ≠ licence projektu |
+| **Třináctý: telemetrie opt-out u policy/authz komponenty** | SpiceDB: hodinový remote write na `telemetry.authzed.com`; Ory: Segment `sqa`; OPA: version check na api.github.com | Hledat `telemetry`, `sqa`, `version check` v konfiguraci; v air-gapu musí být vypnutelné **bez** změny kódu |
+| **Čtrnáctý: telemetrie, kterou EE licence zakazuje vypnout** | Langfuse: OSS `TELEMETRY_ENABLED=false`, s EE klíčem „cannot be disabled“; SigNoz statsreporter sbírá e-maily; ClickHouse `send_crash_reports` v dodávaném configu | Číst stránku telemetry **pro EE režim**, ne jen pro OSS; kontrolovat dodávaný default config |
+| **Patnáctý: AI bot nebo jeden člověk jako hlavní committer** | Jaeger: 137/300 commitů bot jednoho maintainera; MLflow: Copilot 96/300; Phoenix a OpenInference: jeden autor ~45 % | Podíl commitů podle autora za 300 commitů vč. botů – bot jako top autor znamená, že lidská kapacita je jeden člověk |
+| **Šestnáctý: vertikální vlastnictví úložiště i platformy** | ClickHouse Inc. vlastní ClickHouse (CLA) i Langfuse (CLA, od 2026-01-16) | Když jeden vendor s CLA drží dvě vrstvy stacku, relicence jedné zasáhne obě – držet data v otevřeném schématu (OTLP), ne ve formátu platformy |
+| **Sedmnáctý: „self-hosted“ = enterprise smlouva** | Logfire, LangSmith, Traceloop: SDK MIT/Apache, backend jen privátní image za smlouvou | Hledat Helm chart: `pullSecret`, „contact sales“, `LICENSE_KEY` v values |
+| **Osmnáctý: licence je čistá, past je v povinném backendu** | Graphiti (Apache-2.0) umí jen Neo4j (GPL/EE), FalkorDB (SSPL), Neptune; Cognee default Kuzu (archivovaný) | Projít `pyproject` závislosti a podporované backendy – vrstva pod knihovnou musí projít stejným sítem |
+| **Devatenáctý: telemetrie odesílá identifikátory cloudového účtu** | Weaviate od 1.33: AWS Account ID / GCP Project ID / Azure Subscription ID, „may use this data to identify potential customers“ | Číst stránku telemetry **doslovně**, ne jen „anonymní“; v dodávaném configu vypnout a doložit |
+| **Dvacátý: OSS je ukázka, hostovaná platforma má „proprietary optimizations“** | mem0: benchmarky „reflect Mem0's managed platform… not available in the open-source SDK“; MCP jen hostovaný, OSS MCP archivován | Hledat v README a benchmark stránkách formulace o „platform“ vs. „open-source“; archivovaná OSS repa integrací |
+| **Dvacátý první: OSS runtime zamrzne, SDK na registru žije dál** | Daytona: `main` jen README „moved to a private codebase“ (06/2026), poslední tag v0.190.0 AGPL; PyPI `daytona` 0.226.0 vydáno 2026-10-22 z privátní codebase | Porovnat datum posledního tagu runtime repa s datem posledního balíčku SDK; velký rozdíl = runtime už není OSS |
+| **Dvacátý druhý: root `LICENSE` ≠ licence publikovaného balíčku v monorepu** | E2B: root Apache-2.0, `packages/python-sdk/LICENSE` a `js-sdk/LICENSE` MIT, PyPI `license_expression: MIT` | Číst `LICENSE` v adresáři publikovaného balíčku, ne v rootu; do SBOM patří licence balíčku |
+| **Dvacátý třetí: closed-source telemetrický klient v GPL repu, default on** | Judge0 `TELEMETRY.md`: „close-source telemetry client … every 12 hours“, opt-out `JUDGE0_TELEMETRY_ENABLE=false` | Hledat `TELEMETRY.md`, binárky bez zdroje v jinak OSS repu |
+| **Dvacátý čtvrtý: orchestrátor pod nadací, jehož příklady montují tajemství do podu** | `kubernetes-sigs/agent-sandbox` příklad `claude-code-sandbox` montuje `ANTHROPIC_API_KEY` ze Secretu; egress a identita per claim jen v roadmapě | Číst `examples/` jako výpověď o zamýšleném modelu provozu, ne jen CRD; chybějící S2 v roadmapě = platforma si ho staví sama |
+
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
 Aktuální soubor `LICENSE` říká, co platí dnes. Neříká nic o tom, co bude platit za rok.
@@ -284,6 +306,10 @@ a licenční past přestává být existenční.
 Totéž platí pro přístup k modelům – viz model gateway v [overview.md](overview.md).
 
 ## Changelog
+- 2026-10-23: dvacátý první až dvacátý čtvrtý vzorec z vrstvy sandboxů (Daytona zamrzlé OSS, E2B monorepo licence, Judge0 telemetrie, agent-sandbox příklady).
+- 2026-10-23: osmnáctý až dvacátý vzorec z vrstvy paměti (Graphiti backendy, Weaviate telemetrie cloud ID, mem0 platform-only).
+- 2026-10-23: čtrnáctý až sedmnáctý vzorec z vrstvy observability (Langfuse EE telemetrie, AI bot committer, ClickHouse+Langfuse, self-hosted = smlouva).
+- 2026-10-22: osmý až třináctý vzorec z vrstev gateway a identity (LiteLLM, Helicone, Kong, Infisical, Zitadel, SpiceDB).
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).
 - 2026-10-20: re-verifikace všech doložených případů (verze a metadata k 2026-10-20); Mastra a
   LiteLLM doloženy konkrétním souborem; hygienická tabulka rozšířena (diagrid, langgraph-api,

@@ -1,0 +1,9 @@
+[project]
+name = "harness-org-o1"
+version = "0.1.0"
+description = "Harness O-1: zakázka end-to-end jako Dapr Workflow s HITL body, merge-executor s approval tokenem, OPA jako PDP nevratných akcí, stop tlačítko, timeout, restart"
+requires-python = ">=3.11,<3.13"
+dependencies = ["dapr==1.18.*", "dapr-ext-workflow==1.18.3", "httpx>=0.27", "pyyaml>=6"]
+
+[tool.uv]
+package = false

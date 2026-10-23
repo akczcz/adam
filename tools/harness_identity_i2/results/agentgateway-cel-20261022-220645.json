@@ -1,0 +1,97 @@
+{
+ "meta": {
+  "path": "agentgateway",
+  "authz": "cel",
+  "kc_features": "",
+  "started": "2026-10-22T22:06:17",
+  "gateway_version": "1.6.0",
+  "keycloak": "26.8.1"
+ },
+ "checks": [
+  {
+   "id": "I2b",
+   "name": "Přes agentgateway: MCP dostal vyměněný token (aud=mcp-tickets, sub=uživatel, azp=gateway)",
+   "status": "PASS",
+   "detail": {
+    "status": 200,
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"ticket_id\\\": \\\"T-1\\\", \\\"status\\\": \\\"OPEN\\\"}\"}],\"isError\":false}}",
+    "mcp_saw": {
+     "iss": "http://127.0.0.1:8080/realms/platform",
+     "sub": "cabce01f-fb54-433f-9eb4-b370ca8a947c",
+     "aud": "mcp-tickets",
+     "azp": "gateway",
+     "scope": "profile tickets:read",
+     "preferred_username": "alice",
+     "typ": "Bearer",
+     "exp": 1792707401
+    },
+    "verdict": "ok:lookup_ticket",
+    "upstream_requests": 1
+   }
+  },
+  {
+   "id": "I2b'",
+   "name": "Scope doručený MCP je podmnožinou scope uživatele",
+   "status": "PASS",
+   "detail": {
+    "user_scope": "openid profile tickets:read",
+    "mcp_scope": "profile tickets:read"
+   }
+  },
+  {
+   "id": "I2e",
+   "name": "Delegace: `act` claim u MCP",
+   "status": "FAIL",
+   "detail": {
+    "act": null,
+    "note": "viz direct běh"
+   }
+  },
+  {
+   "id": "I2f",
+   "name": "Autorizace (cel): delete_ticket zamítnut na gateway, MCP ho nevidí",
+   "status": "PASS",
+   "detail": {
+    "status": 403,
+    "body": "authorization failed",
+    "reached_mcp": 0
+   }
+  },
+  {
+   "id": "I2f'",
+   "name": "Autorizace (cel): lookup_ticket projde",
+   "status": "PASS",
+   "detail": {
+    "status": 200
+   }
+  },
+  {
+   "id": "I2i",
+   "name": "Neplatný token gateway odmítne (401), nic nevymění",
+   "status": "PASS",
+   "detail": {
+    "status": 401
+   }
+  },
+  {
+   "id": "I2g",
+   "name": "Audit: gateway log obsahuje sub uživatele a rozhodnutí",
+   "status": "PASS",
+   "detail": {
+    "sub_in_gateway_log": true,
+    "lines_with_sub": 3,
+    "deny_logged": true
+   }
+  },
+  {
+   "id": "I2h",
+   "name": "Latence tools/call přes gateway vč. exchange (ms)",
+   "status": "INFO",
+   "detail": {
+    "first_ms": 236.0,
+    "p50": 80.9,
+    "p95": 96.7
+   }
+  }
+ ]
+}

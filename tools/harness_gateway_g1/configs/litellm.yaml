@@ -1,0 +1,15 @@
+# LiteLLM proxy – harness G1. {{UPSTREAM}} doplní harness.py.
+# Nativní /v1/messages: model_list s api_base. Passthrough /anthropic/*: ANTHROPIC_API_BASE v prostředí.
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: "anthropic/*"
+      api_base: "{{UPSTREAM}}"
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  drop_params: false
+  set_verbose: false
+
+general_settings:
+  master_key: sk-harness-master

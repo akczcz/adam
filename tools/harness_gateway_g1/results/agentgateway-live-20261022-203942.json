@@ -1,0 +1,122 @@
+{
+ "meta": {
+  "gateway": "agentgateway",
+  "mode": "live",
+  "model": "claude-haiku-4-5",
+  "upstream": "https://api.anthropic.com",
+  "started": "2026-10-22T20:39:28",
+  "gateway_version": "1.6.0"
+ },
+ "checks": [
+  {
+   "id": "L1",
+   "name": "Live: prompt cache funguje přes gateway (2. volání má cache_read > 0)",
+   "status": "PASS",
+   "detail": {
+    "direct": [
+     {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 0,
+       "ephemeral_5m_input_tokens": 7602
+      },
+      "cache_creation_input_tokens": 7602,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 16,
+      "output_tokens": 4,
+      "output_tokens_details": null,
+      "server_tool_use": null,
+      "service_tier": "standard",
+      "speed": "standard"
+     },
+     {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 0,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 7602,
+      "inference_geo": "not_available",
+      "input_tokens": 16,
+      "output_tokens": 4,
+      "output_tokens_details": null,
+      "server_tool_use": null,
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    ],
+    "gateway": [
+     {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 0,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 7602,
+      "inference_geo": "not_available",
+      "input_tokens": 16,
+      "output_tokens": 4,
+      "output_tokens_details": null,
+      "server_tool_use": null,
+      "service_tier": "standard",
+      "speed": "standard"
+     },
+     {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 0,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 7602,
+      "inference_geo": "not_available",
+      "input_tokens": 16,
+      "output_tokens": 4,
+      "output_tokens_details": null,
+      "server_tool_use": null,
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    ]
+   }
+  },
+  {
+   "id": "A1",
+   "name": "Claude Agent SDK přes gateway: turn s nástrojem doběhl",
+   "status": "PASS",
+   "detail": {
+    "seconds": 9.8,
+    "error": null,
+    "tool_uses": [
+     "ToolSearch",
+     "mcp__harness__lookup_ticket"
+    ],
+    "tool_calls_executed": 1,
+    "num_turns": 3,
+    "is_error": false,
+    "usage": {
+     "input_tokens": 28,
+     "cache_creation_input_tokens": 21262,
+     "cache_read_input_tokens": 41890,
+     "output_tokens": 369,
+     "output_tokens_details": {
+      "thinking_tokens": 192
+     },
+     "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+     },
+     "service_tier": "standard",
+     "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 21262
+     },
+     "inference_geo": "not_available",
+     "iterations": [],
+     "speed": "standard",
+     "fallback_credit": null
+    },
+    "total_cost_usd": 0.0326395
+   }
+  }
+ ]
+}
