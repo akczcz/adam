@@ -47,14 +47,21 @@ nejsou. MCP dává `lastModified` a `ttlMs`, per-resource autorizace je jen SHOU
 
 ## Model původu a životní cyklus
 
-*(doplní se z rešerše 2026-10-23)*
+Detail v [model-pameti.md](model-pameti.md). Záznam = **fakt s původem**: tenant, scope, typ, `sources[]` povinné,
+`created_by` (SVID + za koho), `verification` (člověk / agent), confidence, **bi-temporalita** (`valid_from/to`,
+transaction time), `status` (`proposed → approved`), citlivost, retence, verze, `pipeline_version`, embedding jako
+odvozenina, podpis. Konflikt faktů = invalidace, ne přepis (Graphiti; mem0 4/2026 přešlo na ADD-only). Obrany proti
+poisoningu v pořadí cena/užitek: tenant filter z identity v PEP, zápis vždy `proposed` se schválením přes Dapr HITL,
+default jen `approved`, původ povinný, rate limit, oddělené tabulky, podpis, re-verifikace, evaly M-E3/M-E4 jako gate.
+Procedurální paměť zůstává v gitu, epizodická se čte jen přes destiláty.
 
 ## Co ověřit dál
 
 - [ ] Síto kolo 1 – memory frameworky, vektorové a grafové DB, licence.
 - [x] ~~Co dává Claude, Dapr, MCP a OTEL~~ → [nativni-schopnosti.md](nativni-schopnosti.md), 2026-10-23.
-- [ ] Model původu, izolace tenantů, memory poisoning, výmaz (GDPR čl. 17) – metodika.
+- [x] ~~Model původu, izolace tenantů, memory poisoning, výmaz~~ → [model-pameti.md](model-pameti.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-23: model paměti – schéma záznamu s původem, obrany proti poisoningu, životní cyklus, evaly M-E1–E6.
 - 2026-10-23: nativní schopnosti – model si nepamatuje nic; Managed Agents memory jen vzor; Dapr Vector API 1.19 alpha.
 - 2026-10-23: první verze – kostra, čtyři druhy paměti, otevřeno síto.
