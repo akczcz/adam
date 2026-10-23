@@ -1,0 +1,40 @@
+# rolegen – z definic rolí vznikají konfigurace všech vrstev
+
+První „zakázka“, kterou platforma staví sama sobě (fáze P0, `knowledge/platforma/produkt.md`): **jeden zdroj pravdy
+`knowledge/organization/roles/*.yaml`** (schéma `role.md` §2) → konfigurace pro OPA, agentgateway, sandbox-runtime,
+Claude Code, Kubernetes, Inspect AI a registr agentů. Každý výstup ověřuje **nástroj té vrstvy**, ne generátor sám.
+
+```bash
+python3 rolegen.py --roles ../../knowledge/organization/roles --out build --tenant acme --zakazka Z1
+```
+
+| Výstup | Pro vrstvu | Ověřeno čím |
+|---|---|---|
+| `build/opa/data.json` (`data.roles.<role>`) + `policies/roles.rego` (jedna politika `authz.decision`) | identita (gateway extAuthz, hook Agent SDK, PEP paměti) | OPA: 17 případů podle `autonomie.md` |
+| `build/agentgateway/apikeys-<tenant>-<zakazka>.yaml` (`policies.apiKey.keys[].budgets`), `egress-allowlist.yaml` (`tcpRoutes.hostnames`) | gateway a FinOps, egress | `agentgateway --validate-only` |
+| `build/srt/<role>.json` | sandbox (srt settings) | `srt -s … -c echo` |
+| `build/claude/<role>-managed-settings.json` | Claude Code managed settings | – (JSON) |
+| `build/k8s/<role>-pod.yaml` | sandbox (Kata, non-root, SA token off, drop ALL, seccomp Localhost) | kontrola polí |
+| `build/inspect/<role>-approval.yaml`, `<role>-evals.json` | evaluace (approval policy, vrstvy L0–L4 s gate) | `inspect_ai.approval_policies_from_config` |
+| `build/registry/roles.json` | registr agentů (T12), řádky `org.role_definitions` | sha zdroje, verze, vlastník |
+
+## Výsledek harnessu R1 (2026-10-23)
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| R1a | Generování deterministické (dva běhy = stejný hash), registr nese verzi, vlastníka, SPIFFE ID, sha zdroje | ✅ |
+| R1b | OPA: vývojář čte repo ✅, zapisuje ✗, merguje ✗, přiřazuje issue ✗ (příloha III), push na větev zakázky ✅, push do main ✗, cizí tenant ✗, schvaluje paměť ✗, navrhuje poučení ✅, čte personal ✗, vypíná sandbox ✗; reviewer schvaluje firma/internal ✅, personal ✗, push ✗, merge ✗, forget ✗; neznámá role ✗ | ✅ 17/17 |
+| R1c | srt 0.0.81 přijme settings obou rolí | ✅ |
+| R1d | agentgateway 1.6.0 přijme klíče s rozpočty (USD, 24h/30d, Audit/Block) a egress route | ✅ |
+| R1e | Inspect načte approval policy (reviewer dostal výchozí: `*git-receive-pack*` → reject) | ✅ |
+| R1f | Pod spec: Kata RuntimeClass, non-root, SA token off, drop ALL, seccomp Localhost | ✅ |
+
+Soubor: `results/r1-20261023-224112.json`. Adresář `build/` je generovaný, není v gitu.
+
+## Pasti
+
+- Rego: package nesmí být `roles`, když data mají kořen `roles` – `data.roles.decision` → rekurze. Politika je `package authz`.
+- Pravidla `tool_allowed` a `dangerous_tool_input` se překrývala → OPA vrátí konflikt (null). Allow pravidla mají `not dangerous`.
+- agentgateway: klíč s `budgets` **musí mít `metadata.name`** a **budgets vyžadují `config.database`** (sqlite/postgres) – jinak `--validate-only` padá.
+- Hodnoty klíčů gateway negeneruj: do configu patří `keyHash` (`sha256:<hex>`), hodnotu vydává OpenBao; placeholder v buildu je jen název klíče.
+- Role bez `inspect_approval_policy` dostane výchozí (push přes nástroj role nikdy) – explicitně prázdný seznam neexistuje.

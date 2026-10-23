@@ -23,7 +23,8 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 | Role Account, Architekt, Reviewer, SRE přes Agent SDK podle `organization/roles/*.yaml` | ⬜ | – |
 | Identita: Keycloak JWKS místo HMAC JWT; SVID role místo `spiffe://` řetězce | ⬜ (mechanismus změřen v I2) | – |
 | Rozpočet per role × zakázka v agentgateway (`apiKey.keys[].budgets`) místo součtu usage | ⬜ (mechanismus změřen v G1) | – |
-| První reálná zakázka: „platforma staví sama sebe“ – např. generátor OPA bundle + gateway klíčů z `roles/*.yaml` | ⬜ | – |
+| První reálná zakázka: „platforma staví sama sebe“ – generátor konfigurací z `roles/*.yaml` | ✅ ručně (ne ještě agentem) | [`tools/rolegen`](../../tools/rolegen/README.md) R1 6/6: OPA data + jedna Rego, gateway klíče s rozpočty, srt settings, pod spec, approval policy, registr rolí – každý výstup ověřen nástrojem své vrstvy |
+| Tatáž zakázka **provedená platformou** (Vývojář přes O-2 dostane zadání „rozšiř rolegen o roli SRE“, PR přes HITL) | ⬜ | – |
 
 ## P1 – platforma na AKS
 
@@ -38,7 +39,7 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 
 | Krok | Stav |
 |---|---|
-| Generátor: `roles/*.yaml` → OPA data bundle, gateway klíče a rozpočty, srt settings, Inspect eval sady | ⬜ |
+| Generátor: `roles/*.yaml` → OPA data bundle, gateway klíče a rozpočty, srt settings, Inspect eval sady | ✅ v0 (`tools/rolegen`); zbývá CI job, OPA bundle balení, hash klíčů z OpenBao |
 | Obrazy rolí (devcontainer build v CI) v interním registru | ⬜ |
 | Evaly L0–L3 per role s gate; registr agentů plněný z workflow | ⬜ |
 
@@ -51,4 +52,5 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-23: rolegen R1 6/6 – generátor konfigurací z rolí; v P0 zbývá nechat ji provést agentem.
 - 2026-10-23: první verze – P0 rozpracováno (O-1, O-2 mock hotové), P1–P3 jako checklist.

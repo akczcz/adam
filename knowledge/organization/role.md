@@ -251,6 +251,7 @@ z `input.token.agent_id` stejným `split`. Bundle data generuje CI z `roles/*.ya
 jediný zdroj; změna role = PR + nový bundle + nová řada evalů (T10).
 
 ## 6. Co ověřit dál
+- [x] ~~Generátor z YAML~~ – `tools/rolegen` (2026-10-23, R1 6/6): OPA data + `authz.decision`, gateway `apiKey.keys[].budgets` (vyžaduje `metadata.name` a `config.database`), srt settings, pod spec, approval policy, registr rolí.
 
 - [ ] Přesné názvy polí `apiKey.keys[].budgets[]` a chování `Audit` v agentgateway 1.6.0 (`schema/config.md`); přidání klíče per zakázka bez restartu.
 - [ ] OPA `io.jwt.decode_verify` s `jwks` ze SPIRE OIDC discovery v bundle (rotace); `x-agent-svid` z podu přes srt → gateway (hlavičky CONNECT vs. terminované routy).
@@ -262,4 +263,5 @@ jediný zdroj; změna role = PR + nový bundle + nová řada evalů (T10).
 - [ ] Harness O-1: pozastavená role (`agents_suspended`) → Dapr aktivita odmítne instanci; `BudgetExceeded` → HITL.
 
 ## Changelog
+- 2026-10-23: rolegen ověřil, že schéma jde bez zbytku přeložit do konfigurací vrstev (R1 6/6).
 - 2026-10-23: první verze – šablona YAML, mapování na vrstvy, profily sandboxu, společná Rego politika s daty per roli, zkrácené definice Account/Architekt/SRE/Governance/Člověk; plné YAML Vývojář a Reviewer v `roles/`.
