@@ -178,9 +178,9 @@ sequenceDiagram
 | a2a-python 1.2.3 | spany bez propagace | generické | žádná | – |
 
 ## Co ověřit dál
-- [x] ~~Harness O1: `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` přes agentgateway~~ – **změřeno 2026-10-23** (G1 `HARNESS_TRACE=1`, A3 PASS): CLI 2.1.308 posílá `traceparent` se stejným trace id jako env `TRACEPARENT`, agentgateway přidá child span. CLI vlastní span nevytvořil (console exporter) – ověřit s OTLP.
+- [x] ~~Harness O1: `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` přes agentgateway~~ – **změřeno 2026-10-23** (G1 A3 PASS; **O1 9/9**): s OTLP exportérem CLI 2.1.308 vytváří vlastní spany `claude_code.*` (10 v trace), agentgateway span má rodiče `claude_code.llm_request`, vše v ClickHouse pod jedním `trace_id`.
 - [ ] Dapr Agents + `ClaudeAgentExecutor` end-to-end (SDK injekce → CLI child span) – neměřeno.
-- [ ] agentgateway `tracing.fields.add` s `jwt.sub` na spanu (I2 měřil jen logy).
+- [x] ~~agentgateway `tracing.fields.add` na spanu~~ – O1: `session.id`, `agent.id` z hlaviček a `harness.redaction_probe` dorazily na span (`jwt.sub` v O1 nebyl, bez JWT).
 - [ ] AG-UI spec – trace pole.
 - [ ] Stav SIG GenAI a první release `semantic-conventions-genai`; návrh A2A semconv (Issues nedostupné).
 

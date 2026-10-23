@@ -1,0 +1,29 @@
+# agentgateway 1.6.0 – harness O1: LLM route na mock upstream + tracing do Collectoru.
+# Zdroj polí: schema/config.md (config.tracing.otlpEndpoint/otlpProtocol/fields/clientSampling/randomSampling), ověřeno 2026-10-23.
+config:
+  enableIpv6: false
+  readinessAddr: 127.0.0.1:19001
+  statsAddr: 127.0.0.1:19002
+  logging:
+    format: json
+    level: info
+  tracing:
+    otlpEndpoint: http://127.0.0.1:4318
+    otlpProtocol: http
+    clientSampling: "true"      # span, když request nese traceparent
+    randomSampling: "false"     # gateway sama trace nezačíná
+    fields:
+      add:
+        session.id: request.headers["x-claude-code-session-id"]
+        agent.id: request.headers["x-claude-code-agent-id"]
+        harness.redaction_probe: '"sk-SECRET12345"'   # musí z Collectoru vypadnout zamaskované
+        llm.cost.total: llm.cost.total
+
+llm:
+  port: {{PORT}}
+  models:
+  - name: '*'
+    provider: anthropic
+    params:
+      baseUrl: {{UPSTREAM}}/v1
+      apiKey: $ANTHROPIC_API_KEY

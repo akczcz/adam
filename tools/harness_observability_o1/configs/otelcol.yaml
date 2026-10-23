@@ -1,0 +1,64 @@
+# OTEL Collector contrib 0.163.2 – harness O1.
+# Jeden bod normalizace (gen_ai_normalizer), maskování (redaction) a uložení (clickhouse) – viz knowledge/observability/overview.md.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  # OpenInference / OpenLLMetry atributy → OTEL GenAI semconv (alpha, 2026-10-23)
+  gen_ai_normalizer:
+    sources:
+      - name: openinference
+      - name: openllmetry
+  # maskování hodnot – zde simulace úniku tajemství ve span atributu
+  redaction:
+    allow_all_keys: true
+    blocked_values:
+      - "sk-[A-Za-z0-9]+"
+    summary: debug
+  batch:
+    timeout: 1s
+
+exporters:
+  clickhouse:
+    endpoint: tcp://127.0.0.1:9000?dial_timeout=10s
+    database: otel
+    username: default
+    create_schema: true
+    ttl: 0
+    timeout: 10s
+    sending_queue:
+      queue_size: 100
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 5s
+      max_elapsed_time: 60s
+  file/traces:
+    path: {{LOGS}}/spans.jsonl
+  file/metrics:
+    path: {{LOGS}}/metrics.jsonl
+  file/logs:
+    path: {{LOGS}}/logs.jsonl
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [gen_ai_normalizer, redaction, batch]
+      exporters: [clickhouse, file/traces]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/metrics]
+    logs:
+      receivers: [otlp]
+      processors: [redaction, batch]
+      exporters: [clickhouse, file/logs]

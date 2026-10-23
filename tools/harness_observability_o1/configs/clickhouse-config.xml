@@ -1,0 +1,26 @@
+<!-- ClickHouse server pro harness O1 – lokálně, bez Dockeru. {{DATA}} doplní harness.py. -->
+<clickhouse>
+    <logger><level>warning</level><console>1</console></logger>
+    <listen_host>127.0.0.1</listen_host>
+    <http_port>8123</http_port>
+    <tcp_port>9000</tcp_port>
+    <path>{{DATA}}/</path>
+    <tmp_path>{{DATA}}/tmp/</tmp_path>
+    <user_files_path>{{DATA}}/user_files/</user_files_path>
+    <format_schema_path>{{DATA}}/format_schemas/</format_schema_path>
+    <!-- dodávaný config.xml má send_crash_reports zapnuté → crash.clickhouse.com; v air-gapu vypnout (síto 2026-10-23) -->
+    <send_crash_reports><enabled>false</enabled><send_logical_errors>false</send_logical_errors></send_crash_reports>
+    <mark_cache_size>268435456</mark_cache_size>
+    <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+    <users>
+        <default>
+            <password></password>
+            <networks><ip>::/0</ip></networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <access_management>1</access_management>
+        </default>
+    </users>
+    <profiles><default></default></profiles>
+    <quotas><default></default></quotas>
+</clickhouse>

@@ -59,7 +59,7 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 2 | Frameworky, orchestrace, durable execution | `frameworks/` | `framework-research` / `framework-scout` | ✅ rozhodnuto 2026-10-21 (Claude Agent SDK + Dapr Agents), otevřené položky v `frameworks/overview.md` |
 | 3 | **Model gateway a FinOps** | `gateway/` | `gateway-research` / `gateway-scout` | ✅ rozhodnuto 2026-10-22 (agentgateway) po sítu, kole 2 a harnessu G1 mock + live |
 | 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | ✅ rozhodnuto 2026-10-23 (SPIRE + Keycloak + exchange v agentgateway + OPA-Envoy + OpenBao) po sítu, kole 2 a harnessu I2 |
-| 5 | Observabilita a evaluace | `observability/` | `observability-research` / `observability-scout` | 🟡 síto, standardy i evaluace hotové 2026-10-23; návrh Collector + ClickHouse + Prometheus + Langfuse, Inspect AI + promptfoo + MLflow; čeká na kolo 2 a harness O1/O2 |
+| 5 | Observabilita a evaluace | `observability/` | `observability-research` / `observability-scout` | 🟢 síto, standardy, evaluace i harnessy O1 (9/9) a O2 (6/6) hotové 2026-10-23; návrh Collector + ClickHouse + Prometheus + Langfuse, Inspect AI + promptfoo + MLflow čeká na rozhodnutí |
 | 6 | Paměť a znalosti | `memory/` | – | ⬜ čeká |
 | 7 | Sandboxy a pracovní prostředí | `sandbox/` | – | ⬜ čeká |
 | 8 | Organizační vrstva | `organization/` | – | ⬜ čeká – **návrhová**, ne rešeršní (viz níže) |

@@ -97,18 +97,32 @@ i evals balíček), Braintrust a LangSmith (hostované), OpenAI Evals, Ragas. Me
 trajektorie, výsledek úkolu s pass^k, bezpečnost, provozní drift, kalibrace judge) a šest metrik k evidenci pro čl. 15.
 Nikdo nedodává konvertor trace → eval případ ani role-specifické gradery – to je naše práce.
 
+## Harnessy O1 a O2 (změřeno 2026-10-23)
+
+| Harness | Výsledek | Co prokázal |
+|---|---|---|
+| **O1** `tools/harness_observability_o1/` – orchestrátor (OTEL SDK) → Claude Agent SDK → CLI → agentgateway → mock model; Collector (`gen_ai_normalizer`, `redaction`) → ClickHouse 26.8 LTS | **9/9 PASS**, 1 SKIP (Dapr) | Jeden `trace_id` pro 5 spanů orchestrátoru, **10 spanů Claude Code** (`interaction` → `llm_request`, `tool` → `execution`) a 6 spanů agentgateway (rodič = `claude_code.llm_request`); gateway span nese `gen_ai.usage.cache_creation/cache_read.input_tokens`, `session.id`; redaction zamaskovala `sk-…` na `****`; normalizer přepsal `llm.token_count.*` na `gen_ai.usage.*`; CLI metriky `cost.usage`, `token.usage` a eventy `api_request`, `tool_decision` s `enduser.id` |
+| **O2** `tools/harness_eval_o2/` – Inspect AI 0.3.283 přes agentgateway, 2 vzorky × 3 epochy | **6/6 PASS**, 1 INFO | Scorer nad trajektorií (`state.messages`): správný nástroj, argument, ≤ 2 kroky; **approval policy zamítla `delete_ticket`** (nástroj se neprovedl, `ToolCallError(type='approval')` v trajektorii); pass^3 = 1.0; CI gate exit code; export trajektorií do JSONL; negativní kontrola bez policy: delete se provedl a scorer dal INCORRECT |
+
+Tím je navržený stack O1 (Collector + ClickHouse) a jádro O2 (Inspect AI) **změřené**, ne jen přečtené. Neměřeno:
+Dapr Workflow v řetězu, LLM-as-judge a kalibrace (L2/L5), Langfuse jako druhý konzument, Prometheus metriky z gateway.
+
 ## Co ověřit dál
 
 - [x] ~~Síto kolo 1 – backendy a LLM observability platformy~~ – 2026-10-23, 15 kandidátů.
 - [ ] **Kolo 2:** Collector + ClickHouse – schéma `clickhouseexporter`, TTL per tenant, `genainormalizer` nad spany z agentgateway a Claude Code; Langfuse – co z O3 (alerty) je v OSS, OTLP HTTP z Collectoru.
 - [ ] Nadační stupně (OTEL, Jaeger, Prometheus CNCF; MLflow LF AI) – weby nedostupné.
 - [ ] Právní posudek AGPL (Tempo/Loki/Mimir/Grafana) a Grafana CLA.
-- [ ] **Harness O1 end-to-end:** Agent SDK (OTLP) → agentgateway (tracing) → Collector (genainormalizer, redaction) → ClickHouse; jeden `trace_id` od `invoke_agent` po `execute_tool`; Dapr Agents executor v řetězu.
-- [ ] **Harness O2:** Inspect AI + Claude Agent SDK přes agentgateway, scorer nad trajektorií, approval policy; promptfoo `trajectory:*` nad spany z Collectoru.
+- [x] ~~Harness O1 end-to-end~~ – **změřeno 2026-10-23, 9/9** (bez Dapr Agents executoru – zbývá).
+- [x] ~~Harness O2 Inspect AI~~ – **změřeno 2026-10-23, 6/6**; promptfoo `trajectory:*` nad spany z Collectoru zbývá.
+- [ ] Harness O1 s Dapr Agents `ClaudeAgentExecutor` (serializace traceparent přes workflow) – vyžaduje Dapr lokálně.
+- [ ] Harness O2 rozšířit: LLM-as-judge přes gateway s rubrikou (L2), kalibrace proti HITL labelům (L5), sandbox s Claude Code bridge.
+- [ ] Langfuse jako druhý konzument OTLP z Collectoru (HTTP) – co zobrazí z `claude_code.*` spanů.
 - [x] ~~Stav OTEL GenAI semconv, co emitují komponenty, kde se trace přeruší~~ → [standardy.md](standardy.md), 2026-10-23.
 - [x] ~~Evaluační frameworky pro trajektorie agentů, metodika~~ → [evaluace.md](evaluace.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-23: harnessy O1 (9/9) a O2 (6/6) změřeny.
 - 2026-10-23: síto kolo 1 – 15 backendů; návrh Collector + ClickHouse + Prometheus, Langfuse jako druhý konzument, Grafana jen UI.
 - 2026-10-23: evaluace – síto 15 kandidátů, vrstvy L0–L5, metriky čl. 15 (evaluace.md).
 - 2026-10-23: standardy – semconv Development, přerušení trace CLI → gateway, Dapr aktivity, Foundry bez spanů.

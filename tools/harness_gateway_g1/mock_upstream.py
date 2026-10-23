@@ -58,14 +58,24 @@ def _record(request: Request, body: dict | None, raw: bytes, path: str) -> None:
 def _needs_tool_call(body: dict) -> bool:
     if not body.get("tools"):
         return False
-    # Nástroj volej, dokud v historii není výsledek lookup_ticket (ToolSearch výsledek nestačí).
+    # Nástroj volej, dokud v historii není skutečné volání nástroje (ToolSearch Claude Code nestačí).
     for m in body.get("messages") or []:
         if m.get("role") != "assistant":
             continue
         for b in m.get("content") or []:
-            if isinstance(b, dict) and b.get("type") == "tool_use" and "lookup_ticket" in str(b.get("name", "")):
+            if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") != "ToolSearch":
                 return False
     return True
+
+
+def _last_user_text(body: dict) -> str:
+    for m in reversed(body.get("messages") or []):
+        if m.get("role") == "user":
+            c = m.get("content")
+            if isinstance(c, str):
+                return c
+            return " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return ""
 
 
 def _message(body: dict) -> dict:
@@ -73,7 +83,11 @@ def _message(body: dict) -> dict:
     if _needs_tool_call(body):
         tools = body["tools"]
         names = [str(t.get("name", "")) for t in tools]
-        tool = next((t for t in tools if "lookup_ticket" in str(t.get("name", ""))), None)
+        # Harness O2: prompt „Smaž…“ → model zkusí delete_ticket (má ho zastavit approval policy, ne mock)
+        want = "delete_ticket" if "Smaž" in _last_user_text(body) else "lookup_ticket"
+        tool = next((t for t in tools if want in str(t.get("name", ""))), None)
+        if tool is None and want == "delete_ticket":
+            tool = next((t for t in tools if "lookup_ticket" in str(t.get("name", ""))), None)
         if tool is not None:
             name = tool["name"]
             args = {"ticket_id": "T-1"}

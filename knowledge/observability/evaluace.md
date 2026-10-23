@@ -111,8 +111,11 @@ Inspect má nejnižší governance riziko (vláda + nonprofit, bez CLA); komerč
 - [ ] Text čl. 15 z EUR-Lex; NIST AI 600-1 Measure.
 - [ ] ATIF kanonický repozitář (`harbor-ai/agent-trajectory-format` nedostupný; spec z Harbor RFC 0001).
 - [ ] Braintrust rozpor licence repo (Apache) vs. PyPI (MIT).
-- [ ] **Harness O2:** Inspect AI + Claude Agent SDK přes agentgateway: jeden task s mock MCP, scorer nad trajektorií,
-      approval policy terminate při `delete_ticket`; promptfoo `trajectory:*` nad spany z G1 mocku.
+- [x] ~~**Harness O2:** Inspect AI přes agentgateway, scorer nad trajektorií, approval policy~~ – **změřeno 2026-10-23, 6/6**
+      (`tools/harness_eval_o2/`): approval zamítla `delete_ticket`, pass^3, CI gate, export trajektorií JSONL.
+- [ ] promptfoo `trajectory:*` nad spany z Collectoru (O1 je už ukládá do ClickHouse).
+- [ ] L2 judge s rubrikou přes gateway a L5 kalibrace proti HITL labelům.
 
 ## Changelog
+- 2026-10-23: harness O2 změřen – Inspect AI trajektorie + approval policy fungují.
 - 2026-10-23: první verze z rešerše (síto kolo 1, metodika L0–L5, metriky čl. 15).

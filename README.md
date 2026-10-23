@@ -45,8 +45,10 @@ adam/
 │       ├── agentgateway-identity.md  # Gateway jako PEP: jwtAuth, extAuthz, exchange
 │       └── spire.md           # Workload identita vs. Dapr sentry
 │   └── observability/         # Vrstva 5: Observabilita a evaluace
-│       ├── overview.md        # Tok dat, síto, semconv, evaluace
-│       └── kriteria.md        # Tři otázky O1–O3, kritéria B1–B5
+│       ├── overview.md        # Tok dat, síto, harnessy O1/O2
+│       ├── kriteria.md        # Tři otázky O1–O3, kritéria B1–B5
+│       ├── standardy.md       # GenAI semconv, co emitují komponenty, kde se trace přeruší
+│       └── evaluace.md        # Síto eval frameworků, vrstvy L0–L5, metriky čl. 15
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly
@@ -61,7 +63,7 @@ adam/
 │       ├── identity-scout.md   # Podagent na identitu agentů, policy a regulaci
 │       └── observability-scout.md  # Podagent na OTEL, backendy a evaluaci
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
-├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2)
+├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2)
 ├── docs/                      # Architektura a postupy
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```
