@@ -92,7 +92,7 @@ adam/
 │       ├── sandbox-scout.md    # Podagent na izolaci, egress a pracovní prostředí
 │       └── organization-designer.md # Podagent na návrh rolí, procesů a schvalovacích bodů
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
-├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1, sandbox S1, organizace O-1)
+├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1, sandbox S1, organizace O-1, P0 dogfooding O-2)
 ├── docs/                      # Architektura a postupy
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```
@@ -114,6 +114,8 @@ adam/
 | Organizace | procesy jako Dapr Workflows, role jako YAML svazek, executor nevratných akcí s approval tokenem, autonomie rozšiřovaná měřením | `harness_org_o1` (9/9) |
 
 Všechny harnessy běží lokálně bez Dockeru; výsledky (JSON) a sekce „Pasti“ jsou v README každého harnessu.
+Fáze produktu P0 (dogfooding) běží: harness [`tools/harness_p0_o2`](tools/harness_p0_o2/README.md) skládá všechny vrstvy do jednoho běhu
+(stav v [knowledge/platforma/produkt.md](knowledge/platforma/produkt.md)).
 Nálezy, které se opakují napříč vrstvami, jsou v [knowledge/frameworks/licencni-vzorce.md](knowledge/frameworks/licencni-vzorce.md) (24 vzorců).
 
 ## Dokumentace

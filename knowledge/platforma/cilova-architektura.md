@@ -82,16 +82,17 @@ flowchart TB
     PROTO -.-> run
 ```
 
-### Co následuje – produkt (návrh fází, Pozn. Adam)
+### Co následuje – produkt (návrh fází, Pozn. Adam; stav v [produkt.md](produkt.md))
 
 | Fáze | Cíl | Co se skládá z rozhodnutých vrstev | Harness, který to změří |
 |---|---|---|---|
-| **P0 Dogfooding zakázka** | první reálná zakázka v tomto repu: mock role z O-1 nahradí **Claude Agent SDK v sandboxu S1 za agentgateway**, paměť M1, identita I2 | Dapr Workflow z O-1 + Dapr Agents executor + srt/gateway z S1 + MCP paměti z M1 + Keycloak/OPA z I2 | O-2: tatáž tvrzení jako O-1 se skutečným modelem; cena per zakázka z gateway; S-E1–S-E3 a M-E3/M-E4 jako gate |
+| **P0 Dogfooding zakázka** (běží) | první reálná zakázka v tomto repu: mock role z O-1 nahradí **Claude Agent SDK v sandboxu S1 za agentgateway**, paměť M1, identita I2 | Dapr Workflow z O-1 + Agent SDK + srt/gateway z S1 + MCP paměti z M1 + OPA | **O-2 mock 6/6 (2026-10-23)**: injekce prošla modelem, neprošla platformou; živý běh a artefakty naostro viz [produkt.md](produkt.md) |
 | **P1 Platforma na AKS** | jeden cluster: agentgateway, Keycloak, SPIRE, OPA, OpenBao, Collector, ClickHouse, Postgres (state + paměť + `org.*`), Kata node pool | Helm/manifesty z harnessů (`aks/`, configs) | S1 na AKS (Kata, srt v guestu), O1 ClickHouse end-to-end, I2 s Keycloak JWKS |
 | **P2 Role naostro** | YAML rolí → OPA bundle, gateway klíče, obrazy rolí (devcontainer build), evaly rolí s gate | `roles/*.yaml` → generátor konfigurací | evaly L0–L3 per role, registr agentů plněný z workflow |
 | **P3 První externí zákazník** | tenant model, klasifikační brána naostro, čl. 50 disclosure v reálných kanálech, SLA | vše výše + AG-UI frontend | O-3 multi-tenant: M-E3 přes dva tenanty, stop per tenant |
 
 ## Changelog
+- 2026-10-23: P0 – harness O-2 (mock) 6/6: všechny vrstvy v jednom běhu; sledovací soubor produkt.md.
 - 2026-10-23: organization – **rozhodnuto (Adam)**; všech osm vrstev rozhodnuto; doplněn celkový diagram a fáze produktu P0–P3.
 - 2026-10-23: organization – návrh v1 po kole 1 a harnessu O-1 (9/9); čeká na rozhodnutí.
 - 2026-10-23: sandbox – **rozhodnuto (Adam)** podle návrhu; otevřena organizační vrstva.

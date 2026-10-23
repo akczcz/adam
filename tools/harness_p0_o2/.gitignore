@@ -1,0 +1,6 @@
+.venv/
+logs/
+data/
+certs/
+node_modules/
+package-lock.json

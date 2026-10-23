@@ -58,7 +58,8 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | Organizační vrstva (role, procesy, hranice autonomie) | `knowledge/organization/` | skill `organization-design`, agent `organization-designer` |
 
 Všech osm vrstev je rozhodnuto (2026-10-23); stav, celkový diagram a fáze produktu P0–P3 jsou
-v `knowledge/platforma/cilova-architektura.md`, postup a pořadí v `knowledge/platforma/overview.md`.
+v `knowledge/platforma/cilova-architektura.md`, postup a pořadí v `knowledge/platforma/overview.md`,
+průběh fází produktu v `knowledge/platforma/produkt.md`.
 
 ## Principy práce
 

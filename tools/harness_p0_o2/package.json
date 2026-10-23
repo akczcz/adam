@@ -1,0 +1,6 @@
+{
+  "name": "harness-p0-o2",
+  "private": true,
+  "description": "Harness O-2 – sandbox-runtime pro Vývojáře",
+  "dependencies": { "@anthropic-ai/sandbox-runtime": "0.0.81" }
+}
