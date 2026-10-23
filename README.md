@@ -44,24 +44,29 @@ adam/
 │       ├── keycloak.md        # Token exchange V2 změřený harnessem
 │       ├── agentgateway-identity.md  # Gateway jako PEP: jwtAuth, extAuthz, exchange
 │       └── spire.md           # Workload identita vs. Dapr sentry
-│   └── observability/         # Vrstva 5: Observabilita a evaluace
+│   ├── observability/         # Vrstva 5: Observabilita a evaluace
 │       ├── overview.md        # Tok dat, síto, harnessy O1/O2
 │       ├── kriteria.md        # Tři otázky O1–O3, kritéria B1–B5
 │       ├── standardy.md       # GenAI semconv, co emitují komponenty, kde se trace přeruší
 │       └── evaluace.md        # Síto eval frameworků, vrstvy L0–L5, metriky čl. 15
+│   └── memory/                # Vrstva 6: Paměť a znalosti
+│       ├── overview.md        # Čtyři druhy paměti, síto, model původu
+│       └── kriteria.md        # Otázky M1–M4, kritéria B1–B6
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly
 │   │   ├── framework-research/ # Postup, jak prověřovat frameworky a licence
 │   │   ├── gateway-research/   # Postup, jak prověřovat model gateway a FinOps
 │   │   ├── identity-research/  # Postup pro identitu, autorizaci, audit a AI Act
-│   │   └── observability-research/  # Postup pro tracing, metriky a evaluaci agentů
+│   │   ├── observability-research/  # Postup pro tracing, metriky a evaluaci agentů
+│   │   └── memory-research/    # Postup pro paměť, znalosti, původ a výmaz
 │   └── agents/
 │       ├── protocol-scout.md   # Podagent na novinky v protokolech
 │       ├── framework-scout.md  # Podagent na licenční a governance prověrku
 │       ├── gateway-scout.md    # Podagent na gateway, Anthropic passthrough a FinOps
 │       ├── identity-scout.md   # Podagent na identitu agentů, policy a regulaci
-│       └── observability-scout.md  # Podagent na OTEL, backendy a evaluaci
+│       ├── observability-scout.md  # Podagent na OTEL, backendy a evaluaci
+│       └── memory-scout.md     # Podagent na memory frameworky, DB a původ faktů
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
 ├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2)
 ├── docs/                      # Architektura a postupy

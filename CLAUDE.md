@@ -53,8 +53,9 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | Model gateway a FinOps | `knowledge/gateway/` | skill `gateway-research`, agent `gateway-scout` |
 | Identita, autorizace a governance | `knowledge/identity/` | skill `identity-research`, agent `identity-scout` |
 | Observabilita a evaluace | `knowledge/observability/` | skill `observability-research`, agent `observability-scout` |
+| Paměť a znalosti | `knowledge/memory/` | skill `memory-research`, agent `memory-scout` |
 
-Další vrstvy (paměť, sandboxy, organizace)
+Další vrstvy (sandboxy, organizace)
 se otevírají postupně stejným principem – pořadí a postup jsou v `knowledge/platforma/overview.md`.
 
 ## Principy práce
