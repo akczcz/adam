@@ -1,0 +1,12 @@
+# Default-deny egress pro sandbox pody + DNS + jen agentgateway. Bez FQDN (funguje i bez Cilium/ACNS).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: s1-sandbox-egress }
+spec:
+  podSelector: { matchLabels: { app: s1-sandbox } }
+  policyTypes: [Egress]
+  egress:
+  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+    ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: platform } }, podSelector: { matchLabels: { app: agentgateway } } }]
+    ports: [{ protocol: TCP, port: 3128 }, { protocol: TCP, port: 4100 }]

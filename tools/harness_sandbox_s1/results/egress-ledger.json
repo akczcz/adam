@@ -1,0 +1,34 @@
+[
+ {
+  "server": "pkg",
+  "method": "GET",
+  "path": "/ok",
+  "host": "pkg.harness.test",
+  "authorization": null,
+  "body": ""
+ },
+ {
+  "server": "pkg",
+  "method": "GET",
+  "path": "/via-gateway",
+  "host": "pkg.harness.test",
+  "authorization": null,
+  "body": ""
+ },
+ {
+  "server": "pkg",
+  "method": "GET",
+  "path": "/cert-check",
+  "host": "pkg.harness.test",
+  "authorization": null,
+  "body": ""
+ },
+ {
+  "server": "git-backend",
+  "method": "GET",
+  "path": "/acme/platform.git/info/refs?service=git-upload-pack",
+  "host": "git.harness.test",
+  "authorization": "Bearer ghp_har…(token vložila gateway, redigováno)",
+  "body": ""
+ }
+]

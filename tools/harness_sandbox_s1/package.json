@@ -1,0 +1,6 @@
+{
+  "name": "harness-sandbox-s1",
+  "private": true,
+  "description": "Harness S1 – Anthropic sandbox-runtime (bubblewrap) + agentgateway CONNECT egress",
+  "dependencies": { "@anthropic-ai/sandbox-runtime": "0.0.81" }
+}
