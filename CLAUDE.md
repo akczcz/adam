@@ -52,8 +52,9 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | Agentní frameworky a runtimy | `knowledge/frameworks/` | skill `framework-research`, agent `framework-scout` |
 | Model gateway a FinOps | `knowledge/gateway/` | skill `gateway-research`, agent `gateway-scout` |
 | Identita, autorizace a governance | `knowledge/identity/` | skill `identity-research`, agent `identity-scout` |
+| Observabilita a evaluace | `knowledge/observability/` | skill `observability-research`, agent `observability-scout` |
 
-Další vrstvy (observabilita a evaluace, paměť, sandboxy, organizace)
+Další vrstvy (paměť, sandboxy, organizace)
 se otevírají postupně stejným principem – pořadí a postup jsou v `knowledge/platforma/overview.md`.
 
 ## Principy práce
