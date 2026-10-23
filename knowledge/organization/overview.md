@@ -1,7 +1,7 @@
 ---
 tema: Organizační vrstva virtuální IT firmy – procesy, role, hranice autonomie, schvalovací body (návrh)
 naposledy_overeno: 2026-10-23
-zralost: n/a (návrh v1 po kole 1; jádro změřeno harnessem O-1 9/9 PASS 2026-10-23)
+zralost: n/a (návrh v1 rozhodnut 2026-10-23; jádro změřeno harnessem O-1 9/9 PASS)
 primarni_zdroje:
   - knowledge/platforma/cilova-architektura.md
   - knowledge/identity/regulace.md
@@ -113,6 +113,7 @@ ven (čl. 50 disclosure), platba, smazání dat – všechny kryté approval pol
 - [ ] Mapování na AI Act T1–T15 per proces (klasifikační brána, čl. 14, čl. 50).
 
 ## Changelog
+- 2026-10-23: **rozhodnuto (Adam)** podle návrhu v1 – zapsáno v `platforma/cilova-architektura.md`.
 - 2026-10-23: harness O-1 9/9 PASS – executor s approval tokenem, fail-closed timeout, stop/resume, restart.
 - 2026-10-23: kolo 1 návrhu – procesy, autonomie, role, metriky; diagram doplněn o Eskalaci, Předání, Post-mortem a Pozastaveno; otázky Q1–Q9 s výchozími odpověďmi.
 - 2026-10-23: rozhodnuty výchozí volby (služby, člověk, první zákazník); kolo 1 návrhu spuštěno.

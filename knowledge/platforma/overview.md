@@ -1,6 +1,6 @@
 ---
 tema: Mapa vrstev autonomní multiagentní platformy a postup, jak je otevírat
-naposledy_overeno: 2026-10-22
+naposledy_overeno: 2026-10-23
 zralost: n/a (přehled a metodika)
 primarni_zdroje:
   - https://github.com/akczcz/adam
@@ -62,7 +62,7 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 5 | Observabilita a evaluace | `observability/` | `observability-research` / `observability-scout` | ✅ rozhodnuto 2026-10-23 (Collector + ClickHouse + Prometheus, Langfuse, Inspect AI + promptfoo + MLflow) po sítu a harnessech O1/O2 |
 | 6 | Paměť a znalosti | `memory/` | `memory-research` / `memory-scout` | ✅ rozhodnuto 2026-10-23 (vlastní tenký MCP server s PEP nad Postgres + pgvector, fakt s původem, žádný framework) po sítu, modelu paměti a harnessu M1 |
 | 7 | **Sandboxy a pracovní prostředí** | `sandbox/` | `sandbox-research` / `sandbox-scout` | ✅ rozhodnuto 2026-10-23 (Kata na AKS Pod Sandboxing / gVisor + sandbox-runtime + agentgateway egress + devcontainer + Playwright MCP + wasmtime; evaly inspect_k8s_sandbox) po sítu, kole 2 a harnessu S1; microVM měření na AKS otevřené |
-| 8 | **Organizační vrstva** | `organization/` | `organization-design` / `organization-designer` | 🟡 kolo 1 návrhu + harness O-1 (9/9) hotové 2026-10-23; návrh v1 v `cilova-architektura.md`; **čeká na rozhodnutí** |
+| 8 | **Organizační vrstva** | `organization/` | `organization-design` / `organization-designer` | ✅ rozhodnuto 2026-10-23 (procesy jako Dapr Workflows, role jako YAML svazek, executor nevratných akcí s approval tokenem, autonomie rozšiřovaná měřením) po kole 1 návrhu a harnessu O-1 |
 
 ## Pořadí a proč
 
@@ -98,6 +98,13 @@ Skilly pro protokoly a frameworky tak vznikly taky.
 odpovědnosti, předávání práce a schvalovací body virtuální firmy. Skill pro ni bude návrhová
 metoda (jak role odvodit z procesů, jak nastavit hranice autonomie), ne licenční prověrka.
 
+## Stav 2026-10-23: všech osm vrstev rozhodnuto
+
+Rešeršní fáze je uzavřená. Další postup je produkt ve fázích P0–P3 (dogfooding zakázka → platforma na AKS → role naostro
+→ první externí zákazník), viz [cilova-architektura.md](cilova-architektura.md#co-následuje--produkt-návrh-fází-pozn-adam).
+Znalostní soubory se dál udržují stejným principem: každá vrstva má „Co ověřit dál“ a skill s pastmi; re-verifikace
+verzí a stavů specifikací před každou fází produktu.
+
 ## Co se nemá dělat
 
 - **Nečekat s produktem na poslední vrstvu.** Kostra platformy v `cilova-architektura.md` existuje
@@ -108,6 +115,7 @@ metoda (jak role odvodit z procesů, jak nastavit hranice autonomie), ne licenč
   bude za dva měsíce k přeověření.
 
 ## Changelog
+- 2026-10-23: organization rozhodnuto – **všech osm vrstev rozhodnuto**; doplněn stav a odkaz na fáze produktu.
 - 2026-10-23: organization – harness O-1 hotový; návrh v1 čeká na rozhodnutí.
 - 2026-10-23: organization – kolo 1 návrhu hotové; čeká na harness O-1.
 - 2026-10-23: sandbox rozhodnuto; otevřena organizační vrstva (poslední).

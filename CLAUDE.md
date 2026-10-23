@@ -57,8 +57,8 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | Sandboxy a pracovní prostředí | `knowledge/sandbox/` | skill `sandbox-research`, agent `sandbox-scout` |
 | Organizační vrstva (role, procesy, hranice autonomie) | `knowledge/organization/` | skill `organization-design`, agent `organization-designer` |
 
-Všech osm vrstev je otevřeno; pořadí, postup a stav rozhodnutí jsou v `knowledge/platforma/overview.md`
-a `knowledge/platforma/cilova-architektura.md`.
+Všech osm vrstev je rozhodnuto (2026-10-23); stav, celkový diagram a fáze produktu P0–P3 jsou
+v `knowledge/platforma/cilova-architektura.md`, postup a pořadí v `knowledge/platforma/overview.md`.
 
 ## Principy práce
 
