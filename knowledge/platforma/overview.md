@@ -60,7 +60,7 @@ Průřezové vrstvy (identita, observabilita) jsou čárkovaně – nemají jedn
 | 3 | **Model gateway a FinOps** | `gateway/` | `gateway-research` / `gateway-scout` | ✅ rozhodnuto 2026-10-22 (agentgateway) po sítu, kole 2 a harnessu G1 mock + live |
 | 4 | Identita, autorizace, governance | `identity/` | `identity-research` / `identity-scout` | ✅ rozhodnuto 2026-10-23 (SPIRE + Keycloak + exchange v agentgateway + OPA-Envoy + OpenBao) po sítu, kole 2 a harnessu I2 |
 | 5 | Observabilita a evaluace | `observability/` | `observability-research` / `observability-scout` | ✅ rozhodnuto 2026-10-23 (Collector + ClickHouse + Prometheus, Langfuse, Inspect AI + promptfoo + MLflow) po sítu a harnessech O1/O2 |
-| 6 | Paměť a znalosti | `memory/` | `memory-research` / `memory-scout` | 🟡 otevřeno 2026-10-23, síto kolo 1 běží |
+| 6 | Paměť a znalosti | `memory/` | `memory-research` / `memory-scout` | 🟡 síto, nativní schopnosti i model paměti hotové 2026-10-23; návrh Postgres + pgvector, vlastní MCP server s PEP; čeká na harness M1 |
 | 7 | Sandboxy a pracovní prostředí | `sandbox/` | – | ⬜ čeká |
 | 8 | Organizační vrstva | `organization/` | – | ⬜ čeká – **návrhová**, ne rešeršní (viz níže) |
 

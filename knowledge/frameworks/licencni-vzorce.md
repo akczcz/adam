@@ -223,6 +223,9 @@ patří jako riziko, ne jako předpoklad.
 | **Patnáctý: AI bot nebo jeden člověk jako hlavní committer** | Jaeger: 137/300 commitů bot jednoho maintainera; MLflow: Copilot 96/300; Phoenix a OpenInference: jeden autor ~45 % | Podíl commitů podle autora za 300 commitů vč. botů – bot jako top autor znamená, že lidská kapacita je jeden člověk |
 | **Šestnáctý: vertikální vlastnictví úložiště i platformy** | ClickHouse Inc. vlastní ClickHouse (CLA) i Langfuse (CLA, od 2026-01-16) | Když jeden vendor s CLA drží dvě vrstvy stacku, relicence jedné zasáhne obě – držet data v otevřeném schématu (OTLP), ne ve formátu platformy |
 | **Sedmnáctý: „self-hosted“ = enterprise smlouva** | Logfire, LangSmith, Traceloop: SDK MIT/Apache, backend jen privátní image za smlouvou | Hledat Helm chart: `pullSecret`, „contact sales“, `LICENSE_KEY` v values |
+| **Osmnáctý: licence je čistá, past je v povinném backendu** | Graphiti (Apache-2.0) umí jen Neo4j (GPL/EE), FalkorDB (SSPL), Neptune; Cognee default Kuzu (archivovaný) | Projít `pyproject` závislosti a podporované backendy – vrstva pod knihovnou musí projít stejným sítem |
+| **Devatenáctý: telemetrie odesílá identifikátory cloudového účtu** | Weaviate od 1.33: AWS Account ID / GCP Project ID / Azure Subscription ID, „may use this data to identify potential customers“ | Číst stránku telemetry **doslovně**, ne jen „anonymní“; v dodávaném configu vypnout a doložit |
+| **Dvacátý: OSS je ukázka, hostovaná platforma má „proprietary optimizations“** | mem0: benchmarky „reflect Mem0's managed platform… not available in the open-source SDK“; MCP jen hostovaný, OSS MCP archivován | Hledat v README a benchmark stránkách formulace o „platform“ vs. „open-source“; archivovaná OSS repa integrací |
 
 ## Skutečný prediktor rizika: kdo vlastní copyright
 
@@ -299,6 +302,7 @@ a licenční past přestává být existenční.
 Totéž platí pro přístup k modelům – viz model gateway v [overview.md](overview.md).
 
 ## Changelog
+- 2026-10-23: osmnáctý až dvacátý vzorec z vrstvy paměti (Graphiti backendy, Weaviate telemetrie cloud ID, mem0 platform-only).
 - 2026-10-23: čtrnáctý až sedmnáctý vzorec z vrstvy observability (Langfuse EE telemetrie, AI bot committer, ClickHouse+Langfuse, self-hosted = smlouva).
 - 2026-10-22: osmý až třináctý vzorec z vrstev gateway a identity (LiteLLM, Helicone, Kong, Infisical, Zitadel, SpiceDB).
 - 2026-09-27: první verze; doložen vzorec na `langgraph-api` (ELv2).

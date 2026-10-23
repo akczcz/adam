@@ -50,6 +50,14 @@ Postup `framework-research` sekce 2, vzorce v `knowledge/frameworks/licencni-vzo
 - Návrh úprav `knowledge/memory/` jako diff; rozhodnutí do `knowledge/platforma/cilova-architektura.md`.
 - Soubory měň až po Adamově souhlasu.
 
+## 7b. Pasti z kola 1 (2026-10-23)
+- Memory frameworky sdílejí DNA: Apache SDK + PostHog default on + OpenAI povinná závislost + tenant jako konvence
+  + enterprise hranice tam, kde začíná provoz (mem0 Platform, Cognee licencovaný Postgres-graf, Graphiti „you build tenancy“).
+- Graphiti má nejlepší datový model, ale jen backendy Neo4j (GPL/EE), FalkorDB (SSPL), Neptune – past je pod knihovnou.
+- Weaviate telemetrie posílá ID cloudového účtu; Qdrant tenant filtr dává klient; Chroma Rust server bez auth; Kuzu archivován.
+- Claude Code auto memory i CLAUDE.md jsou v Dapr Agents executoru vypnuté – nespoléhat na ně v platformě.
+- Benchmarky MemLeak/PiSAs: izolace tenantů v promptu nefunguje – jen filtr v DB/PEP.
+
 ## 8. Čemu se vyhni
 - Nevybírej podle skóre LoCoMo/LongMemEval – měří osobního asistenta.
 - Nezaměňuj RAG nad dokumenty za paměť firmy.
