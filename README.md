@@ -54,12 +54,15 @@ adam/
 │       ├── nativni-schopnosti.md  # Co dává Claude, Dapr, MCP a OTEL
 │       ├── model-pameti.md    # Schéma záznamu s původem, poisoning, životní cyklus, evaly
 │       └── kriteria.md        # Otázky M1–M4, kritéria B1–B6
-│   └── sandbox/               # Vrstva 7: Sandboxy a pracovní prostředí
+│   ├── sandbox/               # Vrstva 7: Sandboxy a pracovní prostředí
 │       ├── overview.md        # Co se izoluje, síto kandidátů, kolo 2, harness S1
 │       ├── azure-kata-gvisor.md   # AKS Pod Sandboxing, gVisor na AKS, egress a cena
 │       ├── anthropic-sandboxing.md # sandbox-runtime, Claude Code a Agent SDK sandbox
 │       ├── egress-agentgateway.md  # CONNECT proxy, git přes gateway, Inspect k8s provider
 │       └── kriteria.md        # Otázky S1–S4, kritéria B1–B6
+│   └── organization/          # Vrstva 8: Organizační vrstva (návrhová)
+│       ├── overview.md        # Procesy, role, hranice autonomie, schvalovací body
+│       └── kriteria.md        # Otázky O1–O4, zásady návrhu
 ├── .claude/
 │   ├── skills/
 │   │   ├── protocol-research/  # Postup, jak zkoumat protokoly
@@ -68,7 +71,8 @@ adam/
 │   │   ├── identity-research/  # Postup pro identitu, autorizaci, audit a AI Act
 │   │   ├── observability-research/  # Postup pro tracing, metriky a evaluaci agentů
 │   │   ├── memory-research/    # Postup pro paměť, znalosti, původ a výmaz
-│   │   └── sandbox-research/   # Postup pro sandboxy, izolaci a pracovní prostředí agentů
+│   │   ├── sandbox-research/   # Postup pro sandboxy, izolaci a pracovní prostředí agentů
+│   │   └── organization-design/ # Návrhová metoda: procesy → role → hranice autonomie
 │   └── agents/
 │       ├── protocol-scout.md   # Podagent na novinky v protokolech
 │       ├── framework-scout.md  # Podagent na licenční a governance prověrku
@@ -76,7 +80,8 @@ adam/
 │       ├── identity-scout.md   # Podagent na identitu agentů, policy a regulaci
 │       ├── observability-scout.md  # Podagent na OTEL, backendy a evaluaci
 │       ├── memory-scout.md     # Podagent na memory frameworky, DB a původ faktů
-│       └── sandbox-scout.md    # Podagent na izolaci, egress a pracovní prostředí
+│       ├── sandbox-scout.md    # Podagent na izolaci, egress a pracovní prostředí
+│       └── organization-designer.md # Podagent na návrh rolí, procesů a schvalovacích bodů
 ├── worker/                    # MCP server nad knowledge/ pro Cloudflare Workers
 ├── tools/                     # Smoke testy a harnessy (Dapr+Claude restart, gateway G1, identita I2, trace O1, evaluace O2, paměť M1, sandbox S1)
 ├── docs/                      # Architektura a postupy

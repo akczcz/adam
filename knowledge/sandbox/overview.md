@@ -188,6 +188,7 @@ Zdroje: `LICENSE` (raw, větev/tag), PyPI/npm metadata, zdrojové repozitáře d
 - [ ] Export srt violations a verdictů gateway do OTEL/ClickHouse (adaptér, formát spanů); SPIRE k8s attestor v Kata podu.
 
 ## Changelog
+- 2026-10-23: **rozhodnuto (Adam)** podle návrhu – zapsáno v `platforma/cilova-architektura.md`.
 - 2026-10-23: kolo 2 (Azure/Kata/gVisor, srt/Agent SDK, agentgateway egress/Inspect) + harness S1 11/11 PASS; návrh zpřesněn.
 - 2026-10-23: síto kolo 1 – 31 kandidátů ve 3 skupinách; návrh Kata (AKS Pod Sandboxing) / gVisor + srt + agentgateway egress + devcontainer + Playwright MCP + wasmtime; Inspect k8s sandbox.
 - 2026-10-23: první verze – kostra, druhy prostředí, skupiny kandidátů, otevřeno síto.

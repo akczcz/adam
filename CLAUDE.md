@@ -55,9 +55,10 @@ Nad rámec aktivních oblastí níže u Adama předpokládej zájem o:
 | Observabilita a evaluace | `knowledge/observability/` | skill `observability-research`, agent `observability-scout` |
 | Paměť a znalosti | `knowledge/memory/` | skill `memory-research`, agent `memory-scout` |
 | Sandboxy a pracovní prostředí | `knowledge/sandbox/` | skill `sandbox-research`, agent `sandbox-scout` |
+| Organizační vrstva (role, procesy, hranice autonomie) | `knowledge/organization/` | skill `organization-design`, agent `organization-designer` |
 
-Další vrstvy (organizace)
-se otevírají postupně stejným principem – pořadí a postup jsou v `knowledge/platforma/overview.md`.
+Všech osm vrstev je otevřeno; pořadí, postup a stav rozhodnutí jsou v `knowledge/platforma/overview.md`
+a `knowledge/platforma/cilova-architektura.md`.
 
 ## Principy práce
 
