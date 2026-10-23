@@ -4,6 +4,11 @@ Adam je můj osobní multiagentní pomocník – virtuální představa mě samo
 Postupně získává znalosti (`knowledge/`), dovednosti (`.claude/skills/`)
 a specializované agenty (`.claude/agents/`), kteří za mě řeší různá témata.
 
+Hlavní téma repozitáře je **návrh autonomní multiagentní platformy – „virtuální IT firmy“**:
+osm vrstev (protokoly, frameworky, gateway, identita, observabilita, paměť, sandboxy, organizace),
+každá prověřená stejným postupem (kritéria → skill → agent → síto → hloubkové kolo → rozhodnutí → harness).
+Stav k 2026-10-23: **všech osm vrstev rozhodnuto a změřeno harnessy**; další postup je produkt ve fázích P0–P3.
+
 Znalostní báze se dá konzumovat dvěma cestami:
 
 - **lokálně** – Claude Code spuštěný v kořeni tohoto repozitáře,
@@ -92,6 +97,25 @@ adam/
 └── inbox/                     # Odkládací místo pro podklady ke zpracování
 ```
 
+## Cílová architektura (stav 2026-10-23)
+
+Živý soubor rozhodnutí: [knowledge/platforma/cilova-architektura.md](knowledge/platforma/cilova-architektura.md)
+(celkový diagram, přijatá rizika, fáze produktu). Mapa vrstev a postup: [knowledge/platforma/overview.md](knowledge/platforma/overview.md).
+
+| Vrstva | Rozhodnutí | Harness (`tools/`) |
+|---|---|---|
+| Protokoly | MCP k nástrojům; A2A za adaptérem; AG-UI + A2UI k lidem | `smoke_mcp_2026_07_28.py` |
+| Frameworky a orchestrace | Claude Agent SDK + Dapr Agents / Dapr Workflows | `harness_dapr_claude` (restart uprostřed HITL) |
+| Model gateway a FinOps | agentgateway (nativní `/v1/messages`, rozpočty per klíč) | `harness_gateway_g1` (mock 21/21, live 2/2) |
+| Identita a governance | Keycloak + SPIRE + token exchange v agentgateway + OPA-Envoy + OpenBao | `harness_identity_i2` (8/8 s OPA) |
+| Observabilita a evaluace | OTEL Collector → ClickHouse + Prometheus; Langfuse; Inspect AI + promptfoo + MLflow | `harness_observability_o1` (9/9), `harness_eval_o2` (6/6) |
+| Paměť a znalosti | vlastní MCP server paměti s PEP nad Postgres + pgvector (RLS, fakt s původem, `proposed → approved`) | `harness_memory_m1` (11/11) |
+| Sandboxy | Kata (AKS Pod Sandboxing) / gVisor + `sandbox-runtime` + agentgateway jako jediný egress; devcontainer, Playwright MCP, wasmtime | `harness_sandbox_s1` (11/11 lokálně, microVM část `aks/`) |
+| Organizace | procesy jako Dapr Workflows, role jako YAML svazek, executor nevratných akcí s approval tokenem, autonomie rozšiřovaná měřením | `harness_org_o1` (9/9) |
+
+Všechny harnessy běží lokálně bez Dockeru; výsledky (JSON) a sekce „Pasti“ jsou v README každého harnessu.
+Nálezy, které se opakují napříč vrstvami, jsou v [knowledge/frameworks/licencni-vzorce.md](knowledge/frameworks/licencni-vzorce.md) (24 vzorců).
+
 ## Dokumentace
 
 | Dokument | Pro koho |
@@ -113,6 +137,9 @@ Příklady příkazů pro Adama:
 - „Použij protocol-scout a zkontroluj, co je nového v MCP."
 - „Porovnej A2A a MCP z pohledu autentizace a navrhni, jak je kombinovat v naší platformě."
 - „Zpracuj poznámky v inbox/ a zařaď je do knowledge/."
+- „Použij sandbox-scout a ověř, jestli agentgateway 1.7 už hlídá loopback u dynamic backendu."
+- „Navrhni roli SRE jako YAML podle organization-design."
+- „Spusť harness S1 a porovnej výsledek s results/."
 
 ## Rychlý start – MCP server
 
@@ -127,8 +154,11 @@ Nasazení a připojení klientů popisuje [docs/vlastni-instance.md](docs/vlastn
 
 ## Jak Adam roste
 
-Vrstvy platformy se otevírají postupně – pořadí, stav a společný postup jsou
-v [knowledge/platforma/overview.md](knowledge/platforma/overview.md).
+Vrstvy platformy se otevíraly postupně – pořadí, stav a společný postup jsou
+v [knowledge/platforma/overview.md](knowledge/platforma/overview.md). Rešeršní fáze je uzavřená;
+další krok je produkt (fáze P0 dogfooding zakázka → P1 platforma na AKS → P2 role naostro → P3 externí zákazník).
+Znalosti se dál udržují: každá vrstva má „Co ověřit dál“ a skill se sekcí pastí; před každou fází produktu
+se verze a stavy specifikací re-verifikují z primárních zdrojů.
 
 1. Nová oblast zájmu → nová složka v `knowledge/`.
 2. Opakující se postup → nový skill v `.claude/skills/`.
