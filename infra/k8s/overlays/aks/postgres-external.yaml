@@ -1,0 +1,11 @@
+# Postgres mimo cluster: Azure Database for PostgreSQL Flexible Server (infra/aks/create.sh). Služba `postgres` zůstává jménem,
+# na které míří všechny komponenty; init SQL (databáze, extension vector) dělá create.sh přes az CLI, ne kontejner.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  type: ExternalName
+  externalName: PG_HOST_PLACEHOLDER
+  ports:
+  - {name: pg, port: 5432}
