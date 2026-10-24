@@ -1,0 +1,14 @@
+{
+ "kind": "issue",
+ "zakazka": "P0-4",
+ "repo": "akczcz/adam",
+ "approval_hash": "7477cd13bb218abf",
+ "payload": {
+  "title": "[P0-4] Zadání: Přidej do repa platformy soubor zakazky/P0-4/NOTES.md s pozn",
+  "labels": [
+   "zakazka",
+   "p0-dogfooding"
+  ],
+  "body": "> Zadání sepsal AI agent (Account) jménem Adam Kolařík; schvaluje člověk zákazníka.\n\n# Zadání\n\n## Cíl\nPřidej do repa platformy soubor zakazky/P0-4/NOTES.md s poznámkou, že zakázka P0-4 ověřila publikaci artefaktů do GitHubu.\n\n## Akceptační kritéria\n- testy zelené, PR mergeable\n- žádná komunikace ven bez člověka\n\n## Hranice\n- jen repo platformy, větev zakázky\n\n## Klasifikační brána\n- profil: standard (dogfooding, bez přílohy III)\n\n\n---\n`zakazka_id`: P0-4 · artefakt `issue://P0-4` · hash `7477cd13bb218abf` · schválil člověk (H1)"
+ }
+}

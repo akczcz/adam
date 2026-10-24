@@ -1,0 +1,96 @@
+[
+ {
+  "ts": 1792824126.0435338,
+  "kind": "REJECTED",
+  "zakazka": "P0-5",
+  "bod": "H1",
+  "by": "platform-bot",
+  "reason": "not_allowlisted_human",
+  "source": "webhook"
+ },
+ {
+  "ts": 1792824126.0436196,
+  "kind": "WEBHOOK_OK",
+  "event": "issue_comment"
+ },
+ {
+  "ts": 1792824126.1304152,
+  "kind": "REJECTED",
+  "zakazka": "P0-5",
+  "bod": "H1",
+  "by": "stranger",
+  "reason": "not_allowlisted_human",
+  "source": "webhook"
+ },
+ {
+  "ts": 1792824126.1304786,
+  "kind": "WEBHOOK_OK",
+  "event": "issue_comment"
+ },
+ {
+  "ts": 1792824131.249157,
+  "kind": "APPROVAL_FORWARDED",
+  "zakazka": "P0-5",
+  "bod": "H1",
+  "by": "adam",
+  "artifact_hash": "9f37eff0fe364d83",
+  "source": "webhook",
+  "http": 200
+ },
+ {
+  "ts": 1792824131.2492144,
+  "kind": "WEBHOOK_OK",
+  "event": "issue_comment"
+ },
+ {
+  "ts": 1792824137.894173,
+  "kind": "REJECTED",
+  "zakazka": "P0-5",
+  "bod": "H4",
+  "by": "stranger",
+  "reason": "not_allowlisted_human",
+  "source": "webhook"
+ },
+ {
+  "ts": 1792824137.8942523,
+  "kind": "WEBHOOK_OK",
+  "event": "pull_request_review"
+ },
+ {
+  "ts": 1792824137.983023,
+  "kind": "REJECTED",
+  "zakazka": "P0-5",
+  "bod": "H4",
+  "by": "adam",
+  "reason": "review_not_on_head_sha",
+  "review_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "head": "9d448fdeb54499b3dc5ad7cc369360daf9c35a9b",
+  "source": "webhook"
+ },
+ {
+  "ts": 1792824137.983096,
+  "kind": "WEBHOOK_OK",
+  "event": "pull_request_review"
+ },
+ {
+  "ts": 1792824143.172267,
+  "kind": "APPROVAL_FORWARDED",
+  "zakazka": "P0-5",
+  "bod": "H4",
+  "by": "adam",
+  "artifact_hash": "b5e268ece1fa6ad7",
+  "source": "webhook",
+  "http": 200
+ },
+ {
+  "ts": 1792824143.1723464,
+  "kind": "WEBHOOK_OK",
+  "event": "pull_request_review"
+ },
+ {
+  "ts": 1792824145.8315086,
+  "kind": "WEBHOOK_REJECTED",
+  "reason": "bad_signature",
+  "event": "issue_comment"
+ }
+]

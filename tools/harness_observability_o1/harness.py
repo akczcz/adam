@@ -39,7 +39,8 @@ import httpx
 HERE = Path(__file__).resolve().parent
 G1 = HERE.parent / "harness_gateway_g1"
 RESULTS, LOGS, DATA, CFG = HERE / "results", HERE / "logs", HERE / "data", HERE / "logs" / "cfg"
-MOCK_PORT, GW_PORT, CH_HTTP, OTLP_HTTP = 9777, 4100, 8123, 4318
+MOCK_PORT, GW_PORT = 9777, 4100
+CH_HTTP, OTLP_HTTP = int(os.getenv("O1_CH_HTTP", "8123")), int(os.getenv("O1_OTLP_HTTP", "4318"))   # externí Collector/ClickHouse (P1-2 kind: 30123/30318) přes --external
 
 
 def port_free(port: int) -> bool:
@@ -94,8 +95,10 @@ def main():
     ap.add_argument("--otelcol-bin", default=os.getenv("OTELCOL_BIN", shutil.which("otelcol-contrib") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     ap.add_argument("--model", default="claude-haiku-4-5")
+    ap.add_argument("--external", action="store_true", help="ClickHouse a Collector už běží (kind P1-2): nestartovat, porty z O1_CH_HTTP/O1_OTLP_HTTP; metriky a logy CLI se čtou z ClickHouse místo file exportéru")
+    ap.add_argument("--out-tag", default="")
     a = ap.parse_args()
-    for n, v in (("CLICKHOUSE_BIN", a.clickhouse_bin), ("OTELCOL_BIN", a.otelcol_bin), ("AGENTGATEWAY_BIN", a.agentgateway_bin)):
+    for n, v in ((("CLICKHOUSE_BIN", a.clickhouse_bin), ("OTELCOL_BIN", a.otelcol_bin)) if not a.external else ()) + (("AGENTGATEWAY_BIN", a.agentgateway_bin),):
         if not v: print(f"chybí {n}"); sys.exit(2)
     for d in (RESULTS, LOGS, CFG): d.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(DATA, ignore_errors=True); DATA.mkdir()
@@ -109,30 +112,35 @@ def main():
     env["ANTHROPIC_API_KEY"] = api_key
     rep, procs = Report(), []
     try:
-        for port in (MOCK_PORT, GW_PORT, CH_HTTP, OTLP_HTTP, 9000, 4317):
+        for port in (MOCK_PORT, GW_PORT) + ((CH_HTTP, OTLP_HTTP, 9000, 4317) if not a.external else ()):
             assert port_free(port), f"port {port} obsazen"
-        ch_cfg = render(HERE / "configs/clickhouse-config.xml", CFG / "clickhouse-config.xml", DATA=str(DATA))
-        procs.append(Proc("clickhouse", [a.clickhouse_bin, "server", f"--config-file={ch_cfg}"], env, LOGS / "clickhouse.log", cwd=str(DATA)))
-        assert wait_http(f"http://127.0.0.1:{CH_HTTP}/ping", 60), "ClickHouse nenaběhl (logs/clickhouse.log)"
-        httpx.post(f"http://127.0.0.1:{CH_HTTP}/", content="CREATE DATABASE IF NOT EXISTS otel", timeout=10).raise_for_status()
-        col_cfg = render(HERE / "configs/otelcol.yaml", CFG / "otelcol.yaml", LOGS=str(LOGS))
-        procs.append(Proc("otelcol", [a.otelcol_bin, "--config", str(col_cfg)], env, LOGS / "otelcol.log"))
-        assert wait_http(f"http://127.0.0.1:{OTLP_HTTP}/v1/traces", 30, ok=(405, 415, 400, 200)), "otelcol nenaběhl (logs/otelcol.log)"
+        if a.external:
+            assert wait_http(f"http://127.0.0.1:{CH_HTTP}/ping", 30), f"externí ClickHouse na {CH_HTTP} neodpovídá"
+            assert wait_http(f"http://127.0.0.1:{OTLP_HTTP}/v1/traces", 30, ok=(405, 415, 400, 200)), f"externí Collector na {OTLP_HTTP} neodpovídá"
+        else:
+            ch_cfg = render(HERE / "configs/clickhouse-config.xml", CFG / "clickhouse-config.xml", DATA=str(DATA))
+            procs.append(Proc("clickhouse", [a.clickhouse_bin, "server", f"--config-file={ch_cfg}"], env, LOGS / "clickhouse.log", cwd=str(DATA)))
+            assert wait_http(f"http://127.0.0.1:{CH_HTTP}/ping", 60), "ClickHouse nenaběhl (logs/clickhouse.log)"
+            httpx.post(f"http://127.0.0.1:{CH_HTTP}/", content="CREATE DATABASE IF NOT EXISTS otel", timeout=10).raise_for_status()
+            col_cfg = render(HERE / "configs/otelcol.yaml", CFG / "otelcol.yaml", LOGS=str(LOGS))
+            procs.append(Proc("otelcol", [a.otelcol_bin, "--config", str(col_cfg)], env, LOGS / "otelcol.log"))
+            assert wait_http(f"http://127.0.0.1:{OTLP_HTTP}/v1/traces", 30, ok=(405, 415, 400, 200)), "otelcol nenaběhl (logs/otelcol.log)"
         procs.append(Proc("mock", [sys.executable, str(G1 / "mock_upstream.py")], env | {"MOCK_PORT": str(MOCK_PORT), "MOCK_EVENT_DELAY": "0.05"}, LOGS / "mock.log"))
         assert wait_http(f"http://127.0.0.1:{MOCK_PORT}/health", 30), "mock nenaběhl"
-        gw_cfg = render(HERE / "configs/agentgateway.yaml", CFG / "agentgateway.yaml", PORT=GW_PORT, UPSTREAM=f"http://127.0.0.1:{MOCK_PORT}")
+        gw_cfg = render(HERE / "configs/agentgateway.yaml", CFG / "agentgateway.yaml", PORT=GW_PORT, UPSTREAM=f"http://127.0.0.1:{MOCK_PORT}", OTLP_HTTP=OTLP_HTTP)
         procs.append(Proc("agentgateway", [a.agentgateway_bin, "-f", str(gw_cfg)], env, LOGS / "agentgateway.log"))
         assert wait_http("http://127.0.0.1:19001/healthz/ready", 60), "agentgateway není ready"
         print("== komponenty běží: clickhouse, otelcol, mock, agentgateway")
 
         trace_id, root_span_id, sdk = run_agent(a.model, api_key, env, rep)
         time.sleep(8)  # flush exportérů (CLI exportuje při ukončení, Collector batch 1 s)
-        check_clickhouse(trace_id, root_span_id, rep, sdk)
+        check_clickhouse(trace_id, root_span_id, rep, sdk, external=a.external)
     finally:
         for p in reversed(procs):
             p.stop()
-    out = RESULTS / f"o1-{time.strftime('%Y%m%d-%H%M%S')}.json"
-    out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "otelcol": "0.163.2", "clickhouse": "26.8.34.13-lts", "agentgateway": "1.6.0"}, "checks": rep.checks}, ensure_ascii=False, indent=1))
+    out = RESULTS / f"o1-{a.out_tag + '-' if a.out_tag else ''}{time.strftime('%Y%m%d-%H%M%S')}.json"
+    chver = httpx.get(f"http://127.0.0.1:{CH_HTTP}/?query=SELECT+version()", timeout=5).text.strip() if a.external else "26.8.34.13-lts"
+    out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "otelcol": "0.163.2", "clickhouse": chver, "agentgateway": "1.6.0", "external": a.external, "ch_http": CH_HTTP, "otlp_http": OTLP_HTTP}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}
     print(f"== výsledek: {n} -> {out.relative_to(HERE)}")
 
@@ -213,7 +221,7 @@ def run_agent(model: str, api_key: str, env: dict, rep: Report):
     return trace_id, root_span_id, sdk
 
 
-def check_clickhouse(trace_id: str, root_span_id: str, rep: Report, sdk: dict):
+def check_clickhouse(trace_id: str, root_span_id: str, rep: Report, sdk: dict, external: bool = False):
     import clickhouse_connect
     c = clickhouse_connect.get_client(host="127.0.0.1", port=CH_HTTP, username="default", database="otel")
     rows = None
@@ -247,11 +255,22 @@ def check_clickhouse(trace_id: str, root_span_id: str, rep: Report, sdk: dict):
     probe = c.query("SELECT SpanAttributes FROM otel.otel_traces WHERE TraceId = {t:String} AND SpanName = 'openinference-probe'", parameters={"t": sdk.get("probe_trace", "")}).result_rows
     pa = probe[0][0] if probe else {}
     rep.add("O1f", "gen_ai_normalizer: OpenInference llm.token_count.* → gen_ai.usage.*", "PASS" if pa.get("gen_ai.usage.input_tokens") == "123" else ("FAIL" if pa else "FAIL"), {"attrs": {k: v for k, v in pa.items() if k.startswith(("gen_ai", "llm.", "openinference"))}})
-    mfile = LOGS / "metrics.jsonl"
-    mtxt = mfile.read_text(errors="replace") if mfile.exists() else ""
+    if external:   # v clusteru jdou metriky i logy do ClickHouse (bez file exportéru)
+        mtxt, ltxt = "", ""
+        for _ in range(10):
+            try:
+                mtxt = " ".join(r[0] for t in ("otel_metrics_sum", "otel_metrics_gauge", "otel_metrics_histogram") for r in c.query(f"SELECT DISTINCT MetricName FROM otel.{t}").result_rows)
+                ltxt = " ".join(str(r) for r in c.query("SELECT LogAttributes, Body, ResourceAttributes FROM otel.otel_logs WHERE ResourceAttributes['enduser.id'] = 'alice' OR Body LIKE '%claude_code%' LIMIT 200").result_rows)
+            except Exception:
+                pass
+            if mtxt and ltxt: break
+            time.sleep(2)
+    else:
+        mfile = LOGS / "metrics.jsonl"
+        mtxt = mfile.read_text(errors="replace") if mfile.exists() else ""
+        lfile = LOGS / "logs.jsonl"
+        ltxt = lfile.read_text(errors="replace") if lfile.exists() else ""
     names = sorted({n for n in ("claude_code.cost.usage", "claude_code.token.usage", "claude_code.session.count") if n in mtxt})
-    lfile = LOGS / "logs.jsonl"
-    ltxt = lfile.read_text(errors="replace") if lfile.exists() else ""
     events = sorted({e for e in ("claude_code.api_request", "claude_code.tool_decision", "claude_code.tool_result", "claude_code.user_prompt") if e in ltxt})
     rep.add("O1h", "CLI metriky a eventy přes OTLP (cost, tokeny, tool_decision)", "PASS" if names and events else ("INFO" if names or events else "FAIL"), {"metrics": names, "events": events, "enduser_in_logs": "enduser.id" in ltxt or "alice" in ltxt})
     rep.add("O1i", "Dapr Workflow v řetězu", "SKIP", {"note": "bez Dapr lokálně; Dapr Agents serializují traceparent do vstupu workflow (standardy.md) – neměřeno"})

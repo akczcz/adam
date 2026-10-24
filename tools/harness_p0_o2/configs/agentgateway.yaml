@@ -1,0 +1,87 @@
+# agentgateway 1.6.0 – harness O-2 (kopie S1). {{...}} doplní harness.py.
+# Jeden proces, tři role:
+#  1) LLM listener (plaintext, port {{LLM_PORT}}) → mock modelu (Anthropic Messages API) – jako v G1/O2
+#  2) CONNECT forward proxy (port {{CONNECT_PORT}}) – sandbox posílá `CONNECT host:443`
+#  3) gateway `secure` (port 443 virtuálně): terminace TLS jen pro git.harness.test (vložení tokenu z gateway,
+#     autorizace per repo/metoda), ostatní SNI jen allow-list bez terminace (pkg.harness.test → mock TLS server)
+# Zdroj: examples/traffic-egress-proxy/{config,config-conditional}.yaml @ v1.6.0, schema/config.md
+config:
+  enableIpv6: false
+  readinessAddr: 127.0.0.1:19001
+  statsAddr: 127.0.0.1:19002
+  logging:
+    format: json
+    fields:
+      add:
+        harness.sni: 'destination.hostname'
+        # FinOps: zakázka z hlavičky (ANTHROPIC_CUSTOM_HEADERS v SDK), role z metadat klíče gateway (scénář budget: policies.apiKey)
+        zakazka: '"x-zakazka" in request.headers ? request.headers["x-zakazka"] : ""'
+        role: 'apiKey != null ? string(apiKey.role) : ""'
+
+binds:
+- port: {{CONNECT_PORT}}
+  tunnelProtocol: connect
+  listeners: []
+
+# LLM listener – jako G1: Anthropic Messages API přes gateway, klíč vkládá gateway (sandbox ho nemá)
+llm:
+  gateways: llm
+  models:
+  - name: '*'
+    provider: anthropic
+    params:
+      baseUrl: http://127.0.0.1:{{MOCK_PORT}}/v1
+      apiKey: $ANTHROPIC_API_KEY
+
+gateways:
+  llm:
+    port: {{LLM_PORT}}
+  secure:
+    port: 443
+    listeners:
+    - name: git
+      hostname: git.harness.test
+      protocol: HTTPS
+      tls:
+        cert: {{CERTS}}/git.harness.test.crt
+        key: {{CERTS}}/git.harness.test.key
+    - name: public-egress
+      hostname: "*"
+      protocol: TLS
+
+tcpRoutes:
+- name: public-egress-allowlist
+  gateways: secure/public-egress
+  hostnames:
+  - pkg.harness.test
+  backends:
+  - dynamic:
+      target: 'destination.hostname + ":{{PKG_PORT}}"'   # mock TLS server místo :443
+
+routes:
+- name: git-push-main-denied
+  gateways: secure/git
+  matches:
+  - path: { pathPrefix: /acme/platform.git/git-receive-pack }
+  policies:
+    directResponse:
+      status: 403
+      body: "push do acme/platform je povolen jen přes schválený kanál (OPA/approval) – harness O-2 (kopie S1)"
+- name: git-acme
+  gateways: secure/git
+  matches:
+  - path: { pathPrefix: /acme/ }
+  policies:
+    authorization:
+      rules:
+      - allow: 'request.method == "GET" || request.method == "POST"'
+    backendAuth:
+      key:
+        value:
+          file: {{CERTS}}/git-token.txt
+        location:
+          header:
+            name: Authorization
+            prefix: "Bearer "
+  backends:
+  - host: 127.0.0.1:{{GIT_PORT}}

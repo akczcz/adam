@@ -146,6 +146,8 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--skip-eval", action="store_true")
+    ap.add_argument("--db-uri", default=os.getenv("M1_DB_URI", ""), help="externí Postgres s pgvector (superuser URI, např. kind P1-2: postgresql://postgres:…@127.0.0.1:30432/memory); bez něj embedded pgserver")
+    ap.add_argument("--out-tag", default="", help="přípona názvu výsledku (např. k8s)")
     a = ap.parse_args()
     if not a.opa_bin:
         print("chybí OPA_BIN"); sys.exit(2)
@@ -158,14 +160,22 @@ def main():
     rep, procs, pg = Report(), [], None
     try:
         assert all(port_free(p) for p in (MEM_PORT, OPA_PORT, MOCK_PORT, GW_PORT)), "porty obsazeny"
-        import pgserver
-        pg = pgserver.get_server(str(DATA / "pg"))
-        su_uri = pg.get_uri()
+        if a.db_uri:
+            su_uri = a.db_uri   # externí Postgres (P1-2 kind / AKS): schéma se znovu vytvoří (DROP TABLE v SCHEMA), role memory_app dostane heslo
+        else:
+            import pgserver
+            pg = pgserver.get_server(str(DATA / "pg"))
+            su_uri = pg.get_uri()
         with psycopg.connect(su_uri, autocommit=True) as c:
             c.execute(SCHEMA)
+            if a.db_uri: c.execute("ALTER ROLE memory_app PASSWORD 'memory_app'")
             pgv = c.execute("SELECT extversion FROM pg_extension WHERE extname='vector'").fetchone()[0]
             pgver = c.execute("SHOW server_version").fetchone()[0]
-        app_uri = su_uri.replace("postgresql://postgres:@", "postgresql://memory_app:@")
+        if a.db_uri:
+            from urllib.parse import urlsplit, urlunsplit
+            u = urlsplit(su_uri); app_uri = urlunsplit(u._replace(netloc=f"memory_app:memory_app@{u.hostname}" + (f":{u.port}" if u.port else "")))
+        else:
+            app_uri = su_uri.replace("postgresql://postgres:@", "postgresql://memory_app:@")
         procs.append(Proc("opa", [a.opa_bin, "run", "--server", "--addr", f"127.0.0.1:{OPA_PORT}", "--set", "decision_logs.console=true", str(HERE / "policies")], env, LOGS / "opa.log"))
         assert wait_http(f"http://127.0.0.1:{OPA_PORT}/health", 30)
         procs.append(Proc("memory", [sys.executable, str(HERE / "memory_server.py")], env | {"MEMORY_DB_URI": app_uri, "MEMORY_JWT_SECRET": SECRET, "MEMORY_OPA_URL": f"http://127.0.0.1:{OPA_PORT}/v1/data/memory/decision", "MEMORY_PORT": str(MEM_PORT), "OTEL_CONSOLE": "1", "OTEL_CONSOLE_FILE": str(SPANS)}, LOGS / "memory.log"))
@@ -300,9 +310,9 @@ def main():
         if pg:
             try: pg.cleanup()
             except Exception: pass
-    out = RESULTS / f"m1-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    out = RESULTS / f"m1-{a.out_tag + '-' if a.out_tag else ''}{time.strftime('%Y%m%d-%H%M%S')}.json"
     import inspect_ai
-    out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "inspect_ai": inspect_ai.__version__, "agentgateway": "1.6.0" if a.agentgateway_bin else None, "epochs": a.epochs}, "checks": rep.checks}, ensure_ascii=False, indent=1))
+    out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "inspect_ai": inspect_ai.__version__, "agentgateway": "1.6.0" if a.agentgateway_bin else None, "epochs": a.epochs, "postgres": "external " + a.db_uri.split("@")[-1] if a.db_uri else "embedded pgserver"}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}
     print(f"== výsledek: {n} -> {out.relative_to(HERE)}")
     sys.exit(0 if n["FAIL"] == 0 else 1)

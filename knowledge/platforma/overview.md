@@ -101,7 +101,8 @@ metoda (jak role odvodit z procesů, jak nastavit hranice autonomie), ne licenč
 ## Stav 2026-10-23: všech osm vrstev rozhodnuto
 
 Rešeršní fáze je uzavřená. Další postup je produkt ve fázích P0–P3 (dogfooding zakázka → platforma na AKS → role naostro
-→ první externí zákazník), viz [cilova-architektura.md](cilova-architektura.md#co-následuje--produkt-návrh-fází-pozn-adam).
+→ první externí zákazník), viz [cilova-architektura.md](cilova-architektura.md#co-následuje--produkt-návrh-fází-pozn-adam)
+a sledovací soubor [produkt.md](produkt.md).
 Znalostní soubory se dál udržují stejným principem: každá vrstva má „Co ověřit dál“ a skill s pastmi; re-verifikace
 verzí a stavů specifikací před každou fází produktu.
 

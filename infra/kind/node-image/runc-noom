@@ -1,0 +1,15 @@
+#!/bin/sh
+# Obal runc pro kind uzel v prostředí bez CAP_SYS_RESOURCE: odstraní process.oomScoreAdj z OCI config.json
+# (záporná hodnota pro systémové pody jinak končí "failed to update /proc/self/oom_score_adj: Permission denied").
+# Jen pro lokální harness na kind; na AKS se nepoužívá.
+bundle=""
+prev=""
+for a in "$@"; do
+  case "$prev" in --bundle|-b) bundle="$a";; esac
+  prev="$a"
+done
+[ -z "$bundle" ] && bundle="$PWD"
+if [ -f "$bundle/config.json" ] && grep -q '"oomScoreAdj"' "$bundle/config.json"; then
+  jq 'del(.process.oomScoreAdj)' "$bundle/config.json" > "$bundle/config.json.noom" && mv "$bundle/config.json.noom" "$bundle/config.json"
+fi
+exec /usr/local/sbin/runc "$@"

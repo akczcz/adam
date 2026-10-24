@@ -1,0 +1,39 @@
+# Harness P1-3: dva sondovací pody pro SPIRE workload attestor – s labelem role=vyvojar (má dostat SVID spiffe://platform/role/vyvojar)
+# a bez labelu (nesmí dostat žádnou identitu). Jen pro měření; role jako pody přijdou v P1-6 z rolegen (build/k8s/<role>.yaml).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: role-probe-vyvojar
+  namespace: platform-data
+  labels: {app: role-probe, role: vyvojar}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  containers:
+  - name: probe
+    image: platform/spire:1.14.2
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - {name: sockets, mountPath: /run/spire/sockets, readOnly: true}
+  volumes:
+  - name: sockets
+    hostPath: {path: /run/spire/sockets, type: Directory}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: role-probe-nolabel
+  namespace: platform-data
+  labels: {app: role-probe}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  containers:
+  - name: probe
+    image: platform/spire:1.14.2
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - {name: sockets, mountPath: /run/spire/sockets, readOnly: true}
+  volumes:
+  - name: sockets
+    hostPath: {path: /run/spire/sockets, type: Directory}

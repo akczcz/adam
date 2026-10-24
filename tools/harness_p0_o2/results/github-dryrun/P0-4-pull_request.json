@@ -1,0 +1,20 @@
+{
+ "kind": "pull_request",
+ "zakazka": "P0-4",
+ "repo": "akczcz/adam",
+ "approval_hash": "578d9f593c4d7ee9",
+ "payload": {
+  "base": "main",
+  "head": "zakazka/P0-4/ukol-1",
+  "title": "[P0-4] PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)",
+  "files": [
+   {
+    "path": "zakazky/P0-4/NOTES.md",
+    "content": "# Zakázka P0-4\n\nTato zakázka ověřila publikaci artefaktů platformy do GitHubu: zadání jako issue po H1, větev a PR po implementaci, merge jen přes merge-executor po H4.\n",
+    "sha256": "546034c5267c9f13"
+   }
+  ],
+  "commit_message": "P0-4: implementace úkolu 1\n\nAI-Agent: vyvojar@0.1.0 on-behalf-of Adam Kolařík\nArtifact-Hash: 578d9f593c4d7ee9",
+  "body": "> Tento pull request vytvořil AI agent (role Vývojář, verze 0.1.0) platformy adam-platform jménem Adam Kolařík. Sloučení schvaluje člověk.\n\n`zakazka_id`: P0-4 · artefakt `pr://P0-4/1` · hash `578d9f593c4d7ee9`\n\nSoubory: zakazky/P0-4/NOTES.md\n\nSloučení = HITL H4 (člověk) → merge-executor."
+ }
+}

@@ -10,8 +10,10 @@ kaskádou přes zdroj, OTEL spany `search_memory`/`create_memory` s tenant.id.
 Rozhraní (HTTP JSON, tvarem MCP tools): POST /tools/{search_memory|create_memory|approve_memory|forget_source},
 POST /tools/read_document (mock dokumentů vč. poisoned), GET /_debug/ledger.
 
-Prostředí: MEMORY_DB_URI (role memory_app, ne superuser!), MEMORY_JWT_SECRET (HS256 – v produkci JWKS Keycloaku),
-MEMORY_OPA_URL, MEMORY_PORT, OTEL_CONSOLE=1 (spany na stdout).
+Prostředí: MEMORY_DB_URI (role memory_app, ne superuser!), MEMORY_OPA_URL, MEMORY_PORT, OTEL_CONSOLE=1 (spany na stdout).
+Ověření tokenu: MEMORY_JWKS_URL (+ MEMORY_ISSUER, MEMORY_AUDIENCE=memory) = RS256 proti JWKS Keycloaku, HS256 se pak
+odmítá (P0 identity, 2026-10-24); bez MEMORY_JWKS_URL fallback HS256 s MEMORY_JWT_SECRET (M1 harness).
+Claim `roles` je plochý (mapper realm roles → `roles`), fallback `realm_access.roles`.
 """
 from __future__ import annotations
 
@@ -36,6 +38,10 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 
 DB_URI = os.environ["MEMORY_DB_URI"]
 JWT_SECRET = os.environ.get("MEMORY_JWT_SECRET", "harness-secret")
+JWKS_URL = os.environ.get("MEMORY_JWKS_URL")           # nastaveno → jen RS256 z JWKS (Keycloak), HS256 odmítnut
+JWT_ISSUER = os.environ.get("MEMORY_ISSUER")
+JWT_AUDIENCE = os.environ.get("MEMORY_AUDIENCE", "memory")
+_jwks = jwt.PyJWKClient(JWKS_URL, cache_keys=True, lifespan=300) if JWKS_URL else None
 OPA_URL = os.environ.get("MEMORY_OPA_URL", "http://127.0.0.1:8181/v1/data/memory/decision")
 DIM = 64
 
@@ -73,11 +79,17 @@ def vec(v: list[float]) -> str:
 def principal(authorization: str | None) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "missing bearer token")
+    raw = authorization.split(" ", 1)[1]
     try:
-        c = jwt.decode(authorization.split(" ", 1)[1], JWT_SECRET, algorithms=["HS256"], options={"require": ["exp", "sub", "tenant_id"]})
+        if _jwks:
+            key = _jwks.get_signing_key_from_jwt(raw).key   # kid z hlavičky → klíč z JWKS; HS256 token nemá kid → 401
+            c = jwt.decode(raw, key, algorithms=["RS256"], issuer=JWT_ISSUER, audience=JWT_AUDIENCE, options={"require": ["exp", "sub", "tenant_id", "iss", "aud"]})
+        else:
+            c = jwt.decode(raw, JWT_SECRET, algorithms=["HS256"], options={"require": ["exp", "sub", "tenant_id"]})
     except Exception as e:
         raise HTTPException(401, f"invalid token: {type(e).__name__}")
-    return {"sub": c["sub"], "tenant_id": c["tenant_id"], "roles": c.get("roles", []), "agent_id": c.get("agent_id"), "on_behalf_of": c.get("on_behalf_of")}
+    roles = c.get("roles") or (c.get("realm_access") or {}).get("roles") or []
+    return {"sub": c["sub"], "tenant_id": c["tenant_id"], "roles": roles, "agent_id": c.get("agent_id"), "on_behalf_of": c.get("on_behalf_of"), "iss": c.get("iss"), "alg": jwt.get_unverified_header(raw).get("alg")}
 
 
 def opa(action: str, tok: dict, record: dict | None = None, requested_status: str = "") -> dict:

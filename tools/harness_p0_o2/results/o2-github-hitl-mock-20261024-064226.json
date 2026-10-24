@@ -1,0 +1,116 @@
+{
+ "meta": {
+  "started": "2026-10-24T06:42:27",
+  "scenario": "github-hitl",
+  "mode": "mock",
+  "model": "claude-haiku-4-5",
+  "claude_agent_sdk": "0.2.173",
+  "agentgateway": "1.6.0",
+  "zakazka": "P0-5",
+  "github": "mock (mock_github.py), bridge poll 2 s + webhook HMAC"
+ },
+ "checks": [
+  {
+   "id": "GH1",
+   "name": "H1 v GitHubu: /schvaluji od bota a od člověka mimo allow-list bridge odmítne, zakázka dál čeká na H1",
+   "status": "PASS",
+   "detail": {
+    "rejected": [
+     [
+      "platform-bot",
+      "not_allowlisted_human",
+      "webhook"
+     ],
+     [
+      "stranger",
+      "not_allowlisted_human",
+      "webhook"
+     ]
+    ],
+    "adr_before_approval": null
+   }
+  },
+  {
+   "id": "GH2",
+   "name": "H1: /schvaluji od člověka z allow-listu → bridge ověří hash artefaktu v těle issue a vyvolá schválení; zakázka pokračuje (ADR vzniklo). Webhook i polling zachytí tutéž událost, zpracuje se jednou",
+   "status": "PASS",
+   "detail": {
+    "forwarded": [
+     {
+      "ts": 1792824131.249157,
+      "kind": "APPROVAL_FORWARDED",
+      "zakazka": "P0-5",
+      "bod": "H1",
+      "by": "adam",
+      "artifact_hash": "9f37eff0fe364d83",
+      "source": "webhook",
+      "http": 200
+     }
+    ],
+    "issue_hash": "9f37eff0fe364d83"
+   }
+  },
+  {
+   "id": "GH3",
+   "name": "H4 v GitHubu: review APPROVED od cizího člověka a review člověka na starý commit bridge odmítne; PR nemergnut",
+   "status": "PASS",
+   "detail": {
+    "rejected": [
+     [
+      "stranger",
+      "not_allowlisted_human"
+     ],
+     [
+      "adam",
+      "review_not_on_head_sha"
+     ]
+    ],
+    "merged_early": false
+   }
+  },
+  {
+   "id": "GH4",
+   "name": "H4: review APPROVED od člověka na head SHA → bridge schválí s hashem z těla PR → merge-executor s tokenem mergne PR v GitHubu (1×); zakázka Dokonceno",
+   "status": "PASS",
+   "detail": {
+    "forwarded": [
+     {
+      "ts": 1792824143.172267,
+      "kind": "APPROVAL_FORWARDED",
+      "zakazka": "P0-5",
+      "bod": "H4",
+      "by": "adam",
+      "artifact_hash": "b5e268ece1fa6ad7",
+      "source": "webhook",
+      "http": 200
+     }
+    ],
+    "executed": 1,
+    "merged": true,
+    "output": {
+     "id": "P0-5",
+     "stav": "Dokonceno",
+     "artefakty": [
+      "issue://P0-5",
+      "adr://P0-5/001",
+      "pr://P0-5/1",
+      "review://P0-5/1"
+     ],
+     "cost_usd": 0.045233999999999996
+    }
+   }
+  },
+  {
+   "id": "GH5",
+   "name": "Webhook bez platného HMAC podpisu bridge odmítne (401); platné události z webhooku i pollingu se dedupují podle id",
+   "status": "PASS",
+   "detail": {
+    "forged_http": 401,
+    "sources_used": [
+     "webhook"
+    ],
+    "webhook_ok": 6
+   }
+  }
+ ]
+}

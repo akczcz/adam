@@ -1,0 +1,201 @@
+{
+ "meta": {
+  "started": "2026-10-24T15:44:08",
+  "otelcol": "0.163.2",
+  "clickhouse": "26.8.34.13",
+  "agentgateway": "1.6.0",
+  "external": true,
+  "ch_http": 30123,
+  "otlp_http": 30318
+ },
+ "checks": [
+  {
+   "id": "A1",
+   "name": "Claude Agent SDK přes agentgateway: turn s nástrojem doběhl",
+   "status": "PASS",
+   "detail": {
+    "seconds": 2.5,
+    "tool_uses": [
+     "ToolSearch",
+     "mcp__harness__lookup_ticket"
+    ],
+    "tool_calls_executed": 1,
+    "is_error": false,
+    "usage": {
+     "input_tokens": 33,
+     "cache_creation_input_tokens": 6144,
+     "cache_read_input_tokens": 12288,
+     "output_tokens": 21,
+     "output_tokens_details": {
+      "thinking_tokens": 0
+     },
+     "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+     },
+     "service_tier": "standard",
+     "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 6144
+     },
+     "inference_geo": "",
+     "iterations": [],
+     "speed": "standard",
+     "fallback_credit": null
+    },
+    "cost": 0.009046799999999999,
+    "probe_trace": "75d8c9fc8daaf7be0fad7dc3f21f6a7d"
+   }
+  },
+  {
+   "id": "O1g",
+   "name": "Mock model dostal traceparent se stejným trace_id (CLI → gateway → model)",
+   "status": "PASS",
+   "detail": {
+    "traceparents": [
+     "00-f2e039c854401c7d4129868cab9b1f25-b0e9805c8ce0a65d-01",
+     "00-f2e039c854401c7d4129868cab9b1f25-47b088f75b08f233-01",
+     "00-f2e039c854401c7d4129868cab9b1f25-716d5cfa3c04a57a-01"
+    ],
+    "same_trace": 3,
+    "of": 3,
+    "root_trace_id": "f2e039c854401c7d4129868cab9b1f25"
+   }
+  },
+  {
+   "id": "O1a",
+   "name": "Jeden trace_id: spany orchestrátoru i agentgateway v ClickHouse",
+   "status": "PASS",
+   "detail": {
+    "services": {
+     "claude-code": 10,
+     "harness-orchestrator": 5,
+     "agentgateway": 6
+    },
+    "span_names": [
+     "POST",
+     "POST /v1/messages",
+     "claude_code.interaction",
+     "claude_code.llm_request",
+     "claude_code.tool",
+     "claude_code.tool.blocked_on_user",
+     "claude_code.tool.execution",
+     "initialize",
+     "invoke_agent harness-ticket-agent",
+     "notifications/initialized",
+     "tools/call lookup_ticket",
+     "tools/list"
+    ]
+   }
+  },
+  {
+   "id": "O1b",
+   "name": "Claude Code CLI spany ve stejném trace (beta)",
+   "status": "PASS",
+   "detail": {
+    "cli_services": [
+     "claude-code"
+    ],
+    "cli_span_names": [
+     "claude_code.interaction",
+     "claude_code.llm_request",
+     "claude_code.tool",
+     "claude_code.tool.blocked_on_user",
+     "claude_code.tool.execution"
+    ],
+    "count": 10
+   }
+  },
+  {
+   "id": "O1c",
+   "name": "Gateway span nese gen_ai.usage.* vč. cache tokenů, session.id a cost",
+   "status": "PASS",
+   "detail": {
+    "sample": {
+     "gen_ai.conversation.id": "d221e33c-159c-5c68-ab39-58cc560f6aa8",
+     "gen_ai.operation.name": "chat",
+     "gen_ai.provider.name": "anthropic",
+     "gen_ai.request.max_tokens": "32000",
+     "gen_ai.request.model": "claude-haiku-4-5",
+     "gen_ai.response.model": "claude-haiku-4-5",
+     "gen_ai.usage.cache_creation.input_tokens": "2048",
+     "gen_ai.usage.cache_read.input_tokens": "4096",
+     "gen_ai.usage.input_tokens": "6155",
+     "gen_ai.usage.output_tokens": "7",
+     "harness.redaction_probe": "****",
+     "llm.cost.total": "0.0030156",
+     "session.id": "d221e33c-159c-5c68-ab39-58cc560f6aa8"
+    }
+   }
+  },
+  {
+   "id": "O1d",
+   "name": "Gateway spany mají rodiče uvnitř trace (CLI span nebo root), nejsou osiřelé",
+   "status": "PASS",
+   "detail": {
+    "gateway_parents": [
+     "agentgateway:POST /v1/messages",
+     "claude-code:claude_code.llm_request"
+    ],
+    "orphans": []
+   }
+  },
+  {
+   "id": "O1e",
+   "name": "Redaction v Collectoru zamaskovala sk-… v atributu gateway spanu",
+   "status": "PASS",
+   "detail": {
+    "masked_values": [
+     "****",
+     "****",
+     "****"
+    ],
+    "leaked_spans": []
+   }
+  },
+  {
+   "id": "O1f",
+   "name": "gen_ai_normalizer: OpenInference llm.token_count.* → gen_ai.usage.*",
+   "status": "PASS",
+   "detail": {
+    "attrs": {
+     "gen_ai.operation.name": "chat",
+     "gen_ai.request.model": "probe-model",
+     "gen_ai.usage.input_tokens": "123",
+     "gen_ai.usage.output_tokens": "45",
+     "llm.model_name": "probe-model",
+     "llm.token_count.completion": "45",
+     "llm.token_count.prompt": "123",
+     "openinference.span.kind": "LLM"
+    }
+   }
+  },
+  {
+   "id": "O1h",
+   "name": "CLI metriky a eventy přes OTLP (cost, tokeny, tool_decision)",
+   "status": "PASS",
+   "detail": {
+    "metrics": [
+     "claude_code.cost.usage",
+     "claude_code.session.count",
+     "claude_code.token.usage"
+    ],
+    "events": [
+     "claude_code.api_request",
+     "claude_code.tool_decision",
+     "claude_code.tool_result",
+     "claude_code.user_prompt"
+    ],
+    "enduser_in_logs": true
+   }
+  },
+  {
+   "id": "O1i",
+   "name": "Dapr Workflow v řetězu",
+   "status": "SKIP",
+   "detail": {
+    "note": "bez Dapr lokálně; Dapr Agents serializují traceparent do vstupu workflow (standardy.md) – neměřeno"
+   }
+  }
+ ]
+}

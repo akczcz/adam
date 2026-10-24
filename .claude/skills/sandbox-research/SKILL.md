@@ -78,6 +78,8 @@ Postup `framework-research` sekce 2, vzorce v `knowledge/frameworks/licencni-vzo
   1.6.0 bez loopback/link-local ochrany dynamic backendu (PR #3889 až 1.7) → CNP na gateway podu; bez nameserverů fallback na Google DNS (A3).
 - **Inspect approval** = fnmatch nad `tool(arg='…` (prefix glob), ne regex; `auto_approver("reject")` v Python API.
 - **Agent SDK `sandbox` option existuje** (Py i TS) – Python default bez `failIfUnavailable` běží nesandboxovaně.
+- **`allowed_tools` neomezuje, jen předschvaluje:** v `bypassPermissions` má CLI Bash/Write/Edit/WebFetch na hostu a načte `.mcp.json` repa (O-2 live 2026-10-24). Role = `tools=[]` + `strict_mcp_config=True` + `setting_sources=[]` + cwd mimo repo; hranice je pod + `srt claude` + CNP.
+- **Živý model injekci často odmítne sám** – obranu platformy měří jen adversariální (mock) agent; live běh je o ceně a chování, ne o gate.
 
 ## 8. Čemu se vyhni
 - Nevybírej podle DX nebo počtu jazyků – vybírej podle izolace, egressu a provozu na K8s zákazníka.

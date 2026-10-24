@@ -1,0 +1,139 @@
+{
+ "meta": {
+  "started": "2026-10-23T22:41:12",
+  "roles": [
+   "reviewer",
+   "vyvojar"
+  ],
+  "build_hash": "de79478be462a427"
+ },
+ "checks": [
+  {
+   "id": "R1a",
+   "name": "Generování deterministické, pokrývá všechny role; registr rolí (T12) nese verzi, vlastníka, SPIFFE ID a sha zdroje",
+   "status": "PASS",
+   "detail": {
+    "roles": [
+     "reviewer",
+     "vyvojar"
+    ],
+    "files": 14,
+    "hash": "de79478be462a427",
+    "registry": [
+     [
+      "reviewer",
+      "0.1.0",
+      "adam"
+     ],
+     [
+      "vyvojar",
+      "0.1.0",
+      "adam"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "R1b",
+   "name": "OPA roles.rego + vygenerovaná data: 17 případů podle autonomie.md (merge/push main/assign/approve deny, branch push/propose allow)",
+   "status": "PASS",
+   "detail": {
+    "failed": [],
+    "passed": 17
+   }
+  },
+  {
+   "id": "R1c",
+   "name": "srt 0.0.81 přijme vygenerované settings každé role (schéma: parentProxy objekt, deniedDomains povinné, mandatoryDenySearchDepth)",
+   "status": "PASS",
+   "detail": {
+    "reviewer": {
+     "exit": 0,
+     "ok": true,
+     "err": ""
+    },
+    "vyvojar": {
+     "exit": 0,
+     "ok": true,
+     "err": ""
+    }
+   }
+  },
+  {
+   "id": "R1d",
+   "name": "agentgateway 1.6.0 --validate-only přijme apiKey.keys[] s budgets (USD/24h/30d, Audit|Block) a egress tcpRoute z rolí",
+   "status": "PASS",
+   "detail": {
+    "exit": 0,
+    "note": "budgets vyžadují config.database (sqlite/postgres) a metadata.name na klíči",
+    "budgets": [
+     [
+      "reviewer",
+      3
+     ],
+     [
+      "vyvojar",
+      3
+     ]
+    ],
+    "egress_hosts": [
+     "git.platform.internal",
+     "mirror.platform.internal"
+    ],
+    "stderr": ""
+   }
+  },
+  {
+   "id": "R1e",
+   "name": "Inspect AI načte vygenerované approval policy (fnmatch nad `sandboxed_bash(cmd=*git-receive-pack*`)",
+   "status": "PASS",
+   "detail": {
+    "policies": {
+     "reviewer-approval": 2,
+     "vyvojar-approval": 2
+    },
+    "sample": {
+     "approvers": [
+      {
+       "name": "auto",
+       "tools": "sandboxed_bash(cmd=*git-receive-pack*)",
+       "decision": "reject"
+      },
+      {
+       "name": "auto",
+       "tools": "*",
+       "decision": "approve"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "R1f",
+   "name": "Pod spec rolí: RuntimeClass (Kata), non-root, SA token off, capabilities drop ALL, seccomp Localhost",
+   "status": "PASS",
+   "detail": {
+    "reviewer-pod": {
+     "runtimeClass": "kata-vm-isolation",
+     "nonroot": true,
+     "sa_token": false,
+     "drop": [
+      "ALL"
+     ],
+     "seccomp": "Localhost",
+     "ok": true
+    },
+    "vyvojar-pod": {
+     "runtimeClass": "kata-vm-isolation",
+     "nonroot": true,
+     "sa_token": false,
+     "drop": [
+      "ALL"
+     ],
+     "seccomp": "Localhost",
+     "ok": true
+    }
+   }
+  }
+ ]
+}

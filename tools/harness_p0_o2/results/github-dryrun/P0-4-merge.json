@@ -1,0 +1,11 @@
+{
+ "kind": "merge",
+ "zakazka": "P0-4",
+ "repo": "akczcz/adam",
+ "approval_hash": "578d9f593c4d7ee9",
+ "payload": {
+  "number": 0,
+  "title": "P0-4: merge po schválení H4 (merge-executor)",
+  "head": "zakazka/P0-4/ukol-1"
+ }
+}

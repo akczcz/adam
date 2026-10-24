@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- keycloak.yaml
+configMapGenerator:
+- name: keycloak-realm
+  files:
+  - realm-p0.json   # kopie tools/harness_p0_o2/configs/realm-p0.json – harness P1-3 hlídá shodu
+generatorOptions:
+  disableNameSuffixHash: true

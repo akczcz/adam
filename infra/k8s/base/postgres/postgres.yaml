@@ -1,0 +1,73 @@
+# Postgres 16 + pgvector – jedna instance, databáze memory, dapr_state, org, agentgateway, keycloak; viz knowledge/platforma/p1-aks.md P1-2.
+# Dev heslo v Secretu je jen pro kind; na AKS = Azure Database for PostgreSQL Flexible Server (nebo CloudNativePG) a heslo z OpenBao.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-auth
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: platform-dev
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+data:
+  10-databases.sql: |
+    CREATE DATABASE memory;
+    CREATE DATABASE dapr_state;
+    CREATE DATABASE org;
+    CREATE DATABASE agentgateway;
+    CREATE DATABASE keycloak;
+    \connect memory
+    CREATE EXTENSION IF NOT EXISTS vector;
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: {app: postgres}
+spec:
+  selector: {app: postgres}
+  ports:
+  - {name: pg, port: 5432, targetPort: 5432}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      securityContext: {fsGroup: 999}
+      containers:
+      - name: postgres
+        image: pgvector/pgvector:pg16
+        env:
+        - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: postgres-auth, key: POSTGRES_PASSWORD}}}
+        - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+        ports:
+        - {containerPort: 5432, name: pg}
+        volumeMounts:
+        - {name: data, mountPath: /var/lib/postgresql/data}
+        - {name: init, mountPath: /docker-entrypoint-initdb.d}
+        readinessProbe:
+          exec: {command: ["pg_isready", "-U", "postgres"]}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 1Gi}
+      volumes:
+      - name: init
+        configMap: {name: postgres-init}
+  volumeClaimTemplates:
+  - metadata: {name: data}
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources: {requests: {storage: 2Gi}}

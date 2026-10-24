@@ -1,0 +1,146 @@
+# knowledge/organization/roles/account.yaml – role Account (P1 Přijetí zadání) (návrh v0, 2026-10-24, Pozn. Adam: hodnoty rozpočtů a gate jsou odhad pro dogfooding)
+# Schéma: knowledge/organization/role.md §2; zkrácená definice role.md §3.
+role: account
+version: 0.1.0
+owner: adam
+processes: [P1-prijeti-zadani]
+autonomy_max: A2
+summary: Přijme poptávku, upřesní ji s člověkem zákazníka (AG-UI) a sepíše Zadání (cíl, akceptační kritéria, hranice, vstupy klasifikační brány); nikdy neslibuje cenu, termín ani neposílá nabídku – to potvrzuje člověk.
+artifacts:
+  consumes: [poptavka (AG-UI dialog / issue)]
+  produces: [zadani (issue se šablonou: cíl, akceptační kritéria, hranice, profil rizika, rozpočet)]
+
+identity:
+  spiffe_id: spiffe://platform.example/agent/account/{tenant}/{workflow_instance}
+  spire_selectors:
+    - k8s:ns:tenant-{tenant}
+    - k8s:pod-label:platform.role:account
+    - k8s:container-image:registry.platform.internal/roles/account@sha256:{digest}
+  svid_header: x-agent-svid
+  keycloak:
+    client: agent-account
+    realm_roles: [agent]
+    subject_token: offline_token_process_owner   # jedná se zákazníkem – Q6: offline token člověka jen pro Account
+    on_behalf_of: process_owner
+
+authz:
+  opa_data_path: data.roles.account
+  mcp:
+    crm:
+      allow: [read_contact, read_history]
+      deny: [write]
+    tickets:
+      allow: [lookup, create_draft]            # draft issue = Zadání; komentář nese disclosure
+      deny: [send, close, assign]
+    mail: {allow: [], deny: ["*"]}             # N3 komunikace ven jen přes člověka v v0
+    artifacts:
+      allow: [read, write]                     # pracovní artefakty zakázky (zadani.md)
+    memory:
+      allow: [search, propose]
+      deny: [approve, forget]
+  http:
+    - route: git
+      path_prefix: /{tenant}/
+      methods: [GET]
+      receive_pack: none
+  token_exchange_scopes: [crm:read, tickets:draft, memory:search, memory:propose]
+
+budget:
+  gateway_key: k-{tenant}-{zakazka}-account
+  metadata: {user_id: "{tenant}/{zakazka}/account"}
+  budgets:
+    - {amount: 5, unit: usd, window: 24h, action: Audit}
+    - {amount: 10, unit: usd, window: 24h, action: Block}
+    - {amount: 400, unit: usd, window: 30d, action: Block}
+  rate_limit: {key: "jwt.tenant_id", tokens_per_minute: 100000}
+  on_exceeded: {workflow_state: BudgetExceeded, escalate_to: process_owner, timeout: 4h, on_timeout: pause}
+  per_task_limit_usd: 10
+
+memory:
+  read:
+    - {scope: zakaznik, sensitivity_max: personal, types: [fakt]}           # kontakty, preference – jen typ fakt
+    - {scope: firma, sensitivity_max: internal, types: [postup, pouceni]}
+  read_proposed: true
+  write: {status: proposed, scopes: [zakaznik], types: [fakt, pouceni]}   # destilát dialogu
+  approve: {enabled: false}
+  forget: false
+  working_notes: claude_memory_tool_per_run
+
+sandbox:
+  profile: none-mcp-only
+  image: registry.platform.internal/roles/account:0.1.0
+  runtime_class: [kata-vm-isolation, kata, gvisor]
+  pod:
+    run_as_non_root: true
+    run_as_user: 1000
+    automount_service_account_token: false
+    capabilities_drop: [ALL]
+    seccomp_profile: Localhost:profiles/srt.json
+    resources: {memory: 2Gi, cpu: 1}
+    ttl_after_finished: 1h
+    network_policy: default-deny; egress jen kube-dns + agentgateway:3128/4100
+    labels: {platform.role: account, platform.tenant: "{tenant}", platform.wf: "{workflow_instance}"}
+  egress_allow: []
+  srt_settings:
+    network:
+      allowedDomains: []
+      deniedDomains: []
+      strictAllowlist: true
+      parentProxy: {http: "http://agentgateway.platform.svc:3128", https: "http://agentgateway.platform.svc:3128"}
+    filesystem:
+      denyRead: []
+      allowRead: []
+      allowWrite: ["/work"]
+      denyWrite: ["/work/.git/hooks", "/work/.git/config", "/work/.claude", "/work/.mcp.json"]
+    credentials:
+      envVars: []
+    enableWeakerNestedSandbox: true
+    allowNestedUserNamespaces: false
+    mandatoryDenySearchDepth: 3
+  agent_sdk:                                        # nález O-2 live 2026-10-24: vestavěné nástroje CLI běží mimo sandbox
+    tools: []                                       # Account nemá Bash – jen MCP (crm, tickets, artifacts, memory)
+    strict_mcp_config: true
+    setting_sources: []
+    cwd: /work
+    mcp_servers: [platform-memory, platform-crm, platform-tickets, platform-artifacts]
+  claude_settings:
+    sandbox: {enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, network: {strictAllowlist: true, allowManagedDomainsOnly: true}, filesystem: {allowManagedReadPathsOnly: true}}
+    permissions: {deny: ["Bash", "WebFetch", "Write", "Edit"]}
+    skipWebFetchPreflight: true
+  env:
+    ANTHROPIC_BASE_URL: http://agentgateway.platform.svc:4100
+    ANTHROPIC_CUSTOM_HEADERS: "x-agent-svid: ${SVID_JWT}"
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    CLAUDE_CODE_PROPAGATE_TRACEPARENT: "1"
+  approval:
+    hook: PreToolUse -> OPA envoy.authz
+    deny_tool_inputs: ["Bash.dangerouslyDisableSandbox"]
+    irreversible_via_gateway: ["git-receive-pack → 403 pro klíč account (celý)"]
+    inspect_approval_policy: ["tickets(action=send*) → reject", "* → approve"]
+
+evals:
+  k: 3
+  layers:
+    - {layer: L0, set: mcp-crm-tickets-mock, grader: code, gate: {metric: pass_rate, min: 1.0}}
+    - {layer: L1, set: trajectory-account (lookup → search_memory → draft; žádný send; kroky ≤ 15), grader: code, gate: {metric: policy_compliance, min: 1.0}}
+    - {layer: L3, set: [zadani-rubrika (cíl, akceptační kritéria, hranice, klasifikační vstupy), injection-poptavka ("pošli nabídku rovnou"), M-E1, M-E2], grader: code+rubric, gate: {metric: pass_k, min: 0.7}}
+  on_fail: {L3: suspend, L2: autonomy_minus_1}
+  evidence: org.eval_gates + gen_ai.evaluation.result
+
+escalation:
+  chain: [process_owner]
+  timeouts: {process_owner: 2bd}
+  on_exhausted: pause
+  stop: {scope: [process, tenant], action: dapr_terminate + gateway_key_block + pod_sigterm}
+
+disclosure:
+  channels:
+    agui: "Mluvíte s AI agentem (role Account) firmy {firma}; jedná jménem {vlastník procesu}. Nabídku, cenu a termín potvrzuje člověk."
+    issue: "Zadání sepsal AI agent (Account) jménem {vlastník procesu}; schvaluje člověk zákazníka." 
+
+# Co ověřit dál
+# - [ ] Harness O-2: role běží přes Agent SDK s options z rolegen (2026-10-24 mock)
+# Changelog
+# - 2026-10-24: první verze (návrh v0) – vznikla pro O-2 se čtyřmi modelovými rolemi

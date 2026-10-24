@@ -1,0 +1,253 @@
+# SPIRE 1.14 – identita workloadů: trust domain `platform`, server (sqlite datastore, 1 uzel na kind), agent jako DaemonSet
+# s k8s_psat node attestorem a k8s workload attestorem (pod-label role=<role> → spiffe://platform/role/<role>).
+# Registrace entries dělá operátor/rolegen (harness P1-3). Na AKS totéž s Postgres datastore a více servery.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-server
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spire-server-platform
+rules:
+- apiGroups: [authentication.k8s.io]
+  resources: [tokenreviews]
+  verbs: [create]
+- apiGroups: [""]
+  resources: [pods, nodes]
+  verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spire-server-platform
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: spire-server-platform}
+subjects:
+- {kind: ServiceAccount, name: spire-server, namespace: platform-data}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spire-server-bundle
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [spire-bundle]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spire-server-bundle
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: spire-server-bundle}
+subjects:
+- {kind: ServiceAccount, name: spire-server}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spire-agent-platform
+rules:
+- apiGroups: [""]
+  resources: [pods, nodes, nodes/proxy]
+  verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spire-agent-platform
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: spire-agent-platform}
+subjects:
+- {kind: ServiceAccount, name: spire-agent, namespace: platform-data}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-bundle   # plní Notifier k8sbundle (klíč bundle.crt)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-server-config
+data:
+  server.conf: |
+    server {
+      bind_address = "0.0.0.0"
+      bind_port = "8081"
+      trust_domain = "platform"
+      data_dir = "/run/spire/data"
+      log_level = "INFO"
+      ca_ttl = "24h"
+      default_x509_svid_ttl = "1h"
+    }
+    plugins {
+      DataStore "sql" {
+        plugin_data {
+          database_type = "sqlite3"
+          connection_string = "/run/spire/data/datastore.sqlite3"
+        }
+      }
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          clusters = {
+            "platform" = {
+              service_account_allow_list = ["platform-data:spire-agent"]
+            }
+          }
+        }
+      }
+      KeyManager "disk" {
+        plugin_data { keys_path = "/run/spire/data/keys.json" }
+      }
+      Notifier "k8sbundle" {
+        plugin_data {
+          namespace = "platform-data"
+          config_map = "spire-bundle"
+        }
+      }
+    }
+    health_checks {
+      listener_enabled = true
+      bind_address = "0.0.0.0"
+      bind_port = "8080"
+      live_path = "/live"
+      ready_path = "/ready"
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-server
+  labels: {app: spire-server}
+spec:
+  selector: {app: spire-server}
+  ports:
+  - {name: grpc, port: 8081, targetPort: 8081}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: spire-server
+spec:
+  serviceName: spire-server
+  replicas: 1
+  selector:
+    matchLabels: {app: spire-server}
+  template:
+    metadata:
+      labels: {app: spire-server}
+    spec:
+      serviceAccountName: spire-server
+      containers:
+      - name: spire-server
+        image: platform/spire:1.14.2   # kind: busybox + statické binárky z GitHub releases; AKS: ghcr.io/spiffe/spire-server:1.14.2
+        command: ["spire-server", "run", "-config", "/run/spire/config/server.conf"]
+        ports:
+        - {containerPort: 8081, name: grpc}
+        volumeMounts:
+        - {name: config, mountPath: /run/spire/config, readOnly: true}
+        - {name: data, mountPath: /run/spire/data}
+        readinessProbe:
+          httpGet: {path: /ready, port: 8080}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+      volumes:
+      - name: config
+        configMap: {name: spire-server-config}
+  volumeClaimTemplates:
+  - metadata: {name: data}
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent-config
+data:
+  agent.conf: |
+    agent {
+      data_dir = "/run/spire"
+      log_level = "INFO"
+      server_address = "spire-server"
+      server_port = "8081"
+      socket_path = "/run/spire/sockets/agent.sock"
+      trust_bundle_path = "/run/spire/bundle/bundle.crt"
+      trust_domain = "platform"
+    }
+    plugins {
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          cluster = "platform"
+          token_path = "/var/run/secrets/tokens/spire-agent"
+        }
+      }
+      KeyManager "memory" {
+        plugin_data {}
+      }
+      WorkloadAttestor "k8s" {
+        plugin_data {
+          skip_kubelet_verification = true   # kind: self-signed kubelet cert; na AKS ověřit přes CA uzlu
+          node_name_env = "MY_NODE_NAME"
+        }
+      }
+    }
+    health_checks {
+      listener_enabled = true
+      bind_address = "0.0.0.0"
+      bind_port = "8080"
+      live_path = "/live"
+      ready_path = "/ready"
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+spec:
+  selector:
+    matchLabels: {app: spire-agent}
+  template:
+    metadata:
+      labels: {app: spire-agent}
+    spec:
+      serviceAccountName: spire-agent
+      hostPID: true          # k8s workload attestor čte /proc/<pid>/cgroup volajícího
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: spire-agent
+        image: platform/spire:1.14.2
+        command: ["spire-agent", "run", "-config", "/run/spire/config/agent.conf"]
+        env:
+        - {name: MY_NODE_NAME, valueFrom: {fieldRef: {fieldPath: spec.nodeName}}}
+        volumeMounts:
+        - {name: config, mountPath: /run/spire/config, readOnly: true}
+        - {name: bundle, mountPath: /run/spire/bundle, readOnly: true}
+        - {name: sockets, mountPath: /run/spire/sockets}
+        - {name: token, mountPath: /var/run/secrets/tokens}
+        readinessProbe:
+          httpGet: {path: /ready, port: 8080}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {memory: 256Mi}
+      volumes:
+      - name: config
+        configMap: {name: spire-agent-config}
+      - name: bundle
+        configMap: {name: spire-bundle}
+      - name: sockets
+        hostPath: {path: /run/spire/sockets, type: DirectoryOrCreate}
+      - name: token
+        projected:
+          sources:
+          - serviceAccountToken: {path: spire-agent, expirationSeconds: 7200, audience: spire-server}

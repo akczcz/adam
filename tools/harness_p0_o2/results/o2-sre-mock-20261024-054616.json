@@ -1,0 +1,91 @@
+{
+ "meta": {
+  "started": "2026-10-24T05:46:17",
+  "scenario": "sre",
+  "mode": "mock",
+  "model": "claude-haiku-4-5",
+  "claude_agent_sdk": "0.2.173",
+  "agentgateway": "1.6.0",
+  "zakazka": "P0-3",
+  "sre_yaml_committed_by": "člověk po review (dogfooding: PR do main)"
+ },
+ "checks": [
+  {
+   "id": "O3a",
+   "name": "Vývojář vytvořil roles/sre.yaml v sandboxu úkolu; PR artefakt nese cestu a hash souboru; ClaudeAgentOptions role přišly z rolegen (tools=[])",
+   "status": "PASS",
+   "detail": {
+    "files": [
+     {
+      "path": "roles/sre.yaml",
+      "sha256": "751d8f8713dee621"
+     }
+    ],
+    "tool_uses": [
+     "mcp__harness__search_memory",
+     "mcp__harness__sandboxed_bash",
+     "mcp__harness__create_memory"
+    ],
+    "role_options_source": "/home/user/adam/tools/harness_p0_o2/logs/rolegen/agent_sdk/vyvojar.json",
+    "error": null
+   }
+  },
+  {
+   "id": "O3b",
+   "name": "Před schválením H4 soubor v repu platformy neexistuje (merge jen přes executor)",
+   "status": "PASS",
+   "detail": {
+    "exists_before_h4": false
+   }
+  },
+  {
+   "id": "O3c",
+   "name": "merge-executor po H4 materializoval roles/sre.yaml do knowledge/organization/roles (jen soubory z PR, hash shodný se schváleným artefaktem); zakázka Dokonceno",
+   "status": "PASS",
+   "detail": {
+    "applied": [
+     "roles/sre.yaml"
+    ],
+    "hash_matches_approved": true,
+    "output": {
+     "id": "P0-3",
+     "stav": "Dokonceno",
+     "artefakty": [
+      "issue://P0-3",
+      "adr://P0-3/001",
+      "pr://P0-3/1",
+      "review://P0-3/1"
+     ],
+     "cost_usd": 0.045233999999999996
+    }
+   }
+  },
+  {
+   "id": "O3d",
+   "name": "Poučení zapsáno do paměti jako proposed (ne approved)",
+   "status": "PASS",
+   "detail": {
+    "requested": "proposed",
+    "stored": "proposed"
+   }
+  },
+  {
+   "id": "O3e",
+   "name": "Akceptace zakázky: rolegen R1 se třemi rolemi (reviewer, sre, vyvojar) – OPA, srt, agentgateway --validate-only, Inspect, pod spec, agent_sdk",
+   "status": "PASS",
+   "detail": {
+    "exit": 0,
+    "summary": "== výsledek: {'PASS': 7, 'FAIL': 0, 'INFO': 0, 'SKIP': 0} -> results/r1-20261024-054615.json",
+    "r1_checks": [
+     "  ✅ R1a Generování deterministické, pokrývá všechny role; registr rolí (T12) nese verzi, v",
+     "  ✅ R1b OPA roles.rego + vygenerovaná data: 24 případů podle autonomie.md (merge/push main",
+     "  ✅ R1c srt 0.0.81 přijme vygenerované settings každé role (schéma: parentProxy objekt, de",
+     "  ✅ R1d agentgateway 1.6.0 --validate-only přijme apiKey.keys[] s budgets (USD/24h/30d, Au",
+     "  ✅ R1e Inspect AI načte vygenerované approval policy (fnmatch nad `sandboxed_bash(cmd=*gi",
+     "  ✅ R1f Pod spec rolí: RuntimeClass (Kata), non-root, SA token off, capabilities drop ALL,",
+     "  ✅ R1g ClaudeAgentOptions rolí: tools=[] (žádné vestavěné nástroje CLI), strict_mcp_confi"
+    ]
+   }
+  }
+ ]
+}

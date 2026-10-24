@@ -1,0 +1,68 @@
+# Keycloak 26.8.1 – IdP platformy: realm `p0` (role = service-account klienti, tenant_id/agent_id z atributů, aud=memory).
+# Realm JSON je kopie tools/harness_p0_o2/configs/realm-p0.json (zdroj pravdy; harness P1-3 kontroluje shodu).
+# DB: databáze `keycloak` v clusterovém Postgresu (init SQL). Produkční režim `start --optimized` (build --db=postgres v obrazu),
+# HTTP povoleno jen za ingress/gateway; na AKS TLS a hostname napevno.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-admin
+type: Opaque
+stringData:
+  KC_BOOTSTRAP_ADMIN_USERNAME: admin
+  KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev   # jen kind; na AKS z OpenBao
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  labels: {app: keycloak}
+spec:
+  selector: {app: keycloak}
+  ports:
+  - {name: http, port: 8080, targetPort: 8080}
+  - {name: mgmt, port: 9000, targetPort: 9000}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: keycloak}
+  template:
+    metadata:
+      labels: {app: keycloak}
+    spec:
+      containers:
+      - name: keycloak
+        image: platform/keycloak:26.8.1   # kind: lokální build (infra/README.md); AKS: quay.io/keycloak/keycloak:26.8.1
+        args: ["start", "--optimized", "--import-realm", "--http-enabled=true", "--hostname-strict=false", "--proxy-headers=xforwarded"]
+        env:
+        - {name: KC_DB_URL, value: jdbc:postgresql://postgres:5432/keycloak}
+        - {name: KC_DB_USERNAME, value: postgres}
+        - {name: KC_DB_PASSWORD, valueFrom: {secretKeyRef: {name: postgres-auth, key: POSTGRES_PASSWORD}}}
+        - {name: KC_BOOTSTRAP_ADMIN_USERNAME, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_USERNAME}}}
+        - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_PASSWORD}}}
+        - {name: KC_HTTP_PORT, value: "8080"}
+        - {name: JAVA_OPTS_APPEND, value: "-Xms256m -Xmx768m"}
+        ports:
+        - {containerPort: 8080, name: http}
+        - {containerPort: 9000, name: mgmt}
+        volumeMounts:
+        - {name: realm, mountPath: /opt/keycloak/data/import}
+        readinessProbe:
+          httpGet: {path: /health/ready, port: 9000}
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          failureThreshold: 30
+        startupProbe:
+          httpGet: {path: /health/started, port: 9000}
+          periodSeconds: 5
+          failureThreshold: 60
+        resources:
+          requests: {cpu: 200m, memory: 768Mi}
+          limits: {memory: 1536Mi}
+      volumes:
+      - name: realm
+        configMap: {name: keycloak-realm}

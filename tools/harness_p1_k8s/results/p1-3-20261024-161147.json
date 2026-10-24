@@ -1,0 +1,155 @@
+{
+ "meta": {
+  "started": "2026-10-24T16:11:47",
+  "step": "p1-3",
+  "context": "kind-platform",
+  "kind": "kind v0.33.0 go1.26.7 linux/amd64",
+  "images": [
+   "pgvector/pgvector:pg16",
+   "clickhouse:26.8",
+   "otel/opentelemetry-collector-contrib:0.163.2"
+  ]
+ },
+ "checks": [
+  {
+   "id": "P13a",
+   "name": "Keycloak (Deployment), OpenBao (StatefulSet raft), SPIRE server (StatefulSet) a agent (DaemonSet) Ready v kind; realm v infra = kopie realm-p0.json z O-2 (sha256)",
+   "status": "PASS",
+   "detail": {
+    "pods_ready": {
+     "keycloak-8589c478f7-5gjhx": true,
+     "openbao-0": true,
+     "spire-agent-x97nh": true,
+     "spire-server-0": true
+    },
+    "realm_identical": true,
+    "wall_s": 2.8
+   }
+  },
+  {
+   "id": "P13b",
+   "name": "Keycloak přes NodePort 30080: discovery realmu p0, client_credentials agent-vyvojar → RS256, iss clusteru, aud=memory, tenant_id=acme, agent_id spiffe; realm a klienti uložené v Postgresu (DB keycloak)",
+   "status": "PASS",
+   "detail": {
+    "issuer": "http://172.18.0.2:30080/realms/p0",
+    "token_status": 200,
+    "token_ms": 49.5,
+    "claims": {
+     "iss": "http://172.18.0.2:30080/realms/p0",
+     "aud": "memory",
+     "tenant_id": "acme",
+     "agent_id": "spiffe://platform/role/vyvojar",
+     "roles": [
+      "agent"
+     ],
+     "azp": "agent-vyvojar"
+    },
+    "db_realms": [
+     "master",
+     "p0"
+    ],
+    "db_clients_p0": 13
+   }
+  },
+  {
+   "id": "P13c",
+   "name": "OpenBao přes NodePort 30200: init 1/1 a unseal operátorem (klíče jen v logs/), raft storage s jedním voterem, audit device z HCL (stdout), zdraví 200",
+   "status": "PASS",
+   "detail": {
+    "health": 200,
+    "version": "2.7.1",
+    "raft_servers": [
+     [
+      "openbao-0",
+      true
+     ]
+    ],
+    "audit_devices": [
+     "file/"
+    ],
+    "unseal_ms": 0
+   }
+  },
+  {
+   "id": "P13d",
+   "name": "SPIRE: agent atestován (k8s_psat), entry spiffe://platform/role/vyvojar se selektory k8s:ns + k8s:pod-label:role:vyvojar; pod s labelem dostane SVID (TTL ≤ 1 h, trust domain platform), pod bez labelu žádnou identitu",
+   "status": "PASS",
+   "detail": {
+    "agents": [
+     "Found 1 attested agent:"
+    ],
+    "svid": [
+     "SPIFFE ID:\t\tspiffe://platform/role/vyvojar",
+     "SVID Valid Until:\t2026-10-24 17:08:50 +0000 UTC",
+     "CA #1 Valid Until:\t2026-10-25 16:05:33 +0000 UTC"
+    ],
+    "no_label": "rpc error: code = PermissionDenied desc = no identity issued\ncommand terminated with exit code 1",
+    "attestor_note": "prvý start agenta spadl na chybějící bundle.crt (k8sbundle notifier ho plní až po startu serveru) – DaemonSet ho restartoval"
+   }
+  },
+  {
+   "id": "P13e",
+   "name": "O-2 scénář identity proti clusterovému Keycloaku (JWKS, HS256 odmítnut, tenant z tokenu) a OpenBao (transit podpis approval tokenu, token aplikace jen sign/verify, padělek → HITL_INVALID_TOKEN): 5/5",
+   "status": "PASS",
+   "detail": {
+    "exit": 0,
+    "counts": {
+     "PASS": 5,
+     "FAIL": 0,
+     "INFO": 1,
+     "SKIP": 0
+    },
+    "wall_s": 26.4,
+    "failed": [],
+    "id6": {
+     "kc_token_ms": 39.1,
+     "sign_ms": 21.0,
+     "keycloak": "26.8.1",
+     "openbao": "2.7.1",
+     "keycloak_url": "http://172.18.0.2:30080/realms/p0",
+     "openbao_addr": "http://172.18.0.2:30200"
+    },
+    "log": "/home/user/adam/tools/harness_p1_k8s/logs/o2-identity-k8s.log"
+   }
+  },
+  {
+   "id": "P13f",
+   "name": "Obrazy a restarty identity podů (kind: lokálně postavené obrazy, viz infra/README.md)",
+   "status": "INFO",
+   "detail": {
+    "keycloak-8589c478f7-5gjhx": {
+     "image": [
+      "platform/keycloak:26.8.1"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "openbao-0": {
+     "image": [
+      "platform/openbao:2.7.1"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "spire-agent-x97nh": {
+     "image": [
+      "platform/spire:1.14.2"
+     ],
+     "restarts": [
+      1
+     ]
+    },
+    "spire-server-0": {
+     "image": [
+      "platform/spire:1.14.2"
+     ],
+     "restarts": [
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

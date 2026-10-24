@@ -357,6 +357,42 @@ Bez `artifacts[]` adaptér task odmítne (kriteria.md B1, anti-kritérium „deb
 | incidenty | X1 záznamy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
 | SLA plnění | timery vs. SLA | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
+## HITL přes GitHub (dogfooding, 2026-10-24)
+
+Pro zakázky ve vlastním repu je GitHub nosičem HITL bodů místo AG-UI (externí zákazník → AG-UI). Změřeno harnessem O-2
+scénář `github-hitl` (o2-github-hitl-mock-20261024-064226.json, 5/5 proti mock GitHubu; stejná cesta kódu jako proti api.github.com).
+
+```mermaid
+sequenceDiagram
+    participant WF as Dapr Workflow
+    participant GH as GitHub (issue / PR)
+    participant BR as Bridge (PEP: poll + webhook)
+    participant H as Člověk (allow-list)
+    WF->>GH: issue = Zadání (disclosure, hash artefaktu, „čeká na H1“)
+    H->>GH: komentář /schvaluji
+    GH-->>BR: webhook issue_comment (HMAC) / poll
+    BR->>BR: login ∈ allow-list, ≠ bot; hash z těla issue
+    BR->>WF: approve H1 (app podepíše token vázaný na hash)
+    WF->>GH: větev zakazka/<id>/ukol-1 + PR (disclosure, hash, trailer AI-Agent)
+    H->>GH: PR review APPROVED
+    GH-->>BR: webhook pull_request_review / poll
+    BR->>BR: login ∈ allow-list; review.commit_id == PR head SHA; hash z těla PR
+    BR->>WF: approve H4
+    WF->>GH: merge-executor: merge PR (jen s tokenem)
+```
+
+| Bod | Nosič v GitHubu | Co bridge ověří | Odmítnuto (změřeno) |
+|---|---|---|---|
+| H1 zadání | komentář `/schvaluji` na issue zakázky | autor ∈ allow-list lidí, ≠ bot platformy; hash artefaktu v těle issue | bot sám sobě, cizí člověk |
+| H4 merge | PR review `APPROVED` | autor ∈ allow-list; `commit_id` == aktuální head SHA (review na starý commit neplatí); hash v těle PR | cizí člověk, review na starý commit |
+| stop | komentář `/stop` na issue | autor ∈ allow-list | – |
+| H5 deploy | zatím HTTP/AG-UI (dogfooding: deploy = merge) | – | – |
+
+Vlastnosti: dvě cesty doručení (webhook s HMAC `X-Hub-Signature-256`, polling REST), jeden handler, dedup podle id události –
+každé schválení se uplatní jednou; podvržený webhook bez platného podpisu → 401. Issue vzniká **před** H1 jako nosič
+schválení (reversibilní, vlastní repo, disclosure); bez GitHub HITL až po H1 (N3). Identita člověka = GitHub login v allow-listu
+(v cíli mapovaný na Keycloak uživatele vlastníka procesu, T3).
+
 ## Co ověřit dál
 
 - [ ] Harness O-1: zakázka P1→P5 s mock rolemi; tvrzení: H1–H6 přežijí restart (viz dapr-agents harness T2), timeout nevede ke schválení, A2A task bez artefaktu odmítnut, cena zakázky v logu per klíč, merge bez `approval_id` = 403.
@@ -367,4 +403,5 @@ Bez `artifacts[]` adaptér task odmítne (kriteria.md B1, anti-kritérium „deb
 - [ ] SLA čísla a rozpočty (otázky Q2, Q3) po prvních 3 zakázkách přehodnotit.
 
 ## Changelog
+- 2026-10-24: sekce HITL přes GitHub (issue /schvaluji = H1, PR review na head SHA = H4, bridge poll + webhook) – O-2 github-hitl 5/5.
 - 2026-10-23: první verze – P1–P5, X1–X2, P1a, mapování stavů na vrstvy, kontrakt A2A, metriky (kolo 1, část A).

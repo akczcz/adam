@@ -1,0 +1,87 @@
+# ClickHouse – úložiště OTEL (traces, logs, metrics) z harnessu O1; config odvozen z tools/harness_observability_o1/configs/clickhouse-config.xml.
+# Bez hesla jen uvnitř clusteru (NetworkPolicy omezí na Collector a dotazovací nástroje); na AKS Altinity operator nebo tento StatefulSet s heslem z OpenBao.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-config
+data:
+  platform.xml: |
+    <clickhouse>
+        <logger><level>warning</level><console>1</console></logger>
+        <listen_host>0.0.0.0</listen_host>
+        <send_crash_reports><enabled>false</enabled><send_logical_errors>false</send_logical_errors></send_crash_reports>
+        <mark_cache_size>268435456</mark_cache_size>
+        <max_server_memory_usage_to_ram_ratio>0.5</max_server_memory_usage_to_ram_ratio>
+    </clickhouse>
+  users.xml: |
+    <clickhouse>
+        <users>
+            <default>
+                <password></password>
+                <networks><ip>::/0</ip></networks>
+                <profile>default</profile>
+                <quota>default</quota>
+                <access_management>1</access_management>
+            </default>
+        </users>
+    </clickhouse>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-init
+data:
+  10-otel.sql: |
+    CREATE DATABASE IF NOT EXISTS otel;
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  labels: {app: clickhouse}
+spec:
+  selector: {app: clickhouse}
+  ports:
+  - {name: http, port: 8123, targetPort: 8123}
+  - {name: native, port: 9000, targetPort: 9000}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels: {app: clickhouse}
+  template:
+    metadata:
+      labels: {app: clickhouse}
+    spec:
+      containers:
+      - name: clickhouse
+        image: clickhouse:26.8   # LTS, stejná řada jako harness O1 (26.8.34.13-lts); oficiální obraz `clickhouse`, ne `clickhouse/clickhouse-server`
+        ports:
+        - {containerPort: 8123, name: http}
+        - {containerPort: 9000, name: native}
+        volumeMounts:
+        - {name: data, mountPath: /var/lib/clickhouse}
+        - {name: config, mountPath: /etc/clickhouse-server/config.d/platform.xml, subPath: platform.xml}
+        - {name: config, mountPath: /etc/clickhouse-server/users.d/users.xml, subPath: users.xml}
+        - {name: init, mountPath: /docker-entrypoint-initdb.d}
+        readinessProbe:
+          httpGet: {path: /ping, port: 8123}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 200m, memory: 512Mi}
+          limits: {memory: 2Gi}
+      volumes:
+      - name: config
+        configMap: {name: clickhouse-config}
+      - name: init
+        configMap: {name: clickhouse-init}
+  volumeClaimTemplates:
+  - metadata: {name: data}
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources: {requests: {storage: 4Gi}}
