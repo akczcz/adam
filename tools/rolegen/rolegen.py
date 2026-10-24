@@ -10,6 +10,7 @@ Z jednoho zdroje pravdy (YAML role v gitu) vzniká:
   build/claude/<role>-managed-settings.json            Claude Code managed settings (sandbox.*, permissions.deny)
   build/k8s/<role>-pod.yaml            pod spec (RuntimeClass, non-root, SA token off, labely, limity)
   build/inspect/<role>-approval.yaml   approval policy; build/inspect/<role>-evals.json vrstvy a gate
+  build/agent_sdk/<role>.json          ClaudeAgentOptions pro runtime role (tools=[], strict_mcp_config, setting_sources=[], cwd, mcp_servers) – nález O-2 live
   build/registry/roles.json            řádky org.role_definitions (registr agentů T12)
 
 Použití: rolegen.py --roles knowledge/organization/roles --out build --tenant acme --zakazka Z1
@@ -117,7 +118,7 @@ def main():
     ap.add_argument("--out", default="build"); ap.add_argument("--tenant", default="acme"); ap.add_argument("--zakazka", default="Z1")
     a = ap.parse_args()
     roles = load_roles(Path(a.roles)); out = Path(a.out)
-    for d in ("opa", "agentgateway", "srt", "claude", "k8s", "inspect", "registry"): (out / d).mkdir(parents=True, exist_ok=True)
+    for d in ("opa", "agentgateway", "srt", "claude", "k8s", "inspect", "registry", "agent_sdk"): (out / d).mkdir(parents=True, exist_ok=True)
     (out / "opa/data.json").write_text(json.dumps(opa_data(roles), ensure_ascii=False, indent=1, sort_keys=True))
     (out / f"agentgateway/apikeys-{a.tenant}-{a.zakazka}.yaml").write_text(yaml.safe_dump(gateway_keys(roles, a.tenant, a.zakazka), sort_keys=False, allow_unicode=True))
     (out / "agentgateway/egress-allowlist.yaml").write_text(yaml.safe_dump(egress(roles), sort_keys=False))
@@ -129,6 +130,11 @@ def main():
         if cs: (out / f"claude/{r['role']}-managed-settings.json").write_text(json.dumps(cs, indent=1, sort_keys=True))
         p = pod(r, a.tenant)
         if p: (out / f"k8s/{r['role']}-pod.yaml").write_text(yaml.safe_dump(p, sort_keys=False))
+        sdk = r["sandbox"].get("agent_sdk") or {}
+        if sdk.get("tools", []) != []: raise SystemExit(f"{r['_file']}: sandbox.agent_sdk.tools musí být [] – vestavěné nástroje CLI běží mimo sandbox (O-2 live 2026-10-24)")
+        (out / f"agent_sdk/{r['role']}.json").write_text(json.dumps({"role": r["role"], "version": r["version"], "tools": [], "strict_mcp_config": True, "setting_sources": sdk.get("setting_sources", []),
+                                                                     "cwd": sdk.get("cwd", "/work"), "mcp_servers": sdk.get("mcp_servers", []), "permission_mode": "bypassPermissions",
+                                                                     "env": r["sandbox"].get("env", {}), "managed_settings": r["sandbox"].get("claude_settings", {})}, ensure_ascii=False, indent=1))
         approval, evals = inspect_files(r)
         (out / f"inspect/{r['role']}-approval.yaml").write_text(yaml.safe_dump(approval, sort_keys=False))
         (out / f"inspect/{r['role']}-evals.json").write_text(json.dumps(evals, ensure_ascii=False, indent=1))

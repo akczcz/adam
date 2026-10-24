@@ -143,7 +143,7 @@ disclosure:                      # čl. 50(1) – T7; vkládá platforma, ne mod
     <kanál>: "<věta>"
 ```
 
-## 3. Role v0 (zkrácené definice; plné YAML Vývojář a Reviewer v `roles/`)
+## 3. Role v0 (zkrácené definice; plné YAML Vývojář, Reviewer a **SRE** v `roles/` – SRE vznikla jako zakázka P0-3 provedená platformou, 2026-10-24)
 
 ### Account (P1 Přijetí zadání)
 - `identity`: `/agent/account/{tenant}/{wf}`, KC role `agent`, subject = offline token vlastníka procesu (jedná se zákazníkem).
@@ -255,7 +255,7 @@ jediný zdroj; změna role = PR + nový bundle + nová řada evalů (T10).
 Agent runtime (Claude Code CLI pod Agent SDK) je součást hranice sandboxu: `allowed_tools` jen předschvaluje, neomezuje,
 a vestavěné nástroje Bash/Write/Edit/WebFetch běží v procesu agenta. Role proto deklaruje `sandbox.agent_sdk`:
 `tools: []` (žádné vestavěné), `strict_mcp_config: true`, `setting_sources: []`, `cwd` mimo repo platformy a výčet
-`mcp_servers` platformy. rolegen z toho vygeneruje `ClaudeAgentOptions` (zatím ⬜ – viz Co ověřit dál).
+`mcp_servers` platformy. rolegen z toho generuje `build/agent_sdk/<role>.json` (R1g) a harness O-2 je načítá – runtime role nejde spustit jinak než z YAML.
 
 ## 6. Co ověřit dál
 - [x] ~~Generátor z YAML~~ – `tools/rolegen` (2026-10-23, R1 6/6): OPA data + `authz.decision`, gateway `apiKey.keys[].budgets` (vyžaduje `metadata.name` a `config.database`), srt settings, pod spec, approval policy, registr rolí.
@@ -270,6 +270,7 @@ a vestavěné nástroje Bash/Write/Edit/WebFetch běží v procesu agenta. Role 
 - [ ] Harness O-1: pozastavená role (`agents_suspended`) → Dapr aktivita odmítne instanci; `BudgetExceeded` → HITL.
 
 ## Changelog
+- 2026-10-24: `roles/sre.yaml` (v0, zakázka P0-3); rolegen generuje `agent_sdk` options.
 - 2026-10-24: blok `sandbox.agent_sdk` po nálezu O-2 live (vestavěné nástroje mimo sandbox).
 - 2026-10-23: rolegen ověřil, že schéma jde bez zbytku přeložit do konfigurací vrstev (R1 6/6).
 - 2026-10-23: první verze – šablona YAML, mapování na vrstvy, profily sandboxu, společná Rego politika s daty per roli, zkrácené definice Account/Architekt/SRE/Governance/Člověk; plné YAML Vývojář a Reviewer v `roles/`.

@@ -17,19 +17,21 @@ python3 rolegen.py --roles ../../knowledge/organization/roles --out build --tena
 | `build/k8s/<role>-pod.yaml` | sandbox (Kata, non-root, SA token off, drop ALL, seccomp Localhost) | kontrola polí |
 | `build/inspect/<role>-approval.yaml`, `<role>-evals.json` | evaluace (approval policy, vrstvy L0–L4 s gate) | `inspect_ai.approval_policies_from_config` |
 | `build/registry/roles.json` | registr agentů (T12), řádky `org.role_definitions` | sha zdroje, verze, vlastník |
+| `build/agent_sdk/<role>.json` | runtime role (`ClaudeAgentOptions`: `tools=[]`, `strict_mcp_config`, `setting_sources=[]`, `cwd`, MCP servery) – harness O-2 je načítá přes `P0_ROLE_OPTIONS` | R1g + O-2 scénář sre |
 
 ## Výsledek harnessu R1 (2026-10-23)
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
 | R1a | Generování deterministické (dva běhy = stejný hash), registr nese verzi, vlastníka, SPIFFE ID, sha zdroje | ✅ |
-| R1b | OPA: vývojář čte repo ✅, zapisuje ✗, merguje ✗, přiřazuje issue ✗ (příloha III), push na větev zakázky ✅, push do main ✗, cizí tenant ✗, schvaluje paměť ✗, navrhuje poučení ✅, čte personal ✗, vypíná sandbox ✗; reviewer schvaluje firma/internal ✅, personal ✗, push ✗, merge ✗, forget ✗; neznámá role ✗ | ✅ 17/17 |
+| R1b | OPA (24 případů vč. SRE 2026-10-24: `deploy.plan` ✅, `deploy.apply` jen se schválením, `destroy`/`k8s_raw.exec` ✗, push ✗, runbook GET ✅, approve paměti ✗): vývojář čte repo ✅, zapisuje ✗, merguje ✗, přiřazuje issue ✗ (příloha III), push na větev zakázky ✅, push do main ✗, cizí tenant ✗, schvaluje paměť ✗, navrhuje poučení ✅, čte personal ✗, vypíná sandbox ✗; reviewer schvaluje firma/internal ✅, personal ✗, push ✗, merge ✗, forget ✗; neznámá role ✗ | ✅ 17/17 |
 | R1c | srt 0.0.81 přijme settings obou rolí | ✅ |
 | R1d | agentgateway 1.6.0 přijme klíče s rozpočty (USD, 24h/30d, Audit/Block) a egress route | ✅ |
 | R1e | Inspect načte approval policy (reviewer dostal výchozí: `*git-receive-pack*` → reject) | ✅ |
 | R1f | Pod spec: Kata RuntimeClass, non-root, SA token off, drop ALL, seccomp Localhost | ✅ |
+| R1g | `ClaudeAgentOptions` rolí: žádné vestavěné nástroje CLI, strict MCP, bez user/project settings, cwd mimo repo | ✅ |
 
-Soubor: `results/r1-20261023-224112.json`. Adresář `build/` je generovaný, není v gitu.
+Soubory: `results/r1-20261024-052755.json` (3 role, 2026-10-24), `results/r1-20261023-224112.json`. Adresář `build/` je generovaný, není v gitu.
 
 ## Pasti
 

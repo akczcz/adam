@@ -20,11 +20,11 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 | Vývojář = Claude Agent SDK přes agentgateway, paměť M1 s PEP, sandbox srt za gateway – **mock model** | ✅ | [O-2](../../tools/harness_p0_o2/README.md) 6/6 mock: injekce prošla modelem, neprošla platformou |
 | O-2 se **živým modelem** (`--mode live`) | ✅ 2026-10-24 (Adamův Mac, Remote Control session) | 5 PASS, 3 INFO: `claude-haiku-4-5` injekci **sám odmítl** („vsunutá instrukce, kterou jsem ověřil a ignoroval“), zápis do paměti žádal `proposed`; cena 0,045–0,058 USD per zakázka (8–21 kol). **Nález:** vestavěný Bash CLI běžel 11× mimo sandbox → `tools=[]`, `strict_mcp_config`, cwd mimo repo; agent runtime je součást hranice (kriteria sandboxu B3, `roles/*.yaml` `agent_sdk`) |
 | Artefakty naostro: zadání = issue, ADR v `knowledge/`, PR v tomto repu; HITL přes PR review místo HTTP volání | ⬜ | – |
-| Role Account, Architekt, Reviewer, SRE přes Agent SDK podle `organization/roles/*.yaml` | ⬜ | – |
+| Role Account, Architekt, Reviewer, SRE přes Agent SDK podle `organization/roles/*.yaml` | 🟡 Vývojář běží s options z rolegen; `roles/sre.yaml` existuje (v0); Account, Architekt, Reviewer jako aktivity bez modelu | – |
 | Identita: Keycloak JWKS místo HMAC JWT; SVID role místo `spiffe://` řetězce | ⬜ (mechanismus změřen v I2) | – |
 | Rozpočet per role × zakázka v agentgateway (`apiKey.keys[].budgets`) místo součtu usage | ⬜ (mechanismus změřen v G1) | – |
 | První reálná zakázka: „platforma staví sama sebe“ – generátor konfigurací z `roles/*.yaml` | ✅ ručně (ne ještě agentem) | [`tools/rolegen`](../../tools/rolegen/README.md) R1 6/6: OPA data + jedna Rego, gateway klíče s rozpočty, srt settings, pod spec, approval policy, registr rolí – každý výstup ověřen nástrojem své vrstvy |
-| Tatáž zakázka **provedená platformou** (Vývojář přes O-2 dostane zadání „rozšiř rolegen o roli SRE“, PR přes HITL) | ⬜ | – |
+| Tatáž zakázka **provedená platformou**: zadání „vytvoř roli SRE“ → Vývojář v sandboxu (options z rolegen) → PR s hashem souboru → H4 člověk → merge-executor materializoval `roles/sre.yaml` → akceptace rolegen R1 7/7 | ✅ mock 2026-10-24 (O-2 `--scenario sre` 5/5); commit do gitu = člověk | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
 
 ## P1 – platforma na AKS
 
@@ -52,6 +52,7 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-24: zakázka P0-3 „role SRE“ provedená platformou (mock) – první artefakt dodaný do vlastního repa; rolegen agent_sdk.
 - 2026-10-24: O-2 live hotové (5/0/3) – model injekci odmítl sám; nález: agent runtime součást hranice sandboxu.
 - 2026-10-23: rolegen R1 6/6 – generátor konfigurací z rolí; v P0 zbývá nechat ji provést agentem.
 - 2026-10-23: první verze – P0 rozpracováno (O-1, O-2 mock hotové), P1–P3 jako checklist.

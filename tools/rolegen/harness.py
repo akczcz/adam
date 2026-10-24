@@ -7,6 +7,7 @@ Harness R1 – rolegen: z roles/*.yaml vzniknou konfigurace všech vrstev a kaž
   R1d  agentgateway 1.6.0 `--validate-only` přijme konfiguraci s vygenerovanými apiKey rozpočty a egress allow-listem
   R1e  Inspect AI načte vygenerovanou approval policy (approval_policies_from_config)
   R1f  Pod spec: non-root, SA token off, RuntimeClass, drop ALL, seccomp Localhost – pro všechny role se sandboxem
+  R1g  ClaudeAgentOptions rolí z bloku sandbox.agent_sdk: tools=[], strict_mcp_config, setting_sources=[], cwd
 """
 from __future__ import annotations
 
@@ -68,6 +69,13 @@ CASES = [  # (popis, input, očekávané allow, očekávaný reason)
     ("reviewer merguje", {"role": "reviewer", "tool": {"server": "pr", "action": "merge"}}, False, "tool_denied"),
     ("reviewer zapomíná zdroj", {"role": "reviewer", "memory": {"op": "forget"}}, False, "memory_forget_human_only"),
     ("neznámá role", {"role": "hacker", "tool": {"server": "pr", "action": "merge"}}, False, "unknown_role"),
+    ("SRE plánuje nasazení", {"role": "sre", "tool": {"server": "deploy", "action": "plan"}}, True, "tool_allowed"),
+    ("SRE aplikuje nasazení – jen se schválením (deploy-executor)", {"role": "sre", "tool": {"server": "deploy", "action": "apply"}}, True, "tool_requires_approval"),
+    ("SRE maže prostředí", {"role": "sre", "tool": {"server": "deploy", "action": "destroy"}}, False, "tool_denied"),
+    ("SRE exec do podu", {"role": "sre", "tool": {"server": "k8s_raw", "action": "exec"}}, False, "tool_denied"),
+    ("SRE push do gitu", {"role": "sre", "tenant": "acme", "http": {"service": "git", "path": "/acme/platform.git/git-receive-pack", "method": "POST", "branch": "x"}}, False, "receive_pack_forbidden"),
+    ("SRE čte runbook z gitu", {"role": "sre", "tenant": "acme", "http": {"service": "git", "path": "/acme/runbooks.git/info/refs", "method": "GET"}}, True, "git_allowed"),
+    ("SRE schvaluje paměť", {"role": "sre", "memory": {"op": "approve", "scope": "firma", "type": "pouceni", "sensitivity": "internal"}}, False, "no_rule"),
 ]
 
 
@@ -136,6 +144,10 @@ def main():
         pods[f.stem] = {"runtimeClass": p["spec"].get("runtimeClassName"), "nonroot": sc.get("runAsNonRoot"), "sa_token": p["spec"]["automountServiceAccountToken"], "drop": c["securityContext"]["capabilities"]["drop"], "seccomp": sc["seccompProfile"]["type"],
                         "ok": bool(p["spec"].get("runtimeClassName")) and sc.get("runAsNonRoot") is True and p["spec"]["automountServiceAccountToken"] is False and c["securityContext"]["capabilities"]["drop"] == ["ALL"] and sc["seccompProfile"]["type"] == "Localhost"}
     rep.add("R1f", "Pod spec rolí: RuntimeClass (Kata), non-root, SA token off, capabilities drop ALL, seccomp Localhost", "PASS" if pods and all(v["ok"] for v in pods.values()) else "FAIL", pods)
+
+    # R1g agent_sdk options
+    sdk = {f.stem: json.loads(f.read_text()) for f in sorted((BUILD / "agent_sdk").glob("*.json"))}
+    rep.add("R1g", "ClaudeAgentOptions rolí: tools=[] (žádné vestavěné nástroje CLI), strict_mcp_config, setting_sources=[], cwd mimo repo – pro všechny role (nález O-2 live)", "PASS" if sdk and all(v["tools"] == [] and v["strict_mcp_config"] and v["setting_sources"] == [] and v["cwd"] for v in sdk.values()) else "FAIL", {k: {"tools": v["tools"], "strict": v["strict_mcp_config"], "cwd": v["cwd"], "mcp_servers": v["mcp_servers"]} for k, v in sdk.items()})
 
     out = RESULTS / f"r1-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "roles": g1["roles"], "build_hash": h1}, "checks": rep.checks}, ensure_ascii=False, indent=1))

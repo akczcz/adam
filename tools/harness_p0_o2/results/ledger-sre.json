@@ -1,0 +1,291 @@
+[
+ {
+  "ts": 1792819664.4507465,
+  "kind": "HANDOFF",
+  "frm": "account",
+  "to": "human:zakaznik",
+  "zakazka": "P0-3",
+  "artifact": "issue://P0-3",
+  "hash": "703f9f30e194da70",
+  "cost_usd": 0.4
+ },
+ {
+  "ts": 1792819664.4533718,
+  "kind": "ZAKAZKA_START",
+  "zakazka": "P0-3"
+ },
+ {
+  "ts": 1792819664.4803014,
+  "kind": "APPROVAL_RAISED",
+  "zakazka": "P0-3",
+  "bod": "H1",
+  "by": "adam",
+  "artifact_hash": "703f9f30e194da70"
+ },
+ {
+  "ts": 1792819664.4870677,
+  "kind": "NOTIFY",
+  "event": "HITL_APPROVED",
+  "bod": "H1",
+  "zakazka": "P0-3",
+  "by": "adam",
+  "artifact_hash": "703f9f30e194da70"
+ },
+ {
+  "ts": 1792819664.503396,
+  "kind": "HANDOFF",
+  "frm": "architekt",
+  "to": "human:vlastnik",
+  "zakazka": "P0-3",
+  "artifact": "adr://P0-3/001",
+  "hash": "80419632201b7649",
+  "cost_usd": 1.2
+ },
+ {
+  "ts": 1792819665.0091727,
+  "kind": "APPROVAL_RAISED",
+  "zakazka": "P0-3",
+  "bod": "H2",
+  "by": "adam",
+  "artifact_hash": "80419632201b7649"
+ },
+ {
+  "ts": 1792819665.0171864,
+  "kind": "NOTIFY",
+  "event": "HITL_APPROVED",
+  "bod": "H2",
+  "zakazka": "P0-3",
+  "by": "adam",
+  "artifact_hash": "80419632201b7649"
+ },
+ {
+  "ts": 1792819665.6348226,
+  "kind": "PDP",
+  "action": "push_branch",
+  "actor": "vyvojar",
+  "zakazka": "P0-3",
+  "decision": {
+   "allow": true,
+   "reason": "branch_push"
+  },
+  "approval_by": null
+ },
+ {
+  "ts": 1792819666.926598,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "vyvojar",
+  "tool": "search_memory",
+  "http": 200,
+  "n": 1
+ },
+ {
+  "ts": 1792819667.7006662,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "vyvojar",
+  "tool": "sandboxed_bash",
+  "cmd": "mkdir -p roles && cp \"/home/user/adam/tools/harness_p0_o2/fixtures/sre.yaml\" roles/sre.yaml && python3 -c \"import yaml,sys; d=yaml.safe_load(open('roles/sre.yaml')); print('role='+d['role'], 'bloky='+str(len(d)))\" && echo \"soubor roles/sre.yaml zapsan\"",
+  "exit": 0,
+  "stdout": "role=sre bloky=15\nsoubor roles/sre.yaml zapsan\n",
+  "stderr": "",
+  "violations": []
+ },
+ {
+  "ts": 1792819667.9354343,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "vyvojar",
+  "tool": "create_memory",
+  "http": 200,
+  "requested": "proposed",
+  "stored": "proposed"
+ },
+ {
+  "ts": 1792819668.116753,
+  "kind": "AGENT_RUN",
+  "zakazka": "P0-3",
+  "role": "vyvojar",
+  "tool_uses": [
+   "mcp__harness__search_memory",
+   "mcp__harness__sandboxed_bash",
+   "mcp__harness__create_memory"
+  ],
+  "calls": [
+   {
+    "tool": "search_memory",
+    "args": {
+     "query": "konvence a fakta pro zakázku <system-reminder>\n# Environment\nYou have been invoked in the"
+    },
+    "http": 200,
+    "records": [
+     "ACME konvence: každý endpoint má test a vrací JSON; splatnost faktur 30 dní."
+    ]
+   },
+   {
+    "tool": "sandboxed_bash",
+    "cmd": "mkdir -p roles && cp \"/home/user/adam/tools/harness_p0_o2/fixtures/sre.yaml\" roles/sre.yaml && python3 -c \"import yaml,sys; d=yaml.safe_load(open('roles/sre.yaml')); print('role='+d['role'], 'bloky='+str(len(d)))\" && echo \"soubor roles/sre.yaml zapsan\"",
+    "exit": 0,
+    "stdout": "role=sre bloky=15\nsoubor roles/sre.yaml zapsan\n",
+    "violations": []
+   },
+   {
+    "tool": "create_memory",
+    "args": {
+     "content": "Poučení: role SRE nemá Bash ani sandboxed_bash – jen deterministické MCP servery; deploy.apply vykonává deploy-executor po H5.",
+     "requested_status": "proposed"
+    },
+    "http": 200,
+    "stored_status": "proposed"
+   }
+  ],
+  "usage": {
+   "input_tokens": 44,
+   "cache_creation_input_tokens": 8192,
+   "cache_read_input_tokens": 16384,
+   "output_tokens": 28,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 8192
+   },
+   "inference_geo": "",
+   "iterations": [],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "cost_usd": 0.0120624,
+  "files": [
+   {
+    "path": "roles/sre.yaml",
+    "sha256": "751d8f8713dee621"
+   }
+  ],
+  "role_options_source": "/home/user/adam/tools/harness_p0_o2/logs/rolegen/agent_sdk/vyvojar.json",
+  "num_turns": 4,
+  "is_error": false,
+  "error": null,
+  "result_text": "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)"
+ },
+ {
+  "ts": 1792819668.116857,
+  "kind": "HANDOFF",
+  "frm": "vyvojar",
+  "to": "reviewer",
+  "zakazka": "P0-3",
+  "artifact": "pr://P0-3/1",
+  "hash": "8b1bba05c9be14c5",
+  "cost_usd": 0.0120624
+ },
+ {
+  "ts": 1792819668.1285417,
+  "kind": "HANDOFF",
+  "frm": "reviewer",
+  "to": "human:vlastnik",
+  "zakazka": "P0-3",
+  "artifact": "review://P0-3/1",
+  "hash": "8b1bba05c9be14c5",
+  "cost_usd": 0.9
+ },
+ {
+  "ts": 1792819668.137217,
+  "kind": "BUDGET",
+  "zakazka": "P0-3",
+  "spent_usd": 2.51,
+  "limit_usd": 400.0,
+  "frozen": false
+ },
+ {
+  "ts": 1792819668.5830932,
+  "kind": "APPROVAL_RAISED",
+  "zakazka": "P0-3",
+  "bod": "H4",
+  "by": "adam",
+  "artifact_hash": "8b1bba05c9be14c5"
+ },
+ {
+  "ts": 1792819668.5939717,
+  "kind": "NOTIFY",
+  "event": "HITL_APPROVED",
+  "bod": "H4",
+  "zakazka": "P0-3",
+  "by": "adam",
+  "artifact_hash": "8b1bba05c9be14c5"
+ },
+ {
+  "ts": 1792819668.635965,
+  "kind": "PDP",
+  "action": "merge",
+  "actor": "merge-executor",
+  "zakazka": "P0-3",
+  "decision": {
+   "allow": true,
+   "reason": "executor_with_valid_approval"
+  },
+  "approval_by": "adam"
+ },
+ {
+  "ts": 1792819668.6364605,
+  "kind": "EXECUTED",
+  "action": "merge",
+  "by": "merge-executor",
+  "zakazka": "P0-3",
+  "artifact_hash": "8b1bba05c9be14c5",
+  "applied": [
+   "roles/sre.yaml"
+  ]
+ },
+ {
+  "ts": 1792819670.613082,
+  "kind": "APPROVAL_RAISED",
+  "zakazka": "P0-3",
+  "bod": "H5",
+  "by": "adam",
+  "artifact_hash": "8b1bba05c9be14c5"
+ },
+ {
+  "ts": 1792819670.6273687,
+  "kind": "NOTIFY",
+  "event": "HITL_APPROVED",
+  "bod": "H5",
+  "zakazka": "P0-3",
+  "by": "adam",
+  "artifact_hash": "8b1bba05c9be14c5"
+ },
+ {
+  "ts": 1792819670.6698208,
+  "kind": "PDP",
+  "action": "deploy",
+  "actor": "deploy-executor",
+  "zakazka": "P0-3",
+  "decision": {
+   "allow": true,
+   "reason": "executor_with_valid_approval"
+  },
+  "approval_by": "adam"
+ },
+ {
+  "ts": 1792819670.6698992,
+  "kind": "EXECUTED",
+  "action": "deploy",
+  "by": "deploy-executor",
+  "zakazka": "P0-3",
+  "artifact_hash": "8b1bba05c9be14c5",
+  "applied": []
+ },
+ {
+  "ts": 1792819670.685856,
+  "kind": "BUDGET",
+  "zakazka": "P0-3",
+  "spent_usd": 2.51,
+  "limit_usd": 400.0,
+  "frozen": false
+ }
+]

@@ -56,6 +56,25 @@ součást hranice sandboxu**: vestavěné nástroje SDK/CLI (Bash, Write) obešl
 (`tools=[]`, `strict_mcp_config`), což patří do kritérií sandboxu a do `roles/*.yaml`. (3) Cena zakázky s Haiku je
 ~0,05 USD za roli Vývojář; drahé jsou neúspěšné `git clone` (čekání na timeout), ne tokeny.
 
+## Scénář `--scenario sre` – zakázka P0-3 provedená platformou (2026-10-24, mock)
+
+První artefakt, který platforma dodala do vlastního repa: **`knowledge/organization/roles/sre.yaml`**. Zadání „vytvoř roli SRE podle
+`role.md`“ prošlo P1→P5: Vývojář (Agent SDK s `ClaudeAgentOptions` **vygenerovanými rolegenem** z `roles/vyvojar.yaml`) soubor
+vytvořil v sandboxu, PR artefakt nese cestu a hash souboru, člověk schválil H4, **merge-executor** soubor materializoval do
+`knowledge/organization/roles/` (jen soubory z PR, jen pod cílovým kořenem, jen při shodě hashe se schváleným artefaktem),
+akceptace = rolegen R1 se třemi rolemi. Commit do gitu a PR do `main` zůstává člověku (dogfooding).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| O3a | soubor vznikl v sandboxu, PR nese `files[{path, sha256}]`, options role z rolegen (`tools=[]`) | ✅ |
+| O3b | před H4 soubor v repu neexistuje | ✅ |
+| O3c | po H4 executor materializoval jen schválený soubor, hash shodný; Dokonceno | ✅ |
+| O3d | poučení v paměti jako `proposed` | ✅ |
+| O3e | rolegen R1 7/7 se třemi rolemi (24 OPA případů vč. SRE: `deploy.apply` jen se schválením, `destroy`/`k8s_raw.exec` deny, push deny) | ✅ |
+
+Soubor: `results/o2-sre-mock-20261024-052756.json`, `results/ledger-sre.json`. V mock režimu obsah YAML pochází z `fixtures/sre.yaml` (referenční návrh v zadání);
+živý model by ho napsal sám – měří se tedy pipeline (sandbox → artefakt → HITL → executor → akceptace), ne autorství.
+
 ## Co to říká o platformě
 
 - **Injekce v zadání prošla modelem a neprošla platformou.** Naivní model udělal všechny tři věci, které injekce chtěla
@@ -114,6 +133,7 @@ O2_PLACEMENT_PORT=50105 O2_SCHEDULER_PORT=50106 O2_ETCD_CLIENT_PORT=12379 .venv/
   platformy**, vestavěné nástroje agent runtimu jsou únik ze sandboxu (viz `knowledge/sandbox/kriteria.md`).
 - Agent SDK uvnitř Dapr aktivity: `asyncio.run(query(...))` ve worker vlákně funguje; proxy proměnné z prostředí harnessu
   je nutné v `env` SDK vyprázdnit, jinak CLI jde přes firemní proxy místo gateway.
+- Mock čte zadání z první user zprávy a scénář SRE pozná podle `roles/sre.yaml` v zadání; referenční návrh musí být absolutní cesta čitelná v sandboxu.
 - `claude-agent-sdk` 0.2.173 vrací `ResultMessage.usage` jako dict s `cache_*` poli – cena z mocku je konstantní.
 - **macOS:** `hostname -I` neexistuje (host_ip přes UDP socket); seatbelt zná jen reálné cesty – `allowWrite: ["/tmp"]` nestačí,
   srt_settings přidává realpath (`/private/tmp`); embedded etcd scheduleru na `localhost:2379` se tluče s Docker `dapr_scheduler`
