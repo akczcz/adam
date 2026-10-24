@@ -130,5 +130,15 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 3. GitHub: PAT pro ostrý běh `--scenario github --publish-github` teď, nebo rovnou GitHub App v P1-5?
 4. Kroky P1-2…P1-5 nejdřív na `kind` lokálně (bez Azure, nulová cena) – souhlas?
 
+## Postup
+
+| Krok | Stav |
+|---|---|
+| P1-2 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` 6/6: M1 11/11 a O1 9/9 proti clusterovým službám beze změny checků; manifesty `infra/k8s/base/{postgres,clickhouse,otel-collector}` + overlay `kind` |
+| P1-3 | ⬜ další na kind: Keycloak (realm p0), OpenBao (raft, zatím bez KV unseal), SPIRE; měří I2 a O-2 `identity` |
+| P1-4, P1-5 | ⬜ kind |
+| P1-1, P1-6 | ⬜ AKS (čeká na odpovědi níže) |
+
 ## Changelog
+- 2026-10-24: P1-2 hotovo na kind; zjištění: Collector v clusteru bez file exportéru (metriky i logy do ClickHouse), kind v kontejneru bez CAP_SYS_RESOURCE potřebuje obal runc.
 - 2026-10-24: první verze plánu P1 po uzavření P0 (návrh, Pozn. Adam).

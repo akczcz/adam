@@ -19,6 +19,7 @@ Znalostní báze se dá konzumovat dvěma cestami:
 ```
 adam/
 ├── CLAUDE.md                  # Kdo je Adam – identita, principy, pravidla práce
+├── infra/                     # P1: manifesty clusteru (k8s base + overlay kind), kind cluster s obrazem uzlu
 ├── knowledge/                 # Verzovaná znalostní báze (Markdown) – zdroj pravdy
 │   ├── README.md              # Konvence pro znalostní soubory
 │   ├── platforma/             # Mapa vrstev platformy, pořadí otevírání, cílová architektura

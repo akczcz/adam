@@ -56,6 +56,7 @@ uv venv -q -p 3.12 .venv            # pgserver nemá wheel pro 3.13
 uv pip install -q -p .venv/bin/python -r <(sed -n '/dependencies/,/]/p' pyproject.toml | tr -d '[],"' | sed 's/dependencies = //;s/^ *//' | tr ' ' '\n' | grep .)
 export OPA_BIN=/cesta/k/opa AGENTGATEWAY_BIN=/cesta/k/agentgateway
 .venv/bin/python harness.py --epochs 3          # --skip-eval bez agentgateway a Inspect
+.venv/bin/python harness.py --db-uri postgresql://postgres:…@127.0.0.1:30432/memory --out-tag k8s   # externí Postgres (P1-2 kind) – 11/11 2026-10-24
 ```
 
 Model je mock (`../harness_gateway_g1/mock_upstream.py`, větev `_memory_message`): na prompt „Přečti dokument doc://…“

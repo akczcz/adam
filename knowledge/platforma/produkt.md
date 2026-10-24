@@ -57,7 +57,7 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 | Krok | Stav |
 |---|---|
 | P1-1 Cluster + Kata node pool + Cilium CNP default-deny; měří S1 `aks/` | ⬜ blokováno: subscription/region |
-| P1-2 Postgres (4 schémata) + ClickHouse + Collector; měří M1, O1 proti clusteru | ⬜ lze na `kind` bez Azure |
+| P1-2 Postgres (4 DB) + ClickHouse + Collector; měří M1, O1 proti clusteru | ✅ kind 2026-10-24: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) 6/6 – M1 11/11 proti clusterovému Postgresu 16 + pgvector, O1 9/9 proti Collectoru a ClickHouse 26.8; manifesty [`infra/k8s`](../../infra/README.md) |
 | P1-3 Keycloak + SPIRE + OpenBao (raft, KV unseal); měří I2, O-2 `identity` | ⬜ lze na `kind` |
 | P1-4 agentgateway ×2 s Postgres DB, budgets, egress, git TLS; měří G1, O-2 `budget`, nový P1-G (repliky) | ⬜ lze na `kind` |
 | P1-5 Dapr + app zakázky + paměť + bridge (Helm chart `platform`); měří O-1, O-2 `p0`/`sre`/`github-hitl` | ⬜ lze na `kind` |
@@ -80,6 +80,7 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-24: P1-2 na kind hotovo (M1 11/11, O1 9/9 proti clusteru); infra/k8s + infra/kind; pasti kind v kontejneru (cgroup v1, oom_score_adj).
 - 2026-10-24: P0 uzavřeno (výhrada: ostrý zápis GitHub); shrnutí zjištění; plán P1 v p1-aks.md (návrh).
 - 2026-10-24: rozpočty per role × zakázka v agentgateway (O-2 `budget` 5/5); identita Keycloak JWKS + OpenBao transit (O-2 `identity` 5/5).
 - 2026-10-24: HITL přes GitHub (bridge) 5/5 proti mock GitHubu; design v procesy.md.

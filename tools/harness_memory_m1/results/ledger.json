@@ -5,7 +5,7 @@
   "sub": "alice"
  },
  {
-  "ts": 1792825695.9996474,
+  "ts": 1792856671.4478939,
   "kind": "OPA",
   "action": "create_memory",
   "sub": "alice",
@@ -18,7 +18,7 @@
  },
  {
   "kind": "WRITE",
-  "id": "c93f7b6997454677b40d6c563d933659",
+  "id": "05732661c5d1407e9eb7b91fe2e576a9",
   "status": "proposed",
   "requested": "approved",
   "sub": "alice",
@@ -34,7 +34,7 @@
   ]
  },
  {
-  "ts": 1792825696.0543337,
+  "ts": 1792856671.5247176,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -58,7 +58,7 @@
   ]
  },
  {
-  "ts": 1792825696.1098044,
+  "ts": 1792856671.6041195,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -75,7 +75,7 @@
   "tenant": "acme",
   "query": "jak ACME preferuje komunikaci",
   "returned": [
-   "c93f7b6997454677b40d6c563d933659",
+   "05732661c5d1407e9eb7b91fe2e576a9",
    "seed-acme"
   ],
   "tenants_returned": [
@@ -83,7 +83,7 @@
   ]
  },
  {
-  "ts": 1792825696.170971,
+  "ts": 1792856671.6814516,
   "kind": "OPA",
   "action": "approve_memory",
   "sub": "alice",
@@ -96,7 +96,7 @@
  },
  {
   "kind": "APPROVE_DENIED",
-  "id": "c93f7b6997454677b40d6c563d933659",
+  "id": "05732661c5d1407e9eb7b91fe2e576a9",
   "sub": "alice",
   "roles": [
    "agent"
@@ -104,7 +104,7 @@
   "reason": "no_rule"
  },
  {
-  "ts": 1792825696.253852,
+  "ts": 1792856671.7983394,
   "kind": "OPA",
   "action": "approve_memory",
   "sub": "rev-acme",
@@ -117,7 +117,7 @@
  },
  {
   "kind": "APPROVE",
-  "id": "c93f7b6997454677b40d6c563d933659",
+  "id": "05732661c5d1407e9eb7b91fe2e576a9",
   "sub": "rev-acme",
   "roles": [
    "reviewer",
@@ -125,7 +125,7 @@
   ]
  },
  {
-  "ts": 1792825696.3259068,
+  "ts": 1792856671.864783,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -142,7 +142,7 @@
   "tenant": "acme",
   "query": "jak ACME preferuje komunikaci",
   "returned": [
-   "c93f7b6997454677b40d6c563d933659",
+   "05732661c5d1407e9eb7b91fe2e576a9",
    "seed-acme"
   ],
   "tenants_returned": [
@@ -150,7 +150,7 @@
   ]
  },
  {
-  "ts": 1792825696.3868315,
+  "ts": 1792856671.925421,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "bob",
@@ -174,7 +174,7 @@
   ]
  },
  {
-  "ts": 1792825696.4695752,
+  "ts": 1792856672.0039322,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -192,14 +192,14 @@
   "query": "Fakturační kontakt BETA billing splatnost",
   "returned": [
    "seed-acme",
-   "c93f7b6997454677b40d6c563d933659"
+   "05732661c5d1407e9eb7b91fe2e576a9"
   ],
   "tenants_returned": [
    "acme"
   ]
  },
  {
-  "ts": 1792825696.534627,
+  "ts": 1792856672.0833905,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "bob",
@@ -223,7 +223,7 @@
   ]
  },
  {
-  "ts": 1792825696.6040628,
+  "ts": 1792856672.1467097,
   "kind": "OPA",
   "action": "create_memory",
   "sub": "hana",
@@ -236,7 +236,7 @@
  },
  {
   "kind": "WRITE",
-  "id": "c4d307d99d1849b1bbe246d917261fae",
+  "id": "e0bb19bcf5b44b0e886f4c1f504fa382",
   "status": "approved",
   "requested": "approved",
   "sub": "hana",
@@ -251,7 +251,7 @@
   ]
  },
  {
-  "ts": 1792825697.2776408,
+  "ts": 1792856672.802204,
   "kind": "OPA",
   "action": "create_memory",
   "sub": "hana",
@@ -264,7 +264,7 @@
  },
  {
   "kind": "WRITE",
-  "id": "7542ca53ef82411d81e4279599046d9f",
+  "id": "88c38672423249a3a934480c6ef12608",
   "status": "approved",
   "requested": "approved",
   "sub": "hana",
@@ -279,7 +279,7 @@
   ]
  },
  {
-  "ts": 1792825697.3327713,
+  "ts": 1792856672.8676772,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "bob",
@@ -296,7 +296,7 @@
   "tenant": "beta",
   "query": "splatnost faktur BETA",
   "returned": [
-   "7542ca53ef82411d81e4279599046d9f",
+   "88c38672423249a3a934480c6ef12608",
    "seed-beta"
   ],
   "tenants_returned": [
@@ -304,7 +304,7 @@
   ]
  },
  {
-  "ts": 1792825697.3863282,
+  "ts": 1792856672.9339182,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "bob",
@@ -321,7 +321,7 @@
   "tenant": "beta",
   "query": "splatnost faktur BETA",
   "returned": [
-   "c4d307d99d1849b1bbe246d917261fae",
+   "e0bb19bcf5b44b0e886f4c1f504fa382",
    "seed-beta"
   ],
   "tenants_returned": [
@@ -329,7 +329,7 @@
   ]
  },
  {
-  "ts": 1792825697.4537413,
+  "ts": 1792856673.0140724,
   "kind": "OPA",
   "action": "forget_source",
   "sub": "alice",
@@ -341,7 +341,7 @@
   }
  },
  {
-  "ts": 1792825697.5012922,
+  "ts": 1792856673.0844445,
   "kind": "OPA",
   "action": "forget_source",
   "sub": "rev-acme",
@@ -357,12 +357,12 @@
   "ref": "doc://acme/billing",
   "tombstoned": [
    "seed-acme",
-   "c93f7b6997454677b40d6c563d933659"
+   "05732661c5d1407e9eb7b91fe2e576a9"
   ],
   "sub": "rev-acme"
  },
  {
-  "ts": 1792825697.5801306,
+  "ts": 1792856673.1377912,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -382,7 +382,7 @@
   "tenants_returned": []
  },
  {
-  "ts": 1792825710.4136481,
+  "ts": 1792856678.827267,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -402,7 +402,7 @@
   "tenants_returned": []
  },
  {
-  "ts": 1792825711.0867102,
+  "ts": 1792856679.5577862,
   "kind": "OPA",
   "action": "create_memory",
   "sub": "alice",
@@ -415,7 +415,7 @@
  },
  {
   "kind": "WRITE",
-  "id": "e6aff429d408442082a7c05d85777b8a",
+  "id": "1cb97f963b8f4121b042c490dea618ca",
   "status": "proposed",
   "requested": "approved",
   "sub": "alice",
@@ -431,7 +431,7 @@
   ]
  },
  {
-  "ts": 1792825711.3182278,
+  "ts": 1792856679.8249793,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -451,7 +451,7 @@
   "tenants_returned": []
  },
  {
-  "ts": 1792825711.3817625,
+  "ts": 1792856679.9032474,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -468,14 +468,14 @@
   "tenant": "acme",
   "query": "666/0000",
   "returned": [
-   "e6aff429d408442082a7c05d85777b8a"
+   "1cb97f963b8f4121b042c490dea618ca"
   ],
   "tenants_returned": [
    "acme"
   ]
  },
  {
-  "ts": 1792825711.6587477,
+  "ts": 1792856680.2373135,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -495,7 +495,7 @@
   "tenants_returned": []
  },
  {
-  "ts": 1792825712.304233,
+  "ts": 1792856680.903966,
   "kind": "OPA",
   "action": "create_memory",
   "sub": "alice",
@@ -508,7 +508,7 @@
  },
  {
   "kind": "WRITE",
-  "id": "c4b85ab497ad414784a4ceea219262f9",
+  "id": "d82b60658c224cb6971daf6da0c9af16",
   "status": "proposed",
   "requested": "approved",
   "sub": "alice",
@@ -524,7 +524,7 @@
   ]
  },
  {
-  "ts": 1792825712.5169616,
+  "ts": 1792856681.1375568,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -544,7 +544,7 @@
   "tenants_returned": []
  },
  {
-  "ts": 1792825712.5792773,
+  "ts": 1792856681.1914988,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -561,15 +561,15 @@
   "tenant": "acme",
   "query": "666/0000",
   "returned": [
-   "e6aff429d408442082a7c05d85777b8a",
-   "c4b85ab497ad414784a4ceea219262f9"
+   "1cb97f963b8f4121b042c490dea618ca",
+   "d82b60658c224cb6971daf6da0c9af16"
   ],
   "tenants_returned": [
    "acme"
   ]
  },
  {
-  "ts": 1792825712.8354917,
+  "ts": 1792856681.4818327,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -589,7 +589,7 @@
   "tenants_returned": []
  },
  {
-  "ts": 1792825713.518827,
+  "ts": 1792856682.1267564,
   "kind": "OPA",
   "action": "create_memory",
   "sub": "alice",
@@ -602,7 +602,7 @@
  },
  {
   "kind": "WRITE",
-  "id": "ebbe081d27084fb3b9caa081b431df30",
+  "id": "3b8f95d58215401fa40a0f82b652841e",
   "status": "proposed",
   "requested": "approved",
   "sub": "alice",
@@ -618,7 +618,7 @@
   ]
  },
  {
-  "ts": 1792825713.7701566,
+  "ts": 1792856682.346438,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -638,7 +638,7 @@
   "tenants_returned": []
  },
  {
-  "ts": 1792825713.8336282,
+  "ts": 1792856682.4001791,
   "kind": "OPA",
   "action": "search_memory",
   "sub": "alice",
@@ -655,9 +655,9 @@
   "tenant": "acme",
   "query": "666/0000",
   "returned": [
-   "e6aff429d408442082a7c05d85777b8a",
-   "c4b85ab497ad414784a4ceea219262f9",
-   "ebbe081d27084fb3b9caa081b431df30"
+   "1cb97f963b8f4121b042c490dea618ca",
+   "d82b60658c224cb6971daf6da0c9af16",
+   "3b8f95d58215401fa40a0f82b652841e"
   ],
   "tenants_returned": [
    "acme"

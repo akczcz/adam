@@ -1,0 +1,25 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: platform
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0-noom   # vlastní obraz: runc obal bez oomScoreAdj (hostitel bez CAP_SYS_RESOURCE)
+  extraPortMappings:
+  - containerPort: 30432   # postgres NodePort
+    hostPort: 30432
+  - containerPort: 30900   # clickhouse native
+    hostPort: 30900
+  - containerPort: 30123   # clickhouse http
+    hostPort: 30123
+  - containerPort: 30317   # otel grpc
+    hostPort: 30317
+  - containerPort: 30318   # otel http
+    hostPort: 30318
+kubeadmConfigPatches:
+- |
+  kind: KubeletConfiguration
+  failCgroupV1: false   # hostitel harnessu má cgroup v1; na AKS/Azure Linux netřeba
+containerdConfigPatches:
+- |
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+    BinaryName = "/usr/local/bin/runc-noom"

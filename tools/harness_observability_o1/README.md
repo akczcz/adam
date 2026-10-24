@@ -53,6 +53,7 @@ cd tools/harness_observability_o1
 uv venv && uv pip install -p .venv/bin/python httpx fastapi uvicorn pyyaml "claude-agent-sdk[otel]" opentelemetry-sdk opentelemetry-exporter-otlp-proto-http clickhouse-connect
 export CLICKHOUSE_BIN=/path/clickhouse OTELCOL_BIN=/path/otelcol-contrib AGENTGATEWAY_BIN=/path/agentgateway
 .venv/bin/python harness.py
+O1_CH_HTTP=30123 O1_OTLP_HTTP=30318 .venv/bin/python harness.py --external --out-tag k8s   # Collector + ClickHouse v clusteru (P1-2 kind) – 9/9 2026-10-24; metriky a logy CLI z tabulek otel_metrics_*/otel_logs
 ```
 
 Porty: 8123/9000 (ClickHouse), 4317/4318 (Collector), 9777 (mock), 4100 (gateway), 19001–19002. Data ClickHouse

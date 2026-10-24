@@ -1,0 +1,169 @@
+{
+ "meta": {
+  "started": "2026-10-24T15:44:08",
+  "step": "p1-2",
+  "context": "kind-platform",
+  "kind": "kind v0.33.0 go1.26.7 linux/amd64",
+  "images": [
+   "pgvector/pgvector:pg16",
+   "clickhouse:26.8",
+   "otel/opentelemetry-collector-contrib:0.163.2"
+  ]
+ },
+ "checks": [
+  {
+   "id": "P12a",
+   "name": "Manifesty infra/k8s/overlays/kind aplikovány do kind clusteru `platform`; StatefulSety postgres a clickhouse a Deployment otel-collector Ready",
+   "status": "PASS",
+   "detail": {
+    "context": "kind-platform",
+    "apply": [
+     "deployment.apps/otel-collector unchanged",
+     "statefulset.apps/clickhouse configured",
+     "statefulset.apps/postgres configured"
+    ],
+    "pods_ready": {
+     "clickhouse-0": true,
+     "otel-collector-8bd888f79-h7xfb": true,
+     "postgres-0": true
+    },
+    "wall_s": 1.6,
+    "kubernetes": "v1.37.0"
+   }
+  },
+  {
+   "id": "P12b",
+   "name": "Postgres přes NodePort 30432: verze 16, rozšíření pgvector v databázi memory, databáze memory/dapr_state/org/agentgateway z init SQL",
+   "status": "PASS",
+   "detail": {
+    "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "pgvector": "0.8.7",
+    "databases": [
+     "agentgateway",
+     "dapr_state",
+     "memory",
+     "org",
+     "postgres"
+    ]
+   }
+  },
+  {
+   "id": "P12c",
+   "name": "ClickHouse přes NodePort 30123: /ping, verze 26.8 (LTS řada z O1), databáze otel z init SQL",
+   "status": "PASS",
+   "detail": {
+    "ping": 200,
+    "version": "26.8.34.13",
+    "databases": [
+     "INFORMATION_SCHEMA",
+     "default",
+     "information_schema",
+     "otel",
+     "system"
+    ]
+   }
+  },
+  {
+   "id": "P12d",
+   "name": "OTEL Collector přes NodePort 30318 přijímá OTLP/HTTP (health_check extension jako readiness)",
+   "status": "PASS",
+   "detail": {
+    "otlp_http_status": 415,
+    "restarts": [
+     4
+    ],
+    "note": "restarty před Ready = exporter clickhouse čeká na ClickHouse (create_schema při startu)"
+   }
+  },
+  {
+   "id": "P12e",
+   "name": "Harness M1 proti clusterovému Postgresu (--db-uri, role memory_app s heslem): RLS per tenant, PEP přes OPA, karanténa proposed, supersede, tombstone, OTEL spany, Inspect evaly M-E3/M-E4",
+   "status": "PASS",
+   "detail": {
+    "exit": 0,
+    "counts": {
+     "PASS": 11,
+     "FAIL": 0,
+     "INFO": 0,
+     "SKIP": 0
+    },
+    "postgres": "external 127.0.0.1:30432/memory",
+    "wall_s": 15.7,
+    "failed": [],
+    "log": "/home/user/adam/tools/harness_p1_k8s/logs/m1-k8s.log"
+   }
+  },
+  {
+   "id": "P12f",
+   "name": "Harness O1 proti clusterovému Collectoru a ClickHouse (--external): jeden trace přes SDK → gateway → Collector → ClickHouse, redaction, gen_ai_normalizer, CLI metriky a eventy čtené z ClickHouse (bez file exportéru)",
+   "status": "PASS",
+   "detail": {
+    "exit": 0,
+    "counts": {
+     "PASS": 9,
+     "FAIL": 0,
+     "INFO": 0,
+     "SKIP": 1
+    },
+    "clickhouse": "26.8.34.13",
+    "wall_s": 12.7,
+    "failed": [],
+    "o1h": {
+     "metrics": [
+      "claude_code.cost.usage",
+      "claude_code.session.count",
+      "claude_code.token.usage"
+     ],
+     "events": [
+      "claude_code.api_request",
+      "claude_code.tool_decision",
+      "claude_code.tool_result",
+      "claude_code.user_prompt"
+     ],
+     "enduser_in_logs": true
+    },
+    "log": "/home/user/adam/tools/harness_p1_k8s/logs/o1-k8s.log"
+   }
+  },
+  {
+   "id": "P12g",
+   "name": "Obrazy, restarty a PVC podů datové vrstvy",
+   "status": "INFO",
+   "detail": {
+    "pods": {
+     "clickhouse-0": {
+      "image": [
+       "clickhouse:26.8"
+      ],
+      "restarts": [
+       0
+      ]
+     },
+     "otel-collector-8bd888f79-h7xfb": {
+      "image": [
+       "otel/opentelemetry-collector-contrib:0.163.2"
+      ],
+      "restarts": [
+       4
+      ]
+     },
+     "postgres-0": {
+      "image": [
+       "pgvector/pgvector:pg16"
+      ],
+      "restarts": [
+       0
+      ]
+     }
+    },
+    "pvc": {
+     "data-clickhouse-0": "Bound",
+     "data-postgres-0": "Bound"
+    },
+    "storage_class": [
+     "standard"
+    ]
+   }
+  }
+ ]
+}

@@ -8,7 +8,7 @@ config:
     format: json
     level: info
   tracing:
-    otlpEndpoint: http://127.0.0.1:4318
+    otlpEndpoint: http://127.0.0.1:{{OTLP_HTTP}}
     otlpProtocol: http
     clientSampling: "true"      # span, když request nese traceparent
     randomSampling: "false"     # gateway sama trace nezačíná
