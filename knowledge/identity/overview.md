@@ -78,7 +78,7 @@ publikace verze; Change License: MPL 2.0. **Otázka na právníka:** „dodává
 
 | Otázka | Komponenta | Proč | Riziko / co zbývá |
 |---|---|---|---|
-| I1 workload identita | **SPIRE** vedle Dapr sentry (dvě trust domény) | SVID per instance, JWT-SVID + OIDC discovery; Dapr sentry JWT umí, ale aplikace k němu nemá API | neměřeno v harnessu; společný root = rozhodnutí |
+| I1 workload identita | **SPIRE** vedle Dapr sentry (dvě trust domény) | SVID per instance, JWT-SVID + OIDC discovery; Dapr sentry JWT umí, ale aplikace k němu nemá API | **změřeno 2026-10-24 (P1-3 kind, SPIRE 1.14.2):** agent atestován `k8s_psat`, X.509-SVID `spiffe://platform/role/vyvojar` z pod-labelu `role=vyvojar`, pod bez labelu „no identity issued“ (`tools/harness_p1_k8s`) |
 | I2 uživatelé + delegace | **Keycloak** jako platformní AS, federovaný na Entra ID; **exchange v agentgateway** | V2 exchange změřen: aud, sub, azp, downscope fungují | upscope je default → enforcer **nepoužívat** s per-MCP audience, scope hlídá konfigurace gateway; `act` delegace preview → identita agenta jako druhý credential |
 | I3 + I4 | **OPA-Envoy** za `extAuthz` v gateway + stejná Rego politika z `PreToolUse` hooku; decision log | změřeno: per-tool deny před MCP, 503 při výpadku, decision log | input camelCase; CEL v gateway stačí pro jednoduchá pravidla |
 | N4 tajemství | **OpenBao**; credential k nástrojům injektuje gateway | MPL-2.0, OpenSSF | neměřeno |
@@ -131,6 +131,7 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
   ne dopisovaný agentem (T2). AISI: per-instance monitoring agentů nestačí – útok lze rozložit mezi agenty (T12).
 
 ## Co ověřit dál
+- [x] ~~SPIRE naostro: node + workload attestace v Kubernetes~~ – **2026-10-24 P1-3 kind**: `k8s_psat` + `k8s` attestor (pod-label), SVID TTL 1 h, entries zatím ručně (→ rolegen v P1-6); JWT-SVID a exchange SVID→Keycloak v gateway zbývá.
 
 - [x] ~~Síto kolo 1 – OSS kandidáti pro I1–I4 a N4~~ – 2026-10-22, 15 kandidátů.
 - [x] ~~Kolo 2: Keycloak – `actor_token`, enforcer~~ → [keycloak.md](keycloak.md) (změřeno); federace na Entra ID zbývá.
@@ -146,6 +147,7 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
 - [x] ~~Aktuální harmonogram EU AI Act a technické požadavky na audit a lidský dohled~~ → [regulace.md](regulace.md), 2026-10-22; text OJ zbývá ověřit.
 
 ## Changelog
+- 2026-10-24: P1-3 kind – Keycloak, OpenBao (raft) a SPIRE 1.14.2 v clusteru; SVID z pod-labelu změřen (I1); O-2 identity 5/5 proti clusteru.
 - 2026-10-23: rozhodnuto (Adam): SPIRE + Keycloak + exchange v agentgateway + OPA-Envoy + OpenBao; agent jako druhý credential.
 - 2026-10-22: kolo 2 + harness I2 – Keycloak, agentgateway PEP, SPIRE; `act` nevzniká, upscope potvrzen, OPA 503 při výpadku.
 - 2026-10-22: síto kolo 1 – 15 kandidátů; Vault (BUSL), Infisical, Ory Hydra vyřazeni; návrh SPIRE + Keycloak + OPA + OpenBao.

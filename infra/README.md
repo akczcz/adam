@@ -30,6 +30,22 @@ kubectl apply -k infra/k8s/overlays/kind
 Výsledek 2026-10-24: `tools/harness_p1_k8s/results/p1-2-*.json` **6/6 PASS + 1 INFO** – M1 11/11 proti clusterovému Postgresu
 (16.15, pgvector 0.8.7), O1 9/9 proti clusterovému Collectoru a ClickHouse 26.8.34.13 (stejná verze jako lokální O1).
 
+## P1-3 identita na kind (2026-10-24)
+
+`infra/k8s/base/{keycloak,openbao,spire}`: Keycloak 26.8.1 (`start --optimized --import-realm`, realm `p0` z ConfigMapy, DB `keycloak`
+v clusterovém Postgresu), OpenBao 2.7.1 (StatefulSet, raft, audit device deklarativně do stdout, init/unseal operátorem – harness),
+SPIRE 1.14.2 (server se sqlite datastore, agent DaemonSet s `k8s_psat` + `k8s` workload attestorem, trust domain `platform`).
+
+Obrazy pro kind se stavějí lokálně (quay.io, ghcr.io a api.adoptium.net nejsou z prostředí dostupné, Docker Hub má rate limit):
+`platform/keycloak:26.8.1` = Debian základ (`pgvector/pgvector:pg16`, už lokálně) + Temurin JRE 21 z GitHub releases + Keycloak dist
+z GitHub releases s `kc.sh build --db=postgres`; `platform/openbao:2.7.1` a `platform/spire:1.14.2` = busybox + statické binárky
+z GitHub releases. Dockerfiles: `infra/images/`. Na AKS se použijí oficiální obrazy (`quay.io/keycloak/keycloak`, `ghcr.io/openbao/openbao`,
+`ghcr.io/spiffe/spire-{server,agent}`).
+
+Výsledek: `tools/harness_p1_k8s/results/p1-3-*.json` – Keycloak tokeny rolí (RS256, tenant_id, agent_id, aud) z clusteru, OpenBao raft
+init/unseal + transit, SPIRE SVID `spiffe://platform/role/vyvojar` pro pod s labelem `role=vyvojar` (pod bez labelu „no identity issued“),
+O-2 `identity` 5/5 proti clusterovému Keycloaku a OpenBao.
+
 ## Pasti (kind v cloudovém kontejneru)
 
 - **cgroup v1 na hostiteli**: kubelet v K8s 1.37 odmítne start (`failCgroupV1: true`) → kubeadm patch `KubeletConfiguration.failCgroupV1: false`.
@@ -42,4 +58,9 @@ Výsledek 2026-10-24: `tools/harness_p1_k8s/results/p1-2-*.json` **6/6 PASS + 1 
   readiness přes extension `health_check` (13133).
 - Oficiální obraz ClickHouse je `clickhouse:<verze>`; `clickhouse/clickhouse-server` nemá tag 26.8.
 - StatefulSet s podem v `ErrImagePull` se po změně obrazu sám nepřeplánuje – pod smazat.
-- Docker daemon v kontejneru: `dockerd --data-root <scratch> --storage-driver overlay2` běží i na cgroup v1 (deprecated warning).
+- Docker daemon v kontejneru: `dockerd --data-root <scratch> --storage-driver overlay2` běží i na cgroup v1 (deprecated warning);
+  jednou spadl na buildkit healthchecku – po restartu daemonu uzel kind naběhl a pody se obnovily.
+- SPIRE agent při prvním startu spadne na chybějícím `bundle.crt` (Notifier `k8sbundle` ho zapíše až po startu serveru) – DaemonSet ho restartuje, pak atestace projde.
+- Keycloak `--optimized` vyžaduje `kc.sh build` s `--db=postgres` v obrazu; `--import-realm` je runtime volba a funguje i s `--optimized`.
+- OpenBao readiness s `sealedcode=204&uninitcode=204`, jinak Service nemá endpointy a operátor nemůže init/unseal provést.
+- `kubectl logs -f` jako zdroj audit záznamů OpenBao (audit device do stdout) stačí pro harness; v clusteru je sbírá Collector.

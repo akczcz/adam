@@ -1,4 +1,4 @@
-# Postgres 16 + pgvector – jedna instance, čtyři databáze (memory, dapr_state, org, agentgateway); viz knowledge/platforma/p1-aks.md P1-2.
+# Postgres 16 + pgvector – jedna instance, databáze memory, dapr_state, org, agentgateway, keycloak; viz knowledge/platforma/p1-aks.md P1-2.
 # Dev heslo v Secretu je jen pro kind; na AKS = Azure Database for PostgreSQL Flexible Server (nebo CloudNativePG) a heslo z OpenBao.
 apiVersion: v1
 kind: Secret
@@ -18,6 +18,7 @@ data:
     CREATE DATABASE dapr_state;
     CREATE DATABASE org;
     CREATE DATABASE agentgateway;
+    CREATE DATABASE keycloak;
     \connect memory
     CREATE EXTENSION IF NOT EXISTS vector;
 ---

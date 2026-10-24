@@ -15,6 +15,10 @@ nodes:
     hostPort: 30317
   - containerPort: 30318   # otel http
     hostPort: 30318
+  - containerPort: 30080   # keycloak (P1-3)
+    hostPort: 30080
+  - containerPort: 30200   # openbao (P1-3)
+    hostPort: 30200
 kubeadmConfigPatches:
 - |
   kind: KubeletConfiguration

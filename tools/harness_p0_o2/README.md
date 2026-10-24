@@ -205,6 +205,7 @@ export AGENTGATEWAY_BIN=… DAPR_BIN_DIR=… OPA_BIN=…        # viz README har
 ANTHROPIC_API_KEY=sk-ant-… .venv/bin/python harness.py --mode live --model claude-haiku-4-5
 # identita: rozbalený keycloak-26.8.1 (viz harness I2) + binárka OpenBao 2.7.1 (openbao_2.7.1_<os>_<arch>.tar.gz z GitHub releases)
 KC_HOME=…/keycloak-26.8.1 BAO_BIN=…/bao .venv/bin/python harness.py --scenario identity   # porty 8089 (Keycloak), 8210 (OpenBao): O2_KC_PORT, O2_BAO_PORT
+.venv/bin/python harness.py --scenario identity --kc-url http://<node>:30080 --bao-addr http://<node>:30200 --bao-root-token … --bao-audit-file …   # externí (P1-3 kind) – 5/5 2026-10-24
 .venv/bin/python harness.py --scenario budget                                             # rozpočty per role × zakázka v gateway (sqlite logs/cfg/agentgateway-budgets.db)
 ```
 

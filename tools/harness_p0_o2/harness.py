@@ -184,6 +184,8 @@ def scenario_sre(a, rep, led_fn, reviewer, git_debug, procs, pg):
         tail = [l for l in r1.stdout.splitlines() if l.startswith("  ") or l.startswith("==")]
         rep.add("O3e", "Akceptace zakázky: rolegen R1 se všemi rolemi v roles/ (account, architekt, reviewer, sre, vyvojar) – OPA, srt, agentgateway --validate-only, Inspect, pod spec, agent_sdk", "PASS" if r1.returncode == 0 and '"sre"' in r1.stdout else "FAIL", {"exit": r1.returncode, "summary": tail[-1] if tail else r1.stderr[-300:], "r1_checks": [l[:90] for l in tail[:-1]]})
         (RESULTS / "ledger-sre.json").write_text(json.dumps(led, ensure_ascii=False, indent=1))
+    except Exception as e:
+        import traceback; rep.add("ERR", "Neošetřená výjimka scénáře", "FAIL", {"error": repr(e)[:300], "trace": traceback.format_exc()[-900:]})
     finally:
         finalize(a, rep, procs, pg, {"zakazka": "P0-3", "sre_yaml_committed_by": "člověk po review (dogfooding: PR do main)"})
 
@@ -215,15 +217,21 @@ def start_bao(bao_bin, env):
     (CFG / "openbao.hcl").write_text('audit "file" {\n  type = "file"\n  path = "file/"\n  options = { file_path = "%s" }\n}\n' % audit)
     p = Proc("openbao", [bao_bin, "server", "-dev", f"-dev-root-token-id={root}", f"-dev-listen-address=127.0.0.1:{BAO_PORT}", f"-config={CFG / 'openbao.hcl'}"], env, LOGS / "openbao.log")
     assert wait_http(f"{BAO}/v1/sys/health", 30), "OpenBao nenaběhl (logs/openbao.log)"
+    return p, root, bao_setup(root, audit), audit
+
+
+def bao_setup(root, audit):
+    """Idempotentní příprava OpenBao (lokální dev i externí v clusteru): mount transit, klíč approval (ed25519, neexportovatelný),
+    audit device z configu, policy approval-signer a token aplikace jen na sign/verify."""
     H = {"X-Vault-Token": root}
-    def api(method, path, body=None):
-        r = httpx.request(method, f"{BAO}/v1/{path}", json=body, headers=H, timeout=10); assert r.status_code in (200, 204), f"{path}: {r.status_code} {r.text[:200]}"; return r
-    api("POST", "sys/mounts/transit", {"type": "transit"})
-    api("POST", "transit/keys/approval", {"type": "ed25519", "exportable": False})
+    def api(method, path, body=None, ok=(200, 204)):
+        r = httpx.request(method, f"{BAO}/v1/{path}", json=body, headers=H, timeout=10); assert r.status_code in ok, f"{path}: {r.status_code} {r.text[:200]}"; return r
+    mounts = api("GET", "sys/mounts").json()
+    if "transit/" not in mounts: api("POST", "sys/mounts/transit", {"type": "transit"})
+    api("POST", "transit/keys/approval", {"type": "ed25519", "exportable": False})   # existující klíč: no-op
     assert "file/" in api("GET", "sys/audit").json(), "audit device z configu nenaběhl"
     api("PUT", "sys/policies/acl/approval-signer", {"policy": 'path "transit/sign/approval" { capabilities = ["update"] }\npath "transit/verify/approval" { capabilities = ["update"] }'})
-    app_tok = api("POST", "auth/token/create", {"policies": ["approval-signer"], "no_default_policy": True, "ttl": "2h", "display_name": "zakazka-app"}).json()["auth"]["client_token"]
-    return p, root, app_tok, audit
+    return api("POST", "auth/token/create", {"policies": ["approval-signer"], "no_default_policy": True, "ttl": "2h", "display_name": "zakazka-app"}).json()["auth"]["client_token"]
 
 
 def scenario_identity(a, rep, led_fn, procs, pg, ctx):
@@ -280,8 +288,10 @@ def scenario_identity(a, rep, led_fn, procs, pg, ctx):
         inv = [e for e in led if e["kind"] == "NOTIFY" and e.get("event") == "HITL_INVALID_TOKEN" and e.get("zakazka") == zid2]
         ver2 = [e for e in led if e["kind"] == "VERIFY" and e["zakazka"] == zid2]
         rep.add("ID5", "Padělek s legacy HMAC tajemstvím (event hitl:H1 přímo přes Dapr API, správný hash artefaktu) → VERIFY valid=false → HITL_INVALID_TOKEN → Pozastaveno; Architekt nespuštěn, žádný SIGN pro P0-6", "PASS" if rr.status_code in (200, 202) and inv and (st2.get("output") or {}).get("stav") == "Pozastaveno" and ver2 and not ver2[0]["valid"] and not any(e["kind"] == "AGENT_RUN" and e["zakazka"] == zid2 and e.get("role") == "architekt" for e in led) and not any(e["kind"] == "SIGN" and e["zakazka"] == zid2 for e in led) else "FAIL", {"raise_http": rr.status_code, "output": st2.get("output"), "invalid_token_events": len(inv), "verify": ver2[:1]})
-        rep.add("ID6", "Latence identity (ms)", "INFO", {**lat, "keycloak": "26.8.1", "openbao": subprocess.run([a.bao_bin, "version"], capture_output=True, text=True).stdout.strip()})
+        rep.add("ID6", "Latence identity (ms)", "INFO", {**lat, "keycloak": "26.8.1", "openbao": (subprocess.run([a.bao_bin, "version"], capture_output=True, text=True).stdout.strip() if a.bao_bin and not a.bao_addr else httpx.get(f"{BAO}/v1/sys/health", timeout=5).json().get("version")), "keycloak_url": KC_ISSUER, "openbao_addr": BAO})
         (RESULTS / "ledger-identity.json").write_text(json.dumps(led, ensure_ascii=False, indent=1))
+    except Exception as e:
+        import traceback; rep.add("ERR", "Neošetřená výjimka scénáře", "FAIL", {"error": repr(e)[:300], "trace": traceback.format_exc()[-900:]})
     finally:
         finalize(a, rep, procs, pg, {"keycloak": "26.8.1", "realm": "p0", "openbao_transit_key": "ed25519/approval"})
 
@@ -377,6 +387,8 @@ def scenario_budget(a, rep, led_fn, procs, pg, ctx):
         rep.add("B5", "Audit: klíč Architekta P0-8 (limit 0.001 USD) překročen → gateway loguje `API key budget exceeded` (exceeded=true), ale requesty dál 200 a ADR vzniklo – Audit nikdy neblokuje", "PASS" if audit_warn and len(arch_ok) >= 2 and adr else "FAIL", {"architekt_200": len(arch_ok), "audit_warn": audit_warn[-1][:300] if audit_warn else None})
         rep.add("B6", "Cena: gateway (katalog modelů, USD) vs. SDK total_cost_usd per role P0-7; zbytek vrstvy FinOps", "INFO", {"gateway_by_role": by_role, "sdk_by_role": {r: e.get("cost_usd") for r, e in runs.items()}, "model": a.model, "note": "agentgateway 1.6 cení z vestavěného katalogu (agw.ai.usage.cost.total i pro mock); SDK počítá z vlastní tabulky cen – gateway je zdroj pravdy pro FinOps"})
         (RESULTS / "ledger-budget.json").write_text(json.dumps(led, ensure_ascii=False, indent=1))
+    except Exception as e:
+        import traceback; rep.add("ERR", "Neošetřená výjimka scénáře", "FAIL", {"error": repr(e)[:300], "trace": traceback.format_exc()[-900:]})
     finally:
         finalize(a, rep, procs, pg, {"zakazky": list(BUDGET_ZAKAZKY), "patched_limits": {f"{z}/{r}/{b}": v for z, p in BUDGET_ZAKAZKY.items() for (r, b), v in p.items()}})
 
@@ -408,6 +420,8 @@ def scenario_github(a, rep, led_fn, procs, pg):
         rep.add("G5", "Skutečná publikace do GitHubu", "SKIP" if not a.publish_github else "INFO", {"reason": "suchý běh – spustit s --publish-github a GITHUB_TOKEN (PAT s issues, contents, pull_requests) po Adamově souhlasu"} if not a.publish_github else {"published": [e for e in led if e["kind"] == "PUBLISHED"]})
         for f in sorted(dry.glob("*.json")) if dry.exists() else []:
             (RESULTS / "github-dryrun").mkdir(exist_ok=True); shutil.copy(f, RESULTS / "github-dryrun" / f.name)
+    except Exception as e:
+        import traceback; rep.add("ERR", "Neošetřená výjimka scénáře", "FAIL", {"error": repr(e)[:300], "trace": traceback.format_exc()[-900:]})
     finally:
         finalize(a, rep, procs, pg, {"zakazka": "P0-4", "publish_github": a.publish_github})
 
@@ -463,6 +477,8 @@ def scenario_github_hitl(a, rep, led_fn, procs, pg):
         wl = bridge_log(); sources = {e.get("source") for e in wl if e["kind"] == "APPROVAL_FORWARDED"}
         rep.add("GH5", "Webhook bez platného HMAC podpisu bridge odmítne (401); platné události z webhooku i pollingu se dedupují podle id", "PASS" if bad.status_code == 401 and any(e["kind"] == "WEBHOOK_REJECTED" for e in wl) and len([e for e in wl if e["kind"] == "APPROVAL_FORWARDED"]) == 2 else "FAIL", {"forged_http": bad.status_code, "sources_used": sorted(s for s in sources if s), "webhook_ok": sum(1 for e in wl if e["kind"] == "WEBHOOK_OK")})
         (RESULTS / "bridge-ledger.json").write_text(json.dumps(wl, ensure_ascii=False, indent=1))
+    except Exception as e:
+        import traceback; rep.add("ERR", "Neošetřená výjimka scénáře", "FAIL", {"error": repr(e)[:300], "trace": traceback.format_exc()[-900:]})
     finally:
         finalize(a, rep, procs, pg, {"zakazka": "P0-5", "github": "mock (mock_github.py), bridge poll 2 s + webhook HMAC"})
 
@@ -475,6 +491,10 @@ def main():
     ap.add_argument("--scenario", choices=["p0", "sre", "github", "github-hitl", "identity", "budget"], default="p0", help="p0 = injekce + negativní kontrola; sre = zakázka P0-3 „vytvoř roli SRE“ provedená platformou (merge executor zapíše soubor do knowledge/organization/roles); identity = Keycloak JWKS pro role + OpenBao transit pro approval token (vyžaduje --kc-home a --bao-bin)")
     ap.add_argument("--kc-home", default=os.getenv("KC_HOME", ""), help="rozbalený keycloak-26.8.1 (scénář identity)")
     ap.add_argument("--bao-bin", default=os.getenv("BAO_BIN", shutil.which("bao") or ""), help="binárka OpenBao 2.7.1 (scénář identity)")
+    ap.add_argument("--kc-url", default=os.getenv("O2_KC_URL", ""), help="externí Keycloak s realmem p0 (P1-3 kind: http://<node>:30080) místo --kc-home")
+    ap.add_argument("--bao-addr", default=os.getenv("O2_BAO_ADDR", ""), help="externí OpenBao (P1-3 kind: http://<node>:30200) místo --bao-bin; vyžaduje --bao-root-token")
+    ap.add_argument("--bao-root-token", default=os.getenv("O2_BAO_ROOT_TOKEN", ""))
+    ap.add_argument("--bao-audit-file", default=os.getenv("O2_BAO_AUDIT_FILE", ""), help="soubor s audit záznamy externího OpenBao (např. kubectl logs -f openbao-0)")
     ap.add_argument("--max-turns", type=int, default=None, help="limit kol agenta (výchozí 8 mock, 24 live – živý model potřebuje průzkum)")
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""))
@@ -483,8 +503,13 @@ def main():
     if not (a.agentgateway_bin and a.dapr_bin_dir and a.opa_bin and SRT.exists()):
         print("chybí AGENTGATEWAY_BIN, DAPR_BIN_DIR, OPA_BIN nebo node_modules/.bin/srt"); sys.exit(2)
     ident = a.scenario == "identity"
-    if ident and not (a.kc_home and Path(a.kc_home, "bin/kc.sh").exists() and a.bao_bin and Path(a.bao_bin).exists()):
-        print("scénář identity vyžaduje --kc-home/KC_HOME (keycloak-26.8.1) a --bao-bin/BAO_BIN (openbao 2.7.1)"); sys.exit(2)
+    global KC_ISSUER, BAO
+    if a.kc_url: KC_ISSUER = a.kc_url.rstrip("/") + "/realms/p0"
+    if a.bao_addr: BAO = a.bao_addr.rstrip("/")
+    kc_ok = a.kc_url or (a.kc_home and Path(a.kc_home, "bin/kc.sh").exists())
+    bao_ok = (a.bao_addr and a.bao_root_token) or (a.bao_bin and Path(a.bao_bin).exists())
+    if ident and not (kc_ok and bao_ok):
+        print("scénář identity vyžaduje --kc-home/KC_HOME nebo --kc-url a --bao-bin/BAO_BIN nebo --bao-addr + --bao-root-token"); sys.exit(2)
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if a.mode == "live" and not api_key:
         print("live mode vyžaduje ANTHROPIC_API_KEY"); sys.exit(2)
@@ -501,12 +526,16 @@ def main():
     B = Path(a.dapr_bin_dir)
     rep, procs, pg = Report(), [], None
     try:
-        busy = [p for p in (APP_PORT, OPA_PORT, MEM_PORT, MOCK_PORT, CONNECT_PORT, LLM_PORT, GIT_PORT, PKG_PORT, EVIL_PORT, HTTP_PORT, GRPC_PORT, PLACEMENT, SCHED, ETCD_CLIENT) + ((KC_PORT, BAO_PORT) if ident else ()) if not port_free(p)]
+        busy = [p for p in (APP_PORT, OPA_PORT, MEM_PORT, MOCK_PORT, CONNECT_PORT, LLM_PORT, GIT_PORT, PKG_PORT, EVIL_PORT, HTTP_PORT, GRPC_PORT, PLACEMENT, SCHED, ETCD_CLIENT) + (((KC_PORT,) if not a.kc_url else ()) + ((BAO_PORT,) if not a.bao_addr else ()) if ident else ()) if not port_free(p)]
         assert not busy, f"porty obsazeny: {busy}"
         ictx = {}
         if ident:   # Keycloak startuje ~40 s – spustit první, čekat až před vydáním tokenů
-            procs.append(start_keycloak(a.kc_home, env))
-            bao_p, bao_root, bao_app, bao_audit = start_bao(a.bao_bin, env); procs.append(bao_p)
+            if not a.kc_url: procs.append(start_keycloak(a.kc_home, env))
+            if a.bao_addr:
+                bao_root = a.bao_root_token; bao_audit = Path(a.bao_audit_file) if a.bao_audit_file else LOGS / "openbao-audit-external.log"
+                bao_app = bao_setup(bao_root, bao_audit)
+            else:
+                bao_p, bao_root, bao_app, bao_audit = start_bao(a.bao_bin, env); procs.append(bao_p)
             ictx.update(bao_root=bao_root, bao_app=bao_app, bao_audit=bao_audit, lat={})
         # paměť M1
         import pgserver

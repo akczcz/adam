@@ -1,0 +1,79 @@
+# OpenBao 2.7.1 – tajemství a transit (podpis approval tokenu `approval`, ed25519). Raft storage (1 uzel na kind), audit device
+# deklarativně v HCL (API je od 2.7 zakázané) do stdout → logy podu → Collector. Init/unseal dělá operátor (harness P1-3 na kind);
+# na AKS auto-unseal Azure Key Vault (`seal "azurekeyvault"`) a auth metoda `kubernetes` pro aplikaci místo tokenu v env.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+data:
+  config.hcl: |
+    ui = false
+    disable_mlock = true
+    listener "tcp" {
+      address         = "0.0.0.0:8200"
+      cluster_address = "0.0.0.0:8201"
+      tls_disable     = true          # jen kind; na AKS TLS z cert-manageru
+    }
+    storage "raft" {
+      path    = "/openbao/data"
+      node_id = "openbao-0"
+    }
+    audit "stdout" {
+      type    = "file"
+      path    = "file/"
+      options = { file_path = "stdout" }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbao
+  labels: {app: openbao}
+spec:
+  selector: {app: openbao}
+  ports:
+  - {name: api, port: 8200, targetPort: 8200}
+  - {name: cluster, port: 8201, targetPort: 8201}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: openbao
+spec:
+  serviceName: openbao
+  replicas: 1
+  selector:
+    matchLabels: {app: openbao}
+  template:
+    metadata:
+      labels: {app: openbao}
+    spec:
+      securityContext: {fsGroup: 1000}
+      containers:
+      - name: openbao
+        image: platform/openbao:2.7.1   # kind: busybox + statická binárka z GitHub releases; AKS: ghcr.io/openbao/openbao:2.7.1
+        args: ["server", "-config=/openbao/config/config.hcl"]
+        env:
+        - {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+        - {name: BAO_API_ADDR, value: "http://$(POD_IP):8200"}
+        - {name: BAO_CLUSTER_ADDR, value: "http://$(POD_IP):8201"}
+        ports:
+        - {containerPort: 8200, name: api}
+        - {containerPort: 8201, name: cluster}
+        volumeMounts:
+        - {name: config, mountPath: /openbao/config}
+        - {name: data, mountPath: /openbao/data}
+        readinessProbe:   # 204 i pro sealed/uninitialized – Service musí směrovat, aby operátor mohl init/unseal
+          httpGet: {path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204", port: 8200}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+      volumes:
+      - name: config
+        configMap: {name: openbao-config}
+  volumeClaimTemplates:
+  - metadata: {name: data}
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources: {requests: {storage: 1Gi}}

@@ -7,6 +7,9 @@ resources:
 - ../../base/postgres
 - ../../base/clickhouse
 - ../../base/otel-collector
+- ../../base/keycloak
+- ../../base/openbao
+- ../../base/spire
 patches:
 - target: {kind: Service, name: postgres}
   patch: |
@@ -38,3 +41,19 @@ patches:
     - op: add
       path: /spec/ports/1/nodePort
       value: 30318
+- target: {kind: Service, name: keycloak}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30080
+- target: {kind: Service, name: openbao}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30200

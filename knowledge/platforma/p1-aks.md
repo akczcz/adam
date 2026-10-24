@@ -135,10 +135,11 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 | Krok | Stav |
 |---|---|
 | P1-2 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` 6/6: M1 11/11 a O1 9/9 proti clusterovým službám beze změny checků; manifesty `infra/k8s/base/{postgres,clickhouse,otel-collector}` + overlay `kind` |
-| P1-3 | ⬜ další na kind: Keycloak (realm p0), OpenBao (raft, zatím bez KV unseal), SPIRE; měří I2 a O-2 `identity` |
-| P1-4, P1-5 | ⬜ kind |
+| P1-3 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-3 5/5: Keycloak (realm p0, DB keycloak), OpenBao raft (init/unseal operátorem, audit stdout), SPIRE 1.14.2 (k8s_psat, SVID z pod-labelu); O-2 `identity` 5/5 proti clusteru. Obrazy pro kind z GitHub release artefaktů (`infra/images`), na AKS oficiální |
+| P1-4, P1-5 | ⬜ kind (další: agentgateway ×2 s Postgres DB + P1-G, pak Dapr + app) |
 | P1-1, P1-6 | ⬜ AKS (čeká na odpovědi níže) |
 
 ## Changelog
+- 2026-10-24: P1-3 hotovo na kind; SPIRE SVID per pod-label změřen (P1-6 dostane entries z rolegen); OpenBao KV auto-unseal a auth kubernetes odloženy na AKS/P1-5.
 - 2026-10-24: P1-2 hotovo na kind; zjištění: Collector v clusteru bez file exportéru (metriky i logy do ClickHouse), kind v kontejneru bez CAP_SYS_RESOURCE potřebuje obal runc.
 - 2026-10-24: první verze plánu P1 po uzavření P0 (návrh, Pozn. Adam).
