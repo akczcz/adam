@@ -163,7 +163,27 @@ def _p0_message(body: dict) -> dict | None:
         return next((n for n in names if n.endswith(suffix)), None)
     tu = None
     last = calls[-1] if calls else None
-    if last is None:
+    import re as _re
+    role = (_re.search(r"role=([a-z]+)", sys_txt) or [None, "vyvojar"])[1]
+    if role == "account":
+        if last is None and find("search_memory"): tu = (find("search_memory"), {"query": "zákazník ACME kontakty preference konvence"})
+        elif last and last.endswith("search_memory") and find("write_artifact"):
+            tu = (find("write_artifact"), {"path": "artifacts/zadani.md", "content": f"# Zadání\n\n## Cíl\n{prompt.replace('Zadání: ', '')[:400]}\n\n## Akceptační kritéria\n- testy zelené, PR mergeable\n- žádná komunikace ven bez člověka\n\n## Hranice\n- jen repo platformy, větev zakázky\n\n## Klasifikační brána\n- profil: standard (dogfooding, bez přílohy III)\n"})
+        elif last and last.endswith("write_artifact"): tu = None
+        else: tu = None
+    elif role == "architekt":
+        if last is None and find("read_artifact"): tu = (find("read_artifact"), {"path": "artifacts/zadani.md"})
+        elif last and last.endswith("read_artifact") and find("search_memory"): tu = (find("search_memory"), {"query": "ADR konvence firma Python FastAPI"})
+        elif last and last.endswith("search_memory") and find("write_artifact"):
+            tu = (find("write_artifact"), {"path": "artifacts/adr.md", "content": "# ADR 001\n\n## Kontext\nZadání viz artifacts/zadani.md.\n\n## Varianty\n| Varianta | Pro | Proti |\n|---|---|---|\n| A: 1 úkol, Python+FastAPI | konvence firmy | – |\n| B: rozdělit na 2 úkoly | menší PR | režie |\n\n## Rozhodnutí\nA.\n\n## Rizika\n- žádná nad rámec sandboxu\n\n## Odhad ceny\n≤ 1 USD (haiku), 1 úkol\n\n## Plán úkolů\n1. ukol-1: implementace + testy\n"})
+        else: tu = None
+    elif role == "reviewer":
+        files = _re.findall(r"work/[\w./-]+", sys_txt)
+        if last is None and find("read_artifact"): tu = (find("read_artifact"), {"path": files[0] if files else "work/"})
+        elif last and last.endswith("read_artifact") and find("run_evals"): tu = (find("run_evals"), {"target": "pr"})
+        elif last and last.endswith("run_evals") and find("write_artifact"): tu = (find("write_artifact"), {"path": "artifacts/review.md", "content": "# Review\n\nverdict: ok\n\n- soubory PR přečteny\n- evaly L0–L2 prošly\n- nalezené vady: žádné\n"})
+        else: tu = None
+    elif last is None:
         if find("search_memory"):
             tu = (find("search_memory"), {"query": "konvence a fakta pro zakázku " + prompt[:60]})
         elif "ToolSearch" in names:
@@ -186,7 +206,7 @@ def _p0_message(body: dict) -> dict | None:
         content = [{"type": "text", "text": "Pokračuji."}, {"type": "tool_use", "id": f"toolu_mock_{uuid.uuid4().hex[:8]}", "name": tu[0], "input": tu[1]}]
         stop = "tool_use"
     else:
-        content = [{"type": "text", "text": "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)"}]
+        content = [{"type": "text", "text": {"account": "Zadání připraveno v artifacts/zadani.md (MOCK_OK)", "architekt": "ADR připraveno v artifacts/adr.md (MOCK_OK)", "reviewer": "Review hotové: verdict ok (MOCK_OK)"}.get(role, "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)")}]
         stop = "end_turn"
     return {"id": f"msg_mock_{uuid.uuid4().hex[:12]}", "type": "message", "role": "assistant", "model": body.get("model", "mock"), "content": content, "stop_reason": stop, "stop_sequence": None, "usage": dict(USAGE)}
 

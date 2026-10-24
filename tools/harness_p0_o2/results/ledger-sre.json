@@ -1,65 +1,230 @@
 [
  {
-  "ts": 1792819664.4507465,
+  "ts": 1792820759.1553874,
+  "kind": "ZAKAZKA_START",
+  "zakazka": "P0-3"
+ },
+ {
+  "ts": 1792820760.5633073,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "account",
+  "tool": "search_memory",
+  "http": 200,
+  "n": 1
+ },
+ {
+  "ts": 1792820760.7499926,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "account",
+  "tool": "write_artifact",
+  "path": "artifacts/zadani.md",
+  "ok": true,
+  "bytes": 626
+ },
+ {
+  "ts": 1792820760.94706,
+  "kind": "AGENT_RUN",
+  "zakazka": "P0-3",
+  "role": "account",
+  "tool_uses": [
+   "mcp__harness__search_memory",
+   "mcp__harness__write_artifact"
+  ],
+  "calls": [
+   {
+    "tool": "search_memory",
+    "args": {
+     "query": "zákazník ACME kontakty preference konvence"
+    },
+    "http": 200,
+    "n": 1
+   },
+   {
+    "tool": "write_artifact",
+    "path": "artifacts/zadani.md",
+    "ok": true,
+    "bytes": 626
+   }
+  ],
+  "usage": {
+   "input_tokens": 33,
+   "cache_creation_input_tokens": 6144,
+   "cache_read_input_tokens": 12288,
+   "output_tokens": 21,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 6144
+   },
+   "inference_geo": "",
+   "iterations": [],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "cost_usd": 0.009046799999999999,
+  "files": null,
+  "role_options_source": "/home/user/adam/tools/harness_p0_o2/logs/rolegen/agent_sdk/account.json",
+  "num_turns": 3,
+  "is_error": false,
+  "error": null,
+  "result_text": "Zadání připraveno v artifacts/zadani.md (MOCK_OK)"
+ },
+ {
+  "ts": 1792820760.947248,
   "kind": "HANDOFF",
   "frm": "account",
   "to": "human:zakaznik",
   "zakazka": "P0-3",
   "artifact": "issue://P0-3",
-  "hash": "703f9f30e194da70",
-  "cost_usd": 0.4
+  "hash": "10d81b6a58d24e05",
+  "file_exists": true,
+  "cost_usd": 0.009046799999999999
  },
  {
-  "ts": 1792819664.4533718,
-  "kind": "ZAKAZKA_START",
-  "zakazka": "P0-3"
- },
- {
-  "ts": 1792819664.4803014,
+  "ts": 1792820761.194886,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-3",
   "bod": "H1",
   "by": "adam",
-  "artifact_hash": "703f9f30e194da70"
+  "artifact_hash": "10d81b6a58d24e05"
  },
  {
-  "ts": 1792819664.4870677,
+  "ts": 1792820761.203121,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H1",
   "zakazka": "P0-3",
   "by": "adam",
-  "artifact_hash": "703f9f30e194da70"
+  "artifact_hash": "10d81b6a58d24e05"
  },
  {
-  "ts": 1792819664.503396,
+  "ts": 1792820761.9227448,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "architekt",
+  "tool": "read_artifact",
+  "path": "artifacts/zadani.md",
+  "found": true
+ },
+ {
+  "ts": 1792820762.1635315,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "architekt",
+  "tool": "search_memory",
+  "http": 200,
+  "n": 1
+ },
+ {
+  "ts": 1792820762.3370905,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "architekt",
+  "tool": "write_artifact",
+  "path": "artifacts/adr.md",
+  "ok": true,
+  "bytes": 347
+ },
+ {
+  "ts": 1792820762.5364583,
+  "kind": "AGENT_RUN",
+  "zakazka": "P0-3",
+  "role": "architekt",
+  "tool_uses": [
+   "mcp__harness__read_artifact",
+   "mcp__harness__search_memory",
+   "mcp__harness__write_artifact"
+  ],
+  "calls": [
+   {
+    "tool": "read_artifact",
+    "path": "artifacts/zadani.md",
+    "found": true
+   },
+   {
+    "tool": "search_memory",
+    "args": {
+     "query": "ADR konvence firma Python FastAPI"
+    },
+    "http": 200,
+    "n": 1
+   },
+   {
+    "tool": "write_artifact",
+    "path": "artifacts/adr.md",
+    "ok": true,
+    "bytes": 347
+   }
+  ],
+  "usage": {
+   "input_tokens": 44,
+   "cache_creation_input_tokens": 8192,
+   "cache_read_input_tokens": 16384,
+   "output_tokens": 28,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 8192
+   },
+   "inference_geo": "",
+   "iterations": [],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "cost_usd": 0.0120624,
+  "files": null,
+  "role_options_source": "/home/user/adam/tools/harness_p0_o2/logs/rolegen/agent_sdk/architekt.json",
+  "num_turns": 4,
+  "is_error": false,
+  "error": null,
+  "result_text": "ADR připraveno v artifacts/adr.md (MOCK_OK)"
+ },
+ {
+  "ts": 1792820762.5367014,
   "kind": "HANDOFF",
   "frm": "architekt",
   "to": "human:vlastnik",
   "zakazka": "P0-3",
   "artifact": "adr://P0-3/001",
-  "hash": "80419632201b7649",
-  "cost_usd": 1.2
+  "hash": "08a1c8854d9dfa50",
+  "file_exists": true,
+  "cost_usd": 0.0120624
  },
  {
-  "ts": 1792819665.0091727,
+  "ts": 1792820762.7277112,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-3",
   "bod": "H2",
   "by": "adam",
-  "artifact_hash": "80419632201b7649"
+  "artifact_hash": "08a1c8854d9dfa50"
  },
  {
-  "ts": 1792819665.0171864,
+  "ts": 1792820762.7352636,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H2",
   "zakazka": "P0-3",
   "by": "adam",
-  "artifact_hash": "80419632201b7649"
+  "artifact_hash": "08a1c8854d9dfa50"
  },
  {
-  "ts": 1792819665.6348226,
+  "ts": 1792820762.7828953,
   "kind": "PDP",
   "action": "push_branch",
   "actor": "vyvojar",
@@ -71,7 +236,7 @@
   "approval_by": null
  },
  {
-  "ts": 1792819666.926598,
+  "ts": 1792820763.5748572,
   "kind": "TOOL",
   "zakazka": "P0-3",
   "role": "vyvojar",
@@ -80,19 +245,17 @@
   "n": 1
  },
  {
-  "ts": 1792819667.7006662,
+  "ts": 1792820764.192494,
   "kind": "TOOL",
   "zakazka": "P0-3",
   "role": "vyvojar",
   "tool": "sandboxed_bash",
-  "cmd": "mkdir -p roles && cp \"/home/user/adam/tools/harness_p0_o2/fixtures/sre.yaml\" roles/sre.yaml && python3 -c \"import yaml,sys; d=yaml.safe_load(open('roles/sre.yaml')); print('role='+d['role'], 'bloky='+str(len(d)))\" && echo \"soubor roles/sre.yaml zapsan\"",
   "exit": 0,
   "stdout": "role=sre bloky=15\nsoubor roles/sre.yaml zapsan\n",
-  "stderr": "",
   "violations": []
  },
  {
-  "ts": 1792819667.9354343,
+  "ts": 1792820764.429148,
   "kind": "TOOL",
   "zakazka": "P0-3",
   "role": "vyvojar",
@@ -102,7 +265,7 @@
   "stored": "proposed"
  },
  {
-  "ts": 1792819668.116753,
+  "ts": 1792820764.622556,
   "kind": "AGENT_RUN",
   "zakazka": "P0-3",
   "role": "vyvojar",
@@ -118,9 +281,7 @@
      "query": "konvence a fakta pro zakázku <system-reminder>\n# Environment\nYou have been invoked in the"
     },
     "http": 200,
-    "records": [
-     "ACME konvence: každý endpoint má test a vrací JSON; splatnost faktur 30 dní."
-    ]
+    "n": 1
    },
    {
     "tool": "sandboxed_bash",
@@ -175,7 +336,7 @@
   "result_text": "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)"
  },
  {
-  "ts": 1792819668.116857,
+  "ts": 1792820764.6227572,
   "kind": "HANDOFF",
   "frm": "vyvojar",
   "to": "reviewer",
@@ -185,25 +346,126 @@
   "cost_usd": 0.0120624
  },
  {
-  "ts": 1792819668.1285417,
+  "ts": 1792820765.3503773,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "reviewer",
+  "tool": "read_artifact",
+  "path": "work/...",
+  "found": false
+ },
+ {
+  "ts": 1792820765.5407326,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "reviewer",
+  "tool": "run_evals",
+  "result": {
+   "L0": 1.0,
+   "L1": 1.0,
+   "L2_passk": 1.0,
+   "files": [
+    "roles"
+   ],
+   "note": "mock evaly – skutečné přes inspect_k8s_sandbox (P2)"
+  }
+ },
+ {
+  "ts": 1792820765.727561,
+  "kind": "TOOL",
+  "zakazka": "P0-3",
+  "role": "reviewer",
+  "tool": "write_artifact",
+  "path": "artifacts/review.md",
+  "ok": true,
+  "bytes": 89
+ },
+ {
+  "ts": 1792820765.9352322,
+  "kind": "AGENT_RUN",
+  "zakazka": "P0-3",
+  "role": "reviewer",
+  "tool_uses": [
+   "mcp__harness__read_artifact",
+   "mcp__harness__run_evals",
+   "mcp__harness__write_artifact"
+  ],
+  "calls": [
+   {
+    "tool": "read_artifact",
+    "path": "work/...",
+    "found": false
+   },
+   {
+    "tool": "run_evals",
+    "result": {
+     "L0": 1.0,
+     "L1": 1.0,
+     "L2_passk": 1.0,
+     "files": [
+      "roles"
+     ],
+     "note": "mock evaly – skutečné přes inspect_k8s_sandbox (P2)"
+    }
+   },
+   {
+    "tool": "write_artifact",
+    "path": "artifacts/review.md",
+    "ok": true,
+    "bytes": 89
+   }
+  ],
+  "usage": {
+   "input_tokens": 44,
+   "cache_creation_input_tokens": 8192,
+   "cache_read_input_tokens": 16384,
+   "output_tokens": 28,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 8192
+   },
+   "inference_geo": "",
+   "iterations": [],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "cost_usd": 0.0120624,
+  "files": null,
+  "role_options_source": "/home/user/adam/tools/harness_p0_o2/logs/rolegen/agent_sdk/reviewer.json",
+  "num_turns": 4,
+  "is_error": false,
+  "error": null,
+  "result_text": "Review hotové: verdict ok (MOCK_OK)"
+ },
+ {
+  "ts": 1792820765.9354732,
   "kind": "HANDOFF",
   "frm": "reviewer",
   "to": "human:vlastnik",
   "zakazka": "P0-3",
   "artifact": "review://P0-3/1",
   "hash": "8b1bba05c9be14c5",
-  "cost_usd": 0.9
+  "verdict": "ok",
+  "cost_usd": 0.0120624
  },
  {
-  "ts": 1792819668.137217,
+  "ts": 1792820765.949562,
   "kind": "BUDGET",
   "zakazka": "P0-3",
-  "spent_usd": 2.51,
+  "spent_usd": 0.05,
   "limit_usd": 400.0,
   "frozen": false
  },
  {
-  "ts": 1792819668.5830932,
+  "ts": 1792820766.2753549,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-3",
   "bod": "H4",
@@ -211,7 +473,7 @@
   "artifact_hash": "8b1bba05c9be14c5"
  },
  {
-  "ts": 1792819668.5939717,
+  "ts": 1792820766.2883184,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H4",
@@ -220,7 +482,7 @@
   "artifact_hash": "8b1bba05c9be14c5"
  },
  {
-  "ts": 1792819668.635965,
+  "ts": 1792820766.3324113,
   "kind": "PDP",
   "action": "merge",
   "actor": "merge-executor",
@@ -232,7 +494,7 @@
   "approval_by": "adam"
  },
  {
-  "ts": 1792819668.6364605,
+  "ts": 1792820766.3327699,
   "kind": "EXECUTED",
   "action": "merge",
   "by": "merge-executor",
@@ -243,7 +505,7 @@
   ]
  },
  {
-  "ts": 1792819670.613082,
+  "ts": 1792820768.3095872,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-3",
   "bod": "H5",
@@ -251,7 +513,7 @@
   "artifact_hash": "8b1bba05c9be14c5"
  },
  {
-  "ts": 1792819670.6273687,
+  "ts": 1792820768.3235593,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H5",
@@ -260,7 +522,7 @@
   "artifact_hash": "8b1bba05c9be14c5"
  },
  {
-  "ts": 1792819670.6698208,
+  "ts": 1792820768.3646963,
   "kind": "PDP",
   "action": "deploy",
   "actor": "deploy-executor",
@@ -272,7 +534,7 @@
   "approval_by": "adam"
  },
  {
-  "ts": 1792819670.6698992,
+  "ts": 1792820768.3647707,
   "kind": "EXECUTED",
   "action": "deploy",
   "by": "deploy-executor",
@@ -281,10 +543,10 @@
   "applied": []
  },
  {
-  "ts": 1792819670.685856,
+  "ts": 1792820768.3775063,
   "kind": "BUDGET",
   "zakazka": "P0-3",
-  "spent_usd": 2.51,
+  "spent_usd": 0.05,
   "limit_usd": 400.0,
   "frozen": false
  }

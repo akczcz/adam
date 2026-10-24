@@ -143,7 +143,7 @@ disclosure:                      # čl. 50(1) – T7; vkládá platforma, ne mod
     <kanál>: "<věta>"
 ```
 
-## 3. Role v0 (zkrácené definice; plné YAML Vývojář, Reviewer a **SRE** v `roles/` – SRE vznikla jako zakázka P0-3 provedená platformou, 2026-10-24)
+## 3. Role v0 (zkrácené definice; plné YAML všech pěti rolí v `roles/`: account, architekt, vyvojar, reviewer, sre – SRE vznikla jako zakázka P0-3 provedená platformou, 2026-10-24)
 
 ### Account (P1 Přijetí zadání)
 - `identity`: `/agent/account/{tenant}/{wf}`, KC role `agent`, subject = offline token vlastníka procesu (jedná se zákazníkem).
@@ -270,6 +270,7 @@ a vestavěné nástroje Bash/Write/Edit/WebFetch běží v procesu agenta. Role 
 - [ ] Harness O-1: pozastavená role (`agents_suspended`) → Dapr aktivita odmítne instanci; `BudgetExceeded` → HITL.
 
 ## Changelog
+- 2026-10-24: `roles/account.yaml`, `roles/architekt.yaml` (v0) – všechny role zakázky mají YAML; O-2 je spouští přes Agent SDK.
 - 2026-10-24: `roles/sre.yaml` (v0, zakázka P0-3); rolegen generuje `agent_sdk` options.
 - 2026-10-24: blok `sandbox.agent_sdk` po nálezu O-2 live (vestavěné nástroje mimo sandbox).
 - 2026-10-23: rolegen ověřil, že schéma jde bez zbytku přeložit do konfigurací vrstev (R1 6/6).

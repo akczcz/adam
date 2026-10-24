@@ -1,6 +1,6 @@
 {
  "meta": {
-  "started": "2026-10-24T05:27:57",
+  "started": "2026-10-24T05:46:17",
   "scenario": "sre",
   "mode": "mock",
   "model": "claude-haiku-4-5",
@@ -56,7 +56,7 @@
       "pr://P0-3/1",
       "review://P0-3/1"
      ],
-     "cost_usd": 2.5120624
+     "cost_usd": 0.045233999999999996
     }
    }
   },
@@ -75,7 +75,7 @@
    "status": "PASS",
    "detail": {
     "exit": 0,
-    "summary": "== výsledek: {'PASS': 7, 'FAIL': 0, 'INFO': 0, 'SKIP': 0} -> results/r1-20261024-052755.json",
+    "summary": "== výsledek: {'PASS': 7, 'FAIL': 0, 'INFO': 0, 'SKIP': 0} -> results/r1-20261024-054615.json",
     "r1_checks": [
      "  ✅ R1a Generování deterministické, pokrývá všechny role; registr rolí (T12) nese verzi, v",
      "  ✅ R1b OPA roles.rego + vygenerovaná data: 24 případů podle autonomie.md (merge/push main",

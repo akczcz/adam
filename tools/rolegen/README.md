@@ -23,7 +23,7 @@ python3 rolegen.py --roles ../../knowledge/organization/roles --out build --tena
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| R1a | Generování deterministické (dva běhy = stejný hash), registr nese verzi, vlastníka, SPIFFE ID, sha zdroje | ✅ |
+| R1a | Generování deterministické (dva běhy = stejný hash), registr nese verzi, vlastníka, SPIFFE ID, sha zdroje – 5 rolí (2026-10-24) | ✅ |
 | R1b | OPA (24 případů vč. SRE 2026-10-24: `deploy.plan` ✅, `deploy.apply` jen se schválením, `destroy`/`k8s_raw.exec` ✗, push ✗, runbook GET ✅, approve paměti ✗): vývojář čte repo ✅, zapisuje ✗, merguje ✗, přiřazuje issue ✗ (příloha III), push na větev zakázky ✅, push do main ✗, cizí tenant ✗, schvaluje paměť ✗, navrhuje poučení ✅, čte personal ✗, vypíná sandbox ✗; reviewer schvaluje firma/internal ✅, personal ✗, push ✗, merge ✗, forget ✗; neznámá role ✗ | ✅ 17/17 |
 | R1c | srt 0.0.81 přijme settings obou rolí | ✅ |
 | R1d | agentgateway 1.6.0 přijme klíče s rozpočty (USD, 24h/30d, Audit/Block) a egress route | ✅ |
