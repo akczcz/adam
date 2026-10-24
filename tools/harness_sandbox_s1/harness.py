@@ -82,7 +82,12 @@ class Report:
 
 
 def host_ip():
-    return subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()[0]
+    """IP hosta pro /etc/hosts a parentProxy – přenositelně přes UDP socket (nic neodesílá); `hostname -I` je jen GNU coreutils, na macOS chybí."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1)); return s.getsockname()[0]
+    except OSError:
+        return subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()[0]
 
 
 def make_certs():
@@ -103,8 +108,10 @@ def ensure_hosts(ip):
 
 
 def srt_settings(path, allowed, parent_proxy=None, deny_env=True, allow_write=("/tmp",), extra=None):
+    # macOS: seatbelt pracuje s reálnými cestami (/tmp → /private/tmp), proto i realpath každé allowWrite položky
+    allow_write = list(dict.fromkeys([p for a in allow_write for p in (a, os.path.realpath(a))]))
     cfg = {"network": {"allowedDomains": allowed, "deniedDomains": []},
-           "filesystem": {"denyRead": [], "allowRead": [], "allowWrite": list(allow_write), "denyWrite": []},
+           "filesystem": {"denyRead": [], "allowRead": [], "allowWrite": allow_write, "denyWrite": []},
            "enableWeakerNestedSandbox": False, "allowNestedUserNamespaces": False}
     if parent_proxy:
         cfg["network"]["parentProxy"] = {"http": parent_proxy, "https": parent_proxy}   # schéma: {http, https, noProxy} (sandbox-config.d.ts 0.0.81)
