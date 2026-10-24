@@ -41,7 +41,7 @@ Soubory: [`results/m1-20261023-113029.json`](results/m1-20261023-113029.json), [
 
 | Harness | Cíl | Proč |
 |---|---|---|
-| JWT HS256 podepsaný harnessem (claimy `tenant_id`, `roles`, `agent_id`, `on_behalf_of`) | Keycloak JWKS, `tenant_id` z user attribute, SVID z SPIRE | Keycloak tok a token exchange změřil I2; tady se měří PEP paměti |
+| JWT HS256 podepsaný harnessem (claimy `tenant_id`, `roles`, `agent_id`, `on_behalf_of`); server umí i RS256 proti JWKS (`MEMORY_JWKS_URL`, ověřeno s Keycloakem v O-2 `identity` 2026-10-24) | Keycloak JWKS, `tenant_id` z user attribute, SVID z SPIRE | Keycloak tok a token exchange změřil I2; tady se měří PEP paměti |
 | HTTP JSON `/tools/<name>` | MCP streamable HTTP přes agentgateway | tvar argumentů a odpovědí je stejný; MCP transport změřil G1/I2 |
 | hashing embedder 64 dim | embeddingy přes agentgateway (A3) | deterministický, bez modelu; výkon vektorového hledání se neměří |
 | OPA REST ze serveru | OPA-Envoy ext_authz v agentgateway (rozhodnuto v identitě) | zápis vyžaduje znalost záznamu (tenant cílového řádku) – PDP volá server, ne gateway |

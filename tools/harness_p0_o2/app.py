@@ -5,8 +5,10 @@ sandboxed_bash (sandbox-runtime s parentProxy → agentgateway CONNECT, bez taje
 nebo živý (--mode live). Zbytek (HITL, executor, PDP org.rego, stop/resume) je z O-1.
 
 Mock role = aktivity, které „navrhují“ artefakty (zadání, ADR, PR). Nevratné kroky (merge, deploy) vykonává
-deterministická aktivita *executor* s approval tokenem od člověka; PDP = OPA (policies/org.rego); PEP ověřuje HMAC
-podpis tokenu (zástupce OpenBao transit). HITL = when_any(wait_for_external_event, create_timer) – timeout nikdy neschvaluje.
+deterministická aktivita *executor* s approval tokenem od člověka; PDP = OPA (policies/org.rego); PEP ověřuje podpis tokenu:
+s P0_BAO_ADDR/P0_BAO_TOKEN přes OpenBao transit (klíč P0_BAO_KEY, ed25519, podpis `vault:v1:…`, aplikace klíč nikdy nedrží),
+bez něj HMAC fallback (O-1). Ověření běží v aktivitě `verify_approval` (orchestrátor zůstává deterministický).
+HITL = when_any(wait_for_external_event, create_timer) – timeout nikdy neschvaluje.
 Naivní agent Vývojář poslechne injekci v zadání a pokusí se o merge sám – PDP ho musí zastavit.
 
 HTTP API (FastAPI na APP_PORT): POST /zakazky, GET /zakazky/{id}, POST /zakazky/{id}/approve/{bod}, POST /zakazky/{id}/stop,
@@ -14,6 +16,7 @@ POST /zakazky/{id}/resume, GET /_debug/ledger. Ledger (JSONL) = audit: handoffs,
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -27,6 +30,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 OPA = os.environ.get("O1_OPA_URL", "http://127.0.0.1:8181/v1/data/org/decision")
 SECRET = os.environ.get("O1_APPROVAL_SECRET", "o1-transit-key").encode()
+BAO, BAO_TOKEN, BAO_KEY = os.environ.get("P0_BAO_ADDR"), os.environ.get("P0_BAO_TOKEN", ""), os.environ.get("P0_BAO_KEY", "approval")
 LEDGER = os.environ.get("O1_LEDGER", "logs/ledger.jsonl")
 HITL_TIMEOUT_S = float(os.environ.get("O1_HITL_TIMEOUT_S", "3600"))
 BUDGET_USD = float(os.environ.get("O1_BUDGET_USD", "400"))
@@ -39,16 +43,31 @@ def ledger(kind, **kw):
         f.write(json.dumps({"ts": time.time(), "kind": kind, **kw}, ensure_ascii=False) + "\n")
 
 
+def _bao(path: str, body: dict) -> dict:
+    """OpenBao API s tokenem aplikace (policy jen sign/verify na jednom klíči – export, rotate, delete 403)."""
+    r = httpx.post(f"{BAO}/v1/{path}", json=body, headers={"X-Vault-Token": BAO_TOKEN}, timeout=5)
+    r.raise_for_status()
+    return r.json()["data"]
+
+
 def sign(payload: dict) -> str:
     body = json.dumps(payload, sort_keys=True).encode()
+    if BAO:
+        sig = _bao(f"transit/sign/{BAO_KEY}", {"input": base64.b64encode(body).decode()})["signature"]  # vault:v<verze klíče>:…
+        ledger("SIGN", backend="openbao-transit", key=BAO_KEY, key_version=sig.split(":")[1], bod=payload.get("bod"), zakazka=payload.get("zakazka_id"))
+        return body.hex() + "." + sig
     return body.hex() + "." + hmac.new(SECRET, body, hashlib.sha256).hexdigest()
 
 
 def verify(token: str) -> dict | None:
     try:
-        body_hex, sig = token.split(".")
+        body_hex, sig = token.split(".", 1)
         body = bytes.fromhex(body_hex)
-        if not hmac.compare_digest(hmac.new(SECRET, body, hashlib.sha256).hexdigest(), sig):
+        if BAO:
+            if not sig.startswith("vault:v"): return None
+            if not _bao(f"transit/verify/{BAO_KEY}", {"input": base64.b64encode(body).decode(), "signature": sig})["valid"]:
+                return None
+        elif not hmac.compare_digest(hmac.new(SECRET, body, hashlib.sha256).hexdigest(), sig):
             return None
         return json.loads(body)
     except Exception:
@@ -362,6 +381,14 @@ def notify(ctx, inp):
     return True
 
 
+@rt.activity(name="verify_approval")
+def verify_approval(ctx, inp):
+    """Ověření podpisu approval tokenu mimo orchestrátor (HTTP do OpenBao není deterministické). Vrací payload nebo None."""
+    tok = verify(inp.get("token", ""))
+    ledger("VERIFY", backend="openbao-transit" if BAO else "hmac", zakazka=inp.get("zakazka"), bod=inp.get("bod"), valid=bool(tok), by=(tok or {}).get("by"))
+    return tok
+
+
 def _ledger():
     if not os.path.exists(LEDGER): return []
     return [json.loads(l) for l in open(LEDGER) if l.strip()]
@@ -376,8 +403,8 @@ def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash):
     if winner == tm:
         yield ctx.call_activity(notify, input={"event": "HITL_TIMEOUT", "bod": bod, "zakazka": z["id"], "result": "pozastaveno"})
         return None
-    data = ev.get_result()
-    tok = verify(data.get("token", ""))
+    data = ev.get_result() or {}
+    tok = yield ctx.call_activity(verify_approval, input={"token": (data.get("token") if isinstance(data, dict) else "") or "", "zakazka": z["id"], "bod": bod})
     if not tok or tok.get("artifact_hash") != artifact_hash or tok.get("bod") != bod:
         yield ctx.call_activity(notify, input={"event": "HITL_INVALID_TOKEN", "bod": bod, "zakazka": z["id"]})
         return None

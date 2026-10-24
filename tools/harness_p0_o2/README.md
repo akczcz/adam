@@ -121,6 +121,33 @@ PR, reviews, merge, webhooky) – stejná cesta kódu `gh_api` jako proti api.gi
 
 Soubor: `results/o2-github-hitl-mock-20261024-064226.json`, `results/bridge-ledger.json`. Design: `knowledge/organization/procesy.md` „HITL přes GitHub“.
 
+## Scénář `--scenario identity` – Keycloak JWKS pro role, OpenBao transit pro approval token (2026-10-24, mock)
+
+Dvě zjednodušení z O-1/M1 nahrazena mechanismy rozhodnutých vrstev, lokálně bez Dockeru:
+
+- **Role = OAuth klient Keycloaku se service accountem** (`configs/realm-p0.json`, realm `p0`): `agent-{account,architekt,vyvojar,reviewer}`,
+  grant `client_credentials`, RS256 s `kid` v JWKS. `tenant_id` a `agent_id` jsou **atributy service-account uživatele** (user profile
+  s `unmanagedAttributePolicy`), ne klienta – stejný mapper jako u lidí; realm role → plochý claim `roles`; `aud=memory` přes audience mapper.
+  Server paměti M1 (`MEMORY_JWKS_URL`, `MEMORY_ISSUER`, `MEMORY_AUDIENCE`) ověřuje jen RS256 proti JWKS, HS256 odmítá. Člověk (reviewer)
+  = uživatel `adam` přes password grant klienta `harness-human` (jen pro harness).
+- **Approval token podepisuje OpenBao 2.7.1 transit** (klíč `approval`, ed25519, `exportable=false`), podpis `vault:v1:…`. Aplikace
+  zakázky má token s policy `approval-signer` (jen `transit/sign|verify/approval`); root token zůstává v harnessu (= operátor).
+  Ověření běží v aktivitě `verify_approval` (HTTP do OpenBao není v orchestrátoru deterministické); PDP executoru ověřuje znovu.
+  Audit device OpenBao (`logs/openbao-audit.log`) eviduje každý sign/verify.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| ID1 | Keycloak vydává tokeny 4 rolí: RS256, `kid` v JWKS, `iss` realm p0, `aud=memory`, `tenant_id=acme`, `agent_id=spiffe://platform/role/<role>`, `roles=[agent]` | ✅ ~120–130 ms/token |
+| ID2 | PEP paměti: RS256 → 200 + seed; HS256 s legacy tajemstvím M1 (i s rolí human) → 401; bez `aud=memory` → 401; změněný payload → 401; agent tenanta `globex` → 200, 0 záznamů (tenant z tokenu + RLS) | ✅ |
+| ID3 | Zakázka P0-5 se čtyřmi rolemi na Keycloak tokenech Dokonceno; ledger paměti ukazuje volání pod `sub` service accountu každé role | ✅ |
+| ID4 | 4 podpisy (H1, H2, H4, H5) = 4 `APPROVAL_RAISED`; VERIFY aktivit 4 (valid), audit OpenBao sign 5 (4 + probe harnessu) / verify 6 (4 HITL + 2 PDP); klíč neexportovatelný; token aplikace: export/rotate/read/create klíče → 403 | ✅ 22–47 ms/podpis |
+| ID5 | Padělek s legacy HMAC tajemstvím O-1 vyvolaný přímo přes Dapr API (`raiseEvent/hitl:H1`, správný hash) → VERIFY valid=false → `HITL_INVALID_TOKEN` → Pozastaveno, Architekt nespuštěn | ✅ |
+| ID6 | Latence identity | ℹ️ |
+
+Soubor: `results/o2-identity-mock-20261024-070722.json`. Zbývá k cíli: SVID ze SPIRE jako druhý credential a token exchange
+v gateway (I2) místo `client_credentials` s tajemstvím klienta; tajemství klientů z OpenBao (zde testovací v realm JSON);
+klienti a atributy generované z `roles/*.yaml` (rolegen) místo ručního realmu; mapování GitHub login → Keycloak user pro bridge.
+
 ## Co to říká o platformě
 
 - **Injekce v zadání prošla modelem a neprošla platformou.** Naivní model udělal všechny tři věci, které injekce chtěla
@@ -135,11 +162,11 @@ Soubor: `results/o2-github-hitl-mock-20261024-064226.json`, `results/bridge-ledg
 | Harness | Cíl |
 |---|---|
 | mock model / živý přes API klíč | Claude přes agentgateway s token exchange za SVID role (I2) |
-| JWT role podepsaný HMAC (M1) | Keycloak JWKS, `tenant_id` z user attribute, SVID ze SPIRE |
+| JWT role podepsaný HMAC (M1); ve scénáři `identity` už Keycloak JWKS + `tenant_id` z user attribute | SVID ze SPIRE jako druhý credential, exchange v gateway, tajemství klientů z OpenBao |
 | srt v kontejneru harnessu | Kata pod na AKS (`kata-vm-isolation`) + srt uvnitř non-root (`harness_sandbox_s1/aks/`) |
 | Account, Architekt, Reviewer, SRE = aktivity bez modelu | role přes Agent SDK podle `knowledge/organization/roles/*.yaml` |
 | artefakty jako URI v ledgeru | issue, ADR a PR v tomto repu (dogfooding), AG-UI pro HITL |
-| approval token HMAC v app | OpenBao transit |
+| approval token HMAC v app; ve scénáři `identity` už OpenBao transit (ed25519, policy jen sign/verify) | OpenBao v clusteru s auth metodou Kubernetes/JWT místo tokenu v env, rotace klíče (`min_decryption_version`) |
 
 ## Spuštění
 
@@ -151,6 +178,8 @@ npm install && sudo apt-get install -y bubblewrap socat ripgrep
 export AGENTGATEWAY_BIN=… DAPR_BIN_DIR=… OPA_BIN=…        # viz README harnessů S1 a O-1
 .venv/bin/python harness.py                              # mock
 ANTHROPIC_API_KEY=sk-ant-… .venv/bin/python harness.py --mode live --model claude-haiku-4-5
+# identita: rozbalený keycloak-26.8.1 (viz harness I2) + binárka OpenBao 2.7.1 (openbao_2.7.1_<os>_<arch>.tar.gz z GitHub releases)
+KC_HOME=…/keycloak-26.8.1 BAO_BIN=…/bao .venv/bin/python harness.py --scenario identity   # porty 8089 (Keycloak), 8210 (OpenBao): O2_KC_PORT, O2_BAO_PORT
 ```
 
 Vyžaduje root (zápis do `/etc/hosts`), user namespaces pro bubblewrap a sousední harnessy G1, S1, M1, O-1 v `tools/`
@@ -183,6 +212,11 @@ O2_PLACEMENT_PORT=50105 O2_SCHEDULER_PORT=50106 O2_ETCD_CLIENT_PORT=12379 .venv/
 - Claude Code CLI vkládá do první user zprávy `<system-reminder>` s prostředím (cwd, platforma); mock je musí odfiltrovat, jinak skončí v artefaktu (poprvé se objevil v těle issue). Pro živý model: obsah artefaktů kontrolovat na únik system remindérů (v O-2 live se nestalo).
 - `ledger(kind, **kw)`: klíč `kind` v kwargs koliduje s pozičním argumentem → `publish_kind`.
 - Mock rozlišuje role podle `role=<role>` v system promptu; checky Vývojáře filtrují ledger podle `role`, jinak zachytí nástroje ostatních rolí.
+- Keycloak import realmu odmítne neznámé pole (`_comment`) – poznámky jen do `displayName`/`description`. Atributy service-account
+  uživatele se při importu zapíší jen s user profile, který je zná (`components` → `declarative-user-profile`, nebo `unmanagedAttributePolicy`).
+- OpenBao 2.7: `sys/audit` přes API je zakázán (CVE-2025-6000) – audit device jen deklarativně v HCL (`audit "file" { type, path, options }`;
+  `path` je povinné), i v `-dev` režimu přes `-config=`.
+- Ověření podpisu v orchestrátoru Dapr Workflow nesmí volat síť (replay) → aktivita `verify_approval`.
 - Mock čte zadání z první user zprávy a scénář SRE pozná podle `roles/sre.yaml` v zadání; referenční návrh musí být absolutní cesta čitelná v sandboxu.
 - `claude-agent-sdk` 0.2.173 vrací `ResultMessage.usage` jako dict s `cache_*` poli – cena z mocku je konstantní.
 - **macOS:** `hostname -I` neexistuje (host_ip přes UDP socket); seatbelt zná jen reálné cesty – `allowWrite: ["/tmp"]` nestačí,

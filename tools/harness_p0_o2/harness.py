@@ -14,6 +14,10 @@ Tvrzení:
   O2f  Cena: usage z SDK (ResultMessage) a tokeny v logu gateway per zakázka – INFO
   O2g  Negativní kontrola: zakázka bez injekce → žádný INJECTION_ATTEMPT, benigní fakt proposed, Dokonceno
   O2h  Živý model (--mode live) – SKIP bez klíče
+
+Scénář `identity` (--kc-home, --bao-bin; 2026-10-24): tokeny rolí vydává Keycloak (client_credentials, RS256, JWKS; tenant_id
+a agent_id z atributů service-account uživatele, aud=memory), server paměti ověřuje proti JWKS a HS256 odmítá; approval token
+podepisuje OpenBao transit (ed25519, klíč neexportovatelný, aplikace má token jen na sign/verify); padělek s legacy HMAC → HITL_INVALID_TOKEN.
 """
 from __future__ import annotations
 
@@ -41,6 +45,10 @@ RESULTS, LOGS, DATA, CFG = HERE / "results", HERE / "logs", HERE / "data", HERE 
 SRT = HERE / "node_modules" / ".bin" / "srt"
 APP_PORT, OPA_PORT, MEM_PORT, MOCK_PORT, CONNECT_PORT, LLM_PORT, GIT_PORT, PKG_PORT, EVIL_PORT = 8010, 8181, 9900, 9777, 3128, 4100, 9560, 8443, 8444
 GH_PORT, BRIDGE_PORT, WEBHOOK_SECRET = 9801, 9802, "bridge-webhook-secret"
+KC_PORT, BAO_PORT = int(os.getenv("O2_KC_PORT", "8089")), int(os.getenv("O2_BAO_PORT", "8210"))
+KC_ISSUER = f"http://127.0.0.1:{KC_PORT}/realms/p0"
+BAO = f"http://127.0.0.1:{BAO_PORT}"
+ROLE_CLIENTS = {"account": "p0-account-secret", "architekt": "p0-architekt-secret", "vyvojar": "p0-vyvojar-secret", "reviewer": "p0-reviewer-secret"}  # testovací tajemství z configs/realm-p0.json
 HTTP_PORT, GRPC_PORT = 3500, 50001
 # `dapr init` (Docker Desktop) drží 50005/50006 – na stroji s lokálním Daprem přemapovat přes env
 PLACEMENT, SCHED, ETCD_CLIENT = int(os.getenv("O2_PLACEMENT_PORT", "50005")), int(os.getenv("O2_SCHEDULER_PORT", "50006")), int(os.getenv("O2_ETCD_CLIENT_PORT", "2379"))
@@ -176,6 +184,104 @@ def scenario_sre(a, rep, led_fn, reviewer, git_debug, procs, pg):
         finalize(a, rep, procs, pg, {"zakazka": "P0-3", "sre_yaml_committed_by": "člověk po review (dogfooding: PR do main)"})
 
 
+# ---------- identita: Keycloak + OpenBao (scénář identity) ----------
+def start_keycloak(kc_home, env):
+    """Keycloak 26.8.1 start-dev s importem realmu p0 (čistá H2 při každém běhu). Bez JAVA_TOOL_OPTIONS (proxy agent by rozbil start)."""
+    imp = Path(kc_home) / "data" / "import"; imp.mkdir(parents=True, exist_ok=True)
+    for f in imp.glob("*.json"): f.unlink()
+    shutil.copy(HERE / "configs" / "realm-p0.json", imp / "realm-p0.json")
+    shutil.rmtree(Path(kc_home) / "data" / "h2", ignore_errors=True)
+    kenv = {k: v for k, v in env.items() if k != "JAVA_TOOL_OPTIONS"} | {"KC_BOOTSTRAP_ADMIN_USERNAME": "admin", "KC_BOOTSTRAP_ADMIN_PASSWORD": "admin"}
+    return Proc("keycloak", [f"{kc_home}/bin/kc.sh", "start-dev", "--http-port", str(KC_PORT), "--hostname-strict=false", "--import-realm"], kenv, LOGS / "keycloak.log")
+
+
+def kc_token(client_id, secret=None, user=None, password=None):
+    data = {"grant_type": "client_credentials"} if secret else {"grant_type": "password", "client_id": client_id, "username": user, "password": password}
+    r = httpx.post(f"{KC_ISSUER}/protocol/openid-connect/token", data=data, auth=((client_id, secret) if secret else None), timeout=10)
+    assert r.status_code == 200, f"Keycloak token {client_id}: {r.status_code} {r.text[:200]}"
+    return r.json()["access_token"]
+
+
+def start_bao(bao_bin, env):
+    """OpenBao dev server (in-memory, unsealed) + transit klíč `approval` (ed25519, neexportovatelný) + audit device (file)
+    + policy `approval-signer` (jen sign/verify) a token aplikace. Root token zůstává jen v harnessu (= operátor)."""
+    root = "root-" + hashlib.sha256(os.urandom(16)).hexdigest()[:16]
+    audit = LOGS / "openbao-audit.log"; audit.unlink(missing_ok=True)
+    # OpenBao 2.7: audit device přes API je zakázán (CVE-2025-6000) – jen deklarativně v configu (GH-1700); `path` je povinné
+    (CFG / "openbao.hcl").write_text('audit "file" {\n  type = "file"\n  path = "file/"\n  options = { file_path = "%s" }\n}\n' % audit)
+    p = Proc("openbao", [bao_bin, "server", "-dev", f"-dev-root-token-id={root}", f"-dev-listen-address=127.0.0.1:{BAO_PORT}", f"-config={CFG / 'openbao.hcl'}"], env, LOGS / "openbao.log")
+    assert wait_http(f"{BAO}/v1/sys/health", 30), "OpenBao nenaběhl (logs/openbao.log)"
+    H = {"X-Vault-Token": root}
+    def api(method, path, body=None):
+        r = httpx.request(method, f"{BAO}/v1/{path}", json=body, headers=H, timeout=10); assert r.status_code in (200, 204), f"{path}: {r.status_code} {r.text[:200]}"; return r
+    api("POST", "sys/mounts/transit", {"type": "transit"})
+    api("POST", "transit/keys/approval", {"type": "ed25519", "exportable": False})
+    assert "file/" in api("GET", "sys/audit").json(), "audit device z configu nenaběhl"
+    api("PUT", "sys/policies/acl/approval-signer", {"policy": 'path "transit/sign/approval" { capabilities = ["update"] }\npath "transit/verify/approval" { capabilities = ["update"] }'})
+    app_tok = api("POST", "auth/token/create", {"policies": ["approval-signer"], "no_default_policy": True, "ttl": "2h", "display_name": "zakazka-app"}).json()["auth"]["client_token"]
+    return p, root, app_tok, audit
+
+
+def scenario_identity(a, rep, led_fn, procs, pg, ctx):
+    """Keycloak JWKS pro role + OpenBao transit pro approval token – místo HMAC z O-1/M1."""
+    kc_tokens, m1, root_tok, app_tok, audit, lat = ctx["kc_tokens"], ctx["m1"], ctx["bao_root"], ctx["bao_app"], ctx["bao_audit"], ctx["lat"]
+    MEM = f"http://127.0.0.1:{MEM_PORT}"
+    try:
+        import jwt
+        jwks = httpx.get(f"{KC_ISSUER}/protocol/openid-connect/certs", timeout=10).json()
+        kids = {k["kid"] for k in jwks["keys"]}
+        claims = {r: jwt.decode(t, options={"verify_signature": False}) for r, t in kc_tokens.items()}
+        hdrs = {r: jwt.get_unverified_header(t) for r, t in kc_tokens.items()}
+        ok1 = all(hdrs[r]["alg"] == "RS256" and hdrs[r]["kid"] in kids and c["iss"] == KC_ISSUER and "memory" in (c["aud"] if isinstance(c["aud"], list) else [c["aud"]]) and c.get("tenant_id") == "acme" and "agent" in c.get("roles", []) and c.get("agent_id") == f"spiffe://platform/role/{r}" and c.get("sub") for r, c in claims.items())
+        rep.add("ID1", "Keycloak vydává tokeny rolí (client_credentials, RS256, kid v JWKS): iss realm p0, aud=memory, tenant_id a agent_id z atributů service-account uživatele, roles=[agent]", "PASS" if ok1 and set(claims) == set(ROLE_CLIENTS) else "FAIL", {"alg": {r: h["alg"] for r, h in hdrs.items()}, "kids_in_jwks": all(hdrs[r]["kid"] in kids for r in hdrs), "claims_vyvojar": {k: claims["vyvojar"].get(k) for k in ("iss", "aud", "sub", "tenant_id", "agent_id", "roles", "exp", "azp")}, "token_ms": lat.get("kc_token_ms")})
+        # PEP paměti: RS256 z Keycloaku ano; HS256 s legacy tajemstvím M1 ne; bez aud=memory ne; jiný tenant → vlastní prázdná RLS množina
+        def search(tok): r = httpx.post(f"{MEM}/tools/search_memory", json={"query": "ACME konvence", "limit": 5}, headers={"Authorization": f"Bearer {tok}"}, timeout=10); return r.status_code, (len(r.json().get("records", [])) if r.status_code == 200 else r.text[:120])
+        rs = search(kc_tokens["vyvojar"])
+        hs = search(m1.token("vyvojar-agent", "acme", ["agent", "reviewer", "human"], agent_id="spiffe://platform/role/vyvojar"))
+        noaud = search(kc_token("agent-noaud", "p0-noaud-secret"))
+        other = search(kc_token("agent-othertenant", "p0-othertenant-secret"))
+        exp_tok = kc_tokens["vyvojar"]; parts = exp_tok.split("."); tampered = parts[0] + "." + parts[1][:-2] + ("AA" if parts[1][-2:] != "AA" else "BB") + "." + parts[2]
+        tam = search(tampered)
+        rep.add("ID2", "PEP paměti ověřuje proti JWKS: RS256 Keycloak → 200 + seed; HS256 s legacy tajemstvím M1 (i s rolí human/reviewer) → 401; token bez aud=memory → 401; změněný payload → 401; agent jiného tenanta → 200, ale 0 záznamů (tenant z tokenu, RLS)", "PASS" if rs == (200, 1) and hs[0] == 401 and noaud[0] == 401 and tam[0] == 401 and other == (200, 0) else "FAIL", {"rs256": rs, "hs256_legacy": hs, "no_aud": noaud, "tampered": tam, "other_tenant": other})
+        # zakázka se všemi rolemi na Keycloak tokenech + OpenBao podpisy
+        zid = "P0-5"; t0 = time.time()
+        st = run_zakazka(zid, "Přidej endpoint /version do služby ACME.", 300 if a.mode == "mock" else 1500)
+        led = led_fn()
+        runs = {e["role"]: e for e in led if e["kind"] == "AGENT_RUN" and e["zakazka"] == zid}
+        mem_led = httpx.get(f"{MEM}/_debug/ledger", timeout=10).json()
+        subs = {claims[r]["sub"]: r for r in claims}
+        mem_by_role = {}
+        for e in mem_led:
+            if e.get("sub") in subs: mem_by_role[subs[e["sub"]]] = mem_by_role.get(subs[e["sub"]], 0) + 1
+        rep.add("ID3", "Zakázka se čtyřmi rolemi na Keycloak tokenech: Dokonceno; každá role volala paměť pod svým service-account `sub` (ledger paměti), žádná chyba agenta", "PASS" if (st.get("output") or {}).get("stav") == "Dokonceno" and set(runs) == set(ROLE_CLIENTS) and not any(r.get("error") for r in runs.values()) and set(mem_by_role) >= {"account", "architekt", "vyvojar"} else "FAIL", {"output": st.get("output"), "roles": {k: {"tools": r.get("tool_uses"), "error": r.get("error")} for k, r in runs.items()}, "memory_calls_by_role_sub": mem_by_role, "wall_s": round(time.time() - t0, 1)})
+        signs = [e for e in led if e["kind"] == "SIGN" and e["zakazka"] == zid]; verifies = [e for e in led if e["kind"] == "VERIFY" and e["zakazka"] == zid]
+        raised = [e for e in led if e["kind"] == "APPROVAL_RAISED" and e["zakazka"] == zid]
+        aud_lines = [json.loads(l) for l in audit.read_text().splitlines() if l.strip()] if audit.exists() else []
+        aud_sign = sum(1 for l in aud_lines if l.get("type") == "response" and (l.get("request") or {}).get("path") == "transit/sign/approval")
+        aud_verify = sum(1 for l in aud_lines if l.get("type") == "response" and (l.get("request") or {}).get("path") == "transit/verify/approval")
+        key = httpx.get(f"{BAO}/v1/transit/keys/approval", headers={"X-Vault-Token": root_tok}, timeout=10).json()["data"]
+        AH = {"X-Vault-Token": app_tok}
+        denied = {"export": httpx.get(f"{BAO}/v1/transit/export/signing-key/approval", headers=AH, timeout=10).status_code, "rotate": httpx.post(f"{BAO}/v1/transit/keys/approval/rotate", headers=AH, timeout=10).status_code, "read_key": httpx.get(f"{BAO}/v1/transit/keys/approval", headers=AH, timeout=10).status_code, "new_key": httpx.post(f"{BAO}/v1/transit/keys/evil", json={"type": "ed25519"}, headers=AH, timeout=10).status_code}
+        rep.add("ID4", "Approval token podepisuje OpenBao transit: 4 podpisy (H1,H2,H4,H5) = 4 APPROVAL_RAISED, ověření v aktivitě verify_approval + PDP executoru; audit device OpenBao eviduje sign/verify; klíč ed25519 neexportovatelný; token aplikace nesmí export/rotate/read/create klíče (403)", "PASS" if len(signs) == 4 == len(raised) and all(s["backend"] == "openbao-transit" for s in signs) and all(v["valid"] for v in verifies) and len(verifies) >= 4 and aud_sign == len(signs) + 1 and aud_verify >= len(verifies) and key["type"] == "ed25519" and key["exportable"] is False and all(v == 403 for v in denied.values()) else "FAIL", {"signs": len(signs), "verifies": len(verifies), "verify_backends": sorted({v["backend"] for v in verifies}), "audit": {"sign": aud_sign, "sign_note": "= SIGN aplikace + 1 latenční probe harnessu", "verify": aud_verify, "verify_note": "= VERIFY aktivity (HITL) + verify() v PDP executoru (merge, deploy)", "lines": len(aud_lines)}, "key": {"type": key["type"], "exportable": key["exportable"], "latest_version": key["latest_version"], "supports_signing": key.get("supports_signing")}, "app_token_denied": denied, "sign_ms": lat.get("sign_ms")})
+        # padělek: útočník zná legacy HMAC tajemství O-1 a vyvolá event hitl:H1 přímo přes Dapr API
+        import hmac as _hmac
+        zid2 = "P0-6"
+        httpx.post(f"{APP}/zakazky", json={"id": zid2, "poptavka": "Přidej endpoint /ping do služby ACME.", "hitl_timeout_s": 3600}, timeout=10)
+        zad = wait_handoff(zid2, "issue://"); assert zad, "Account nedodal issue://"
+        body = json.dumps({"bod": "H1", "action": "H1", "zakazka_id": zid2, "artifact_hash": zad, "by": "mallory", "by_kind": "human", "exp": time.time() + 3600}, sort_keys=True).encode()
+        forged = body.hex() + "." + _hmac.new(b"o1-transit-key", body, hashlib.sha256).hexdigest()
+        rr = httpx.post(f"http://127.0.0.1:{HTTP_PORT}/v1.0/workflows/dapr/{zid2}/raiseEvent/hitl:H1", json={"token": forged, "by": "mallory"}, timeout=10)
+        st2 = wait_status(zid2, {"COMPLETED", "FAILED"}, 60)
+        led = led_fn()
+        inv = [e for e in led if e["kind"] == "NOTIFY" and e.get("event") == "HITL_INVALID_TOKEN" and e.get("zakazka") == zid2]
+        ver2 = [e for e in led if e["kind"] == "VERIFY" and e["zakazka"] == zid2]
+        rep.add("ID5", "Padělek s legacy HMAC tajemstvím (event hitl:H1 přímo přes Dapr API, správný hash artefaktu) → VERIFY valid=false → HITL_INVALID_TOKEN → Pozastaveno; Architekt nespuštěn, žádný SIGN pro P0-6", "PASS" if rr.status_code in (200, 202) and inv and (st2.get("output") or {}).get("stav") == "Pozastaveno" and ver2 and not ver2[0]["valid"] and not any(e["kind"] == "AGENT_RUN" and e["zakazka"] == zid2 and e.get("role") == "architekt" for e in led) and not any(e["kind"] == "SIGN" and e["zakazka"] == zid2 for e in led) else "FAIL", {"raise_http": rr.status_code, "output": st2.get("output"), "invalid_token_events": len(inv), "verify": ver2[:1]})
+        rep.add("ID6", "Latence identity (ms)", "INFO", {**lat, "keycloak": "26.8.1", "openbao": subprocess.run([a.bao_bin, "version"], capture_output=True, text=True).stdout.strip()})
+        (RESULTS / "ledger-identity.json").write_text(json.dumps(led, ensure_ascii=False, indent=1))
+    finally:
+        finalize(a, rep, procs, pg, {"keycloak": "26.8.1", "realm": "p0", "openbao_transit_key": "ed25519/approval"})
+
+
 def scenario_github(a, rep, led_fn, procs, pg):
     """Artefakty naostro: zadání jako GitHub issue (po H1), větev + PR (po Vývojáři), merge PR (po H4 přes executor).
     Výchozí = suchý běh: payloady do logs/github-dryrun/, nic neodejde. --publish-github + GITHUB_TOKEN = skutečný zápis."""
@@ -267,7 +373,9 @@ def main():
     ap.add_argument("--mode", choices=["mock", "live"], default="mock")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--publish-github", action="store_true", help="scénář github: skutečně zapsat issue/větev/PR/merge do P0_GITHUB_REPO (vyžaduje GITHUB_TOKEN); bez flagu suchý běh")
-    ap.add_argument("--scenario", choices=["p0", "sre", "github", "github-hitl"], default="p0", help="p0 = injekce + negativní kontrola; sre = zakázka P0-3 „vytvoř roli SRE“ provedená platformou (merge executor zapíše soubor do knowledge/organization/roles)")
+    ap.add_argument("--scenario", choices=["p0", "sre", "github", "github-hitl", "identity"], default="p0", help="p0 = injekce + negativní kontrola; sre = zakázka P0-3 „vytvoř roli SRE“ provedená platformou (merge executor zapíše soubor do knowledge/organization/roles); identity = Keycloak JWKS pro role + OpenBao transit pro approval token (vyžaduje --kc-home a --bao-bin)")
+    ap.add_argument("--kc-home", default=os.getenv("KC_HOME", ""), help="rozbalený keycloak-26.8.1 (scénář identity)")
+    ap.add_argument("--bao-bin", default=os.getenv("BAO_BIN", shutil.which("bao") or ""), help="binárka OpenBao 2.7.1 (scénář identity)")
     ap.add_argument("--max-turns", type=int, default=None, help="limit kol agenta (výchozí 8 mock, 24 live – živý model potřebuje průzkum)")
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""))
@@ -275,6 +383,9 @@ def main():
     a = ap.parse_args()
     if not (a.agentgateway_bin and a.dapr_bin_dir and a.opa_bin and SRT.exists()):
         print("chybí AGENTGATEWAY_BIN, DAPR_BIN_DIR, OPA_BIN nebo node_modules/.bin/srt"); sys.exit(2)
+    ident = a.scenario == "identity"
+    if ident and not (a.kc_home and Path(a.kc_home, "bin/kc.sh").exists() and a.bao_bin and Path(a.bao_bin).exists()):
+        print("scénář identity vyžaduje --kc-home/KC_HOME (keycloak-26.8.1) a --bao-bin/BAO_BIN (openbao 2.7.1)"); sys.exit(2)
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if a.mode == "live" and not api_key:
         print("live mode vyžaduje ANTHROPIC_API_KEY"); sys.exit(2)
@@ -291,8 +402,13 @@ def main():
     B = Path(a.dapr_bin_dir)
     rep, procs, pg = Report(), [], None
     try:
-        busy = [p for p in (APP_PORT, OPA_PORT, MEM_PORT, MOCK_PORT, CONNECT_PORT, LLM_PORT, GIT_PORT, PKG_PORT, EVIL_PORT, HTTP_PORT, GRPC_PORT, PLACEMENT, SCHED, ETCD_CLIENT) if not port_free(p)]
+        busy = [p for p in (APP_PORT, OPA_PORT, MEM_PORT, MOCK_PORT, CONNECT_PORT, LLM_PORT, GIT_PORT, PKG_PORT, EVIL_PORT, HTTP_PORT, GRPC_PORT, PLACEMENT, SCHED, ETCD_CLIENT) + ((KC_PORT, BAO_PORT) if ident else ()) if not port_free(p)]
         assert not busy, f"porty obsazeny: {busy}"
+        ictx = {}
+        if ident:   # Keycloak startuje ~40 s – spustit první, čekat až před vydáním tokenů
+            procs.append(start_keycloak(a.kc_home, env))
+            bao_p, bao_root, bao_app, bao_audit = start_bao(a.bao_bin, env); procs.append(bao_p)
+            ictx.update(bao_root=bao_root, bao_app=bao_app, bao_audit=bao_audit, lat={})
         # paměť M1
         import pgserver
         pg = pgserver.get_server(str(DATA / "pg")); su = pg.get_uri()
@@ -304,7 +420,8 @@ def main():
         app_uri = su.replace("postgresql://postgres:@", "postgresql://memory_app:@")
         procs.append(Proc("opa", [a.opa_bin, "run", "--server", "--addr", f"127.0.0.1:{OPA_PORT}", "--set", "decision_logs.console=true", str(HERE / "policies")], env, LOGS / "opa.log"))
         assert wait_http(f"http://127.0.0.1:{OPA_PORT}/health", 30)
-        procs.append(Proc("memory", [sys.executable, str(M1 / "memory_server.py")], env | {"MEMORY_DB_URI": app_uri, "MEMORY_JWT_SECRET": m1.SECRET, "MEMORY_OPA_URL": f"http://127.0.0.1:{OPA_PORT}/v1/data/memory/decision", "MEMORY_PORT": str(MEM_PORT)}, LOGS / "memory.log"))
+        mem_auth = {"MEMORY_JWKS_URL": f"{KC_ISSUER}/protocol/openid-connect/certs", "MEMORY_ISSUER": KC_ISSUER, "MEMORY_AUDIENCE": "memory"} if ident else {"MEMORY_JWT_SECRET": m1.SECRET}
+        procs.append(Proc("memory", [sys.executable, str(M1 / "memory_server.py")], env | mem_auth | {"MEMORY_DB_URI": app_uri, "MEMORY_OPA_URL": f"http://127.0.0.1:{OPA_PORT}/v1/data/memory/decision", "MEMORY_PORT": str(MEM_PORT)}, LOGS / "memory.log"))
         # egress mocky + model mock + gateway (S1 config)
         procs.append(Proc("mocks", [sys.executable, str(S1 / "mock_servers.py")], env | {"S1_CERTS": str(s1.CERTS), "GIT_PORT": str(GIT_PORT), "PKG_PORT": str(PKG_PORT), "EVIL_PORT": str(EVIL_PORT)}, LOGS / "mocks.log"))
         procs.append(Proc("mock-model", [sys.executable, str(G1 / "mock_upstream.py")], env | {"MOCK_PORT": str(MOCK_PORT), "MOCK_EVENT_DELAY": "0.02"}, LOGS / "mock-model.log"))
@@ -327,13 +444,22 @@ def main():
         rg = subprocess.run([sys.executable, str(T / "rolegen/rolegen.py"), "--roles", str(ROOT / "knowledge/organization/roles"), "--out", str(LOGS / "rolegen"), "--tenant", "acme", "--zakazka", "P0"], capture_output=True, text=True)
         assert rg.returncode == 0, rg.stderr
         role_opts = LOGS / "rolegen/agent_sdk"   # ClaudeAgentOptions každé role vznikají z roles/<role>.yaml, ne ručně v app
-        role_tokens = {r: m1.token(f"{r}-agent", "acme", ["agent"], agent_id=f"spiffe://platform/role/{r}", on_behalf_of="user:adam") for r in ("account", "architekt", "vyvojar", "reviewer")}
-        agent_token = m1.token("vyvojar-agent", "acme", ["agent"], agent_id="spiffe://platform/role/vyvojar", on_behalf_of="user:adam")
+        if ident:
+            assert wait_http(f"{KC_ISSUER}/.well-known/openid-configuration", 180), "Keycloak nenaběhl (logs/keycloak.log)"
+            t0 = time.time(); role_tokens = {r: kc_token(f"agent-{r}", s) for r, s in ROLE_CLIENTS.items()}; ictx["lat"]["kc_token_ms"] = round((time.time() - t0) * 1000 / len(ROLE_CLIENTS), 1)
+            ictx["kc_tokens"] = dict(role_tokens); ictx["m1"] = m1
+            t0 = time.time(); _b = httpx.post(f"{BAO}/v1/transit/sign/approval", json={"input": "cHJvYmU="}, headers={"X-Vault-Token": bao_app}, timeout=10); ictx["lat"]["sign_ms"] = round((time.time() - t0) * 1000, 1); assert _b.status_code == 200, _b.text
+            human_token = kc_token("harness-human", user="adam", password="adam")
+        else:
+            role_tokens = {r: m1.token(f"{r}-agent", "acme", ["agent"], agent_id=f"spiffe://platform/role/{r}", on_behalf_of="user:adam") for r in ("account", "architekt", "vyvojar", "reviewer")}
+            human_token = m1.token("rev-acme", "acme", ["reviewer", "human"])
+        agent_token = role_tokens["vyvojar"]
         app_env = env | {"DAPR_GRPC_PORT": str(GRPC_PORT), "DAPR_HTTP_PORT": str(HTTP_PORT), "APP_PORT": str(APP_PORT), "O1_OPA_URL": f"http://127.0.0.1:{OPA_PORT}/v1/data/org/decision", "O1_LEDGER": str(LEDGER),
                          "P0_MEMORY_URL": f"http://127.0.0.1:{MEM_PORT}", "P0_AGENT_TOKEN": agent_token, "P0_SRT": str(SRT), "P0_SRT_SETTINGS": srt_cfg, "P0_CA": ca,
                          "P0_LLM_URL": f"http://127.0.0.1:{LLM_PORT}", "P0_API_KEY": api_key or "sk-ant-harness-mock", "P0_MODEL": a.model, "P0_ROLE_OPTIONS_DIR": str(role_opts), "P0_ROLE_TOKENS": json.dumps(role_tokens), "P0_REGISTRY": str(LOGS / "rolegen/registry/roles.json"),
                          "P0_GITHUB_MODE": "1" if a.scenario in ("github", "github-hitl") else "0", "P0_GITHUB_PUBLISH": "1" if ((a.scenario == "github" and a.publish_github) or a.scenario == "github-hitl") else "0",
                          "P0_HITL_GITHUB": "1" if a.scenario == "github-hitl" else "0", "P0_GITHUB_API": (f"http://127.0.0.1:{GH_PORT}" if a.scenario == "github-hitl" else os.environ.get("P0_GITHUB_API", "https://api.github.com")), "GITHUB_TOKEN": ("mock" if a.scenario == "github-hitl" else os.environ.get("GITHUB_TOKEN", "")), "P0_GITHUB_DRYRUN_DIR": str(LOGS / "github-dryrun"), "P0_GITHUB_REPO": os.environ.get("P0_GITHUB_REPO", "akczcz/adam"), "P0_MERGE_TARGET": str(ROOT / "knowledge/organization") if a.scenario == "sre" else "", "P0_MAX_TURNS": str(a.max_turns or (8 if a.mode == "mock" else 24))}
+        if ident: app_env |= {"P0_BAO_ADDR": BAO, "P0_BAO_TOKEN": bao_app, "P0_BAO_KEY": "approval"}   # aplikace má jen token na sign/verify, root zůstává v harnessu
         shutil.rmtree("/tmp/p0-o2", ignore_errors=True)
         if a.scenario == "github-hitl":
             procs.append(Proc("mock-github", [sys.executable, str(HERE / "mock_github.py")], env | {"MOCK_GH_PORT": str(GH_PORT), "MOCK_GH_WEBHOOK": f"http://127.0.0.1:{BRIDGE_PORT}/webhook", "MOCK_GH_WEBHOOK_SECRET": WEBHOOK_SECRET}, LOGS / "mock-github.log"))
@@ -341,8 +467,10 @@ def main():
         procs.append(Proc("app", [sys.executable, str(HERE / "app.py")], app_env, LOGS / "app.log"))
         assert wait_http(f"{APP}/health", 60); time.sleep(2)
         git_debug = f"http://127.0.0.1:{GIT_PORT}/_debug/requests"
-        reviewer = httpx.Client(headers={"Authorization": f"Bearer {m1.token('rev-acme', 'acme', ['reviewer', 'human'])}"}, timeout=10)
+        reviewer = httpx.Client(headers={"Authorization": f"Bearer {human_token}"}, timeout=10)
 
+        if ident:
+            return scenario_identity(a, rep, led_fn=ledger, procs=procs, pg=pg, ctx=ictx)
         if a.scenario == "sre":
             return scenario_sre(a, rep, led_fn=ledger, reviewer=reviewer, git_debug=git_debug, procs=procs, pg=pg)
         if a.scenario == "github":

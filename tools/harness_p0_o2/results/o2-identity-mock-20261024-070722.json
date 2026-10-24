@@ -1,0 +1,194 @@
+{
+ "meta": {
+  "started": "2026-10-24T07:07:23",
+  "scenario": "identity",
+  "mode": "mock",
+  "model": "claude-haiku-4-5",
+  "claude_agent_sdk": "0.2.173",
+  "agentgateway": "1.6.0",
+  "keycloak": "26.8.1",
+  "realm": "p0",
+  "openbao_transit_key": "ed25519/approval"
+ },
+ "checks": [
+  {
+   "id": "ID1",
+   "name": "Keycloak vydává tokeny rolí (client_credentials, RS256, kid v JWKS): iss realm p0, aud=memory, tenant_id a agent_id z atributů service-account uživatele, roles=[agent]",
+   "status": "PASS",
+   "detail": {
+    "alg": {
+     "account": "RS256",
+     "architekt": "RS256",
+     "vyvojar": "RS256",
+     "reviewer": "RS256"
+    },
+    "kids_in_jwks": true,
+    "claims_vyvojar": {
+     "iss": "http://127.0.0.1:8089/realms/p0",
+     "aud": "memory",
+     "sub": "b93d07ed-999a-4e99-8724-daeffb350910",
+     "tenant_id": "acme",
+     "agent_id": "spiffe://platform/role/vyvojar",
+     "roles": [
+      "agent"
+     ],
+     "exp": 1792826524,
+     "azp": "agent-vyvojar"
+    },
+    "token_ms": 130.6
+   }
+  },
+  {
+   "id": "ID2",
+   "name": "PEP paměti ověřuje proti JWKS: RS256 Keycloak → 200 + seed; HS256 s legacy tajemstvím M1 (i s rolí human/reviewer) → 401; token bez aud=memory → 401; změněný payload → 401; agent jiného tenanta → 200, ale 0 záznamů (tenant z tokenu, RLS)",
+   "status": "PASS",
+   "detail": {
+    "rs256": [
+     200,
+     1
+    ],
+    "hs256_legacy": [
+     401,
+     "{\"detail\":\"invalid token: PyJWKClientError\"}"
+    ],
+    "no_aud": [
+     401,
+     "{\"detail\":\"invalid token: MissingRequiredClaimError\"}"
+    ],
+    "tampered": [
+     401,
+     "{\"detail\":\"invalid token: DecodeError\"}"
+    ],
+    "other_tenant": [
+     200,
+     0
+    ]
+   }
+  },
+  {
+   "id": "ID3",
+   "name": "Zakázka se čtyřmi rolemi na Keycloak tokenech: Dokonceno; každá role volala paměť pod svým service-account `sub` (ledger paměti), žádná chyba agenta",
+   "status": "PASS",
+   "detail": {
+    "output": {
+     "id": "P0-5",
+     "stav": "Dokonceno",
+     "artefakty": [
+      "issue://P0-5",
+      "adr://P0-5/001",
+      "pr://P0-5/1",
+      "review://P0-5/1"
+     ],
+     "cost_usd": 0.045233999999999996
+    },
+    "roles": {
+     "account": {
+      "tools": [
+       "mcp__harness__search_memory",
+       "mcp__harness__write_artifact"
+      ],
+      "error": null
+     },
+     "architekt": {
+      "tools": [
+       "mcp__harness__read_artifact",
+       "mcp__harness__search_memory",
+       "mcp__harness__write_artifact"
+      ],
+      "error": null
+     },
+     "vyvojar": {
+      "tools": [
+       "mcp__harness__search_memory",
+       "mcp__harness__sandboxed_bash",
+       "mcp__harness__create_memory"
+      ],
+      "error": null
+     },
+     "reviewer": {
+      "tools": [
+       "mcp__harness__read_artifact",
+       "mcp__harness__run_evals",
+       "mcp__harness__write_artifact"
+      ],
+      "error": null
+     }
+    },
+    "memory_calls_by_role_sub": {
+     "vyvojar": 6,
+     "account": 2,
+     "architekt": 2
+    },
+    "wall_s": 10.9
+   }
+  },
+  {
+   "id": "ID4",
+   "name": "Approval token podepisuje OpenBao transit: 4 podpisy (H1,H2,H4,H5) = 4 APPROVAL_RAISED, ověření v aktivitě verify_approval + PDP executoru; audit device OpenBao eviduje sign/verify; klíč ed25519 neexportovatelný; token aplikace nesmí export/rotate/read/create klíče (403)",
+   "status": "PASS",
+   "detail": {
+    "signs": 4,
+    "verifies": 4,
+    "verify_backends": [
+     "openbao-transit"
+    ],
+    "audit": {
+     "sign": 5,
+     "sign_note": "= SIGN aplikace + 1 latenční probe harnessu",
+     "verify": 6,
+     "verify_note": "= VERIFY aktivity (HITL) + verify() v PDP executoru (merge, deploy)",
+     "lines": 39
+    },
+    "key": {
+     "type": "ed25519",
+     "exportable": false,
+     "latest_version": 1,
+     "supports_signing": true
+    },
+    "app_token_denied": {
+     "export": 403,
+     "rotate": 403,
+     "read_key": 403,
+     "new_key": 403
+    },
+    "sign_ms": 46.5
+   }
+  },
+  {
+   "id": "ID5",
+   "name": "Padělek s legacy HMAC tajemstvím (event hitl:H1 přímo přes Dapr API, správný hash artefaktu) → VERIFY valid=false → HITL_INVALID_TOKEN → Pozastaveno; Architekt nespuštěn, žádný SIGN pro P0-6",
+   "status": "PASS",
+   "detail": {
+    "raise_http": 202,
+    "output": {
+     "id": "P0-6",
+     "stav": "Pozastaveno",
+     "bod": "H1"
+    },
+    "invalid_token_events": 1,
+    "verify": [
+     {
+      "ts": 1792825640.6942003,
+      "kind": "VERIFY",
+      "backend": "openbao-transit",
+      "zakazka": "P0-6",
+      "bod": "H1",
+      "valid": false,
+      "by": null
+     }
+    ]
+   }
+  },
+  {
+   "id": "ID6",
+   "name": "Latence identity (ms)",
+   "status": "INFO",
+   "detail": {
+    "kc_token_ms": 130.6,
+    "sign_ms": 46.5,
+    "keycloak": "26.8.1",
+    "openbao": "OpenBao v2.7.1 (a5db72cef75c24b920ade02065b18dd8eb666bac), committed 2026-10-01T15:32:54Z"
+   }
+  }
+ ]
+}
