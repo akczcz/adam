@@ -57,6 +57,9 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 - `azure.extensions=VECTOR` musí být nastaveno před `CREATE EXTENSION vector` (M1 schema seed) – Terraform to dělá; jinak „extension not allow-listed“.
 - Flux extension vyžaduje registrovaný provider `Microsoft.KubernetesConfiguration` (bootstrap) – identita Actions providery registrovat nesmí
   (`resource_provider_registrations = "none"`).
+- **OIDC `sub` s ID (změřeno 2026-10-24, první `plan`):** GitHub posílá `repo:akczcz@51314480/adam@1386473812:environment:dev`, ne
+  `repo:akczcz/adam:environment:dev` → Entra `AADSTS700213 No matching federated identity record`. Bootstrap zakládá federaci pro obě podoby
+  (6 credentials); při dalším podobném selhání porovnat subjekt z chyby s `az identity federated-credential list`.
 - `terraform plan` z PR cizího forku OIDC token nedostane (subjekt `pull_request` platí jen pro PR z vlastního repa) – záměr.
 - Flux `postBuild.substitute` nahrazuje každé `${var}`/`$var` v manifestech a **nedefinované proměnné mění na prázdný řetězec** (fluxcd/pkg
   `kustomize_varsub.go`, non-strict). ConfigMapy `agentgateway-config` (`$AGW_DATABASE_URL`) a `keycloak-realm` (`${username}`) mají proto

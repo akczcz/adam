@@ -21,11 +21,18 @@ az storage container create -n tfstate --account-name "$SA" --auth-mode login -o
 echo "== identita GitHub Actions: $ID (OIDC)"
 az identity show -n "$ID" -g "$RG" -o none 2>/dev/null || az identity create -n "$ID" -g "$RG" -l "$LOC" -o none
 CLIENT_ID=$(az identity show -n "$ID" -g "$RG" --query clientId -o tsv); PRINCIPAL_ID=$(az identity show -n "$ID" -g "$RG" --query principalId -o tsv)
-for sub in "repo:${REPO}:ref:refs/heads/main" "repo:${REPO}:pull_request" "repo:${REPO}:environment:dev"; do
-  name=$(echo "$sub" | tr ':/' '--' | cut -c1-120)
+# GitHub od 2026 posílá v OIDC `sub` i neměnná ID: repo:<owner>@<owner_id>/<repo>@<repo_id>:… (zjištěno z chyby AADSTS700213 2026-10-24).
+# Zakládáme federaci pro obě podoby subjektu (jmennou i s ID), aby přežila přejmenování repa i změnu formátu.
+OWNER_ID=$(curl -sS "https://api.github.com/repos/${REPO}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["owner"]["id"])' 2>/dev/null || gh api "repos/${REPO}" --jq .owner.id)
+REPO_ID=$(curl -sS "https://api.github.com/repos/${REPO}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null || gh api "repos/${REPO}" --jq .id)
+REPO_IDS="${REPO%/*}@${OWNER_ID}/${REPO##*/}@${REPO_ID}"
+echo "   subjekty: repo:${REPO}:* a repo:${REPO_IDS}:*"
+for r in "$REPO" "$REPO_IDS"; do for suffix in "ref:refs/heads/main" "pull_request" "environment:dev"; do
+  sub="repo:${r}:${suffix}"
+  name=$(echo "$sub" | tr ':/@' '---' | cut -c1-120)
   az identity federated-credential show -n "$name" --identity-name "$ID" -g "$RG" -o none 2>/dev/null || \
     az identity federated-credential create -n "$name" --identity-name "$ID" -g "$RG" --issuer https://token.actions.githubusercontent.com --subject "$sub" --audiences api://AzureADTokenExchange -o none
-done
+done; done
 RG_ID=$(az group show -n "$RG" --query id -o tsv); SA_ID=$(az storage account show -n "$SA" -g "$RG" --query id -o tsv)
 for role in Contributor "User Access Administrator"; do   # UAA: Terraform přiděluje AcrPull kubeletu a Cluster Admin identitě; jen v rámci RG
   az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal --role "$role" --scope "$RG_ID" -o none 2>/dev/null || true
