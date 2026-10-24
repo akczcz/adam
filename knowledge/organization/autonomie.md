@@ -191,6 +191,7 @@ Retence ≥ 6 měsíců, per tenant výš (T4); append-only + podpis pro high-ri
 ## Co ověřit dál
 - [x] ~~Stop a HITL změřeny harnessem O-1~~ (2026-10-23): pause → SUSPENDED; **schválení vyvolané během stopu se neztratí a uplatní se po resume** → resume smí jen člověk s důvodem a token zůstává vázán na hash artefaktu; timeout → Pozastaveno bez schválení; token agenta odmítnut (`approval_not_by_human`).
 - [ ] **L3 evaly nesmí spoléhat na to, že model injekci odmítne:** v O-2 live (2026-10-24) `claude-haiku-4-5` injekci sám rozpoznal a ignoroval, takže blokace gateway/srt/PEP se ověřila jen mockem. Eval sady potřebují **adversariálního agenta** (mock nebo nástroj, který injekci vždy poslechne), jinak gate měří model, ne platformu.
+- [x] ~~N3/N1 do GitHubu~~ – O-2 scénář github (2026-10-24, suchý běh): issue až po H1, PR jako reverzibilní artefakt, merge jen executor po H4; disclosure vkládá platforma z `roles/*.yaml`; ostrý zápis jen s flagem + PAT.
 
 - [ ] Harness O-1: nevratný krok bez `approval_id` → 403/deny ve **všech** primárních PEP (gateway git, extAuthz deploy, PEP paměti), timeout → `Pozastaveno` bez schválení, stop během běhu sandboxu zachová commit na větvi, cena zakázky v logu.
 - [ ] Dapr Workflow pause/resume (T5) v docs 1.18 a chování child workflow při pause rodiče.

@@ -241,6 +241,87 @@ def role_reviewer(ctx, inp):
     return rep
 
 
+# --- GitHub publisher (artefakty naostro) --------------------------------------------------------------------------------
+GH_REPO = os.environ.get("P0_GITHUB_REPO", "akczcz/adam")
+GH_PUBLISH = os.environ.get("P0_GITHUB_PUBLISH") == "1"          # bez flagu = suchý běh: payloady do logs/github-dryrun, nic neodejde
+GH_DRYRUN_DIR = os.environ.get("P0_GITHUB_DRYRUN_DIR", "logs/github-dryrun")
+
+
+def _disclosure(role, channel):
+    """Věta čl. 50 z definice role (rolegen build/registry/roles.json) – vkládá ji platforma, ne model (T7)."""
+    try:
+        reg = json.loads(open(os.environ["P0_REGISTRY"]).read())
+        txt = next((r["disclosure"].get(channel) for r in reg if r["role"] == role), None)
+    except Exception:
+        txt = None
+    txt = txt or f"Tento obsah vytvořil AI agent (role {role}) platformy; schvaluje člověk."
+    return txt.replace("{firma}", "adam-platform").replace("{vlastník procesu}", "Adam Kolařík").replace("{vlastník}", "Adam Kolařík")
+
+
+def gh_api(method, path, payload=None):
+    tok = os.environ.get("GITHUB_TOKEN")
+    if not tok: raise RuntimeError("GITHUB_TOKEN chybí – publikace do GitHubu vyžaduje token s právem issues/contents/pull_requests")
+    r = httpx.request(method, f"https://api.github.com{path}", json=payload, headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, timeout=30)
+    if r.status_code >= 300: raise RuntimeError(f"GitHub {method} {path} → {r.status_code}: {r.text[:200]}")
+    return r.json() if r.text else {}
+
+
+def _publish(z, kind, payload, approval_hash=None):
+    """Jediné místo, kde platforma píše do GitHubu. Suchý běh = JSON soubor + ledger; živě jen s P0_GITHUB_PUBLISH=1 a GITHUB_TOKEN."""
+    rec = {"kind": kind, "zakazka": z["id"], "repo": GH_REPO, "approval_hash": approval_hash, "payload": payload}
+    if not GH_PUBLISH:
+        os.makedirs(GH_DRYRUN_DIR, exist_ok=True)
+        p = os.path.join(GH_DRYRUN_DIR, f"{z['id']}-{kind}.json"); open(p, "w").write(json.dumps(rec, ensure_ascii=False, indent=1))
+        ledger("PUBLISH_DRYRUN", zakazka=z["id"], publish_kind=kind, file=p, approval_hash=approval_hash)
+        return {"dry_run": True, "file": p}
+    o, r = GH_REPO.split("/")
+    if kind == "issue":
+        res = gh_api("POST", f"/repos/{o}/{r}/issues", {"title": payload["title"], "body": payload["body"], "labels": payload.get("labels", [])})
+        out = {"number": res["number"], "url": res["html_url"]}
+    elif kind == "pull_request":
+        base = gh_api("GET", f"/repos/{o}/{r}/git/ref/heads/{payload['base']}")["object"]["sha"]
+        base_tree = gh_api("GET", f"/repos/{o}/{r}/git/commits/{base}")["tree"]["sha"]
+        blobs = [{"path": f["path"], "mode": "100644", "type": "blob", "sha": gh_api("POST", f"/repos/{o}/{r}/git/blobs", {"content": f["content"], "encoding": "utf-8"})["sha"]} for f in payload["files"]]
+        tree = gh_api("POST", f"/repos/{o}/{r}/git/trees", {"base_tree": base_tree, "tree": blobs})["sha"]
+        commit = gh_api("POST", f"/repos/{o}/{r}/git/commits", {"message": payload["commit_message"], "tree": tree, "parents": [base]})["sha"]
+        try: gh_api("POST", f"/repos/{o}/{r}/git/refs", {"ref": f"refs/heads/{payload['head']}", "sha": commit})
+        except RuntimeError: gh_api("PATCH", f"/repos/{o}/{r}/git/refs/heads/{payload['head']}", {"sha": commit, "force": True})
+        res = gh_api("POST", f"/repos/{o}/{r}/pulls", {"title": payload["title"], "body": payload["body"], "head": payload["head"], "base": payload["base"]})
+        out = {"number": res["number"], "url": res["html_url"], "head_sha": commit}
+    elif kind == "merge":
+        res = gh_api("PUT", f"/repos/{o}/{r}/pulls/{payload['number']}/merge", {"merge_method": "merge", "commit_title": payload["title"]})
+        out = {"merged": res.get("merged"), "sha": res.get("sha")}
+    else:
+        raise RuntimeError(f"neznámý druh publikace {kind}")
+    ledger("PUBLISHED", zakazka=z["id"], publish_kind=kind, approval_hash=approval_hash, **out)
+    return out
+
+
+@rt.activity(name="publish_issue")
+def publish_issue(ctx, inp):
+    """P1 po H1: zadání jako GitHub issue (N3 komunikace ven – jen po schválení člověkem; disclosure vkládá platforma)."""
+    z, zad = inp["z"], inp["zad"]
+    p = f"/tmp/p0-o2/{z['id']}/{zad.get('path', 'artifacts/zadani.md')}"
+    body = open(p).read() if os.path.exists(p) else z["poptavka"]
+    payload = {"title": f"[{z['id']}] Zadání: {z['poptavka'][:60].split('[INJECT]')[0].strip()}", "labels": ["zakazka", "p0-dogfooding"],
+               "body": f"> {_disclosure('account', 'issue')}\n\n{body}\n\n---\n`zakazka_id`: {z['id']} · artefakt `{zad['ref']}` · hash `{zad['hash']}` · schválil člověk (H1)"}
+    return _publish(z, "issue", payload, approval_hash=zad["hash"])
+
+
+@rt.activity(name="publish_pr")
+def publish_pr(ctx, inp):
+    """P3: větev + commit souborů ze sandboxu + PR jako artefakt pro review a HITL H4 (reverzibilní – PR jde zavřít)."""
+    z, pr = inp["z"], inp["pr"]
+    files = []
+    for f in pr.get("files", []):
+        fp = os.path.join(pr["work"], f["path"])
+        if os.path.exists(fp): files.append({"path": f"zakazky/{z['id']}/{f['path']}", "content": open(fp).read(), "sha256": f["sha256"]})
+    payload = {"base": "main", "head": pr["branch"], "title": f"[{z['id']}] {pr['text'][:60] or 'PR zakázky'}", "files": files,
+               "commit_message": f"{z['id']}: implementace úkolu 1\n\nAI-Agent: vyvojar@0.1.0 on-behalf-of Adam Kolařík\nArtifact-Hash: {pr['hash']}",
+               "body": f"> {_disclosure('vyvojar', 'pr_description')}\n\n`zakazka_id`: {z['id']} · artefakt `{pr['ref']}` · hash `{pr['hash']}`\n\nSoubory: " + ", ".join(f["path"] for f in files) + "\n\nSloučení = HITL H4 (člověk) → merge-executor."}
+    return _publish(z, "pull_request", payload, approval_hash=pr["hash"])
+
+
 @rt.activity(name="executor")
 def executor(ctx, inp):
     """Deterministická aktivita – jediné místo, kde se nevratná akce provede. Rozhoduje PDP, ne agent."""
@@ -257,6 +338,9 @@ def executor(ctx, inp):
             if hashlib.sha256(open(src, "rb").read()).hexdigest()[:16] != f["sha256"]:
                 ledger("EXECUTOR_REFUSED", action=action, zakazka=z["id"], reason="artifact_changed_after_approval", path=f["path"]); continue
             os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copyfile(src, dst); applied.append(os.path.relpath(dst, target))
+    if d["allow"] and action == "merge" and os.environ.get("P0_GITHUB_MODE") == "1" and inp.get("pr"):
+        pub = inp.get("pr_publish") or {}
+        _publish(z, "merge", {"number": pub.get("number", 0), "title": f"{z['id']}: merge po schválení H4 (merge-executor)", "head": inp["pr"]["branch"]}, approval_hash=artifact_hash)
     if d["allow"]:
         ledger("EXECUTED", action=action, by=f"{action}-executor", zakazka=z["id"], artifact_hash=artifact_hash, applied=applied)
     return d
@@ -304,15 +388,20 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     zad = yield ctx.call_activity(role_account, input=z)                      # P1 Přijetí zadání
     t1 = yield from hitl(ctx, z, "H1", zad["hash"])                           # vstup zakázky – člověk zákazníka
     if not t1: return {**state, "stav": "Pozastaveno", "bod": "H1"}
+    if os.environ.get("P0_GITHUB_MODE") == "1":
+        yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # N3 – až po schválení zadání člověkem
     adr = yield ctx.call_activity(role_architekt, input=z)                    # P2 Návrh
     t2 = yield from hitl(ctx, z, "H2", adr["hash"])
     if not t2: return {**state, "stav": "Pozastaveno", "bod": "H2"}
     pr = yield ctx.call_activity(role_vyvojar, input=z)                       # P3 Implementace (sandbox)
+    pr_pub = {}
+    if os.environ.get("P0_GITHUB_MODE") == "1":
+        pr_pub = yield ctx.call_activity(publish_pr, input={"z": z, "pr": pr})  # větev + PR = artefakt pro review (reverzibilní)
     rev = yield ctx.call_activity(role_reviewer, input={"z": z, "pr": pr})    # P4 Review
     yield ctx.call_activity(budget_check, input=z)
     t4 = yield from hitl(ctx, z, "H4", pr["hash"])                            # merge = N1 – člověk vlastník
     if not t4: return {**state, "stav": "Pozastaveno", "bod": "H4"}
-    m = yield ctx.call_activity(executor, input={"z": z, "action": "merge", "artifact_hash": pr["hash"], "token": t4, "pr": pr})
+    m = yield ctx.call_activity(executor, input={"z": z, "action": "merge", "artifact_hash": pr["hash"], "token": t4, "pr": pr, "pr_publish": pr_pub})
     if not m["allow"]: return {**state, "stav": "Zamitnuto", "bod": "H4", "reason": m["reason"]}
     t5 = yield from hitl(ctx, z, "H5", pr["hash"])                            # deploy = N2
     if not t5: return {**state, "stav": "Pozastaveno", "bod": "H5"}

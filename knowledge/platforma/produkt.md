@@ -19,7 +19,8 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 | Zakázka end-to-end jako Dapr Workflow s HITL, executor nevratných akcí, PDP | ✅ | [O-1](../../tools/harness_org_o1/README.md) 9/9 |
 | Vývojář = Claude Agent SDK přes agentgateway, paměť M1 s PEP, sandbox srt za gateway – **mock model** | ✅ | [O-2](../../tools/harness_p0_o2/README.md) 6/6 mock: injekce prošla modelem, neprošla platformou |
 | O-2 se **živým modelem** (`--mode live`) | ✅ 2026-10-24 (Adamův Mac, Remote Control session) | 5 PASS, 3 INFO: `claude-haiku-4-5` injekci **sám odmítl** („vsunutá instrukce, kterou jsem ověřil a ignoroval“), zápis do paměti žádal `proposed`; cena 0,045–0,058 USD per zakázka (8–21 kol). **Nález:** vestavěný Bash CLI běžel 11× mimo sandbox → `tools=[]`, `strict_mcp_config`, cwd mimo repo; agent runtime je součást hranice (kriteria sandboxu B3, `roles/*.yaml` `agent_sdk`) |
-| Artefakty naostro: zadání = issue, ADR v `knowledge/`, PR v tomto repu; HITL přes PR review místo HTTP volání | ⬜ | – |
+| Artefakty naostro: zadání = GitHub issue (po H1), větev + PR ze sandboxu (po Vývojáři), merge PR jen přes executor po H4; disclosure vkládá platforma z definice role | ✅ suchý běh 2026-10-24 (O-2 `--scenario github` 4/4, payloady v `results/github-dryrun/`); **ostrý zápis čeká na Adamův souhlas a PAT** (`--publish-github`) | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
+| HITL přes PR review místo HTTP volání (schválení = review/merge v GitHubu, webhook → Dapr event) | ⬜ | – |
 | Role Account, Architekt, Reviewer, SRE přes Agent SDK podle `organization/roles/*.yaml` | ✅ mock 2026-10-24: Account, Architekt, Vývojář, Reviewer běží přes Agent SDK s options z rolegen a vlastním JWT (O-2 check O2i); `roles/` má 5 definic (account, architekt, vyvojar, reviewer, sre); SRE jako modelová role až s deploy MCP serverem (P1) | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
 | Identita: Keycloak JWKS místo HMAC JWT; SVID role místo `spiffe://` řetězce | ⬜ (mechanismus změřen v I2) | – |
 | Rozpočet per role × zakázka v agentgateway (`apiKey.keys[].budgets`) místo součtu usage | ⬜ (mechanismus změřen v G1) | – |
@@ -52,6 +53,7 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-24: publikace artefaktů do GitHubu (issue, větev+PR, merge) – suchý běh 4/4; ostrý zápis gated flagem a PAT.
 - 2026-10-24: čtyři modelové role přes Agent SDK (O2i), roles/account.yaml a architekt.yaml; rolegen R1 7/7 s pěti rolemi.
 - 2026-10-24: zakázka P0-3 „role SRE“ provedená platformou (mock) – první artefakt dodaný do vlastního repa; rolegen agent_sdk.
 - 2026-10-24: O-2 live hotové (5/0/3) – model injekci odmítl sám; nález: agent runtime součást hranice sandboxu.

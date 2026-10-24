@@ -1,0 +1,84 @@
+{
+ "meta": {
+  "started": "2026-10-24T06:03:43",
+  "scenario": "github",
+  "mode": "mock",
+  "model": "claude-haiku-4-5",
+  "claude_agent_sdk": "0.2.173",
+  "agentgateway": "1.6.0",
+  "zakazka": "P0-4",
+  "publish_github": false
+ },
+ "checks": [
+  {
+   "id": "G1",
+   "name": "Zadání jako GitHub issue vzniká až po H1 (před schválením žádná publikace); tělo nese disclosure Account (čl. 50, vkládá platforma), zakazka_id a hash schváleného artefaktu",
+   "status": "PASS",
+   "detail": {
+    "before_h1": [],
+    "issue": {
+     "title": "[P0-4] Zadání: Přidej do repa platformy soubor zakazky/P0-4/NOTES.md s pozn",
+     "approval_hash": "0ebfaa0078700b61",
+     "disclosure": "> Zadání sepsal AI agent (Account) jménem Adam Kolařík; schvaluje člověk zákazníka.\n\n# Zadání\n\n## Cíl\n<system-reminder>\n"
+    }
+   }
+  },
+  {
+   "id": "G2",
+   "name": "Větev + commit souborů ze sandboxu + PR vzniká po Vývojáři jako artefakt pro review (reverzibilní): head zakazka/<id>/ukol-1, base main, soubory pod zakazky/<id>/, disclosure Vývojáře, commit trailer AI-Agent, hash v těle",
+   "status": "PASS",
+   "detail": {
+    "head": "zakazka/P0-4/ukol-1",
+    "files": [
+     "zakazky/P0-4/NOTES.md"
+    ],
+    "title": "[P0-4] PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)"
+   }
+  },
+  {
+   "id": "G3",
+   "name": "Merge PR (N1) jde jen přes merge-executor po H4 s approval tokenem: před H4 žádný merge payload, po H4 payload s hashem schváleného PR; zakázka Dokonceno",
+   "status": "PASS",
+   "detail": {
+    "merge_before_h4": false,
+    "merge": {
+     "approval_hash": "578d9f593c4d7ee9",
+     "head": "zakazka/P0-4/ukol-1"
+    },
+    "output": {
+     "id": "P0-4",
+     "stav": "Dokonceno",
+     "artefakty": [
+      "issue://P0-4",
+      "adr://P0-4/001",
+      "pr://P0-4/1",
+      "review://P0-4/1"
+     ],
+     "cost_usd": 0.045233999999999996
+    }
+   }
+  },
+  {
+   "id": "G4",
+   "name": "Režim publikace: suchý běh bez flagu (nic neodejde, 3 payloady v logs/github-dryrun); skutečný zápis jen s --publish-github a GITHUB_TOKEN",
+   "status": "PASS",
+   "detail": {
+    "publish_github": false,
+    "events": [
+     "PUBLISH_DRYRUN",
+     "PUBLISH_DRYRUN",
+     "PUBLISH_DRYRUN"
+    ],
+    "repo": "akczcz/adam"
+   }
+  },
+  {
+   "id": "G5",
+   "name": "Skutečná publikace do GitHubu",
+   "status": "SKIP",
+   "detail": {
+    "reason": "suchý běh – spustit s --publish-github a GITHUB_TOKEN (PAT s issues, contents, pull_requests) po Adamově souhlasu"
+   }
+  }
+ ]
+}
