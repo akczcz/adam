@@ -161,6 +161,7 @@ O2_PLACEMENT_PORT=50105 O2_SCHEDULER_PORT=50106 O2_ETCD_CLIENT_PORT=12379 .venv/
   platformy**, vestavěné nástroje agent runtimu jsou únik ze sandboxu (viz `knowledge/sandbox/kriteria.md`).
 - Agent SDK uvnitř Dapr aktivity: `asyncio.run(query(...))` ve worker vlákně funguje; proxy proměnné z prostředí harnessu
   je nutné v `env` SDK vyprázdnit, jinak CLI jde přes firemní proxy místo gateway.
+- Claude Code CLI vkládá do první user zprávy `<system-reminder>` s prostředím (cwd, platforma); mock je musí odfiltrovat, jinak skončí v artefaktu (poprvé se objevil v těle issue). Pro živý model: obsah artefaktů kontrolovat na únik system remindérů (v O-2 live se nestalo).
 - `ledger(kind, **kw)`: klíč `kind` v kwargs koliduje s pozičním argumentem → `publish_kind`.
 - Mock rozlišuje role podle `role=<role>` v system promptu; checky Vývojáře filtrují ledger podle `role`, jinak zachytí nástroje ostatních rolí.
 - Mock čte zadání z první user zprávy a scénář SRE pozná podle `roles/sre.yaml` v zadání; referenční návrh musí být absolutní cesta čitelná v sandboxu.

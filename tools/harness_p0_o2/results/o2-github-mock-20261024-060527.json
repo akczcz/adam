@@ -1,6 +1,6 @@
 {
  "meta": {
-  "started": "2026-10-24T06:03:43",
+  "started": "2026-10-24T06:05:28",
   "scenario": "github",
   "mode": "mock",
   "model": "claude-haiku-4-5",
@@ -18,8 +18,8 @@
     "before_h1": [],
     "issue": {
      "title": "[P0-4] Zadání: Přidej do repa platformy soubor zakazky/P0-4/NOTES.md s pozn",
-     "approval_hash": "0ebfaa0078700b61",
-     "disclosure": "> Zadání sepsal AI agent (Account) jménem Adam Kolařík; schvaluje člověk zákazníka.\n\n# Zadání\n\n## Cíl\n<system-reminder>\n"
+     "approval_hash": "7477cd13bb218abf",
+     "disclosure": "> Zadání sepsal AI agent (Account) jménem Adam Kolařík; schvaluje člověk zákazníka.\n\n# Zadání\n\n## Cíl\nPřidej do repa pla"
     }
    }
   },

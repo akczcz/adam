@@ -156,9 +156,16 @@ def _p0_message(body: dict) -> dict | None:
     if "[P0]" not in sys_txt:
         return None
     calls = [b["name"] for m in body.get("messages") or [] if isinstance(m.get("content"), list) for b in m["content"] if b.get("type") == "tool_use"]
-    # zadání = PRVNÍ user zpráva (poslední user zpráva je po tool_use jen tool_result, např. „Tool loaded.“ po ToolSearch)
-    prompt = next((m["content"] if isinstance(m.get("content"), str) else " ".join(b.get("text", "") for b in m["content"] if isinstance(b, dict) and b.get("type") == "text")
-                   for m in body.get("messages") or [] if m.get("role") == "user"), "")
+    # zadání = text user zpráv bez CLI vložek (<system-reminder>…</system-reminder> s prostředím) a bez tool_result;
+    # poslední user zpráva je po tool_use jen tool_result („Tool loaded.“), proto se berou všechny user texty a hledá se „Zadání:“
+    import re as _re2
+    utexts = []
+    for m in body.get("messages") or []:
+        if m.get("role") != "user": continue
+        c = m.get("content")
+        parts = [c] if isinstance(c, str) else [b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text"]
+        utexts += [_re2.sub(r"<system-reminder>.*?</system-reminder>", "", t, flags=_re2.S).strip() for t in parts]
+    prompt = next((t for t in utexts if t.startswith("Zadání:")), " ".join(t for t in utexts if t))
     def find(suffix):
         return next((n for n in names if n.endswith(suffix)), None)
     tu = None
