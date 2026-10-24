@@ -114,9 +114,10 @@ adam/
 | Organizace | procesy jako Dapr Workflows, role jako YAML svazek, executor nevratných akcí s approval tokenem, autonomie rozšiřovaná měřením | `harness_org_o1` (9/9) |
 
 Všechny harnessy běží lokálně bez Dockeru; výsledky (JSON) a sekce „Pasti“ jsou v README každého harnessu.
-Fáze produktu P0 (dogfooding) běží: harness [`tools/harness_p0_o2`](tools/harness_p0_o2/README.md) skládá všechny vrstvy do jednoho běhu,
-[`tools/rolegen`](tools/rolegen/README.md) generuje z definic rolí konfigurace všech vrstev
-(stav v [knowledge/platforma/produkt.md](knowledge/platforma/produkt.md)).
+Fáze produktu P0 (dogfooding) je uzavřená (2026-10-24, výhrada: ostrý zápis do GitHubu): harness [`tools/harness_p0_o2`](tools/harness_p0_o2/README.md)
+skládá všechny vrstvy do jednoho běhu zakázky (scénáře p0, sre, github, github-hitl, identity, budget), [`tools/rolegen`](tools/rolegen/README.md)
+generuje z definic rolí konfigurace všech vrstev (stav v [knowledge/platforma/produkt.md](knowledge/platforma/produkt.md),
+plán P1 v [knowledge/platforma/p1-aks.md](knowledge/platforma/p1-aks.md)).
 Nálezy, které se opakují napříč vrstvami, jsou v [knowledge/frameworks/licencni-vzorce.md](knowledge/frameworks/licencni-vzorce.md) (24 vzorců).
 
 ## Dokumentace
@@ -159,7 +160,7 @@ Nasazení a připojení klientů popisuje [docs/vlastni-instance.md](docs/vlastn
 
 Vrstvy platformy se otevíraly postupně – pořadí, stav a společný postup jsou
 v [knowledge/platforma/overview.md](knowledge/platforma/overview.md). Rešeršní fáze je uzavřená;
-další krok je produkt (fáze P0 dogfooding zakázka → P1 platforma na AKS → P2 role naostro → P3 externí zákazník).
+produkt postupuje po fázích (P0 dogfooding zakázka ✅ → P1 platforma na AKS (plán) → P2 role naostro → P3 externí zákazník).
 Znalosti se dál udržují: každá vrstva má „Co ověřit dál“ a skill se sekcí pastí; před každou fází produktu
 se verze a stavy specifikací re-verifikují z primárních zdrojů.
 

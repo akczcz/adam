@@ -86,12 +86,13 @@ flowchart TB
 
 | Fáze | Cíl | Co se skládá z rozhodnutých vrstev | Harness, který to změří |
 |---|---|---|---|
-| **P0 Dogfooding zakázka** (běží) | první reálná zakázka v tomto repu: mock role z O-1 nahradí **Claude Agent SDK v sandboxu S1 za agentgateway**, paměť M1, identita I2 | Dapr Workflow z O-1 + Agent SDK + srt/gateway z S1 + MCP paměti z M1 + OPA | **O-2 mock 6/6 (2026-10-23)**: injekce prošla modelem, neprošla platformou; živý běh a artefakty naostro viz [produkt.md](produkt.md) |
-| **P1 Platforma na AKS** | jeden cluster: agentgateway, Keycloak, SPIRE, OPA, OpenBao, Collector, ClickHouse, Postgres (state + paměť + `org.*`), Kata node pool | Helm/manifesty z harnessů (`aks/`, configs) | S1 na AKS (Kata, srt v guestu), O1 ClickHouse end-to-end, I2 s Keycloak JWKS |
+| **P0 Dogfooding zakázka** (uzavřeno 2026-10-24, výhrada: ostrý zápis GitHub) | první reálná zakázka v tomto repu: mock role z O-1 nahradí **Claude Agent SDK v sandboxu S1 za agentgateway**, paměť M1, identita I2 | Dapr Workflow z O-1 + Agent SDK + srt/gateway z S1 + MCP paměti z M1 + OPA + Keycloak JWKS + OpenBao transit + budgets gateway | **O-2 mock 6/6 (2026-10-23)**, live 5/0/3, scénáře sre/github/github-hitl/identity/budget vše PASS (2026-10-24); shrnutí v [produkt.md](produkt.md) |
+| **P1 Platforma na AKS** (plán: [p1-aks.md](p1-aks.md)) | jeden cluster: agentgateway, Keycloak, SPIRE, OPA, OpenBao, Collector, ClickHouse, Postgres (state + paměť + `org.*`), Kata node pool | Helm/manifesty z harnessů (`aks/`, configs); kroky P1-2…P1-5 nejdřív na `kind` | tytéž harnessy proti clusteru (S1 aks/, M1, O1, I2, G1, O-1, O-2 všechny scénáře) + P1-G persistence rozpočtů mezi replikami |
 | **P2 Role naostro** | YAML rolí → OPA bundle, gateway klíče, obrazy rolí (devcontainer build), evaly rolí s gate | `roles/*.yaml` → generátor konfigurací | evaly L0–L3 per role, registr agentů plněný z workflow |
 | **P3 První externí zákazník** | tenant model, klasifikační brána naostro, čl. 50 disclosure v reálných kanálech, SLA | vše výše + AG-UI frontend | O-3 multi-tenant: M-E3 přes dva tenanty, stop per tenant |
 
 ## Changelog
+- 2026-10-24: P0 uzavřeno (výhrada: ostrý zápis GitHub); identita (Keycloak JWKS, OpenBao transit) a FinOps (budgets gateway) změřeny v O-2; plán P1 v p1-aks.md.
 - 2026-10-24: P0 – O-2 live na Macu: model injekci odmítl sám; riziko sandboxů doplněno o vestavěné nástroje CLI.
 - 2026-10-23: P0 – harness O-2 (mock) 6/6: všechny vrstvy v jednom běhu; sledovací soubor produkt.md.
 - 2026-10-23: organization – **rozhodnuto (Adam)**; všech osm vrstev rozhodnuto; doplněn celkový diagram a fáze produktu P0–P3.
