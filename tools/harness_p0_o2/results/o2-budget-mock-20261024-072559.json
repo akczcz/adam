@@ -1,0 +1,221 @@
+{
+ "meta": {
+  "started": "2026-10-24T07:25:59",
+  "scenario": "budget",
+  "mode": "mock",
+  "model": "claude-haiku-4-5",
+  "claude_agent_sdk": "0.2.173",
+  "agentgateway": "1.6.0",
+  "zakazky": [
+   "P0-7",
+   "P0-8"
+  ],
+  "patched_limits": {
+   "P0-8/vyvojar/vyvojar-24h-block": 0.005,
+   "P0-8/architekt/architekt-24h-audit": 0.001
+  }
+ },
+ "checks": [
+  {
+   "id": "B1",
+   "name": "LLM listener ve strict apiKey režimu: bez klíče a s cizím klíčem 401; klíč role (sha256 z rolegen apikeys-acme-<zakazka>.yaml) projde; log gateway nese `role` z metadat klíče a `zakazka` z hlavičky",
+   "status": "PASS",
+   "detail": {
+    "no_key": 401,
+    "bad_key": 401,
+    "good_key": 200,
+    "log": {
+     "role": "reviewer",
+     "zakazka": "probe",
+     "agw.ai.usage.cost.total": "0.0030156",
+     "gen_ai.request.model": "claude-haiku-4-5"
+    },
+    "location": {
+     "header": {
+      "name": "Authorization",
+      "prefix": "Bearer "
+     }
+    }
+   }
+  },
+  {
+   "id": "B2",
+   "name": "Zakázka P0-7 na klíčích role × zakázka Dokonceno; cena zakázky v BUDGET pochází z gateway (součet agw.ai.usage.cost.total podle zakazka/role), ne z usage SDK; všechny 4 role mají vlastní klíč v logu",
+   "status": "PASS",
+   "detail": {
+    "output": {
+     "id": "P0-7",
+     "stav": "Dokonceno",
+     "artefakty": [
+      "issue://P0-7",
+      "adr://P0-7/001",
+      "pr://P0-7/1",
+      "review://P0-7/1"
+     ],
+     "cost_usd": 0.045234
+    },
+    "budget": {
+     "spent_usd": 0.045234,
+     "source": "agentgateway",
+     "by_role": {
+      "account": 0.009047,
+      "architekt": 0.012062,
+      "vyvojar": 0.012062,
+      "reviewer": 0.012062
+     },
+     "gateway_requests": 15,
+     "sdk_usd": 0.045234
+    },
+    "gateway_log_sum": 0.045234,
+    "gateway_log_requests": 15,
+    "sdk_cost_by_role": {
+     "account": 0.009046799999999999,
+     "architekt": 0.0120624,
+     "vyvojar": 0.0120624,
+     "reviewer": 0.0120624
+    }
+   }
+  },
+  {
+   "id": "B3",
+   "name": "Tabulka budget_usage (sqlite, USD v nanodolarech, okna v ms) má pro každý klíč P0-7 tři okna (24h audit, 24h block, 30d block) a used_amount = cena všech requestů klíče z logu gateway (zakázka + probe); zápis do DB je periodický",
+   "status": "PASS",
+   "detail": {
+    "rows": 12,
+    "db_lag_s": 1.0,
+    "expected_usd": {
+     "account": 0.009047,
+     "architekt": 0.012062,
+     "vyvojar": 0.012062,
+     "reviewer": 0.0150776
+    },
+    "P0-7": {
+     "account": [
+      [
+       "account-24h-audit",
+       0.0090468,
+       24.0
+      ],
+      [
+       "account-24h-block",
+       0.0090468,
+       24.0
+      ],
+      [
+       "account-30d-block",
+       0.0090468,
+       720.0
+      ]
+     ],
+     "reviewer": [
+      [
+       "reviewer-24h-audit",
+       0.015078,
+       24.0
+      ],
+      [
+       "reviewer-24h-block",
+       0.015078,
+       24.0
+      ],
+      [
+       "reviewer-30d-block",
+       0.015078,
+       720.0
+      ]
+     ],
+     "architekt": [
+      [
+       "architekt-24h-audit",
+       0.0120624,
+       24.0
+      ],
+      [
+       "architekt-24h-block",
+       0.0120624,
+       24.0
+      ],
+      [
+       "architekt-30d-block",
+       0.0120624,
+       720.0
+      ]
+     ],
+     "vyvojar": [
+      [
+       "vyvojar-24h-audit",
+       0.0120624,
+       24.0
+      ],
+      [
+       "vyvojar-24h-block",
+       0.0120624,
+       24.0
+      ],
+      [
+       "vyvojar-30d-block",
+       0.0120624,
+       720.0
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "B4",
+   "name": "Block: klíč Vývojáře P0-8 (limit 0.005 USD) → gateway 429 (Retry-After), SDK run selže → BUDGET_EXCEEDED → eskalace vlastníkovi (HITL `rozpocet`) → timeout 5 s → Pozastaveno bod rozpocet, Reviewer nespuštěn",
+   "status": "PASS",
+   "detail": {
+    "output": {
+     "id": "P0-8",
+     "stav": "Pozastaveno",
+     "bod": "rozpocet",
+     "role": "vyvojar"
+    },
+    "gateway_429": 1,
+    "vyvojar_200_before_block": 2,
+    "budget_exceeded_events": [
+     [
+      "vyvojar",
+      "ResultError: Claude Code returned an error result: API Error: Server is temporarily limiting requests (not your usage li"
+     ]
+    ],
+    "notify": [
+     "BUDGET_EXCEEDED",
+     "HITL_TIMEOUT"
+    ],
+    "block_warn": "{\"level\":\"warn\",\"time\":\"2026-10-24T07:25:53.197655Z\",\"scope\":\"budget\",\"connection.id\":18,\"request.id\":37,\"message\":\"API key budget exceeded\",\"api_key\":\"k-acme-P0-8-vyvojar\",\"budget\":\"vyvojar-24h-block\",\"used\":\"0.0060312\",\"limit_unit\":\"USD\",\"limit_amount\":\"0.005\",\"exceeded\":true}"
+   }
+  },
+  {
+   "id": "B5",
+   "name": "Audit: klíč Architekta P0-8 (limit 0.001 USD) překročen → gateway loguje `API key budget exceeded` (exceeded=true), ale requesty dál 200 a ADR vzniklo – Audit nikdy neblokuje",
+   "status": "PASS",
+   "detail": {
+    "architekt_200": 4,
+    "audit_warn": "{\"level\":\"warn\",\"time\":\"2026-10-24T07:25:51.052531Z\",\"scope\":\"budget\",\"connection.id\":16,\"request.id\":32,\"message\":\"API key budget exceeded\",\"api_key\":\"k-acme-P0-8-architekt\",\"budget\":\"architekt-24h-audit\",\"used\":\"0.0090468\",\"limit_unit\":\"USD\",\"limit_amount\":\"0.001\",\"exceeded\":true}"
+   }
+  },
+  {
+   "id": "B6",
+   "name": "Cena: gateway (katalog modelů, USD) vs. SDK total_cost_usd per role P0-7; zbytek vrstvy FinOps",
+   "status": "INFO",
+   "detail": {
+    "gateway_by_role": {
+     "account": 0.009047,
+     "architekt": 0.012062,
+     "vyvojar": 0.012062,
+     "reviewer": 0.012062
+    },
+    "sdk_by_role": {
+     "account": 0.009046799999999999,
+     "architekt": 0.0120624,
+     "vyvojar": 0.0120624,
+     "reviewer": 0.0120624
+    },
+    "model": "claude-haiku-4-5",
+    "note": "agentgateway 1.6 cení z vestavěného katalogu (agw.ai.usage.cost.total i pro mock); SDK počítá z vlastní tabulky cen – gateway je zdroj pravdy pro FinOps"
+   }
+  }
+ ]
+}

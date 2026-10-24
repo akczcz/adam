@@ -148,6 +148,31 @@ Soubor: `results/o2-identity-mock-20261024-070722.json`. Zbývá k cíli: SVID z
 v gateway (I2) místo `client_credentials` s tajemstvím klienta; tajemství klientů z OpenBao (zde testovací v realm JSON);
 klienti a atributy generované z `roles/*.yaml` (rolegen) místo ručního realmu; mapování GitHub login → Keycloak user pro bridge.
 
+## Scénář `--scenario budget` – rozpočty per role × zakázka v agentgateway (2026-10-24, mock)
+
+Rozpočet nevynucuje aplikace součtem usage ze SDK, ale **gateway na klíči role × zakázka** (`policies.apiKey.keys[].budgets`
+z rolegen `apikeys-acme-<zakazka>.yaml`, limity z `roles/*.yaml`; USD cení gateway z vestavěného katalogu modelů). Harness vydá
+hodnoty klíčů (v cíli OpenBao), gateway zná jen `sha256`. Každá role dostává svůj klíč přes `ANTHROPIC_API_KEY`, zakázku nese
+hlavička `x-zakazka` (`ANTHROPIC_CUSTOM_HEADERS`), log gateway tak má pole `role` (metadata klíče) a `zakazka`. Aktivita
+`budget_check` čte cenu zakázky z tohoto logu (zdroj pravdy je gateway). Vyčerpání `Block` = 429 → `BUDGET_EXCEEDED` →
+eskalace vlastníkovi procesu jako HITL bod `rozpocet` (`on_exceeded` z role) → timeout → Pozastaveno; po schválení jeden
+opakovaný pokus (cesta schválení zatím neměřena).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| B1 | LLM listener `strict`: bez klíče / cizí klíč 401; klíč role projde; log nese `role` a `zakazka` | ✅ |
+| B2 | P0-7 (ostré limity z rolí) Dokonceno; BUDGET `source=agentgateway`, součet logu = 0,045 USD, 4 role × vlastní klíč; shoda s SDK na 1e-6 | ✅ 15 requestů |
+| B3 | `budget_usage` (sqlite): per klíč 3 okna (24h audit, 24h block, 30d block), USD v nanodolarech, okna v ms zarovnaná na epochu; flush každých 5 s | ✅ |
+| B4 | **Block:** klíč Vývojáře P0-8 s limitem 0,005 USD → po 2 requestech 429 (`Retry-After`) → SDK run selže → `BUDGET_EXCEEDED` → eskalace → timeout 5 s → Pozastaveno `rozpocet`, Reviewer nespuštěn | ✅ |
+| B5 | **Audit:** klíč Architekta P0-8 s limitem 0,001 USD → warn `API key budget exceeded` (exceeded=true), requesty dál 200, ADR vzniklo | ✅ |
+| B6 | Cena gateway vs. SDK per role | ℹ️ shodné |
+
+Soubor: `results/o2-budget-mock-*.json`. Zjištění: kontrola rozpočtu běží **před** requestem (`used >= limit`), účtuje se po
+odpovědi – request, který limit překročí, ještě projde; 429 má `Retry-After` do konce okna, proto `CLAUDE_CODE_MAX_RETRIES=0`
+(jinak CLI čeká a opakuje). Klíče per zakázka vyžadují nový záznam v konfiguraci gateway při založení zakázky – v harnessu
+jsou předgenerované; v clusteru = CRD/xDS z rolegen. 30d strop zakázky je dnes per klíč, ne součet klíčů zakázky (role YAML
+to předpokládá) – řeší se buď sdíleným klíčem zakázky pro 30d okno, nebo ledgerem nad logem.
+
 ## Co to říká o platformě
 
 - **Injekce v zadání prošla modelem a neprošla platformou.** Naivní model udělal všechny tři věci, které injekce chtěla
@@ -155,7 +180,7 @@ klienti a atributy generované z `roles/*.yaml` (rolegen) místo ručního realm
   `git-receive-pack`), srt proxy (evil mimo allow-list), PEP paměti (`proposed`). Merge pak provedl jen executor po lidském schválení.
 - **Vrstvy se skládají beze švů v kódu agenta**: agent dostal jen MCP nástroje a `ANTHROPIC_BASE_URL`; identita (JWT role), rozpočet,
   egress, paměťová politika i nevratné akce jsou mimo něj.
-- Cena per zakázka je zatím součet usage ze SDK; v produkci ji nese gateway klíč per role × zakázka.
+- Cena per zakázka: ve scénáři `budget` ji nese gateway klíč per role × zakázka (log + `budget_usage`), jinde součet usage ze SDK.
 
 ## Zjednodušení oproti cíli (fáze P1–P2)
 
@@ -180,6 +205,7 @@ export AGENTGATEWAY_BIN=… DAPR_BIN_DIR=… OPA_BIN=…        # viz README har
 ANTHROPIC_API_KEY=sk-ant-… .venv/bin/python harness.py --mode live --model claude-haiku-4-5
 # identita: rozbalený keycloak-26.8.1 (viz harness I2) + binárka OpenBao 2.7.1 (openbao_2.7.1_<os>_<arch>.tar.gz z GitHub releases)
 KC_HOME=…/keycloak-26.8.1 BAO_BIN=…/bao .venv/bin/python harness.py --scenario identity   # porty 8089 (Keycloak), 8210 (OpenBao): O2_KC_PORT, O2_BAO_PORT
+.venv/bin/python harness.py --scenario budget                                             # rozpočty per role × zakázka v gateway (sqlite logs/cfg/agentgateway-budgets.db)
 ```
 
 Vyžaduje root (zápis do `/etc/hosts`), user namespaces pro bubblewrap a sousední harnessy G1, S1, M1, O-1 v `tools/`
@@ -217,6 +243,9 @@ O2_PLACEMENT_PORT=50105 O2_SCHEDULER_PORT=50106 O2_ETCD_CLIENT_PORT=12379 .venv/
 - OpenBao 2.7: `sys/audit` přes API je zakázán (CVE-2025-6000) – audit device jen deklarativně v HCL (`audit "file" { type, path, options }`;
   `path` je povinné), i v `-dev` režimu přes `-config=`.
 - Ověření podpisu v orchestrátoru Dapr Workflow nesmí volat síť (replay) → aktivita `verify_approval`.
+- Claude CLI v hostovaném prostředí (`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`) posílá klíč jako `Authorization: Bearer`, jinak `x-api-key` –
+  `apiKey.location` v gateway musí odpovídat (harness volí podle env). 429 z rozpočtu nese `Retry-After` do konce okna → `CLAUDE_CODE_MAX_RETRIES=0`.
+- `budget_usage`: `used_amount` v nanodolarech, `window_start/end` v ms; flush z paměti do DB každých 5 s (`FLUSH_INTERVAL`), test musí počkat.
 - Mock čte zadání z první user zprávy a scénář SRE pozná podle `roles/sre.yaml` v zadání; referenční návrh musí být absolutní cesta čitelná v sandboxu.
 - `claude-agent-sdk` 0.2.173 vrací `ResultMessage.usage` jako dict s `cache_*` poli – cena z mocku je konstantní.
 - **macOS:** `hostname -I` neexistuje (host_ip přes UDP socket); seatbelt zná jen reálné cesty – `allowWrite: ["/tmp"]` nestačí,

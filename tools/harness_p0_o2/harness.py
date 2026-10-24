@@ -18,6 +18,10 @@ Tvrzení:
 Scénář `identity` (--kc-home, --bao-bin; 2026-10-24): tokeny rolí vydává Keycloak (client_credentials, RS256, JWKS; tenant_id
 a agent_id z atributů service-account uživatele, aud=memory), server paměti ověřuje proti JWKS a HS256 odmítá; approval token
 podepisuje OpenBao transit (ed25519, klíč neexportovatelný, aplikace má token jen na sign/verify); padělek s legacy HMAC → HITL_INVALID_TOKEN.
+
+Scénář `budget` (2026-10-24): rozpočty per role × zakázka vynucuje agentgateway (apiKey.keys[].budgets z rolegen, USD z katalogu modelů,
+sqlite budget_usage); cena zakázky z logu gateway (role z klíče, zakázka z hlavičky x-zakazka); Block → 429 → BUDGET_EXCEEDED → eskalace
+vlastníkovi (HITL `rozpocet`) → timeout → Pozastaveno; Audit jen loguje.
 """
 from __future__ import annotations
 
@@ -282,6 +286,101 @@ def scenario_identity(a, rep, led_fn, procs, pg, ctx):
         finalize(a, rep, procs, pg, {"keycloak": "26.8.1", "realm": "p0", "openbao_transit_key": "ed25519/approval"})
 
 
+# ---------- rozpočty: klíče gateway per role × zakázka (scénář budget) ----------
+BUDGET_ZAKAZKY = {"P0-7": {}, "P0-8": {("vyvojar", "vyvojar-24h-block"): 0.005, ("architekt", "architekt-24h-audit"): 0.001}}   # P0-8: zmenšené limity pro měření Block/Audit
+
+
+def budget_keys():
+    """rolegen → apikeys-acme-<zakazka>.yaml pro každou zakázku; harness vydá hodnoty klíčů (v cíli OpenBao), gateway dostane jen sha256.
+    Umístění klíče: Claude CLI posílá `x-api-key`; v hostovaném prostředí (CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST) `Authorization: Bearer`."""
+    import yaml
+    keys, policy_keys = {}, []
+    for zid, patch in BUDGET_ZAKAZKY.items():
+        out = LOGS / f"rolegen-{zid}"
+        rg = subprocess.run([sys.executable, str(T / "rolegen/rolegen.py"), "--roles", str(ROOT / "knowledge/organization/roles"), "--out", str(out), "--tenant", "acme", "--zakazka", zid], capture_output=True, text=True)
+        assert rg.returncode == 0, rg.stderr
+        pol = yaml.safe_load((out / f"agentgateway/apikeys-acme-{zid}.yaml").read_text())["policies"]["apiKey"]
+        keys[zid] = {}
+        for k in pol["keys"]:
+            role = k["metadata"]["role"]
+            if role not in ROLE_CLIENTS: continue           # sre nemá v P0 model
+            val = f"sk-gw-{zid}-{role}-{hashlib.sha256(os.urandom(16)).hexdigest()[:20]}"
+            keys[zid][role] = val
+            k["keyHash"] = "sha256:" + hashlib.sha256(val.encode()).hexdigest()
+            for b in k["budgets"]:
+                if (role, b["name"]) in patch: b["limit"]["amount"] = patch[(role, b["name"])]
+            policy_keys.append(k)
+    loc = {"header": {"name": "Authorization", "prefix": "Bearer "}} if os.environ.get("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST") else {"header": {"name": "x-api-key"}}
+    return {"keys": keys, "policies": {"apiKey": {"mode": "strict", "location": loc, "keys": policy_keys}}, "location": loc}
+
+
+def gw_log():
+    out = []
+    for line in (LOGS / "agentgateway.log").read_text(errors="replace").splitlines():
+        try: out.append(json.loads(line))
+        except Exception: pass
+    return out
+
+
+def scenario_budget(a, rep, led_fn, procs, pg, ctx):
+    """Rozpočty per role × zakázka vynucuje agentgateway (apiKey.keys[].budgets, USD z katalogu modelů), ne součet usage v app."""
+    import sqlite3
+    keys, loc = ctx["keys"], ctx["location"]
+    LLM = f"http://127.0.0.1:{LLM_PORT}/v1/messages"
+    def hdr(val): return {"Authorization": f"Bearer {val}"} if loc["header"]["name"] == "Authorization" else {"x-api-key": val}
+    body = {"model": a.model, "max_tokens": 64, "messages": [{"role": "user", "content": "ping"}]}
+    try:
+        no_key = httpx.post(LLM, json=body, headers={"x-zakazka": "probe", "anthropic-version": "2023-06-01"}, timeout=20).status_code
+        bad = httpx.post(LLM, json=body, headers=hdr("sk-gw-neplatny") | {"x-zakazka": "probe", "anthropic-version": "2023-06-01"}, timeout=20).status_code
+        good = httpx.post(LLM, json=body, headers=hdr(keys["P0-7"]["reviewer"]) | {"x-zakazka": "probe", "anthropic-version": "2023-06-01"}, timeout=20)
+        time.sleep(1)
+        probe = [e for e in gw_log() if e.get("zakazka") == "probe" and e.get("http.status") == 200]
+        rep.add("B1", "LLM listener ve strict apiKey režimu: bez klíče a s cizím klíčem 401; klíč role (sha256 z rolegen apikeys-acme-<zakazka>.yaml) projde; log gateway nese `role` z metadat klíče a `zakazka` z hlavičky", "PASS" if no_key == 401 and bad == 401 and good.status_code == 200 and probe and probe[-1].get("role") == "reviewer" else "FAIL", {"no_key": no_key, "bad_key": bad, "good_key": good.status_code, "log": {k: probe[-1].get(k) for k in ("role", "zakazka", "agw.ai.usage.cost.total", "gen_ai.request.model")} if probe else None, "location": loc})
+        # P0-7: ostré limity z roles/*.yaml – zakázka projde, cena z gateway
+        st = run_zakazka("P0-7", "Přidej endpoint /version do služby ACME.", 300 if a.mode == "mock" else 1500)
+        led = led_fn(); bud = [e for e in led if e["kind"] == "BUDGET" and e["zakazka"] == "P0-7"]; last = bud[-1] if bud else {}
+        gl = [e for e in gw_log() if e.get("zakazka") == "P0-7" and "agw.ai.usage.cost.total" in e]
+        gl_sum = round(sum(float(e["agw.ai.usage.cost.total"]) for e in gl), 6); gl_roles = sorted({e.get("role") for e in gl})
+        runs = {e["role"]: e for e in led if e["kind"] == "AGENT_RUN" and e["zakazka"] == "P0-7"}
+        rep.add("B2", "Zakázka P0-7 na klíčích role × zakázka Dokonceno; cena zakázky v BUDGET pochází z gateway (součet agw.ai.usage.cost.total podle zakazka/role), ne z usage SDK; všechny 4 role mají vlastní klíč v logu", "PASS" if (st.get("output") or {}).get("stav") == "Dokonceno" and last.get("source") == "agentgateway" and abs(last.get("spent_usd", 0) - gl_sum) < 1e-6 and set(last.get("by_role") or {}) == set(ROLE_CLIENTS) == set(gl_roles) else "FAIL", {"output": st.get("output"), "budget": {k: last.get(k) for k in ("spent_usd", "source", "by_role", "gateway_requests", "sdk_usd")}, "gateway_log_sum": gl_sum, "gateway_log_requests": len(gl), "sdk_cost_by_role": {r: e.get("cost_usd") for r, e in runs.items()}})
+        # budget_usage v DB gateway – zápis je periodický (čítače v paměti + flush delt), proto se čeká na shodu s logem
+        def role_of(bid):
+            for zid, rk in keys.items():
+                for role, val in rk.items():
+                    if hashlib.sha256(val.encode()).hexdigest() in bid: return zid, role
+            return None, None
+        by_role = last.get("by_role") or {}
+        expected = {r: by_role.get(r, 0) + (float(probe[-1]["agw.ai.usage.cost.total"]) if r == "reviewer" and probe else 0) for r in ROLE_CLIENTS}   # klíč reviewer P0-7 nesl i probe z B1
+        t0 = time.time(); db, rows, db_ok = {}, [], False
+        while time.time() - t0 < 45 and not db_ok:
+            time.sleep(1)
+            rows = sqlite3.connect(str(CFG / "agentgateway-budgets.db")).execute("SELECT budget_id, window_start, window_end, unit, used_amount FROM budget_usage").fetchall()
+            db = {}
+            for bid, ws, we, unit, used in rows:
+                zid, role = role_of(bid); db.setdefault(zid, {}).setdefault(role, []).append({"budget": bid.rsplit(":", 1)[-1], "unit": unit, "used_usd": used / 1e9 if unit == "USD" else used, "window_h": round((we - ws) / 3_600_000, 1)})   # okna v ms, USD v nanodolarech
+            db_ok = set(db.get("P0-7") or {}) == set(ROLE_CLIENTS) and all(any(abs(b["used_usd"] - expected[r]) < 1e-6 for b in bl if b["budget"].endswith("24h-block")) and {b["window_h"] for b in bl} == {24.0, 720.0} for r, bl in (db.get("P0-7") or {}).items())
+        rep.add("B3", "Tabulka budget_usage (sqlite, USD v nanodolarech, okna v ms) má pro každý klíč P0-7 tři okna (24h audit, 24h block, 30d block) a used_amount = cena všech requestů klíče z logu gateway (zakázka + probe); zápis do DB je periodický", "PASS" if db_ok and all(len(bl) == 3 for bl in (db.get("P0-7") or {}).values()) else "FAIL", {"rows": len(rows), "db_lag_s": round(time.time() - t0, 1), "expected_usd": expected, "P0-7": {r: [(b["budget"], b["used_usd"], b["window_h"]) for b in bl] for r, bl in (db.get("P0-7") or {}).items()}})
+        # P0-8: Architekt má Audit limit 0.001 USD (překročen → jen log), Vývojář Block 0.005 USD (→ 429 → BUDGET_EXCEEDED → eskalace → timeout → pauza)
+        zid = "P0-8"
+        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": "Přidej endpoint /metrics do služby ACME.", "hitl_timeout_s": 3600, "budget_timeout_s": 5}, timeout=10)
+        approve(zid, "H1", wait_handoff(zid, "issue://")); adr = wait_handoff(zid, "adr://"); assert adr, "Architekt (Audit) nedodal ADR"; approve(zid, "H2", adr)
+        st8 = wait_status(zid, {"COMPLETED", "FAILED"}, 240)
+        led = led_fn()
+        exc = [e for e in led if e["kind"] == "BUDGET_EXCEEDED" and e["zakazka"] == zid]
+        notif = [e for e in led if e["kind"] == "NOTIFY" and e["zakazka"] == zid and e.get("event") in ("BUDGET_EXCEEDED", "HITL_TIMEOUT")]
+        g8 = [e for e in gw_log() if e.get("zakazka") == zid]
+        s429 = [e for e in g8 if e.get("http.status") == 429]
+        arch_ok = [e for e in g8 if e.get("role") == "architekt" and e.get("http.status") == 200]
+        audit_warn = [l for l in (LOGS / "agentgateway.log").read_text(errors="replace").splitlines() if "API key budget exceeded" in l and "architekt-24h-audit" in l]
+        block_warn = [l for l in (LOGS / "agentgateway.log").read_text(errors="replace").splitlines() if "API key budget exceeded" in l and "vyvojar-24h-block" in l]
+        rep.add("B4", "Block: klíč Vývojáře P0-8 (limit 0.005 USD) → gateway 429 (Retry-After), SDK run selže → BUDGET_EXCEEDED → eskalace vlastníkovi (HITL `rozpocet`) → timeout 5 s → Pozastaveno bod rozpocet, Reviewer nespuštěn", "PASS" if s429 and exc and [e for e in exc if e["role"] == "vyvojar"] and (st8.get("output") or {}).get("stav") == "Pozastaveno" and (st8.get("output") or {}).get("bod") == "rozpocet" and (st8.get("output") or {}).get("role") == "vyvojar" and not any(e["kind"] == "AGENT_RUN" and e["zakazka"] == zid and e["role"] == "reviewer" for e in led) and block_warn else "FAIL", {"output": st8.get("output"), "gateway_429": len(s429), "vyvojar_200_before_block": len([e for e in g8 if e.get("role") == "vyvojar" and e.get("http.status") == 200]), "budget_exceeded_events": [(e["role"], e["detail"][:120]) for e in exc], "notify": [e.get("event") for e in notif], "block_warn": block_warn[-1][:300] if block_warn else None})
+        rep.add("B5", "Audit: klíč Architekta P0-8 (limit 0.001 USD) překročen → gateway loguje `API key budget exceeded` (exceeded=true), ale requesty dál 200 a ADR vzniklo – Audit nikdy neblokuje", "PASS" if audit_warn and len(arch_ok) >= 2 and adr else "FAIL", {"architekt_200": len(arch_ok), "audit_warn": audit_warn[-1][:300] if audit_warn else None})
+        rep.add("B6", "Cena: gateway (katalog modelů, USD) vs. SDK total_cost_usd per role P0-7; zbytek vrstvy FinOps", "INFO", {"gateway_by_role": by_role, "sdk_by_role": {r: e.get("cost_usd") for r, e in runs.items()}, "model": a.model, "note": "agentgateway 1.6 cení z vestavěného katalogu (agw.ai.usage.cost.total i pro mock); SDK počítá z vlastní tabulky cen – gateway je zdroj pravdy pro FinOps"})
+        (RESULTS / "ledger-budget.json").write_text(json.dumps(led, ensure_ascii=False, indent=1))
+    finally:
+        finalize(a, rep, procs, pg, {"zakazky": list(BUDGET_ZAKAZKY), "patched_limits": {f"{z}/{r}/{b}": v for z, p in BUDGET_ZAKAZKY.items() for (r, b), v in p.items()}})
+
+
 def scenario_github(a, rep, led_fn, procs, pg):
     """Artefakty naostro: zadání jako GitHub issue (po H1), větev + PR (po Vývojáři), merge PR (po H4 přes executor).
     Výchozí = suchý běh: payloady do logs/github-dryrun/, nic neodejde. --publish-github + GITHUB_TOKEN = skutečný zápis."""
@@ -373,7 +472,7 @@ def main():
     ap.add_argument("--mode", choices=["mock", "live"], default="mock")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--publish-github", action="store_true", help="scénář github: skutečně zapsat issue/větev/PR/merge do P0_GITHUB_REPO (vyžaduje GITHUB_TOKEN); bez flagu suchý běh")
-    ap.add_argument("--scenario", choices=["p0", "sre", "github", "github-hitl", "identity"], default="p0", help="p0 = injekce + negativní kontrola; sre = zakázka P0-3 „vytvoř roli SRE“ provedená platformou (merge executor zapíše soubor do knowledge/organization/roles); identity = Keycloak JWKS pro role + OpenBao transit pro approval token (vyžaduje --kc-home a --bao-bin)")
+    ap.add_argument("--scenario", choices=["p0", "sre", "github", "github-hitl", "identity", "budget"], default="p0", help="p0 = injekce + negativní kontrola; sre = zakázka P0-3 „vytvoř roli SRE“ provedená platformou (merge executor zapíše soubor do knowledge/organization/roles); identity = Keycloak JWKS pro role + OpenBao transit pro approval token (vyžaduje --kc-home a --bao-bin)")
     ap.add_argument("--kc-home", default=os.getenv("KC_HOME", ""), help="rozbalený keycloak-26.8.1 (scénář identity)")
     ap.add_argument("--bao-bin", default=os.getenv("BAO_BIN", shutil.which("bao") or ""), help="binárka OpenBao 2.7.1 (scénář identity)")
     ap.add_argument("--max-turns", type=int, default=None, help="limit kol agenta (výchozí 8 mock, 24 live – živý model potřebuje průzkum)")
@@ -430,6 +529,15 @@ def main():
         for k, v in {"CONNECT_PORT": CONNECT_PORT, "LLM_PORT": LLM_PORT, "MOCK_PORT": MOCK_PORT, "GIT_PORT": GIT_PORT, "PKG_PORT": PKG_PORT, "CERTS": str(s1.CERTS)}.items(): cfg = cfg.replace("{{%s}}" % k, str(v))
         if a.mode == "live":
             cfg = cfg.replace(f"baseUrl: http://127.0.0.1:{MOCK_PORT}/v1", "baseUrl: https://api.anthropic.com/v1")
+        bctx = {}
+        if a.scenario == "budget":
+            bctx = budget_keys()                       # klíče role × zakázka z rolegen (P0-7 ostré limity, P0-8 zmenšené pro měření)
+            import yaml
+            c = yaml.safe_load(cfg)
+            c["config"]["database"] = {"url": str(CFG / "agentgateway-budgets.db")}          # budgets vyžadují config.database (sqlite/postgres)
+            c["llm"]["policies"] = bctx["policies"]
+            cfg = yaml.safe_dump(c, sort_keys=False, allow_unicode=True)
+            (CFG / "agentgateway-budgets.db").unlink(missing_ok=True)
         (CFG / "agentgateway.yaml").write_text(cfg)
         procs.append(Proc("agentgateway", [a.agentgateway_bin, "-f", str(CFG / "agentgateway.yaml")], env | {"ANTHROPIC_API_KEY": api_key or "sk-ant-harness-mock"}, LOGS / "agentgateway.log"))
         assert wait_http("http://127.0.0.1:19001/healthz/ready", 60)
@@ -460,6 +568,8 @@ def main():
                          "P0_GITHUB_MODE": "1" if a.scenario in ("github", "github-hitl") else "0", "P0_GITHUB_PUBLISH": "1" if ((a.scenario == "github" and a.publish_github) or a.scenario == "github-hitl") else "0",
                          "P0_HITL_GITHUB": "1" if a.scenario == "github-hitl" else "0", "P0_GITHUB_API": (f"http://127.0.0.1:{GH_PORT}" if a.scenario == "github-hitl" else os.environ.get("P0_GITHUB_API", "https://api.github.com")), "GITHUB_TOKEN": ("mock" if a.scenario == "github-hitl" else os.environ.get("GITHUB_TOKEN", "")), "P0_GITHUB_DRYRUN_DIR": str(LOGS / "github-dryrun"), "P0_GITHUB_REPO": os.environ.get("P0_GITHUB_REPO", "akczcz/adam"), "P0_MERGE_TARGET": str(ROOT / "knowledge/organization") if a.scenario == "sre" else "", "P0_MAX_TURNS": str(a.max_turns or (8 if a.mode == "mock" else 24))}
         if ident: app_env |= {"P0_BAO_ADDR": BAO, "P0_BAO_TOKEN": bao_app, "P0_BAO_KEY": "approval"}   # aplikace má jen token na sign/verify, root zůstává v harnessu
+        app_env["P0_GATEWAY_LOG"] = str(LOGS / "agentgateway.log")                                     # cena zakázky ze záznamů gateway (pole zakazka/role)
+        if a.scenario == "budget": app_env |= {"P0_ROLE_KEYS": json.dumps(bctx["keys"]), "P0_CLI_MAX_RETRIES": "0"}
         shutil.rmtree("/tmp/p0-o2", ignore_errors=True)
         if a.scenario == "github-hitl":
             procs.append(Proc("mock-github", [sys.executable, str(HERE / "mock_github.py")], env | {"MOCK_GH_PORT": str(GH_PORT), "MOCK_GH_WEBHOOK": f"http://127.0.0.1:{BRIDGE_PORT}/webhook", "MOCK_GH_WEBHOOK_SECRET": WEBHOOK_SECRET}, LOGS / "mock-github.log"))
@@ -471,6 +581,8 @@ def main():
 
         if ident:
             return scenario_identity(a, rep, led_fn=ledger, procs=procs, pg=pg, ctx=ictx)
+        if a.scenario == "budget":
+            return scenario_budget(a, rep, led_fn=ledger, procs=procs, pg=pg, ctx=bctx)
         if a.scenario == "sre":
             return scenario_sre(a, rep, led_fn=ledger, reviewer=reviewer, git_debug=git_debug, procs=procs, pg=pg)
         if a.scenario == "github":

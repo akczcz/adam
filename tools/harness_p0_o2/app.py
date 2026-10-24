@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from datetime import timedelta
 
@@ -34,6 +35,7 @@ BAO, BAO_TOKEN, BAO_KEY = os.environ.get("P0_BAO_ADDR"), os.environ.get("P0_BAO_
 LEDGER = os.environ.get("O1_LEDGER", "logs/ledger.jsonl")
 HITL_TIMEOUT_S = float(os.environ.get("O1_HITL_TIMEOUT_S", "3600"))
 BUDGET_USD = float(os.environ.get("O1_BUDGET_USD", "400"))
+BUDGET_TIMEOUT_S = float(os.environ.get("P0_BUDGET_TIMEOUT_S", str(4 * 3600)))   # roles/*.yaml on_exceeded.timeout: 4h, on_timeout: pause
 COST = {"account": 0.4, "architekt": 1.2, "vyvojar": 3.5, "reviewer": 0.9, "sre": 0.6}
 
 
@@ -105,6 +107,31 @@ def role_token(role):
     return toks.get(role) or os.environ["P0_AGENT_TOKEN"]
 
 
+def role_key(role, zakazka_id):
+    """Klíč gateway per role × zakázka (P0_ROLE_KEYS = {zakazka: {role: key}}, "*" = výchozí); bez něj společný P0_API_KEY.
+    Hodnotu klíče vydává v cíli OpenBao, gateway zná jen sha256 (rolegen apikeys-<tenant>-<zakazka>.yaml)."""
+    keys = json.loads(os.environ.get("P0_ROLE_KEYS", "{}"))
+    return (keys.get(zakazka_id) or keys.get("*") or {}).get(role) or os.environ.get("P0_API_KEY", "sk-ant-harness-mock")
+
+
+BUDGET_RE = re.compile(r"\b429\b|budget exceeded|rate.?limit", re.I)
+
+
+def gateway_cost(zakazka_id):
+    """Cena zakázky podle gateway: součet `agw.ai.usage.cost.total` z JSON logu agentgateway (pole `zakazka` z hlavičky, `role` z metadat klíče).
+    Zdroj pravdy je gateway (vidí každý request a cení ho z katalogu), ne usage hlášená SDK. Bez logu vrací None."""
+    path = os.environ.get("P0_GATEWAY_LOG")
+    if not path or not os.path.exists(path): return None
+    by_role, n = {}, 0
+    for line in open(path, errors="replace"):
+        if '"agw.ai.usage.cost.total"' not in line: continue
+        try: e = json.loads(line)
+        except Exception: continue
+        if e.get("zakazka") != zakazka_id: continue
+        by_role[e.get("role") or "?"] = by_role.get(e.get("role") or "?", 0.0) + float(e["agw.ai.usage.cost.total"]); n += 1
+    return {"total_usd": round(sum(by_role.values()), 6), "by_role": {k: round(v, 6) for k, v in by_role.items()}, "requests": n}
+
+
 def agent_run(role, z, prompt, tool_names):
     """Spustí roli jako Claude Agent SDK query s ClaudeAgentOptions vygenerovanými rolegenem (build/agent_sdk/<role>.json)."""
     import asyncio, subprocess
@@ -172,7 +199,9 @@ def agent_run(role, z, prompt, tool_names):
 
     all_tools = {"search_memory": search_memory, "create_memory": create_memory, "sandboxed_bash": sandboxed_bash, "read_artifact": read_artifact, "write_artifact": write_artifact, "run_evals": run_evals}
     server = create_sdk_mcp_server("harness", "1.0.0", [all_tools[n] for n in tool_names])
-    cli_env = {"ANTHROPIC_BASE_URL": os.environ["P0_LLM_URL"], "ANTHROPIC_API_KEY": os.environ.get("P0_API_KEY", "sk-ant-harness-mock"),
+    cli_env = {"ANTHROPIC_BASE_URL": os.environ["P0_LLM_URL"], "ANTHROPIC_API_KEY": role_key(role, z["id"]),
+               "ANTHROPIC_CUSTOM_HEADERS": f"x-zakazka: {z['id']}\nx-role: {role}",   # zakázka do logu gateway (CEL pole `zakazka`); role nese klíč (apiKey.metadata.role)
+               "CLAUDE_CODE_MAX_RETRIES": os.environ.get("P0_CLI_MAX_RETRIES", "2"),  # 429 z rozpočtu gateway není přechodná chyba – neopakovat do konce okna
                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
     for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"): cli_env[k] = ""
     if os.environ.get("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"):
@@ -200,6 +229,9 @@ def agent_run(role, z, prompt, tool_names):
     usage = (getattr(result, "usage", None) or {}) if result else {}
     cost = getattr(result, "total_cost_usd", None) if result else None
     text = (getattr(result, "result", "") or "") if result else (f"AGENT_ERROR {error}" if error else "")
+    is_err = (getattr(result, "is_error", None) if result else True)
+    budget_exceeded = bool((is_err or error) and BUDGET_RE.search((error or "") + " " + text))   # 429 z gateway = rozpočet klíče role × zakázka (onBudgetExceeded: Block)
+    if budget_exceeded: ledger("BUDGET_EXCEEDED", zakazka=z["id"], role=role, source="agentgateway", detail=((error or "") + " " + text)[:300])
     files = []
     for r_, _, names in os.walk(work):
         for n in sorted(names):
@@ -207,8 +239,8 @@ def agent_run(role, z, prompt, tool_names):
             if rel.startswith(".") or n == "health.py": continue
             files.append({"path": rel, "sha256": hashlib.sha256(open(fp, "rb").read()).hexdigest()[:16]})
     ledger("AGENT_RUN", zakazka=z["id"], role=role, tool_uses=tool_uses, calls=calls, usage=usage, cost_usd=cost, files=files if role == "vyvojar" else None,
-           role_options_source=opts_src, num_turns=getattr(result, "num_turns", None) if result else None, is_error=(getattr(result, "is_error", None) if result else True), error=error, result_text=text[:600])
-    return {"text": text, "cost": cost, "files": files, "work": work, "arts": arts, "error": error}
+           role_options_source=opts_src, num_turns=getattr(result, "num_turns", None) if result else None, is_error=is_err, error=error, result_text=text[:600], budget_exceeded=budget_exceeded)
+    return {"text": text, "cost": cost, "files": files, "work": work, "arts": arts, "error": error, "budget_exceeded": budget_exceeded}
 
 
 def _art_hash(path):
@@ -220,6 +252,7 @@ def role_account(ctx, z):
     r = agent_run("account", z, ROLE_PROMPTS["account"], ["search_memory", "read_artifact", "write_artifact"])
     p = os.path.join(r["arts"], "zadani.md")
     art = {"type": "zadani", "ref": f"issue://{z['id']}", "path": "artifacts/zadani.md", "hash": _art_hash(p) or h(z["poptavka"])}
+    art["budget_exceeded"] = r.get("budget_exceeded", False)
     ledger("HANDOFF", frm="account", to="human:zakaznik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["account"]))
     return art
 
@@ -229,6 +262,7 @@ def role_architekt(ctx, z):
     r = agent_run("architekt", z, ROLE_PROMPTS["architekt"], ["search_memory", "read_artifact", "write_artifact"])
     p = os.path.join(r["arts"], "adr.md")
     art = {"type": "adr", "ref": f"adr://{z['id']}/001", "path": "artifacts/adr.md", "hash": _art_hash(p) or h("adr-missing" + z["id"])}
+    art["budget_exceeded"] = r.get("budget_exceeded", False)
     ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["architekt"]))
     return art
 
@@ -244,6 +278,7 @@ def role_vyvojar(ctx, z):
     if "[INJECT]" in z["poptavka"]:
         d = pdp("merge", "vyvojar", z, pr["hash"])
         ledger("INJECTION_ATTEMPT", zakazka=z["id"], action="merge", allowed=d["allow"], reason=d["reason"])
+    pr["budget_exceeded"] = r.get("budget_exceeded", False)
     ledger("HANDOFF", frm="vyvojar", to="reviewer", zakazka=z["id"], artifact=pr["ref"], hash=pr["hash"], cost_usd=(r["cost"] or COST["vyvojar"]))
     return pr
 
@@ -256,6 +291,7 @@ def role_reviewer(ctx, inp):
     p = os.path.join(r["arts"], "review.md"); txt = open(p).read() if os.path.exists(p) else ""
     verdict = "ok" if "verdict: ok" in txt else ("changes_requested" if "verdict: changes_requested" in txt else "missing")
     rep = {"type": "review", "ref": f"review://{z['id']}/1", "verdict": verdict, "path": "artifacts/review.md", "pr_hash": pr["hash"], "hash": _art_hash(p) or pr["hash"]}
+    rep["budget_exceeded"] = r.get("budget_exceeded", False)
     ledger("HANDOFF", frm="reviewer", to="human:vlastnik", zakazka=z["id"], artifact=rep["ref"], hash=pr["hash"], verdict=verdict, cost_usd=(r["cost"] or COST["reviewer"]))
     return rep
 
@@ -370,8 +406,10 @@ def executor(ctx, inp):
 
 @rt.activity(name="budget_check")
 def budget_check(ctx, z):
-    spent = sum(e.get("cost_usd", 0) for e in _ledger() if e.get("kind") == "HANDOFF" and e.get("zakazka") == z["id"])
-    ledger("BUDGET", zakazka=z["id"], spent_usd=round(spent, 2), limit_usd=BUDGET_USD, frozen=z.get("stopped", False))
+    gw = gateway_cost(z["id"])
+    sdk = sum(e.get("cost_usd", 0) for e in _ledger() if e.get("kind") == "HANDOFF" and e.get("zakazka") == z["id"])
+    spent = gw["total_usd"] if gw else sdk
+    ledger("BUDGET", zakazka=z["id"], spent_usd=round(spent, 6), limit_usd=BUDGET_USD, frozen=z.get("stopped", False), source="agentgateway" if gw else "sdk_usage", by_role=(gw or {}).get("by_role"), gateway_requests=(gw or {}).get("requests"), sdk_usd=round(sdk, 6))
     return spent
 
 
@@ -395,10 +433,10 @@ def _ledger():
 
 
 # --- workflow zakázky --------------------------------------------------------------------------------------------------
-def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash):
+def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
     """HITL bod: čeká na event `hitl:<bod>` NEBO timer. Timeout nikdy neschvaluje → stav Pozastaveno."""
     ev = ctx.wait_for_external_event(f"hitl:{bod}")
-    tm = ctx.create_timer(timedelta(seconds=float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))))
+    tm = ctx.create_timer(timedelta(seconds=float(timeout_s if timeout_s is not None else z.get("hitl_timeout_s", HITL_TIMEOUT_S))))
     winner = yield wf.when_any([ev, tm])
     if winner == tm:
         yield ctx.call_activity(notify, input={"event": "HITL_TIMEOUT", "bod": bod, "zakazka": z["id"], "result": "pozastaveno"})
@@ -412,10 +450,24 @@ def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash):
     return data["token"]
 
 
+def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
+    """Role jako aktivita + `on_exceeded` z roles/<role>.yaml: rozpočet klíče role × zakázka vyčerpán (429 z gateway) →
+    BUDGET_EXCEEDED, eskalace vlastníkovi procesu jako HITL bod `rozpocet` (token vázaný na roli), timeout → pauza (fail-closed).
+    Po schválení (vlastník navýšil limit / vydal nový klíč) jeden opakovaný pokus; druhé vyčerpání → pauza."""
+    art = yield ctx.call_activity(activity, input=inp)
+    if not art.get("budget_exceeded"): return art
+    yield ctx.call_activity(notify, input={"event": "BUDGET_EXCEEDED", "role": role, "zakazka": z["id"], "escalate_to": "process_owner", "timeout_s": z.get("budget_timeout_s", BUDGET_TIMEOUT_S)})
+    tok = yield from hitl(ctx, z, "rozpocet", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
+    if not tok: return None
+    art = yield ctx.call_activity(activity, input=inp)
+    return None if art.get("budget_exceeded") else art
+
+
 @rt.workflow(name="zakazka")
 def zakazka(ctx: wf.DaprWorkflowContext, z):
     state = {"id": z["id"], "stav": "P1"}
-    zad = yield ctx.call_activity(role_account, input=z)                      # P1 Přijetí zadání
+    zad = yield from run_role(ctx, z, "account", role_account, z)               # P1 Přijetí zadání
+    if not zad: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
     gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
     if os.environ.get("P0_GITHUB_MODE") == "1" and gh_hitl:
         yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # issue = nosič H1 (dogfooding, vlastní repo; cizí zákazník → AG-UI)
@@ -423,14 +475,17 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     if not t1: return {**state, "stav": "Pozastaveno", "bod": "H1"}
     if os.environ.get("P0_GITHUB_MODE") == "1" and not gh_hitl:
         yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # bez GitHub HITL: issue až po schválení (N3)
-    adr = yield ctx.call_activity(role_architekt, input=z)                    # P2 Návrh
+    adr = yield from run_role(ctx, z, "architekt", role_architekt, z)          # P2 Návrh
+    if not adr: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "architekt"}
     t2 = yield from hitl(ctx, z, "H2", adr["hash"])
     if not t2: return {**state, "stav": "Pozastaveno", "bod": "H2"}
-    pr = yield ctx.call_activity(role_vyvojar, input=z)                       # P3 Implementace (sandbox)
+    pr = yield from run_role(ctx, z, "vyvojar", role_vyvojar, z)               # P3 Implementace (sandbox)
+    if not pr: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "vyvojar"}
     pr_pub = {}
     if os.environ.get("P0_GITHUB_MODE") == "1":
         pr_pub = yield ctx.call_activity(publish_pr, input={"z": z, "pr": pr})  # větev + PR = artefakt pro review (reverzibilní)
-    rev = yield ctx.call_activity(role_reviewer, input={"z": z, "pr": pr})    # P4 Review
+    rev = yield from run_role(ctx, z, "reviewer", role_reviewer, {"z": z, "pr": pr})   # P4 Review
+    if not rev: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "reviewer"}
     yield ctx.call_activity(budget_check, input=z)
     t4 = yield from hitl(ctx, z, "H4", pr["hash"])                            # merge = N1 – člověk vlastník
     if not t4: return {**state, "stav": "Pozastaveno", "bod": "H4"}
@@ -457,7 +512,7 @@ def client():
 @app.post("/zakazky")
 async def create(req: Request):
     b = await req.json()
-    z = {"id": b["id"], "poptavka": b["poptavka"], "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S)}
+    z = {"id": b["id"], "poptavka": b["poptavka"], "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S)}
     client().schedule_new_workflow(zakazka, input=z, instance_id=z["id"])
     ledger("ZAKAZKA_START", zakazka=z["id"])
     return {"id": z["id"]}

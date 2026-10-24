@@ -14,6 +14,9 @@ config:
     fields:
       add:
         harness.sni: 'destination.hostname'
+        # FinOps: zakázka z hlavičky (ANTHROPIC_CUSTOM_HEADERS v SDK), role z metadat klíče gateway (scénář budget: policies.apiKey)
+        zakazka: '"x-zakazka" in request.headers ? request.headers["x-zakazka"] : ""'
+        role: 'apiKey != null ? string(apiKey.role) : ""'
 
 binds:
 - port: {{CONNECT_PORT}}

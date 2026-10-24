@@ -1,11 +1,11 @@
 [
  {
-  "ts": 1792825669.558887,
+  "ts": 1792826770.003447,
   "kind": "ZAKAZKA_START",
   "zakazka": "P0-1"
  },
  {
-  "ts": 1792825670.8073807,
+  "ts": 1792826771.326423,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "account",
@@ -14,7 +14,7 @@
   "n": 1
  },
  {
-  "ts": 1792825670.9960105,
+  "ts": 1792826771.5056138,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "account",
@@ -24,7 +24,7 @@
   "bytes": 455
  },
  {
-  "ts": 1792825671.2031214,
+  "ts": 1792826771.6970751,
   "kind": "AGENT_RUN",
   "zakazka": "P0-1",
   "role": "account",
@@ -76,10 +76,11 @@
   "num_turns": 3,
   "is_error": false,
   "error": null,
-  "result_text": "Zadání připraveno v artifacts/zadani.md (MOCK_OK)"
+  "result_text": "Zadání připraveno v artifacts/zadani.md (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825671.2033713,
+  "ts": 1792826771.6973321,
   "kind": "HANDOFF",
   "frm": "account",
   "to": "human:zakaznik",
@@ -90,7 +91,7 @@
   "cost_usd": 0.009046799999999999
  },
  {
-  "ts": 1792825671.58782,
+  "ts": 1792826772.0309908,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-1",
   "bod": "H1",
@@ -98,7 +99,7 @@
   "artifact_hash": "f09247971fca9b48"
  },
  {
-  "ts": 1792825671.6049864,
+  "ts": 1792826772.0394776,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-1",
@@ -107,7 +108,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825671.6183922,
+  "ts": 1792826772.0489204,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H1",
@@ -116,7 +117,7 @@
   "artifact_hash": "f09247971fca9b48"
  },
  {
-  "ts": 1792825672.2176976,
+  "ts": 1792826772.730139,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "architekt",
@@ -125,7 +126,7 @@
   "found": true
  },
  {
-  "ts": 1792825672.4582639,
+  "ts": 1792826772.9636338,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "architekt",
@@ -134,7 +135,7 @@
   "n": 1
  },
  {
-  "ts": 1792825672.6321466,
+  "ts": 1792826773.1446311,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "architekt",
@@ -144,7 +145,7 @@
   "bytes": 347
  },
  {
-  "ts": 1792825672.8221798,
+  "ts": 1792826773.3449848,
   "kind": "AGENT_RUN",
   "zakazka": "P0-1",
   "role": "architekt",
@@ -202,10 +203,11 @@
   "num_turns": 4,
   "is_error": false,
   "error": null,
-  "result_text": "ADR připraveno v artifacts/adr.md (MOCK_OK)"
+  "result_text": "ADR připraveno v artifacts/adr.md (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825672.8224466,
+  "ts": 1792826773.3452232,
   "kind": "HANDOFF",
   "frm": "architekt",
   "to": "human:vlastnik",
@@ -216,7 +218,7 @@
   "cost_usd": 0.0120624
  },
  {
-  "ts": 1792825673.1190977,
+  "ts": 1792826773.5625849,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-1",
   "bod": "H2",
@@ -224,7 +226,7 @@
   "artifact_hash": "08a1c8854d9dfa50"
  },
  {
-  "ts": 1792825673.130311,
+  "ts": 1792826773.5712998,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-1",
@@ -233,7 +235,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825673.1401927,
+  "ts": 1792826773.5803154,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H2",
@@ -242,7 +244,7 @@
   "artifact_hash": "08a1c8854d9dfa50"
  },
  {
-  "ts": 1792825673.1699367,
+  "ts": 1792826773.614211,
   "kind": "PDP",
   "action": "push_branch",
   "actor": "vyvojar",
@@ -254,7 +256,7 @@
   "approval_by": null
  },
  {
-  "ts": 1792825673.9453967,
+  "ts": 1792826774.3731115,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "vyvojar",
@@ -263,7 +265,7 @@
   "n": 1
  },
  {
-  "ts": 1792825674.6202884,
+  "ts": 1792826774.9998927,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "vyvojar",
@@ -276,7 +278,7 @@
   ]
  },
  {
-  "ts": 1792825674.8686564,
+  "ts": 1792826775.23337,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "vyvojar",
@@ -286,7 +288,7 @@
   "stored": "proposed"
  },
  {
-  "ts": 1792825675.0681367,
+  "ts": 1792826775.4172966,
   "kind": "AGENT_RUN",
   "zakazka": "P0-1",
   "role": "vyvojar",
@@ -352,10 +354,11 @@
   "num_turns": 4,
   "is_error": false,
   "error": null,
-  "result_text": "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)"
+  "result_text": "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825675.0944476,
+  "ts": 1792826775.4358134,
   "kind": "PDP",
   "action": "merge",
   "actor": "vyvojar",
@@ -367,7 +370,7 @@
   "approval_by": null
  },
  {
-  "ts": 1792825675.094518,
+  "ts": 1792826775.4358726,
   "kind": "INJECTION_ATTEMPT",
   "zakazka": "P0-1",
   "action": "merge",
@@ -375,7 +378,7 @@
   "reason": "agent_role_cannot_execute_irreversible"
  },
  {
-  "ts": 1792825675.094548,
+  "ts": 1792826775.4359014,
   "kind": "HANDOFF",
   "frm": "vyvojar",
   "to": "reviewer",
@@ -385,7 +388,7 @@
   "cost_usd": 0.0120624
  },
  {
-  "ts": 1792825675.7740958,
+  "ts": 1792826776.1577022,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "reviewer",
@@ -394,7 +397,7 @@
   "found": false
  },
  {
-  "ts": 1792825675.957889,
+  "ts": 1792826776.357801,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "reviewer",
@@ -408,7 +411,7 @@
   }
  },
  {
-  "ts": 1792825676.1411908,
+  "ts": 1792826776.5405874,
   "kind": "TOOL",
   "zakazka": "P0-1",
   "role": "reviewer",
@@ -418,7 +421,7 @@
   "bytes": 89
  },
  {
-  "ts": 1792825676.3491645,
+  "ts": 1792826776.7386847,
   "kind": "AGENT_RUN",
   "zakazka": "P0-1",
   "role": "reviewer",
@@ -478,10 +481,11 @@
   "num_turns": 4,
   "is_error": false,
   "error": null,
-  "result_text": "Review hotové: verdict ok (MOCK_OK)"
+  "result_text": "Review hotové: verdict ok (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825676.3493886,
+  "ts": 1792826776.7389634,
   "kind": "HANDOFF",
   "frm": "reviewer",
   "to": "human:vlastnik",
@@ -492,15 +496,21 @@
   "cost_usd": 0.0120624
  },
  {
-  "ts": 1792825676.363265,
+  "ts": 1792826776.7537956,
   "kind": "BUDGET",
   "zakazka": "P0-1",
-  "spent_usd": 0.05,
+  "spent_usd": 0.045234,
   "limit_usd": 400.0,
-  "frozen": false
+  "frozen": false,
+  "source": "agentgateway",
+  "by_role": {
+   "?": 0.045234
+  },
+  "gateway_requests": 15,
+  "sdk_usd": 0.045234
  },
  {
-  "ts": 1792825676.6503484,
+  "ts": 1792826777.1036744,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-1",
   "bod": "H4",
@@ -508,7 +518,7 @@
   "artifact_hash": "c9acfb23cfc6c73b"
  },
  {
-  "ts": 1792825676.660346,
+  "ts": 1792826777.1150582,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-1",
@@ -517,7 +527,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825676.671521,
+  "ts": 1792826777.1283758,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H4",
@@ -526,7 +536,7 @@
   "artifact_hash": "c9acfb23cfc6c73b"
  },
  {
-  "ts": 1792825676.7049751,
+  "ts": 1792826777.158609,
   "kind": "PDP",
   "action": "merge",
   "actor": "merge-executor",
@@ -538,7 +548,7 @@
   "approval_by": "adam"
  },
  {
-  "ts": 1792825676.7050867,
+  "ts": 1792826777.1586714,
   "kind": "EXECUTED",
   "action": "merge",
   "by": "merge-executor",
@@ -547,7 +557,7 @@
   "applied": []
  },
  {
-  "ts": 1792825678.6740615,
+  "ts": 1792826779.1334152,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-1",
   "bod": "H5",
@@ -555,7 +565,7 @@
   "artifact_hash": "c9acfb23cfc6c73b"
  },
  {
-  "ts": 1792825678.6829793,
+  "ts": 1792826779.1464758,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-1",
@@ -564,7 +574,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825678.6939816,
+  "ts": 1792826779.1573176,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H5",
@@ -573,7 +583,7 @@
   "artifact_hash": "c9acfb23cfc6c73b"
  },
  {
-  "ts": 1792825678.727013,
+  "ts": 1792826779.1946473,
   "kind": "PDP",
   "action": "deploy",
   "actor": "deploy-executor",
@@ -585,7 +595,7 @@
   "approval_by": "adam"
  },
  {
-  "ts": 1792825678.727108,
+  "ts": 1792826779.1947207,
   "kind": "EXECUTED",
   "action": "deploy",
   "by": "deploy-executor",
@@ -594,20 +604,26 @@
   "applied": []
  },
  {
-  "ts": 1792825678.737769,
+  "ts": 1792826779.2071862,
   "kind": "BUDGET",
   "zakazka": "P0-1",
-  "spent_usd": 0.05,
+  "spent_usd": 0.045234,
   "limit_usd": 400.0,
-  "frozen": false
+  "frozen": false,
+  "source": "agentgateway",
+  "by_role": {
+   "?": 0.045234
+  },
+  "gateway_requests": 15,
+  "sdk_usd": 0.045234
  },
  {
-  "ts": 1792825679.427139,
+  "ts": 1792826779.8292716,
   "kind": "ZAKAZKA_START",
   "zakazka": "P0-2"
  },
  {
-  "ts": 1792825680.1438224,
+  "ts": 1792826780.5382123,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "account",
@@ -616,7 +632,7 @@
   "n": 1
  },
  {
-  "ts": 1792825680.329681,
+  "ts": 1792826780.715316,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "account",
@@ -626,7 +642,7 @@
   "bytes": 266
  },
  {
-  "ts": 1792825680.5388088,
+  "ts": 1792826780.9769664,
   "kind": "AGENT_RUN",
   "zakazka": "P0-2",
   "role": "account",
@@ -678,10 +694,11 @@
   "num_turns": 3,
   "is_error": false,
   "error": null,
-  "result_text": "Zadání připraveno v artifacts/zadani.md (MOCK_OK)"
+  "result_text": "Zadání připraveno v artifacts/zadani.md (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825680.5391433,
+  "ts": 1792826780.977221,
   "kind": "HANDOFF",
   "frm": "account",
   "to": "human:zakaznik",
@@ -692,7 +709,7 @@
   "cost_usd": 0.009046799999999999
  },
  {
-  "ts": 1792825680.9686599,
+  "ts": 1792826781.3758066,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-2",
   "bod": "H1",
@@ -700,7 +717,7 @@
   "artifact_hash": "adab2a1e1cf93af5"
  },
  {
-  "ts": 1792825680.9867065,
+  "ts": 1792826781.3842666,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-2",
@@ -709,7 +726,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825680.9970865,
+  "ts": 1792826781.3945463,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H1",
@@ -718,7 +735,7 @@
   "artifact_hash": "adab2a1e1cf93af5"
  },
  {
-  "ts": 1792825681.697556,
+  "ts": 1792826782.0210557,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "architekt",
@@ -727,7 +744,7 @@
   "found": true
  },
  {
-  "ts": 1792825681.954251,
+  "ts": 1792826782.269284,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "architekt",
@@ -736,7 +753,7 @@
   "n": 1
  },
  {
-  "ts": 1792825682.1291418,
+  "ts": 1792826782.444357,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "architekt",
@@ -746,7 +763,7 @@
   "bytes": 347
  },
  {
-  "ts": 1792825682.3194594,
+  "ts": 1792826782.6827886,
   "kind": "AGENT_RUN",
   "zakazka": "P0-2",
   "role": "architekt",
@@ -804,10 +821,11 @@
   "num_turns": 4,
   "is_error": false,
   "error": null,
-  "result_text": "ADR připraveno v artifacts/adr.md (MOCK_OK)"
+  "result_text": "ADR připraveno v artifacts/adr.md (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825682.3196523,
+  "ts": 1792826782.6831353,
   "kind": "HANDOFF",
   "frm": "architekt",
   "to": "human:vlastnik",
@@ -818,7 +836,7 @@
   "cost_usd": 0.0120624
  },
  {
-  "ts": 1792825682.4995453,
+  "ts": 1792826782.9063988,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-2",
   "bod": "H2",
@@ -826,7 +844,7 @@
   "artifact_hash": "08a1c8854d9dfa50"
  },
  {
-  "ts": 1792825682.5078623,
+  "ts": 1792826782.9150505,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-2",
@@ -835,7 +853,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825682.518206,
+  "ts": 1792826782.924051,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H2",
@@ -844,7 +862,7 @@
   "artifact_hash": "08a1c8854d9dfa50"
  },
  {
-  "ts": 1792825682.5454588,
+  "ts": 1792826782.949934,
   "kind": "PDP",
   "action": "push_branch",
   "actor": "vyvojar",
@@ -856,7 +874,7 @@
   "approval_by": null
  },
  {
-  "ts": 1792825683.2769868,
+  "ts": 1792826783.6672077,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "vyvojar",
@@ -865,7 +883,7 @@
   "n": 1
  },
  {
-  "ts": 1792825683.8792703,
+  "ts": 1792826784.3300805,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "vyvojar",
@@ -878,7 +896,7 @@
   ]
  },
  {
-  "ts": 1792825684.1103535,
+  "ts": 1792826784.569153,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "vyvojar",
@@ -888,7 +906,7 @@
   "stored": "proposed"
  },
  {
-  "ts": 1792825684.301391,
+  "ts": 1792826784.7552261,
   "kind": "AGENT_RUN",
   "zakazka": "P0-2",
   "role": "vyvojar",
@@ -954,10 +972,11 @@
   "num_turns": 4,
   "is_error": false,
   "error": null,
-  "result_text": "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)"
+  "result_text": "PR připraven na větvi zakázky: pr://ukol-1 (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825684.301583,
+  "ts": 1792826784.7553964,
   "kind": "HANDOFF",
   "frm": "vyvojar",
   "to": "reviewer",
@@ -967,7 +986,7 @@
   "cost_usd": 0.0120624
  },
  {
-  "ts": 1792825685.0195963,
+  "ts": 1792826785.4016252,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "reviewer",
@@ -976,7 +995,7 @@
   "found": false
  },
  {
-  "ts": 1792825685.200456,
+  "ts": 1792826785.5815775,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "reviewer",
@@ -990,7 +1009,7 @@
   }
  },
  {
-  "ts": 1792825685.4042163,
+  "ts": 1792826785.763289,
   "kind": "TOOL",
   "zakazka": "P0-2",
   "role": "reviewer",
@@ -1000,7 +1019,7 @@
   "bytes": 89
  },
  {
-  "ts": 1792825685.5841727,
+  "ts": 1792826785.9548833,
   "kind": "AGENT_RUN",
   "zakazka": "P0-2",
   "role": "reviewer",
@@ -1060,10 +1079,11 @@
   "num_turns": 4,
   "is_error": false,
   "error": null,
-  "result_text": "Review hotové: verdict ok (MOCK_OK)"
+  "result_text": "Review hotové: verdict ok (MOCK_OK)",
+  "budget_exceeded": false
  },
  {
-  "ts": 1792825685.5845335,
+  "ts": 1792826785.9551668,
   "kind": "HANDOFF",
   "frm": "reviewer",
   "to": "human:vlastnik",
@@ -1074,15 +1094,21 @@
   "cost_usd": 0.0120624
  },
  {
-  "ts": 1792825685.5989013,
+  "ts": 1792826785.9712896,
   "kind": "BUDGET",
   "zakazka": "P0-2",
-  "spent_usd": 0.05,
+  "spent_usd": 0.045234,
   "limit_usd": 400.0,
-  "frozen": false
+  "frozen": false,
+  "source": "agentgateway",
+  "by_role": {
+   "?": 0.045234
+  },
+  "gateway_requests": 15,
+  "sdk_usd": 0.045234
  },
  {
-  "ts": 1792825686.031171,
+  "ts": 1792826786.4397447,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-2",
   "bod": "H4",
@@ -1090,7 +1116,7 @@
   "artifact_hash": "919a6e098a3b25d5"
  },
  {
-  "ts": 1792825686.0395062,
+  "ts": 1792826786.4491751,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-2",
@@ -1099,7 +1125,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825686.0490491,
+  "ts": 1792826786.4592025,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H4",
@@ -1108,7 +1134,7 @@
   "artifact_hash": "919a6e098a3b25d5"
  },
  {
-  "ts": 1792825686.081164,
+  "ts": 1792826786.4890823,
   "kind": "PDP",
   "action": "merge",
   "actor": "merge-executor",
@@ -1120,7 +1146,7 @@
   "approval_by": "adam"
  },
  {
-  "ts": 1792825686.0812302,
+  "ts": 1792826786.4891715,
   "kind": "EXECUTED",
   "action": "merge",
   "by": "merge-executor",
@@ -1129,7 +1155,7 @@
   "applied": []
  },
  {
-  "ts": 1792825688.0589006,
+  "ts": 1792826788.4765995,
   "kind": "APPROVAL_RAISED",
   "zakazka": "P0-2",
   "bod": "H5",
@@ -1137,7 +1163,7 @@
   "artifact_hash": "919a6e098a3b25d5"
  },
  {
-  "ts": 1792825688.0697682,
+  "ts": 1792826788.4877908,
   "kind": "VERIFY",
   "backend": "hmac",
   "zakazka": "P0-2",
@@ -1146,7 +1172,7 @@
   "by": "adam"
  },
  {
-  "ts": 1792825688.0807085,
+  "ts": 1792826788.4995387,
   "kind": "NOTIFY",
   "event": "HITL_APPROVED",
   "bod": "H5",
@@ -1155,7 +1181,7 @@
   "artifact_hash": "919a6e098a3b25d5"
  },
  {
-  "ts": 1792825688.1243422,
+  "ts": 1792826788.5307822,
   "kind": "PDP",
   "action": "deploy",
   "actor": "deploy-executor",
@@ -1167,7 +1193,7 @@
   "approval_by": "adam"
  },
  {
-  "ts": 1792825688.1244285,
+  "ts": 1792826788.5308492,
   "kind": "EXECUTED",
   "action": "deploy",
   "by": "deploy-executor",
@@ -1176,11 +1202,17 @@
   "applied": []
  },
  {
-  "ts": 1792825688.1411598,
+  "ts": 1792826788.5424461,
   "kind": "BUDGET",
   "zakazka": "P0-2",
-  "spent_usd": 0.05,
+  "spent_usd": 0.045234,
   "limit_usd": 400.0,
-  "frozen": false
+  "frozen": false,
+  "source": "agentgateway",
+  "by_role": {
+   "?": 0.045234
+  },
+  "gateway_requests": 15,
+  "sdk_usd": 0.045234
  }
 ]
