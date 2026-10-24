@@ -123,12 +123,30 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 | agentgateway 1.7 mění chybová těla (PR #2162) | kontrakt Claude Code | zůstat na 1.6.0, přeměřit G1 na 1.7 před upgrade |
 | Nested virt SKU dostupnost v regionu/subscription | P1-1 neproveditelný | ověřit `az vm list-skus` před vytvořením; záloha gVisor `systrap` DaemonSet |
 
-## Otázky pro Adama (blokují start P1-1)
+## Rozhodnutí k AKS (2026-10-24, Adam)
 
-1. Subscription a region (West Europe?) a kdo platí dev cluster (~500 USD/měsíc při nepřetržitém běhu).
-2. Postgres jako Azure služba (Flexible Server) nebo v clusteru (CloudNativePG)? Návrh: Azure služba – méně provozu, RLS beze změny.
-3. GitHub: PAT pro ostrý běh `--scenario github --publish-github` teď, nebo rovnou GitHub App v P1-5?
-4. Kroky P1-2…P1-5 nejdřív na `kind` lokálně (bez Azure, nulová cena) – souhlas?
+| Otázka | Rozhodnutí | Důsledek |
+|---|---|---|
+| Subscription, region, kdo platí | Adamova subscription (soukromá karta, přihlášen na svém Macu); region vybrat v EU podle ceny a dostupnosti nested-virt SKU + Pod Sandboxing | **Azure kroky běží z Adamova Macu** (Remote Control session): cloudové prostředí Adama nemá `az` ani síť na `management.azure.com`. Kandidát regionu: **Sweden Central** (obvykle ~10 % pod West Europe, *sek.*), záloha West Europe; potvrdit `az vm list-skus -l swedencentral --size Standard_D2ads_v7` a `az aks` s `--workload-runtime KataVmIsolation` |
+| Postgres | **Azure Database for PostgreSQL Flexible Server** | schéma M1, RLS a role `memory_app` beze změny; nejmenší SKU `Standard_B1ms` (~15 USD/měs., *sek.*), heslo z OpenBao |
+| GitHub ostrý zápis | PAT vydá Adam | fine-grained PAT jen na `akczcz/adam`; běh na Macu s tokenem v env jednoho příkazu (viz níže), ne v chatu ani v cloudovém prostředí |
+| Pořadí | kind nejdřív (P1-4, P1-5 v cloudovém kontejneru); Mac k dispozici | AKS až P1-1 a P1-6 |
+| Kata SKU | co nejmenší | Kata pool `Standard_D2ads_v7` autoscale 0–1 (nested virt, 8 GiB), system pool 1× `Standard_D4as_v5` (platformní komponenty ~6 GiB RAM); cluster vypínat (`az aks stop`) mimo práci |
+| PR do `main` | podle mého uvážení | PR po P1-3 (15 commitů), další práce v nové větvi |
+
+Cena P1 po rozhodnutí (*spekulace*, PAYG): system D4as_v5 ≈ 0,19 USD/h + Kata D2ads_v7 ≈ 0,14 USD/h (jen při běhu zakázek) + Flexible Server B1ms ≈ 15 USD/měs.
++ disky/LB/KV ≈ 30 USD/měs. → **≈ 250 USD/měs. nepřetržitě, ≈ 100 USD/měs. při 8 h denně ve všední dny**. Dřívější odhad 490–600 USD platil pro 2× D2s_v5 + D4ads_v7 + větší Postgres.
+
+### PAT pro `--scenario github --publish-github` (instrukce)
+
+1. GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
+2. Resource owner `akczcz`, Repository access **Only select repositories → `akczcz/adam`**, expirace **7 dní**.
+3. Repository permissions: **Contents: Read and write**, **Issues: Read and write**, **Pull requests: Read and write** (Metadata: Read se přidá samo). Nic dalšího.
+4. Spustit na Macu (Remote Control session nebo terminál), token jen v prostředí jednoho příkazu, nikdy do chatu ani do souboru:
+   ```bash
+   cd tools/harness_p0_o2 && GITHUB_TOKEN=github_pat_… P0_GITHUB_REPO=akczcz/adam .venv/bin/python harness.py --scenario github --publish-github
+   ```
+   Výsledek: issue `[P0-4] …`, větev `zakazka/P0-4/ukol-1`, PR a merge PR přes executor po H4 (schválení dělá harness). Po běhu token revokovat.
 
 ## Postup
 
