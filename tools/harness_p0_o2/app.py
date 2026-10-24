@@ -258,10 +258,13 @@ def _disclosure(role, channel):
     return txt.replace("{firma}", "adam-platform").replace("{vlastník procesu}", "Adam Kolařík").replace("{vlastník}", "Adam Kolařík")
 
 
+GH_API = os.environ.get("P0_GITHUB_API", "https://api.github.com")   # mock GitHub pro scénář github-hitl
+
+
 def gh_api(method, path, payload=None):
     tok = os.environ.get("GITHUB_TOKEN")
     if not tok: raise RuntimeError("GITHUB_TOKEN chybí – publikace do GitHubu vyžaduje token s právem issues/contents/pull_requests")
-    r = httpx.request(method, f"https://api.github.com{path}", json=payload, headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, timeout=30)
+    r = httpx.request(method, f"{GH_API}{path}", json=payload, headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, timeout=30)
     if r.status_code >= 300: raise RuntimeError(f"GitHub {method} {path} → {r.status_code}: {r.text[:200]}")
     return r.json() if r.text else {}
 
@@ -304,7 +307,7 @@ def publish_issue(ctx, inp):
     p = f"/tmp/p0-o2/{z['id']}/{zad.get('path', 'artifacts/zadani.md')}"
     body = open(p).read() if os.path.exists(p) else z["poptavka"]
     payload = {"title": f"[{z['id']}] Zadání: {z['poptavka'][:60].split('[INJECT]')[0].strip()}", "labels": ["zakazka", "p0-dogfooding"],
-               "body": f"> {_disclosure('account', 'issue')}\n\n{body}\n\n---\n`zakazka_id`: {z['id']} · artefakt `{zad['ref']}` · hash `{zad['hash']}` · schválil člověk (H1)"}
+               "body": f"> {_disclosure('account', 'issue')}\n\n{body}\n\n---\n`zakazka_id`: {z['id']} · artefakt `{zad['ref']}` · hash `{zad['hash']}` · " + ("**čeká na schválení H1** – komentář `/schvaluji` od vlastníka procesu" if os.environ.get("P0_HITL_GITHUB") == "1" else "schválil člověk (H1)")}
     return _publish(z, "issue", payload, approval_hash=zad["hash"])
 
 
@@ -386,10 +389,13 @@ def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash):
 def zakazka(ctx: wf.DaprWorkflowContext, z):
     state = {"id": z["id"], "stav": "P1"}
     zad = yield ctx.call_activity(role_account, input=z)                      # P1 Přijetí zadání
-    t1 = yield from hitl(ctx, z, "H1", zad["hash"])                           # vstup zakázky – člověk zákazníka
+    gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
+    if os.environ.get("P0_GITHUB_MODE") == "1" and gh_hitl:
+        yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # issue = nosič H1 (dogfooding, vlastní repo; cizí zákazník → AG-UI)
+    t1 = yield from hitl(ctx, z, "H1", zad["hash"])                           # vstup zakázky – člověk zákazníka (/schvaluji na issue nebo AG-UI)
     if not t1: return {**state, "stav": "Pozastaveno", "bod": "H1"}
-    if os.environ.get("P0_GITHUB_MODE") == "1":
-        yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # N3 – až po schválení zadání člověkem
+    if os.environ.get("P0_GITHUB_MODE") == "1" and not gh_hitl:
+        yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # bez GitHub HITL: issue až po schválení (N3)
     adr = yield ctx.call_activity(role_architekt, input=z)                    # P2 Návrh
     t2 = yield from hitl(ctx, z, "H2", adr["hash"])
     if not t2: return {**state, "stav": "Pozastaveno", "bod": "H2"}

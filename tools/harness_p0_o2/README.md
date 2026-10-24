@@ -103,6 +103,24 @@ on-behalf-of …` a `Artifact-Hash`. **Bez flagu je to suchý běh**: payloady j
 
 Soubor: `results/o2-github-mock-20261024-060342.json`, payloady `results/github-dryrun/P0-4-*.json`.
 
+## Scénář `--scenario github-hitl` – schvalování přímo v GitHubu (2026-10-24, mock GitHub)
+
+Člověk schvaluje v GitHubu, ne HTTP voláním: **H1 = komentář `/schvaluji` na issue**, **H4 = PR review APPROVED na head SHA**.
+`github_bridge.py` je PEP mezi GitHubem a workflow: ověří login proti allow-listu lidí (ne bot platformy), vazbu na artefakt
+(hash v těle issue/PR, `commit_id == head SHA`) a teprve pak vyvolá schválení; app podepíše approval token. Dvě cesty doručení
+(webhook s HMAC, polling 2 s), jeden handler, dedup podle id. `mock_github.py` = mock REST API (issues, komentáře, git objekty,
+PR, reviews, merge, webhooky) – stejná cesta kódu `gh_api` jako proti api.github.com (`P0_GITHUB_API`).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| GH1 | `/schvaluji` od bota a od člověka mimo allow-list odmítnuto, zakázka čeká | ✅ |
+| GH2 | `/schvaluji` od člověka → schválení s hashem z těla issue, ADR vzniklo; webhook i poll → jednou | ✅ |
+| GH3 | review od cizího člověka a review na starý commit odmítnuty, PR nemergnut | ✅ |
+| GH4 | review na head SHA → H4 → merge-executor mergne PR 1×; Dokonceno | ✅ |
+| GH5 | podvržený webhook (špatný HMAC) → 401; dedup webhook/poll | ✅ |
+
+Soubor: `results/o2-github-hitl-mock-20261024-064226.json`, `results/bridge-ledger.json`. Design: `knowledge/organization/procesy.md` „HITL přes GitHub“.
+
 ## Co to říká o platformě
 
 - **Injekce v zadání prošla modelem a neprošla platformou.** Naivní model udělal všechny tři věci, které injekce chtěla
@@ -161,6 +179,7 @@ O2_PLACEMENT_PORT=50105 O2_SCHEDULER_PORT=50106 O2_ETCD_CLIENT_PORT=12379 .venv/
   platformy**, vestavěné nástroje agent runtimu jsou únik ze sandboxu (viz `knowledge/sandbox/kriteria.md`).
 - Agent SDK uvnitř Dapr aktivity: `asyncio.run(query(...))` ve worker vlákně funguje; proxy proměnné z prostředí harnessu
   je nutné v `env` SDK vyprázdnit, jinak CLI jde přes firemní proxy místo gateway.
+- GitHub jako nosič H1: issue musí vzniknout **před** H1 (jinak není kam komentovat) – v režimu `P0_HITL_GITHUB=1` se publikuje hned po Account s označením „čeká na schválení“; bez něj až po H1.
 - Claude Code CLI vkládá do první user zprávy `<system-reminder>` s prostředím (cwd, platforma); mock je musí odfiltrovat, jinak skončí v artefaktu (poprvé se objevil v těle issue). Pro živý model: obsah artefaktů kontrolovat na únik system remindérů (v O-2 live se nestalo).
 - `ledger(kind, **kw)`: klíč `kind` v kwargs koliduje s pozičním argumentem → `publish_kind`.
 - Mock rozlišuje role podle `role=<role>` v system promptu; checky Vývojáře filtrují ledger podle `role`, jinak zachytí nástroje ostatních rolí.
