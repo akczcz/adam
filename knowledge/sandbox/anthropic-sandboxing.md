@@ -144,6 +144,22 @@ flowchart LR
   GW --> NET[(modely, git, registry)]
 ```
 
+## Nález z O-2 live (2026-10-24): agent runtime je součást hranice sandboxu
+
+Živý `claude-haiku-4-5` přes Claude Agent SDK (`permission_mode="bypassPermissions"`, jen `allowed_tools` na MCP nástroje
+harnessu) použil **vestavěný Bash Claude Code 11× mimo sandbox** – `git init`, `commit`, `pytest` běžely přímo na Macu
+v `/tmp`; navíc CLI načetlo `.mcp.json` repa a volalo cizí MCP server (`mcp__adam-knowledge__search_knowledge`).
+`allowed_tools` nic **neomezuje** (jen předschvaluje), v `bypassPermissions` má CLI Bash/Write/Edit/WebFetch na hostu procesu.
+
+| Co platí | Důsledek pro platformu |
+|---|---|
+| Vestavěné nástroje CLI běží v procesu agenta, ne v `sandboxed_bash` | sandbox profil role musí buď **obalit celý proces** (`srt claude`, Kata pod s CNP), nebo vestavěné nástroje vypnout |
+| Agent SDK: `tools=[]` + `strict_mcp_config=True` + `setting_sources=[]` + `cwd` mimo repo platformy | role dostane jen MCP nástroje platformy (O-2 app.py opraveno 2026-10-24) |
+| CC sandbox (`sandbox.*`) kryje jen Bash/PowerShell/Monitor – ne Write/Edit/WebFetch, MCP, hooky | stejný závěr jako dřív, teď změřený: hranice = S1 pod + srt celý proces + CNP, ne nastavení CLI |
+| Push do main by i z hostu skončil na gateway (SNI allow-list), exfil na skutečný host z hostu **projde** | egress musí být síťový na úrovni podu (CNP), ne jen v nástroji |
+
+Zapsáno do `kriteria.md` B3, `roles/*.yaml` (`sandbox.agent_sdk`) a `role.md`.
+
 ## Co ověřit dál
 
 - [ ] srt 0.0.81 v Kata podu (AKS `kata-vm-isolation`) a gVisor podu: `RuntimeDefault` → očekávané selhání; Localhost profil / Unconfined;
@@ -154,4 +170,5 @@ flowchart LR
 - [ ] Export violations + proxy verdictů do OTEL (adaptér), formát spanů.
 
 ## Changelog
+- 2026-10-24: nález O-2 live – vestavěné nástroje CLI mimo sandbox; `tools=[]`, `strict_mcp_config`, `setting_sources=[]`, cwd mimo repo.
 - 2026-10-23: první verze – kolo 2 srt/CC/Agent SDK z primárních zdrojů (repo main, npm 0.0.81, docs) + nálezy harnessu S1.

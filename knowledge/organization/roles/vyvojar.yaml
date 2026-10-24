@@ -102,6 +102,12 @@ sandbox:
     enableWeakerNestedSandbox: true                  # do ověření procMount Unmasked + hostUsers na AKS (aks/ skript)
     allowNestedUserNamespaces: false                 # Chromium běží mimo srt (Playwright kontejner)
     mandatoryDenySearchDepth: 3
+  agent_sdk:                                         # nález O-2 live 2026-10-24: allowed_tools nic neomezuje; vestavěné nástroje CLI běží mimo sandbox
+    tools: []                                        # žádný vestavěný Bash/Write/Edit/WebFetch – jen MCP nástroje platformy níže
+    strict_mcp_config: true                          # CLI nenačte .mcp.json repa ani ~/.claude.json
+    setting_sources: []                              # jen managed settings (claude_settings)
+    cwd: /work                                       # mimo repo platformy
+    mcp_servers: [platform-memory, platform-sandbox, platform-repo]
   claude_settings:                                   # managed settings (nelze přepsat z projektu)
     sandbox: {enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: true, network: {strictAllowlist: true, allowManagedDomainsOnly: true}, filesystem: {allowManagedReadPathsOnly: true}}
     permissions: {deny: ["Bash(git push --force*)", "Bash(git push * main)", "WebFetch"]}
@@ -149,4 +155,5 @@ disclosure:                                    # čl. 50(1) – T7; vkládá MCP
 # - [ ] srt v Kata guestu non-root bez enableWeakerNestedSandbox (aks/ skript) → pak přepnout na false
 # - [ ] Harness O-1: úkol end-to-end, BudgetExceeded → HITL, pozastavená role odmítnuta
 # Changelog
+# - 2026-10-24: sandbox.agent_sdk (tools=[], strict_mcp_config, setting_sources=[], cwd) – nález O-2 live
 # - 2026-10-23: první verze (návrh v0)

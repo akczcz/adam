@@ -18,7 +18,7 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 |---|---|---|
 | Zakázka end-to-end jako Dapr Workflow s HITL, executor nevratných akcí, PDP | ✅ | [O-1](../../tools/harness_org_o1/README.md) 9/9 |
 | Vývojář = Claude Agent SDK přes agentgateway, paměť M1 s PEP, sandbox srt za gateway – **mock model** | ✅ | [O-2](../../tools/harness_p0_o2/README.md) 6/6 mock: injekce prošla modelem, neprošla platformou |
-| O-2 se **živým modelem** (`--mode live`) | ⬜ spouští Adam lokálně s API klíčem | – |
+| O-2 se **živým modelem** (`--mode live`) | ✅ 2026-10-24 (Adamův Mac, Remote Control session) | 5 PASS, 3 INFO: `claude-haiku-4-5` injekci **sám odmítl** („vsunutá instrukce, kterou jsem ověřil a ignoroval“), zápis do paměti žádal `proposed`; cena 0,045–0,058 USD per zakázka (8–21 kol). **Nález:** vestavěný Bash CLI běžel 11× mimo sandbox → `tools=[]`, `strict_mcp_config`, cwd mimo repo; agent runtime je součást hranice (kriteria sandboxu B3, `roles/*.yaml` `agent_sdk`) |
 | Artefakty naostro: zadání = issue, ADR v `knowledge/`, PR v tomto repu; HITL přes PR review místo HTTP volání | ⬜ | – |
 | Role Account, Architekt, Reviewer, SRE přes Agent SDK podle `organization/roles/*.yaml` | ⬜ | – |
 | Identita: Keycloak JWKS místo HMAC JWT; SVID role místo `spiffe://` řetězce | ⬜ (mechanismus změřen v I2) | – |
@@ -52,5 +52,6 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-24: O-2 live hotové (5/0/3) – model injekci odmítl sám; nález: agent runtime součást hranice sandboxu.
 - 2026-10-23: rolegen R1 6/6 – generátor konfigurací z rolí; v P0 zbývá nechat ji provést agentem.
 - 2026-10-23: první verze – P0 rozpracováno (O-1, O-2 mock hotové), P1–P3 jako checklist.

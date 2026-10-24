@@ -76,6 +76,7 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | Co | Jak se to zjistí |
 |---|---|
 | Co dává **Anthropic nativně**: Claude Code sandboxing (`sandbox-runtime`: bwrap/seatbelt, network proxy), Agent SDK, Managed Agents sandbox (hostovaný – jen vzor), MCP servery uvnitř sandboxu | docs code.claude.com, repo sandbox-runtime, changelog |
+| **Agent runtime je součást hranice:** vestavěné nástroje CLI (Bash/Write/Edit/WebFetch) běží v procesu agenta na hostu; role dostane jen MCP nástroje platformy (`tools=[]`, `strict_mcp_config`, `setting_sources=[]`, cwd mimo repo) a celý proces běží v S1 podu + `srt claude` + CNP | změřeno O-2 live 2026-10-24 (živý model použil Bash mimo sandbox 11×) |
 | **Devcontainer** jako definice prostředí (spec, features, prebuild); Nix jako alternativa | spec devcontainers; pozor: `devcontainer up` běží s `seccomp=unconfined` + `SYS_PTRACE` → jen `build` v CI, ne runtime |
 | Předpřipravené obrazy per role (vývojář, SRE, QA) a cache závislostí (npm, pip, uv) v air-gapped režimu | praxe, harness |
 | Prohlížeč v sandboxu (Playwright/Chromium headless), code interpreter bez kontejneru (Wasm/Pyodide, Deno) | kandidáti |
@@ -114,6 +115,7 @@ Společná A1–A5 z [`../frameworks/kriteria.md`](../frameworks/kriteria.md), p
 | Persistentní „agentův počítač“ | stav patří do gitu, artefaktů a paměti; persistentní sandbox je neauditovatelný a neopakovatelný |
 
 ## Changelog
+- 2026-10-24: B3 – agent runtime jako součást hranice (nález O-2 live).
 - 2026-10-23: po kole 2 doplněno B1 (metadata i v CNP, seccomp/hostUsers uvnitř S1).
 - 2026-10-23: po sítu zpřesněno A2 (Firecracker, nested virt, mshv), B1 (metadata endpointy), B3 (devcontainer up).
 - 2026-10-23: první verze; druhy prostředí, otázky S1–S4, kritéria B1–B6.

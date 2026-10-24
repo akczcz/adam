@@ -106,6 +106,12 @@ sandbox:
     enableWeakerNestedSandbox: true
     allowNestedUserNamespaces: false
     mandatoryDenySearchDepth: 3
+  agent_sdk:                                         # nález O-2 live 2026-10-24: allowed_tools nic neomezuje; vestavěné nástroje CLI běží mimo sandbox
+    tools: []                                        # žádný vestavěný Bash/Write/Edit/WebFetch – jen MCP nástroje platformy níže
+    strict_mcp_config: true                          # CLI nenačte .mcp.json repa ani ~/.claude.json
+    setting_sources: []                              # jen managed settings (claude_settings)
+    cwd: /work                                       # mimo repo platformy
+    mcp_servers: [platform-memory, platform-sandbox, platform-repo]
   claude_settings:
     sandbox: {enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, network: {strictAllowlist: true, allowManagedDomainsOnly: true}}
     permissions: {deny: ["Bash(git push*)", "Bash(git commit*)", "Edit", "Write", "WebFetch"]}
@@ -148,4 +154,5 @@ disclosure:
 # - [ ] L2 label: org.approvals decision jako ground truth – vyžaduje ≥ 30 lidských review (dogfooding)
 # - [ ] L5: MLflow alignment přes gateway – O2 to neměřil
 # Changelog
+# - 2026-10-24: sandbox.agent_sdk (tools=[], strict_mcp_config, setting_sources=[], cwd) – nález O-2 live
 # - 2026-10-23: první verze (návrh v0)
