@@ -155,10 +155,11 @@ Cena P1 po rozhodnutí (*spekulace*, PAYG): system D4as_v5 ≈ 0,19 USD/h + Kata
 | P1-2 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` 6/6: M1 11/11 a O1 9/9 proti clusterovým službám beze změny checků; manifesty `infra/k8s/base/{postgres,clickhouse,otel-collector}` + overlay `kind` |
 | P1-3 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-3 5/5: Keycloak (realm p0, DB keycloak), OpenBao raft (init/unseal operátorem, audit stdout), SPIRE 1.14.2 (k8s_psat, SVID z pod-labelu); O-2 `identity` 5/5 proti clusteru. Obrazy pro kind z GitHub release artefaktů (`infra/images`), na AKS oficiální |
 | P1-4 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-4 6/6: agentgateway ×2, Postgres `budget_usage`, G1 21/21 proti clusteru; P1-G: aditivní persistence OK, vynucení mezi replikami eventually consistent (flush 5 s) → pro ostrý strop jedna replika listeneru s budgets nebo `localRateLimit` jako tvrdá brzda |
-| P1-5 | ⬜ kind (další: Dapr + aplikace zakázky + paměť + bridge) |
+| P1-5 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-5 6/6: OPA, Dapr (placement, scheduler, daprd sidecar, Postgres state), aplikace zakázky, paměť, mock GitHub, bridge; zakázka end-to-end v clusteru, durabilita (smazaný pod → workflow obnoveno), FinOps z Postgresu. Obraz `platform/zakazka-app` (Python + Node + CLI) |
 | P1-1, P1-6 | ⬜ AKS (čeká na odpovědi níže) |
 
 ## Changelog
+- 2026-10-24: P1-5 hotovo na kind – kind fáze uzavřena (P1-2…P1-5); durabilita Dapr Workflow v clusteru změřena; dál jen AKS (P1-1, P1-6).
 - 2026-10-24: P1-4 hotovo na kind; P1-G: rozpočty mezi replikami eventually consistent (flush 5 s), riziko přijato jako měkký strop.
 - 2026-10-24: P1-3 hotovo na kind; SPIRE SVID per pod-label změřen (P1-6 dostane entries z rolegen); OpenBao KV auto-unseal a auth kubernetes odloženy na AKS/P1-5.
 - 2026-10-24: P1-2 hotovo na kind; zjištění: Collector v clusteru bez file exportéru (metriky i logy do ClickHouse), kind v kontejneru bez CAP_SYS_RESOURCE potřebuje obal runc.

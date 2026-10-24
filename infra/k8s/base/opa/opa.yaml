@@ -1,0 +1,42 @@
+# OPA – PDP organizace (org.rego: executor nevratných akcí, approval token, stop) a paměti (memory.rego). Policies z ConfigMapy
+# (v cíli OPA bundle z rolegen přes OCI + OPA-Envoy sidecar u gateway). Decision log na konzoli → logy podu → Collector.
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  labels: {app: opa}
+spec:
+  selector: {app: opa}
+  ports:
+  - {name: http, port: 8181, targetPort: 8181}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: opa}
+  template:
+    metadata:
+      labels: {app: opa}
+    spec:
+      containers:
+      - name: opa
+        image: platform/opa:1   # kind: busybox + statická binárka; AKS: openpolicyagent/opa:<verze>-static
+        args: ["run", "--server", "--addr", "0.0.0.0:8181", "--set", "decision_logs.console=true", "/policies"]
+        ports:
+        - {containerPort: 8181, name: http}
+        volumeMounts:   # subPath per soubor: OPA načítá adresář rekurzivně a ..data symlinky ConfigMapy by zdvojily pravidla
+        - {name: policies, mountPath: /policies/org.rego, subPath: org.rego, readOnly: true}
+        - {name: policies, mountPath: /policies/memory.rego, subPath: memory.rego, readOnly: true}
+        readinessProbe:
+          httpGet: {path: /health, port: 8181}
+          periodSeconds: 3
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {memory: 256Mi}
+      volumes:
+      - name: policies
+        configMap: {name: opa-policies}

@@ -240,4 +240,4 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("MEMORY_PORT", "9900")), log_level="warning")
+    uvicorn.run(app, host=os.environ.get("MEMORY_HOST", "127.0.0.1"), port=int(os.environ.get("MEMORY_PORT", "9900")), log_level="warning")

@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- opa.yaml
+configMapGenerator:
+- name: opa-policies
+  files:
+  - policies/org.rego      # kopie tools/harness_p0_o2/policies/org.rego (PDP organizace: executor, approval, stop)
+  - policies/memory.rego   # kopie tools/harness_p0_o2/policies/memory.rego (PEP paměti)
+generatorOptions:
+  disableNameSuffixHash: true

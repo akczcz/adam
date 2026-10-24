@@ -1,0 +1,281 @@
+# Aplikace zakázky (Dapr Workflow + role přes Claude Agent SDK), server paměti M1, mock GitHub a bridge – obraz platform/zakazka-app
+# (infra/images/app). Role běží zatím uvnitř aplikace (agent_run), sandboxed_bash = bash v podu (P0_SRT=none); pody rolí s srt/Kata = P1-6.
+# Tajemství: Secret zakazka-secrets (kind: dev hodnoty; token OpenBao a klíče gateway doplní harness P1-5; na AKS vše z OpenBao).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dapr-components
+data:
+  statestore.yaml: |
+    apiVersion: dapr.io/v1alpha1
+    kind: Component
+    metadata:
+      name: statestore
+    spec:
+      type: state.postgresql
+      version: v1
+      metadata:
+      - name: connectionString
+        value: "host=postgres user=postgres password=platform-dev port=5432 dbname=dapr_state sslmode=disable"
+      - name: actorStateStore
+        value: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zakazka-secrets
+type: Opaque
+stringData:
+  P0_ROLE_CLIENT_SECRETS: '{"account": "p0-account-secret", "architekt": "p0-architekt-secret", "vyvojar": "p0-vyvojar-secret", "reviewer": "p0-reviewer-secret"}'
+  P0_BAO_TOKEN: "doplni-harness"
+  P0_ROLE_KEYS: "{}"
+  P0_API_KEY: sk-ant-harness-mock
+  BRIDGE_WEBHOOK_SECRET: bridge-webhook-secret
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zakazka-env
+data:
+  APP_HOST: "0.0.0.0"
+  APP_PORT: "8010"
+  DAPR_HTTP_PORT: "3500"
+  DAPR_GRPC_PORT: "50001"
+  O1_OPA_URL: http://opa:8181/v1/data/org/decision
+  O1_LEDGER: /data/ledger.jsonl
+  P0_MEMORY_URL: http://memory:9900
+  P0_LLM_URL: http://agentgateway:4100
+  P0_MODEL: claude-haiku-4-5
+  P0_MAX_TURNS: "8"
+  P0_SRT: none
+  P0_ROLE_OPTIONS_DIR: /rolegen           # ConfigMap rolegen-build (ploché klíče: <role>.json, roles.json)
+  P0_REGISTRY: /rolegen/roles.json
+  P0_BAO_ADDR: http://openbao:8200
+  P0_BAO_KEY: approval
+  P0_KC_TOKEN_URL: http://keycloak:8080/realms/p0/protocol/openid-connect/token
+  P0_GITHUB_MODE: "1"
+  P0_GITHUB_PUBLISH: "1"
+  P0_HITL_GITHUB: "1"
+  P0_GITHUB_API: http://mock-github:9801
+  P0_GITHUB_REPO: akczcz/adam
+  P0_GITHUB_DRYRUN_DIR: /data/github
+  GITHUB_TOKEN: mock
+  P0_CLI_MAX_RETRIES: "1"
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zakazka
+  labels: {app: zakazka}
+spec:
+  selector: {app: zakazka}
+  ports:
+  - {name: http, port: 8010, targetPort: 8010}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zakazka
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # jediný app-id s actor placementem; stav zakázek je v Postgresu (Dapr state store), ne v podu
+  selector:
+    matchLabels: {app: zakazka}
+  template:
+    metadata:
+      labels: {app: zakazka}
+    spec:
+      containers:
+      - name: app
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/harness_p0_o2/app.py"]
+        workingDir: /app
+        envFrom:
+        - configMapRef: {name: zakazka-env}
+        - secretRef: {name: zakazka-secrets}
+        env:
+        - {name: HOME, value: /data/home}
+        ports:
+        - {containerPort: 8010, name: http}
+        volumeMounts:
+        - {name: data, mountPath: /data}
+        - {name: work, mountPath: /tmp/p0-o2}
+        - {name: rolegen, mountPath: /rolegen, readOnly: true}
+        readinessProbe:
+          httpGet: {path: /health, port: 8010}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 24
+        resources:
+          requests: {cpu: 200m, memory: 512Mi}
+          limits: {memory: 2Gi}
+      - name: daprd
+        image: platform/dapr:1.18.9
+        command: ["daprd", "--app-id", "zakazka", "--app-port", "8010", "--dapr-http-port", "3500", "--dapr-grpc-port", "50001",
+                  "--placement-host-address", "placement:50005", "--scheduler-host-address", "scheduler:50006",
+                  "--resources-path", "/dapr/components", "--log-level", "warn", "--enable-app-health-check=false"]
+        ports:
+        - {containerPort: 3500, name: dapr-http}
+        - {containerPort: 50001, name: dapr-grpc}
+        volumeMounts:
+        - {name: components, mountPath: /dapr/components/statestore.yaml, subPath: statestore.yaml, readOnly: true}   # subPath: bez ..data symlinků ConfigMapy (daprd je hlásí)
+        readinessProbe:
+          httpGet: {path: /v1.0/healthz, port: 3500}
+          periodSeconds: 3
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+      volumes:
+      - name: components
+        configMap: {name: dapr-components}
+      - name: rolegen
+        configMap: {name: rolegen-build, optional: true}   # vytváří harness/CI z rolegen (agent_sdk/<role>.json, registry/roles.json)
+      - name: data
+        persistentVolumeClaim: {claimName: zakazka-data}   # ledger a HOME CLI přežijí restart podu (P1-5 měří durabilitu workflow)
+      - name: work
+        emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zakazka-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memory
+  labels: {app: memory}
+spec:
+  selector: {app: memory}
+  ports:
+  - {name: http, port: 9900, targetPort: 9900}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: memory}
+  template:
+    metadata:
+      labels: {app: memory}
+    spec:
+      containers:
+      - name: memory
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/harness_memory_m1/memory_server.py"]
+        env:
+        - {name: MEMORY_HOST, value: "0.0.0.0"}
+        - {name: MEMORY_PORT, value: "9900"}
+        - {name: MEMORY_DB_URI, value: "postgresql://memory_app:memory_app@postgres:5432/memory"}   # role memory_app (RLS), ne superuser; heslo kind-dev
+        - {name: MEMORY_JWKS_URL, value: http://keycloak:8080/realms/p0/protocol/openid-connect/certs}
+        - {name: MEMORY_ISSUER, value: http://keycloak:8080/realms/p0}
+        - {name: MEMORY_AUDIENCE, value: memory}
+        - {name: MEMORY_OPA_URL, value: http://opa:8181/v1/data/memory/decision}
+        ports:
+        - {containerPort: 9900, name: http}
+        readinessProbe:
+          httpGet: {path: /health, port: 9900}
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 768Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-github
+  labels: {app: mock-github}
+spec:
+  selector: {app: mock-github}
+  ports:
+  - {name: http, port: 9801, targetPort: 9801}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-github
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mock-github}
+  template:
+    metadata:
+      labels: {app: mock-github}
+    spec:
+      containers:
+      - name: mock-github
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/harness_p0_o2/mock_github.py"]
+        env:
+        - {name: MOCK_GH_HOST, value: "0.0.0.0"}
+        - {name: MOCK_GH_PORT, value: "9801"}
+        - {name: MOCK_GH_WEBHOOK, value: http://bridge:9802/webhook}
+        - {name: MOCK_GH_WEBHOOK_SECRET, valueFrom: {secretKeyRef: {name: zakazka-secrets, key: BRIDGE_WEBHOOK_SECRET}}}
+        ports:
+        - {containerPort: 9801, name: http}
+        readinessProbe:
+          httpGet: {path: /health, port: 9801}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bridge
+  labels: {app: bridge}
+spec:
+  selector: {app: bridge}
+  ports:
+  - {name: http, port: 9802, targetPort: 9802}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: bridge}
+  template:
+    metadata:
+      labels: {app: bridge}
+    spec:
+      containers:
+      - name: bridge
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/harness_p0_o2/github_bridge.py"]
+        env:
+        - {name: BRIDGE_HOST, value: "0.0.0.0"}
+        - {name: BRIDGE_PORT, value: "9802"}
+        - {name: BRIDGE_APP_URL, value: http://zakazka:8010}
+        - {name: BRIDGE_LEDGER, value: /data/bridge.jsonl}
+        - {name: BRIDGE_POLL_S, value: "2"}
+        - {name: P0_GITHUB_API, value: http://mock-github:9801}
+        - {name: P0_GITHUB_REPO, value: akczcz/adam}
+        - {name: P0_HUMANS, value: adam}
+        - {name: P0_BOT_LOGIN, value: platform-bot}
+        - {name: GITHUB_TOKEN, value: mock}
+        - {name: BRIDGE_WEBHOOK_SECRET, valueFrom: {secretKeyRef: {name: zakazka-secrets, key: BRIDGE_WEBHOOK_SECRET}}}
+        ports:
+        - {containerPort: 9802, name: http}
+        volumeMounts:
+        - {name: data, mountPath: /data}
+        readinessProbe:
+          httpGet: {path: /health, port: 9802}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+      volumes:
+      - name: data
+        emptyDir: {}

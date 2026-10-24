@@ -30,6 +30,16 @@ Tvrzení (krok p1-4 – gateway):
   P14e  Harness G1 (--gateway-url) proti clusterové gateway: kontrakt Anthropic Messages API beze změny
   P14f  Pody, restarty – INFO
 
+Tvrzení (krok p1-5 – workflow, paměť, bridge v clusteru):
+  P15a  OPA, Dapr placement + scheduler, aplikace zakázky (app + daprd sidecar), server paměti, mock GitHub a bridge Ready; Dapr state store = Postgres (DB dapr_state)
+  P15b  Zakázka end-to-end v clusteru se schvalováním přes GitHub (mock): /schvaluji → H1, review APPROVED na head SHA → H4 → merge executor → Dokonceno;
+        čtyři role přes Agent SDK uvnitř podu s tokeny z clusterového Keycloaku, paměť v clusteru, approval tokeny z clusterového OpenBao
+  P15c  Durabilita: pod aplikace smazán uprostřed zakázky (čeká na H2) → nový pod obnoví workflow ze stavu v Postgresu a zakázka doběhne
+  P15d  Paměť: fakta rolí v clusterovém serveru paměti jako proposed; člověk (Keycloak password grant) je vidí s include_unverified
+  P15e  FinOps: budget_usage v Postgresu nese útratu klíčů role × zakázka P1-5 (requesty rolí šly přes clusterovou gateway)
+  P15f  Bridge: /schvaluji od bota a cizího člověka odmítnuto, od člověka z allow-listu předáno; review cizího odmítnuta
+  P15g  Pody, restarty – INFO
+
 Spuštění: viz README. Vyžaduje kubectl (KUBECTL), běžící kind cluster `platform` (infra/kind/), OPA_BIN, AGENTGATEWAY_BIN,
 venvy harnessů M1 a O1. `--create-kind` postaví obraz uzlu (runc obal), cluster a nahraje obrazy (docker daemon nutný).
 """
@@ -55,6 +65,7 @@ M1, O1 = T / "harness_memory_m1", T / "harness_observability_o1"
 NS = "platform-data"
 PG_PORT, CH_HTTP, CH_NATIVE, OTLP_GRPC, OTLP_HTTP = 30432, 30123, 30900, 30317, 30318
 PG_PASSWORD = "platform-dev"   # infra/k8s/base/postgres/postgres.yaml – dev heslo jen pro kind
+ROLE_CLIENTS = ("account", "architekt", "vyvojar", "reviewer")   # modelové role P0 (klienti agent-<role> v realmu p0)
 IMAGES = ["pgvector/pgvector:pg16", "clickhouse:26.8", "otel/opentelemetry-collector-contrib:0.163.2"]   # P1-3 obrazy platform/{keycloak,openbao,spire} se stavějí lokálně (infra/README.md)
 
 
@@ -179,7 +190,7 @@ def step_p1_3(a, rep, env):
     with psycopg.connect(f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/keycloak", autocommit=True, connect_timeout=10) as c:
         realms = [r[0] for r in c.execute("SELECT name FROM realm").fetchall()]
         n_clients = c.execute("SELECT count(*) FROM client c JOIN realm r ON r.id = c.realm_id WHERE r.name = 'p0'").fetchone()[0]
-    rep.add("P13b", "Keycloak přes NodePort 30080: discovery realmu p0, client_credentials agent-vyvojar → RS256, iss clusteru, aud=memory, tenant_id=acme, agent_id spiffe; realm a klienti uložené v Postgresu (DB keycloak)", "PASS" if disc.get("issuer") == ISS and tok.status_code == 200 and hdr.get("alg") == "RS256" and claims.get("aud") == "memory" and claims.get("tenant_id") == "acme" and claims.get("agent_id") == "spiffe://platform/role/vyvojar" and "p0" in realms and n_clients >= 7 else "FAIL", {"issuer": disc.get("issuer"), "token_status": tok.status_code, "token_ms": tok_ms, "claims": {k: claims.get(k) for k in ("iss", "aud", "tenant_id", "agent_id", "roles", "azp")}, "db_realms": realms, "db_clients_p0": n_clients})
+    rep.add("P13b", "Keycloak přes NodePort 30080: discovery realmu p0 (issuer = KC_HOSTNAME http://keycloak:8080, stejný zevnitř i přes NodePort), client_credentials agent-vyvojar → RS256, iss = discovery issuer, aud=memory, tenant_id=acme, agent_id spiffe; realm a klienti uložené v Postgresu (DB keycloak)", "PASS" if disc.get("issuer") and claims.get("iss") == disc.get("issuer") and tok.status_code == 200 and hdr.get("alg") == "RS256" and claims.get("aud") == "memory" and claims.get("tenant_id") == "acme" and claims.get("agent_id") == "spiffe://platform/role/vyvojar" and "p0" in realms and n_clients >= 7 else "FAIL", {"issuer": disc.get("issuer"), "token_status": tok.status_code, "token_ms": tok_ms, "claims": {k: claims.get(k) for k in ("iss", "aud", "tenant_id", "agent_id", "roles", "azp")}, "db_realms": realms, "db_clients_p0": n_clients})
 
     # OpenBao: init + unseal (operátor) – klíče jen do logs/ (gitignore); na AKS auto-unseal KV
     init_f = LOGS / "openbao-init.json"
@@ -351,9 +362,201 @@ def step_p1_4(a, rep, env):
     rep.add("P14f", "Pody agentgateway", "INFO", {p["metadata"]["name"]: {"image": [c["image"] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])], "node_ip": ip, "bridge_ip": bridge_ip} for p in pods})
 
 
+def kc_token_ext(ip, client_id, secret=None, user=None, password=None):
+    data = {"grant_type": "client_credentials"} if secret else {"grant_type": "password", "client_id": client_id, "username": user, "password": password}
+    r = httpx.post(f"http://{ip}:30080/realms/p0/protocol/openid-connect/token", data=data, auth=((client_id, secret) if secret else None), timeout=15)
+    assert r.status_code == 200, f"Keycloak token {client_id}: {r.status_code} {r.text[:200]}"
+    return r.json()["access_token"]
+
+
+def render_gateway(a, zids, patch=None, mock_upstream="http://172.18.0.1:9777/v1"):
+    """ConfigMap agentgateway = base config + upstream + apiKey klíče z rolegen pro dané zakázky (hodnoty vydá harness). Vrací {zid: {role: key}}."""
+    import yaml, hashlib as _h
+    pol, keys = None, {}
+    for zid in zids:
+        out = LOGS / f"rolegen-{zid}"
+        rg = sh([sys.executable, str(T / "rolegen/rolegen.py"), "--roles", str(ROOT / "knowledge/organization/roles"), "--out", str(out), "--tenant", "acme", "--zakazka", zid]); assert rg.returncode == 0, rg.stderr
+        p = yaml.safe_load((out / f"agentgateway/apikeys-acme-{zid}.yaml").read_text())["policies"]["apiKey"]
+        keys[zid] = {}
+        for k in list(p["keys"]):
+            role = k["metadata"]["role"]
+            if role == "sre": p["keys"].remove(k); continue
+            val = f"sk-gw-{zid}-{role}-{_h.sha256(os.urandom(16)).hexdigest()[:20]}"; keys[zid][role] = val
+            k["keyHash"] = "sha256:" + _h.sha256(val.encode()).hexdigest()
+            for b in k["budgets"]:
+                if patch and (zid, role, b["name"]) in patch: b["limit"]["amount"] = patch[(zid, role, b["name"])]
+        if pol is None: pol = p
+        else: pol["keys"] += p["keys"]
+    pol["mode"] = "optional"
+    base_cm = next(d for d in yaml.safe_load_all((INFRA / "k8s/base/agentgateway/agentgateway.yaml").read_text()) if d and d.get("kind") == "ConfigMap")
+    cfg = yaml.safe_load(base_cm["data"]["config.yaml"])
+    cfg["llm"]["models"][0]["params"]["baseUrl"] = mock_upstream
+    cfg["llm"]["policies"] = {"apiKey": pol}
+    cfg_path = LOGS / f"agentgateway-{'-'.join(zids)}.yaml"; cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+    cm = kubectl(a, "create", "configmap", "agentgateway-config", "-n", NS, f"--from-file=config.yaml={cfg_path}", "--dry-run=client", "-o", "yaml").stdout
+    subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=cm, text=True, capture_output=True)
+    kubectl(a, "-n", NS, "rollout", "restart", "deploy/agentgateway")
+    assert kubectl(a, "-n", NS, "rollout", "status", "deploy/agentgateway", "--timeout=180s", timeout=200).returncode == 0
+    return keys
+
+
+def step_p1_5(a, rep, env):
+    import psycopg, jwt
+    O2 = T / "harness_p0_o2"; G1 = T / "harness_gateway_g1"; M1 = T / "harness_memory_m1"
+    o2 = __import__("importlib.util").util.spec_from_file_location("o2h", O2 / "harness.py"); o2m = __import__("importlib.util").util.module_from_spec(o2); o2.loader.exec_module(o2m)
+    m1 = __import__("importlib.util").util.spec_from_file_location("m1h", M1 / "harness.py"); m1m = __import__("importlib.util").util.module_from_spec(m1); m1.loader.exec_module(m1m)
+    ip = node_ip(a); APP = f"http://{ip}:30810"; MEM = f"http://{ip}:30990"; GHM = f"http://{ip}:30801/repos/akczcz/adam"; GHS = f"http://{ip}:30801/_debug/state"; BAO = f"http://{ip}:30200"
+    bridge_ip = subprocess.run(["docker", "network", "inspect", "kind", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"], capture_output=True, text=True).stdout.strip() or "172.18.0.1"
+    t_all = time.time()
+    # mock model na hostiteli pro clusterovou gateway (port 9777 musí být volný – po přerušeném běhu zabít starý mock_upstream.py)
+    import socket as _s
+    with _s.socket() as _sock: assert _sock.connect_ex(("127.0.0.1", 9777)) != 0, "port 9777 obsazen (starý mock_upstream.py?) – pkill -f mock_upstream.py"
+    mock = subprocess.Popen([str(G1 / ".venv/bin/python"), str(G1 / "mock_upstream.py")], env=env | {"MOCK_HOST": "0.0.0.0", "MOCK_PORT": "9777", "MOCK_EVENT_DELAY": "0.02"}, stdout=open(LOGS / "mock-p15.log", "wb"), stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        assert wait_http("http://127.0.0.1:9777/health", 30), "mock nenaběhl"
+        # OpenBao: unseal (klíče z P1-3), transit + token aplikace
+        init_f = LOGS / "openbao-init.json"; assert init_f.exists(), "chybí logs/openbao-init.json – nejdřív --step p1-3"
+        init = json.loads(init_f.read_text())
+        if httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json().get("sealed"): httpx.post(f"{BAO}/v1/sys/unseal", json={"key": init["keys_base64"][0]}, timeout=30)
+        o2m.BAO = BAO; bao_app = o2m.bao_setup(init["root_token"], LOGS / "openbao-audit-k8s.log")
+        # paměť: schéma M1 + seed v clusterovém Postgresu, role memory_app s heslem
+        su = f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/memory"
+        with psycopg.connect(su, autocommit=True, connect_timeout=10) as c:
+            c.execute(m1m.SCHEMA); c.execute("ALTER ROLE memory_app PASSWORD 'memory_app'")
+            txt = "ACME konvence: každý endpoint má test a vrací JSON; splatnost faktur 30 dní."
+            c.execute("""INSERT INTO memory_records (id,tenant_id,scope,type,content,content_hash,sources,created_by,created_at,verification,confidence,valid_from,status,sensitivity,pipeline_version,embedding)
+                         VALUES ('seed-acme','acme','zakaznik','fakt',%s,'h','[{"ref":"doc://acme/konvence","kind":"document"}]','{"sub":"seed"}',now(),'{"method":"human","by":"adam"}',0.95,now(),'approved','internal','seed',%s::vector)""", (txt, m1m._embed_sql(txt)))
+        # nejdřív base manifesty (Secret s placeholdery, base ConfigMap gateway), pak hodnoty z harnessu – apply po renderu by je přepsal (gateway hot-reloaduje config)
+        r = kubectl(a, "apply", "-k", str(INFRA / "k8s/overlays/kind")); assert r.returncode == 0, r.stderr
+        keys = render_gateway(a, ["P1-5"], mock_upstream=f"http://{bridge_ip}:9777/v1")   # gateway klíče role × zakázka + restart gateway
+        rb = LOGS / "rolegen-P1-5"
+        cm1 = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "configmap", "rolegen-build", *[f"--from-file={f}" for f in (rb / "agent_sdk").glob("*.json")], f"--from-file=roles.json={rb / 'registry/roles.json'}", "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
+        subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=cm1, text=True, capture_output=True)
+        sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "zakazka-secrets",
+                              "--from-literal=P0_ROLE_CLIENT_SECRETS=" + json.dumps({r: f"p0-{r}-secret" for r in ROLE_CLIENTS}), f"--from-literal=P0_BAO_TOKEN={bao_app}",
+                              "--from-literal=P0_ROLE_KEYS=" + json.dumps({"*": keys["P1-5"]}), "--from-literal=P0_API_KEY=sk-ant-harness-mock", "--from-literal=BRIDGE_WEBHOOK_SECRET=bridge-webhook-secret",
+                              "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
+        subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
+        kubectl(a, "-n", NS, "rollout", "restart", "deploy/zakazka", "deploy/memory", "deploy/bridge", "deploy/mock-github")
+        t0 = time.time()
+        rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=420s", timeout=440).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
+        with psycopg.connect(f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/dapr_state", autocommit=True, connect_timeout=10) as c:
+            dapr_tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
+        health = {"app": httpx.get(f"{APP}/health", timeout=10).status_code, "memory": httpx.get(f"{MEM}/health", timeout=10).status_code, "mock_github": httpx.get(f"http://{ip}:30801/health", timeout=10).status_code, "bridge": httpx.get(f"http://{ip}:30802/health", timeout=10).status_code}
+        rep.add("P15a", "OPA, Dapr placement + scheduler, aplikace zakázky (app + daprd sidecar, komponenty z ConfigMapy), server paměti, mock GitHub a bridge Ready; Dapr state store Postgres (DB dapr_state) má tabulky", "PASS" if all(rolls.values()) and all(v == 200 for v in health.values()) and dapr_tables else "FAIL", {"rollouts": rolls, "health": health, "dapr_state_tables": dapr_tables, "rollout_s": round(time.time() - t0, 1)})
+
+        def led(): return httpx.get(f"{APP}/_debug/ledger", timeout=15).json()
+        def hash_of(zid, typ):
+            for e in reversed(led()):
+                if e.get("kind") == "HANDOFF" and e.get("zakazka") == zid and str(e.get("artifact", "")).startswith(typ): return e["hash"]
+        def wait_handoff(zid, typ, timeout=300):
+            t = time.time()
+            while time.time() - t < timeout:
+                h = hash_of(zid, typ)
+                if h: return h
+                time.sleep(1)
+        def pub(zid, kind, timeout=300):
+            t = time.time()
+            while time.time() - t < timeout:
+                e = next((e for e in led() if e["kind"] == "PUBLISHED" and e["zakazka"] == zid and e.get("publish_kind") == kind), None)
+                if e: return e
+                time.sleep(1)
+        def status(zid):
+            r = httpx.get(f"{APP}/zakazky/{zid}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+        def wait_status(zid, want, timeout=120):
+            t = time.time()
+            while time.time() - t < timeout:
+                st = status(zid)
+                if st.get("status") in want: return st
+                time.sleep(1)
+            return status(zid)
+        def approve(zid, bod, hh): httpx.post(f"{APP}/zakazky/{zid}/approve/{bod}", json={"by": "adam", "by_kind": "human", "artifact_hash": hh, "exp_s": 86400}, timeout=15)
+        def gh_post(path, payload, user): return httpx.post(f"{GHM}{path}", json=payload, headers={"X-Mock-User": user}, timeout=15).json()
+        def bridge_log():
+            r = kubectl(a, "-n", NS, "exec", "deploy/bridge", "--", "cat", "/data/bridge.jsonl"); return [json.loads(l) for l in r.stdout.splitlines() if l.strip()]
+
+        # P15b – zakázka přes GitHub HITL v clusteru
+        run_tag = time.strftime("%H%M%S"); zid = f"P15-{run_tag}-1"; t1 = time.time()   # unikátní: stav workflow (Postgres) i ledger (PVC) přežívají běhy
+        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v Kubernetes.", "hitl_timeout_s": 3600}, timeout=15)
+        issue = pub(zid, "issue"); assert issue, "issue nebylo publikováno (ledger app)"
+        gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "platform-bot"); gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "stranger")
+        time.sleep(5); adr_early = hash_of(zid, "adr://")
+        gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji – zadání odpovídá"}, "adam")
+        adr = wait_handoff(zid, "adr://", 240); assert adr, "Architekt nedodal ADR"
+        approve(zid, "H2", adr)
+        pr = pub(zid, "pull_request", 400); assert pr, "PR nebyl publikován"
+        wait_handoff(zid, "review://", 240)
+        gh_post(f"/pulls/{pr['number']}/reviews", {"event": "APPROVE", "commit_id": pr["head_sha"]}, "stranger")
+        gh_post(f"/pulls/{pr['number']}/reviews", {"event": "APPROVE", "commit_id": pr["head_sha"], "body": "LGTM"}, "adam")
+        t = time.time(); merged = False
+        while time.time() - t < 120 and not merged:
+            merged = httpx.get(GHS, timeout=10).json()["pulls"][str(pr["number"])]["merged"]; time.sleep(1)
+        approve(zid, "H5", hash_of(zid, "pr://")); st = wait_status(zid, {"COMPLETED", "FAILED"}, 120)
+        L = led(); runs = {e["role"]: e for e in L if e["kind"] == "AGENT_RUN" and e["zakazka"] == zid}
+        mem_calls = [e for e in L if e["kind"] == "TOOL" and e["zakazka"] == zid and e["tool"] in ("search_memory", "create_memory")]
+        signs = [e for e in L if e["kind"] == "SIGN" and e["zakazka"] == zid]
+        rep.add("P15b", "Zakázka v clusteru end-to-end přes GitHub HITL (mock GitHub v clusteru): issue → /schvaluji → ADR → H2 → PR → review APPROVED na head SHA → merge executor → H5 → Dokonceno; 4 role přes Agent SDK v podu s tokeny z clusterového Keycloaku, paměť v clusteru (200), approval tokeny z clusterového OpenBao", "PASS" if (st.get("output") or {}).get("stav") == "Dokonceno" and merged and not adr_early and set(runs) == set(ROLE_CLIENTS) and not any(r.get("error") for r in runs.values()) and mem_calls and all(c.get("http") == 200 for c in mem_calls) and signs and all(s["backend"] == "openbao-transit" for s in signs) else "FAIL", {"output": st.get("output"), "merged_in_mock_github": merged, "issue": issue.get("number"), "pr": pr.get("number"), "roles": {k: {"tools": r.get("tool_uses"), "error": r.get("error"), "cost_usd": r.get("cost_usd")} for k, r in runs.items()}, "memory_calls_200": sum(1 for c in mem_calls if c.get("http") == 200), "signs": len(signs), "wall_s": round(time.time() - t1, 1)})
+
+        # P15c – durabilita: smazat pod uprostřed (čeká na H2)
+        zid2 = f"P15-{run_tag}-2"; t2 = time.time()
+        httpx.post(f"{APP}/zakazky", json={"id": zid2, "poptavka": "Přidej endpoint /version do služby ACME (test durability).", "hitl_timeout_s": 3600}, timeout=15)
+        issue2 = pub(zid2, "issue"); assert issue2, "issue 2 nebylo publikováno"
+        gh_post(f"/issues/{issue2['number']}/comments", {"body": "/schvaluji"}, "adam")
+        adr2 = wait_handoff(zid2, "adr://", 240); assert adr2, "ADR 2 nevzniklo"
+        old_pod = kubectl(a, "-n", NS, "get", "pods", "-l", "app=zakazka", "-o", "jsonpath={.items[0].metadata.name}").stdout.strip()
+        kubectl(a, "-n", NS, "delete", "pod", old_pod, "--wait=true", timeout=120)
+        assert kubectl(a, "-n", NS, "rollout", "status", "deploy/zakazka", "--timeout=300s", timeout=320).returncode == 0
+        new_pod = kubectl(a, "-n", NS, "get", "pods", "-l", "app=zakazka", "-o", "jsonpath={.items[0].metadata.name}").stdout.strip()
+        for _ in range(30):
+            try:
+                if httpx.get(f"{APP}/health", timeout=3).status_code == 200: break
+            except Exception: pass
+            time.sleep(2)
+        st_after = status(zid2)
+        approve(zid2, "H2", adr2)
+        pr2 = pub(zid2, "pull_request", 400)
+        if pr2:
+            wait_handoff(zid2, "review://", 240)
+            gh_post(f"/pulls/{pr2['number']}/reviews", {"event": "APPROVE", "commit_id": pr2["head_sha"]}, "adam")
+            t = time.time()
+            while time.time() - t < 120 and not httpx.get(GHS, timeout=10).json()["pulls"][str(pr2["number"])]["merged"]: time.sleep(1)
+            approve(zid2, "H5", hash_of(zid2, "pr://"))
+        st2 = wait_status(zid2, {"COMPLETED", "FAILED"}, 120)
+        L = led(); runs2 = {e["role"]: e for e in L if e["kind"] == "AGENT_RUN" and e["zakazka"] == zid2}
+        rep.add("P15c", "Durabilita workflow: pod aplikace smazán, když zakázka čeká na H2 (po ADR) → nový pod (jiné jméno) obnoví instanci ze stavu v Postgresu (Dapr Workflow replay), schválení H2 doručeno novému podu, Vývojář a Reviewer běží v novém podu, zakázka Dokonceno", "PASS" if old_pod != new_pod and st_after.get("status") in ("RUNNING", "SUSPENDED", "PENDING") and (st2.get("output") or {}).get("stav") == "Dokonceno" and {"vyvojar", "reviewer"} <= set(runs2) else "FAIL", {"old_pod": old_pod, "new_pod": new_pod, "status_after_restart": st_after.get("status"), "output": st2.get("output"), "roles_after": sorted(runs2), "wall_s": round(time.time() - t2, 1)})
+
+        # P15d – paměť: fakta rolí jako proposed, člověk vidí
+        human = kc_token_ext(ip, "harness-human", user="adam", password="adam")
+        unv = httpx.post(f"{MEM}/tools/search_memory", json={"query": "ACME endpoint", "include_unverified": True, "limit": 20}, headers={"Authorization": f"Bearer {human}"}, timeout=15)
+        recs = unv.json().get("records", []) if unv.status_code == 200 else []
+        proposed = [r for r in recs if r.get("status") == "proposed" or r.get("unverified")]
+        rep.add("P15d", "Paměť v clusteru: zápisy rolí (Keycloak service-account tokeny, aud=memory, iss keycloak:8080) uložené jako proposed; člověk (password grant, token z NodePortu se stejným iss) je vidí s include_unverified; seed approved", "PASS" if unv.status_code == 200 and recs and proposed else "FAIL", {"http": unv.status_code, "records": len(recs), "proposed": len(proposed), "iss": jwt.decode(human, options={"verify_signature": False}).get("iss")})
+
+        # P15e – FinOps z Postgresu gateway
+        import hashlib as _h
+        with psycopg.connect(f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/agentgateway", autocommit=True, connect_timeout=10) as c:
+            rows = c.execute("SELECT budget_id, used_amount FROM budget_usage").fetchall()
+        spend = {}
+        for role, val in keys["P1-5"].items():
+            h = _h.sha256(val.encode()).hexdigest()
+            spend[role] = next((used / 1e9 for bid, used in rows if h in bid and bid.endswith("24h-block")), 0.0)
+        rep.add("P15e", "FinOps v clusteru: requesty rolí šly přes clusterovou gateway s klíči role × zakázka P1-5 → budget_usage v Postgresu nese útratu každé role (zdroj pravdy pro cenu zakázky místo logu na disku)", "PASS" if all(v > 0 for v in spend.values()) else "FAIL", {"spend_usd_by_role": spend, "total_usd": round(sum(spend.values()), 6)})
+
+        # P15f – bridge
+        bl = bridge_log()
+        rej = [e for e in bl if e["kind"] == "REJECTED"]; fwd = [e for e in bl if e["kind"] == "APPROVAL_FORWARDED"]
+        rep.add("P15f", "Bridge v clusteru jako PEP: /schvaluji od bota a cizího člověka odmítnuto, review cizího odmítnuta; schválení od člověka z allow-listu předáno pro H1 i H4 (poll i webhook v clusteru)", "PASS" if {e["by"] for e in rej if e.get("bod") == "H1"} >= {"platform-bot", "stranger"} and any(e.get("bod") == "H4" for e in rej) and {e["bod"] for e in fwd} >= {"H1", "H4"} else "FAIL", {"rejected": [(e.get("bod"), e.get("by"), e.get("reason")) for e in rej][:6], "forwarded": [(e["bod"], e.get("by")) for e in fwd][:6]})
+        pods = json.loads(kubectl(a, "-n", NS, "get", "pods", "-o", "json").stdout)["items"]
+        rep.add("P15g", "Pody P1-5", "INFO", {p["metadata"]["name"]: {"image": [c["image"].split("/")[-1] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])]} for p in pods if p["metadata"]["name"].split("-")[0] in ("zakazka", "memory", "bridge", "mock", "opa", "placement", "scheduler")} | {"wall_s": round(time.time() - t_all, 1)})
+    finally:
+        mock.terminate()
+        try: mock.wait(10)
+        except Exception: mock.kill()
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -372,7 +575,7 @@ def main():
     if a.create_kind:
         assert a.kind, "chybí KIND"
         create_kind(a, env)
-    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4}[a.step](a, rep, env)
+    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5}[a.step](a, rep, env)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

@@ -40,11 +40,14 @@ def gh(path):
 
 
 def published():
-    """Mapování zakázka ↔ issue/PR číslo z ledgeru app (v cíli org.handoffs)."""
-    out = {}
+    """Mapování zakázka ↔ issue/PR číslo z ledgeru app (v cíli org.handoffs). Když se číslo opakuje (mock GitHub po restartu čísluje
+    od 1, ledger přežívá na PVC), platí nejnovější záznam – starší zakázka mapování ztrácí."""
+    out, owner = {}, {}
     for e in httpx.get(f"{APP}/_debug/ledger", timeout=10).json():
         if e.get("kind") == "PUBLISHED" and e.get("number"):
-            out.setdefault(e["zakazka"], {})[e["publish_kind"]] = e["number"]
+            key = (e["publish_kind"], e["number"])
+            if key in owner and owner[key] != e["zakazka"]: out[owner[key]].pop(e["publish_kind"], None)
+            owner[key] = e["zakazka"]; out.setdefault(e["zakazka"], {})[e["publish_kind"]] = e["number"]
     return out
 
 
@@ -131,4 +134,4 @@ async def health(): return {"ok": True}
 if __name__ == "__main__":
     import uvicorn
     threading.Thread(target=poll, daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("BRIDGE_PORT", "9802")), log_level="warning")
+    uvicorn.run(app, host=os.environ.get("BRIDGE_HOST", "127.0.0.1"), port=int(os.environ.get("BRIDGE_PORT", "9802")), log_level="warning")

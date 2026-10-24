@@ -102,7 +102,20 @@ ROLE_PROMPTS = {
 }
 
 
+_KC_CACHE: dict = {}
+
+
 def role_token(role):
+    """Token role pro server paměti. V clusteru (P1-5) si ho aplikace bere sama z Keycloaku (client_credentials klienta agent-<role>,
+    tajemství z P0_ROLE_CLIENT_SECRETS – v cíli z OpenBao) s cache do expirace; v harnessu P0 dostává hotové tokeny v P0_ROLE_TOKENS."""
+    kc = os.environ.get("P0_KC_TOKEN_URL")
+    if kc:
+        secrets = json.loads(os.environ.get("P0_ROLE_CLIENT_SECRETS", "{}"))
+        c = _KC_CACHE.get(role)
+        if c and c["exp"] - 30 > time.time(): return c["token"]
+        r = httpx.post(kc, data={"grant_type": "client_credentials"}, auth=(f"agent-{role}", secrets[role]), timeout=10); r.raise_for_status()
+        j = r.json(); _KC_CACHE[role] = {"token": j["access_token"], "exp": time.time() + float(j.get("expires_in", 300))}
+        return j["access_token"]
     toks = json.loads(os.environ.get("P0_ROLE_TOKENS", "{}"))
     return toks.get(role) or os.environ["P0_AGENT_TOKEN"]
 
@@ -139,7 +152,7 @@ def agent_run(role, z, prompt, tool_names):
     root = f"/tmp/p0-o2/{z['id']}"; work = f"{root}/work"; arts = f"{root}/artifacts"
     os.makedirs(work, exist_ok=True); os.makedirs(arts, exist_ok=True)
     MEM = os.environ["P0_MEMORY_URL"]; MH = {"Authorization": f"Bearer {role_token(role)}"}
-    SRT, SRTCFG = os.environ["P0_SRT"], os.environ["P0_SRT_SETTINGS"]
+    SRT, SRTCFG = os.environ.get("P0_SRT", "none"), os.environ.get("P0_SRT_SETTINGS", "")   # "none" = bez srt (P1-5: hranicí je pod; srt + Kata s pody rolí v P1-6)
     calls = []
 
     @tool("search_memory", "Hledá ve sdílené firemní paměti (jen schválené fakty).", {"query": str})
@@ -162,8 +175,9 @@ def agent_run(role, z, prompt, tool_names):
     async def sandboxed_bash(args):
         env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
         env["CUSTOMER_API_KEY"] = "AKIA-P0-SECRET-4242"; env["SRT_DEBUG"] = "1"
-        env["SSL_CERT_FILE"] = env["CURL_CA_BUNDLE"] = os.environ["P0_CA"]
-        r = subprocess.run([SRT, "-s", SRTCFG, "-c", args["cmd"]], capture_output=True, text=True, timeout=90, env=env, cwd=work)
+        if os.environ.get("P0_CA"): env["SSL_CERT_FILE"] = env["CURL_CA_BUNDLE"] = os.environ["P0_CA"]
+        cmd = ["bash", "-c", args["cmd"]] if SRT == "none" else [SRT, "-s", SRTCFG, "-c", args["cmd"]]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env, cwd=work)
         viol = [l.split("] ", 1)[-1] for l in r.stderr.splitlines() if "Connection blocked" in l or "denying" in l]
         calls.append({"tool": "sandboxed_bash", "cmd": args["cmd"][:300], "exit": r.returncode, "stdout": r.stdout[-400:], "violations": viol[-4:]})
         ledger("TOOL", zakazka=z["id"], role=role, tool="sandboxed_bash", exit=r.returncode, stdout=r.stdout[-300:], violations=viol[-4:])
@@ -568,4 +582,4 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     rt.start()
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("APP_PORT", "8010")), log_level="warning")
+    uvicorn.run(app, host=os.environ.get("APP_HOST", "127.0.0.1"), port=int(os.environ.get("APP_PORT", "8010")), log_level="warning")

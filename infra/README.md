@@ -53,7 +53,22 @@ logging CEL pole `role`/`zakazka`. ConfigMapu s `policies.apiKey` (klíče a roz
 (`tools/harness_p1_k8s`), v cíli CI job rolegen. Obraz `platform/agentgateway:1.6.0` = busybox + statická binárka (`infra/images/agentgateway`).
 Výsledek 6/6: G1 21/21 proti clusteru; P1-G: rozpočty mezi replikami aditivní v Postgresu, vynucení eventually consistent (flush 5 s) – viz README harnessu.
 
+## P1-5 workflow, paměť a bridge na kind (2026-10-24)
+
+`infra/k8s/base/{opa,dapr,zakazka}`: OPA s policies z ConfigMapy (subPath), Dapr placement + scheduler (StatefulSety ze statických
+binárek, bez operátoru/injectoru/sentry – na AKS Helm chart), aplikace zakázky s daprd sidecarem (`state.postgresql` z ConfigMapy, PVC pro
+ledger), server paměti, mock GitHub a bridge – jeden obraz `platform/zakazka-app` (`infra/images/app`). Secret `zakazka-secrets` má v base
+placeholdery; token OpenBao, klíče gateway a rolegen build (ConfigMap `rolegen-build`) dodává harness P1-5 (v cíli CI z rolegen + OpenBao).
+Výsledek 6/6: zakázka end-to-end v clusteru přes GitHub HITL, durabilita přes smazání podu, paměť, FinOps z Postgresu, bridge jako PEP.
+
 ## Pasti (kind v cloudovém kontejneru)
+- ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.
+  Mountovat `subPath` per soubor.
+- `kubectl apply -k` po ručních úpravách ConfigMap/Secret je přepíše (base má placeholdery); agentgateway config hot-reloaduje → upstream se
+  vrátil na api.anthropic.com a requesty padaly na TLS. Vždy: apply base → render hodnot → rollout.
+- Mock GitHub po restartu čísluje od 1, ledger aplikace na PVC přežívá → mapování číslo→zakázka v bridge musí brát nejnovější záznam.
+- Dapr odmítne `schedule_new_workflow` se stejným instance id, pokud instance existuje (stav v Postgresu přežívá) – ids zakázek unikátní.
+- Řádek `strategy: Recreate` u aplikace: jediný app-id s actor placementem; stav je v Postgresu, nový pod instanci obnoví (P15c).
 - Dvě repliky agentgateway proti prázdné DB migrují současně → jedna spadne na `duplicate key … pg_type_typname_nsp_index` a restartuje se (jen při prvním nasazení).
 - Měření přes NodePort: klient s keep-alive drží jeden pod; pro střídání replik `Connection: close`. Po rolloutu chvíli trvá, než kube-proxy přeprogramuje endpointy (první SYN může vyhasnout) – warm-up.
 

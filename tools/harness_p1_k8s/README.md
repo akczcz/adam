@@ -65,6 +65,33 @@ requestu, při dvou 3,68. Pro P1 přijatelné (limit je měkký strop s auditem)
 Druhý nález: dvě repliky startující současně proti prázdné DB se perou o migrace (`duplicate key … pg_type_typname_nsp_index`) – jedna
 spadne a restartuje se; rollout restart (surge 1) tomu předchází, při prvním nasazení je restart očekávaný.
 
+## Krok P1-5 – workflow, paměť a bridge v clusteru (2026-10-24, kind, `results/p1-5-20261024-193226.json`)
+
+Poprvé běží **celá zakázka uvnitř Kubernetes**: OPA (PDP org + memory), Dapr placement + scheduler (`infra/k8s/base/dapr`), aplikace
+zakázky s daprd sidecarem a Postgres state store, server paměti M1, mock GitHub a bridge (`infra/k8s/base/zakazka`), to vše v obrazu
+`platform/zakazka-app` (Python 3.12 + Node 22 + Claude Code CLI, `infra/images/app`). Role běží zatím uvnitř aplikace (`agent_run`),
+model = mock G1 na hostiteli přes clusterovou gateway s klíči role × zakázka, tokeny rolí si aplikace bere sama z clusterového Keycloaku
+(`P0_KC_TOKEN_URL`, client_credentials s cache), approval tokeny podepisuje clusterový OpenBao, `sandboxed_bash` = bash v podu (`P0_SRT=none`).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P15a | OPA, placement, scheduler, zakazka (app + daprd), memory, mock-github, bridge Ready; Dapr state store v Postgresu (`dapr_state`: tabulky `state`, `dapr_metadata`) | ✅ rollout 41 s |
+| P15b | **Zakázka end-to-end v clusteru přes GitHub HITL**: issue → `/schvaluji` → ADR → H2 → PR → review APPROVED na head SHA → merge executor → H5 → Dokonceno; 4 role, paměť 200, 4 podpisy OpenBao | ✅ |
+| P15c | **Durabilita:** pod aplikace smazán, když zakázka čeká na H2 → nový pod obnoví instanci ze stavu v Postgresu (status RUNNING), H2 doručeno novému podu, Vývojář a Reviewer doběhli, Dokonceno | ✅ 42 s |
+| P15d | Paměť: zápisy rolí jako `proposed`, člověk (password grant, iss `keycloak:8080` i přes NodePort) je vidí s `include_unverified` | ✅ |
+| P15e | FinOps: `budget_usage` v Postgresu nese útratu každé role za zakázku (0,078 USD / 2 zakázky) – zdroj pravdy místo logu na disku | ✅ |
+| P15f | Bridge jako PEP: bot a cizí člověk odmítnuti (H1 i H4), člověk z allow-listu předán pro H1 a H4 (webhook i poll v clusteru) | ✅ |
+| P15g | Pody | ℹ️ |
+
+Zjištění a pasti P1-5 (zapsané i v `infra/README.md`):
+- **ConfigMap `..data` symlinky**: OPA načítá adresář rekurzivně → „multiple default rules“; daprd hlásí ne-YAML soubory. Řešení `subPath` per soubor.
+- **Pořadí apply**: `kubectl apply -k` vrací base ConfigMap gateway (upstream api.anthropic.com) a base Secret s placeholdery; agentgateway config
+  hot-reloaduje → requesty šly na skutečné API a padaly na TLS (`UnknownIssuer`, busybox bez CA). Harness aplikuje base nejdřív, hodnoty až potom.
+- **Čísla issue se po restartu mock GitHubu opakují**, ledger na PVC přežívá → bridge mapoval číslo na starou zakázku. Bridge teď bere nejnovější
+  záznam; ids zakázek v harnessu jsou unikátní per běh (stav workflow v Postgresu přežívá, Dapr odmítne duplicitní instanci).
+- Pokud role selže (např. 503 z gateway), aplikace přesto publikuje issue bez hashe a bridge `/schvaluji` odmítne (`no_artifact_hash_in_issue`) – správně fail-closed, ale zakázka visí; chybějící stav „role selhala → eskalace“ je úkol pro P2 (procesy X1).
+- Apps v obrazu bez `curl`/`git`: mock Vývojář volá curl (push/exfil) – selže, soubory přesto vzniknou; sandbox a egress se měří v S1/P1-6, ne tady.
+
 ## Spuštění
 
 ```bash
@@ -74,10 +101,12 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-2 --create-kind   # + postaví obraz uzlu, cluster a nahraje obrazy (docker)
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
+../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
 ```
 
 Pasti prostředí (cgroup v1, chybějící `CAP_SYS_RESOURCE`, proxy uzlu): [`infra/README.md`](../../infra/README.md).
 
 ## Další kroky
 
-P1-5 Dapr + aplikace zakázky + paměťový server + bridge na kind (O-1, O-2 `p0`/`sre`/`github-hitl` proti clusteru); P1-1 a P1-6 až na AKS.
+Na kind je hotovo P1-2 až P1-5. Zbývá P1-1 (AKS cluster + Kata node pool) a P1-6 (role jako Kata pody z rolegen, srt uvnitř, egress CONNECT
+gateway, SPIRE entries z rolegen) – obojí na AKS z Adamova Macu.

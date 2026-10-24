@@ -148,4 +148,4 @@ async def health(): return {"ok": True}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("MOCK_GH_PORT", "9801")), log_level="warning")
+    uvicorn.run(app, host=os.environ.get("MOCK_GH_HOST", "127.0.0.1"), port=int(os.environ.get("MOCK_GH_PORT", "9801")), log_level="warning")
