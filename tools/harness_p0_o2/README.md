@@ -84,7 +84,14 @@ akceptace = rolegen R1 se třemi rolemi. Commit do gitu a PR do `main` zůstáv�
 Soubor: `results/o2-sre-mock-20261024-052756.json`, `results/ledger-sre.json`. V mock režimu obsah YAML pochází z `fixtures/sre.yaml` (referenční návrh v zadání);
 živý model by ho napsal sám – měří se tedy pipeline (sandbox → artefakt → HITL → executor → akceptace), ne autorství.
 
-## Scénář `--scenario github` – artefakty naostro (2026-10-24, suchý běh)
+## Scénář `--scenario github` – artefakty naostro (2026-10-24, suchý běh + **ostrý běh**)
+
+**Ostrý běh 2026-10-24 (Adamův Mac, fine-grained PAT jen na `akczcz/adam`, mock model):** platforma zapsala do skutečného repozitáře
+issue [#3](https://github.com/akczcz/adam/issues/3) (po H1, s disclosure Account, `zakazka_id` a hashem `980c4d74e51bdeaf`), větev
+`zakazka/P0-4/ukol-1` + PR [#4](https://github.com/akczcz/adam/pull/4) (disclosure Vývojáře, hash `578d9f593c4d7ee9`) a merge PR přes
+merge-executor po H4 (`2c47bfe` na `main`, soubor `zakazky/P0-4/NOTES.md`). Ledger: PUBLISHED ×3, G4 ✅, G5 ℹ️ s URL.
+Checky G1–G3 v tom běhu skončily ❌ falešně: četly payloady ze suchého běhu, které `_publish` v ostrém režimu nezapisoval – opraveno
+(záznam vzniká v obou režimech, v ostrém i s odpovědí API). Token po běhu revokován.
 
 Platforma poprvé píše do skutečného GitHubu: **zadání jako issue** (až po H1), **větev + commit souborů ze sandboxu + PR** (po
 Vývojáři, jako artefakt pro review – reverzibilní) a **merge PR** (jen merge-executor po H4 s approval tokenem). Věty čl. 50

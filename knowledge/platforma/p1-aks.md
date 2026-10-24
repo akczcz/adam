@@ -129,7 +129,7 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 |---|---|---|
 | Subscription, region, kdo platí | Adamova subscription (soukromá karta, přihlášen na svém Macu); region vybrat v EU podle ceny a dostupnosti nested-virt SKU + Pod Sandboxing | **Azure kroky běží z Adamova Macu** (Remote Control session): cloudové prostředí Adama nemá `az` ani síť na `management.azure.com`. Kandidát regionu: **Sweden Central** (obvykle ~10 % pod West Europe, *sek.*), záloha West Europe; potvrdit `az vm list-skus -l swedencentral --size Standard_D2ads_v7` a `az aks` s `--workload-runtime KataVmIsolation` |
 | Postgres | **Azure Database for PostgreSQL Flexible Server** | schéma M1, RLS a role `memory_app` beze změny; nejmenší SKU `Standard_B1ms` (~15 USD/měs., *sek.*), heslo z OpenBao |
-| GitHub ostrý zápis | PAT vydá Adam | fine-grained PAT jen na `akczcz/adam`; běh na Macu s tokenem v env jednoho příkazu (viz níže), ne v chatu ani v cloudovém prostředí |
+| GitHub ostrý zápis | PAT vydá Adam | fine-grained PAT jen na `akczcz/adam`; běh na Macu s tokenem v env jednoho příkazu (viz níže), ne v chatu ani v cloudovém prostředí. **Provedeno 2026-10-24: issue #3, PR #4, merge `2c47bfe`.** |
 | Pořadí | kind nejdřív (P1-4, P1-5 v cloudovém kontejneru); Mac k dispozici | AKS až P1-1 a P1-6 |
 | Kata SKU | co nejmenší | Kata pool `Standard_D2ads_v7` autoscale 0–1 (nested virt, 8 GiB), system pool 1× `Standard_D4as_v5` (platformní komponenty ~6 GiB RAM); cluster vypínat (`az aks stop`) mimo práci |
 | PR do `main` | podle mého uvážení | PR po P1-3 (15 commitů), další práce v nové větvi |

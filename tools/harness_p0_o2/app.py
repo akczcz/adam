@@ -326,10 +326,11 @@ def gh_api(method, path, payload=None):
 
 def _publish(z, kind, payload, approval_hash=None):
     """Jediné místo, kde platforma píše do GitHubu. Suchý běh = JSON soubor + ledger; živě jen s P0_GITHUB_PUBLISH=1 a GITHUB_TOKEN."""
-    rec = {"kind": kind, "zakazka": z["id"], "repo": GH_REPO, "approval_hash": approval_hash, "payload": payload}
+    rec = {"kind": kind, "zakazka": z["id"], "repo": GH_REPO, "approval_hash": approval_hash, "payload": payload, "published": bool(GH_PUBLISH)}
+    os.makedirs(GH_DRYRUN_DIR, exist_ok=True)
+    p = os.path.join(GH_DRYRUN_DIR, f"{z['id']}-{kind}.json")   # záznam payloadu v obou režimech (checky G1–G3 ho čtou; ostrý běh 2026-10-24 ho dřív nepsal → falešné FAIL)
     if not GH_PUBLISH:
-        os.makedirs(GH_DRYRUN_DIR, exist_ok=True)
-        p = os.path.join(GH_DRYRUN_DIR, f"{z['id']}-{kind}.json"); open(p, "w").write(json.dumps(rec, ensure_ascii=False, indent=1))
+        open(p, "w").write(json.dumps(rec, ensure_ascii=False, indent=1))
         ledger("PUBLISH_DRYRUN", zakazka=z["id"], publish_kind=kind, file=p, approval_hash=approval_hash)
         return {"dry_run": True, "file": p}
     o, r = GH_REPO.split("/")
@@ -351,6 +352,7 @@ def _publish(z, kind, payload, approval_hash=None):
         out = {"merged": res.get("merged"), "sha": res.get("sha")}
     else:
         raise RuntimeError(f"neznámý druh publikace {kind}")
+    open(p, "w").write(json.dumps(rec | {"response": out}, ensure_ascii=False, indent=1))
     ledger("PUBLISHED", zakazka=z["id"], publish_kind=kind, approval_hash=approval_hash, **out)
     return out
 

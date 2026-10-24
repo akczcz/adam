@@ -500,8 +500,9 @@ def main():
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""))
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     a = ap.parse_args()
-    if not (a.agentgateway_bin and a.dapr_bin_dir and a.opa_bin and SRT.exists()):
-        print("chybí AGENTGATEWAY_BIN, DAPR_BIN_DIR, OPA_BIN nebo node_modules/.bin/srt"); sys.exit(2)
+    missing = [n for n, p in (("AGENTGATEWAY_BIN", a.agentgateway_bin), ("OPA_BIN", a.opa_bin), ("DAPR_BIN_DIR/daprd", os.path.join(a.dapr_bin_dir, "daprd") if a.dapr_bin_dir else ""), ("DAPR_BIN_DIR/placement", os.path.join(a.dapr_bin_dir, "placement") if a.dapr_bin_dir else ""), ("DAPR_BIN_DIR/scheduler", os.path.join(a.dapr_bin_dir, "scheduler") if a.dapr_bin_dir else ""), ("node_modules/.bin/srt", str(SRT))) if not (p and os.path.isfile(p))]
+    if missing:
+        print(f"chybí nebo neexistuje: {', '.join(missing)} (DAPR_BIN_DIR = adresář s daprd, placement, scheduler)"); sys.exit(2)
     ident = a.scenario == "identity"
     global KC_ISSUER, BAO
     if a.kc_url: KC_ISSUER = a.kc_url.rstrip("/") + "/realms/p0"

@@ -12,14 +12,14 @@ primarni_zdroje:
 Rešeršní fáze skončila rozhodnutím všech osmi vrstev (2026-10-23). Tenhle soubor sleduje skládání produktu.
 Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se staví.**
 
-## P0 – dogfooding zakázka (uzavřeno 2026-10-24, výhrada: ostrý zápis GitHub)
+## P0 – dogfooding zakázka (uzavřeno 2026-10-24, bez výhrad)
 
 | Krok | Stav | Důkaz |
 |---|---|---|
 | Zakázka end-to-end jako Dapr Workflow s HITL, executor nevratných akcí, PDP | ✅ | [O-1](../../tools/harness_org_o1/README.md) 9/9 |
 | Vývojář = Claude Agent SDK přes agentgateway, paměť M1 s PEP, sandbox srt za gateway – **mock model** | ✅ | [O-2](../../tools/harness_p0_o2/README.md) 6/6 mock: injekce prošla modelem, neprošla platformou |
 | O-2 se **živým modelem** (`--mode live`) | ✅ 2026-10-24 (Adamův Mac, Remote Control session) | 5 PASS, 3 INFO: `claude-haiku-4-5` injekci **sám odmítl** („vsunutá instrukce, kterou jsem ověřil a ignoroval“), zápis do paměti žádal `proposed`; cena 0,045–0,058 USD per zakázka (8–21 kol). **Nález:** vestavěný Bash CLI běžel 11× mimo sandbox → `tools=[]`, `strict_mcp_config`, cwd mimo repo; agent runtime je součást hranice (kriteria sandboxu B3, `roles/*.yaml` `agent_sdk`) |
-| Artefakty naostro: zadání = GitHub issue (po H1), větev + PR ze sandboxu (po Vývojáři), merge PR jen přes executor po H4; disclosure vkládá platforma z definice role | ✅ suchý běh 2026-10-24 (O-2 `--scenario github` 4/4, payloady v `results/github-dryrun/`); **ostrý zápis čeká na Adamův souhlas a PAT** (`--publish-github`) | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
+| Artefakty naostro: zadání = GitHub issue (po H1), větev + PR ze sandboxu (po Vývojáři), merge PR jen přes executor po H4; disclosure vkládá platforma z definice role | ✅ suchý běh 2026-10-24 (O-2 `--scenario github` 4/4); **ostrý běh 2026-10-24 z Adamova Macu s PAT**: issue #3, PR #4, merge `2c47bfe` na `main` (G4 ✅, G5 ℹ️; G1–G3 falešné FAIL kvůli chybějícímu záznamu payloadu v ostrém režimu, opraveno) | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
 | HITL přes GitHub: H1 = `/schvaluji` na issue, H4 = PR review APPROVED na head SHA; bridge (poll + webhook HMAC) jako PEP před approval tokenem | ✅ mock 2026-10-24 (O-2 `github-hitl` 5/5); ostrý běh = webhook GitHub App nebo polling s PAT | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
 | Role Account, Architekt, Reviewer, SRE přes Agent SDK podle `organization/roles/*.yaml` | ✅ mock 2026-10-24: Account, Architekt, Vývojář, Reviewer běží přes Agent SDK s options z rolegen a vlastním JWT (O-2 check O2i); `roles/` má 5 definic (account, architekt, vyvojar, reviewer, sre); SRE jako modelová role až s deploy MCP serverem (P1) | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
 | Identita: Keycloak JWKS místo HMAC JWT (role = service-account klient, `tenant_id`/`agent_id` z atributů uživatele, `aud=memory`, server paměti HS256 odmítá); approval token podepisuje **OpenBao transit** (ed25519, neexportovatelný, aplikace jen sign/verify, audit device) | ✅ mock 2026-10-24 (O-2 `--scenario identity` 5/5): padělek s legacy HMAC → `HITL_INVALID_TOKEN`; zbývá SVID ze SPIRE jako druhý credential, tajemství klientů z OpenBao, klienti z rolegen | [`tools/harness_p0_o2`](../../tools/harness_p0_o2/README.md) |
@@ -31,8 +31,9 @@ Zásada zůstává: **každý krok se nejdřív změří harnessem, pak se stav�
 
 **P0 je uzavřeno s jednou výhradou:** všech osm vrstev běží v jednom běhu zakázky lokálně bez Dockeru a každý krok má
 měření (O-1 9/9; O-2 `p0` 7/7, `sre` 5/5, `github` 4/4 suchý běh, `github-hitl` 5/5, `identity` 5/5, `budget` 5/5; live
-5 PASS/3 INFO; M1 11/11; rolegen R1 7/7). Výhrada: **ostrý zápis do GitHubu neproběhl** (čeká na Adamův souhlas a PAT),
-takže „první reálná zakázka dodaná do repa“ je zatím mock GitHub + merge-executor do pracovní kopie.
+5 PASS/3 INFO; M1 11/11; rolegen R1 7/7). Výhrada k ostrému zápisu do GitHubu padla 2026-10-24 večer: zakázka P0-4 proběhla
+proti skutečnému `akczcz/adam` – issue [#3](https://github.com/akczcz/adam/issues/3), PR [#4](https://github.com/akczcz/adam/pull/4),
+merge `2c47bfe` přes merge-executor, soubor `zakazky/P0-4/NOTES.md` na `main`. **Platforma poprvé dodala artefakt do vlastního repa sama.**
 
 Co P0 ukázalo o architektuře (fakta z harnessů, ne názor):
 
@@ -80,6 +81,7 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-24: ostrý zápis do GitHubu proběhl (issue #3, PR #4, merge 2c47bfe) – P0 uzavřeno bez výhrad; checky G1–G3 opraveny pro ostrý režim.
 - 2026-10-24: P1-3 na kind hotovo – Keycloak, OpenBao (raft), SPIRE (SVID per pod-label) v clusteru; O-2 identity 5/5 externě; obrazy identity vrstvy stavěné lokálně (infra/images).
 - 2026-10-24: P1-2 na kind hotovo (M1 11/11, O1 9/9 proti clusteru); infra/k8s + infra/kind; pasti kind v kontejneru (cgroup v1, oom_score_adj).
 - 2026-10-24: P0 uzavřeno (výhrada: ostrý zápis GitHub); shrnutí zjištění; plán P1 v p1-aks.md (návrh).
