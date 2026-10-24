@@ -5,7 +5,7 @@ metadata:
   labels: { app: s1-sandbox, task: harness-s1 }
 spec:
   runtimeClassName: kata-vm-isolation      # AKS Pod Sandboxing (Azure Linux node pool, --workload-runtime KataVmIsolation)
-  nodeSelector: {pool: kata}               # P1-1 cluster (infra/aks/create.sh): Kata pool má label pool=kata a taint sandbox=kata
+  nodeSelector: {pool: kata}               # P1-1 cluster (infra/terraform/main.tf): Kata pool má label pool=kata a taint sandbox=kata
   tolerations:
   - {key: sandbox, operator: Equal, value: kata, effect: NoSchedule}
   automountServiceAccountToken: false      # žádná identita K8s v sandboxu (vzor AISI chartu)

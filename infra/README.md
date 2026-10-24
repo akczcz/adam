@@ -61,12 +61,12 @@ ledger), server paměti, mock GitHub a bridge – jeden obraz `platform/zakazka-
 placeholdery; token OpenBao, klíče gateway a rolegen build (ConfigMap `rolegen-build`) dodává harness P1-5 (v cíli CI z rolegen + OpenBao).
 Výsledek 6/6: zakázka end-to-end v clusteru přes GitHub HITL, durabilita přes smazání podu, paměť, FinOps z Postgresu, bridge jako PEP.
 
-## P1-1 AKS (připraveno 2026-10-24, běží z Adamova Macu)
+## P1-1 AKS: Terraform + GitHub Actions (OIDC) + Flux (připraveno 2026-10-24)
 
-`infra/aks/`: `precheck.sh` (SKU, kvóty, verze – nic nevytváří), `create.sh` (RG, ACR, AKS Azure Linux + Cilium, Kata pool D2ads_v7 autoscale 0–1,
-Flexible Server PG 16 B1ms s DB a `vector`), `images.sh` (ACR import oficiálních obrazů + `az acr build` aplikace z `infra/images/app/Dockerfile.aks`),
-`deploy.sh` (overlay `infra/k8s/overlays/aks`: ACR obrazy, ExternalName Postgres, bez NodePortů), `stop.sh`/`start.sh`, `destroy.sh`.
-Podrobnosti a postup: [`infra/aks/README.md`](aks/README.md). Měření P1-1 = S1 na Katě (`tools/harness_sandbox_s1/aks/`).
+`infra/bootstrap/azure-oidc.sh` (1× na Macu: RG, tfstate, identita Actions s OIDC federací, role jen na RG) → `infra/terraform/` (ACR, AKS Azure Linux +
+Cilium, Kata pool D2ads_v7 autoscale 0–1, Flexible Server PG 16 B1ms s DB a `vector`, Flux extension + konfigurace na `infra/k8s/overlays/aks`) →
+`.github/workflows/{infra,images,measure,cluster}.yml`. Overlay `aks` používá Flux proměnné `${ACR_LOGIN_SERVER}`, `${PG_HOST}`, `${PG_PASSWORD}`.
+Podrobnosti, postup a bezpečnostní model: [`infra/bootstrap/README.md`](bootstrap/README.md). Měření P1-1 = workflow `measure` (S1 na Katě).
 
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.

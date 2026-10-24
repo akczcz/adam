@@ -1,11 +1,20 @@
-# Postgres mimo cluster: Azure Database for PostgreSQL Flexible Server (infra/aks/create.sh). Služba `postgres` zůstává jménem,
-# na které míří všechny komponenty; init SQL (databáze, extension vector) dělá create.sh přes az CLI, ne kontejner.
+# Postgres mimo cluster: Azure Database for PostgreSQL Flexible Server (infra/terraform/postgres.tf). Služba `postgres` zůstává jménem,
+# na které míří všechny komponenty; databáze a extension vector zakládá Terraform (infra/terraform/postgres.tf), ne kontejner.
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres
 spec:
   type: ExternalName
-  externalName: PG_HOST_PLACEHOLDER
+  externalName: "${PG_HOST}"
   ports:
   - {name: pg, port: 5432}
+---
+# heslo admin účtu Flexible Serveru (dosazuje Flux); na kind ho má base/postgres, který overlay aks nepoužívá
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-auth
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "${PG_PASSWORD}"
