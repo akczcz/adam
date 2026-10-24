@@ -10,6 +10,7 @@ resources:
 - ../../base/keycloak
 - ../../base/openbao
 - ../../base/spire
+- ../../base/agentgateway
 patches:
 - target: {kind: Service, name: postgres}
   patch: |
@@ -57,3 +58,11 @@ patches:
     - op: add
       path: /spec/ports/0/nodePort
       value: 30200
+- target: {kind: Service, name: agentgateway}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30410

@@ -364,4 +364,4 @@ async def catch_all(path: str, request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("MOCK_PORT", "9777")), log_level="warning")
+    uvicorn.run(app, host=os.getenv("MOCK_HOST", "127.0.0.1"), port=int(os.getenv("MOCK_PORT", "9777")), log_level="warning")   # MOCK_HOST=0.0.0.0 pro gateway v kind (P1-4)

@@ -408,6 +408,9 @@ def main():
     ap.add_argument("--skip-agent-sdk", action="store_true")
     ap.add_argument("--latency-n", type=int, default=20)
     ap.add_argument("--upstream", default="https://api.anthropic.com", help="live: upstream (např. Azure Foundry /anthropic)")
+    ap.add_argument("--gateway-url", default=os.getenv("G1_GATEWAY_URL", ""), help="externí agentgateway (P1-4 kind: http://<node>:30410) – harness ho nestartuje; mock se váže na --mock-host")
+    ap.add_argument("--mock-host", default=os.getenv("MOCK_HOST", "127.0.0.1"), help="bind mocku (0.0.0.0, aby na něj dosáhla gateway v kind)")
+    ap.add_argument("--client-key", default="", help="externí gateway: klíč, který klient posílá (apiKey policy); výchozí = api_key")
     a = ap.parse_args()
 
     RESULTS.mkdir(exist_ok=True)
@@ -433,10 +436,14 @@ def main():
     meta = {"gateway": a.gateway, "mode": a.mode, "model": a.model, "upstream": upstream, "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
     try:
         if a.mode == "mock":
-            procs.append(start_mock(env))
+            procs.append(start_mock(env | {"MOCK_HOST": a.mock_host}))
         if a.gateway == "direct":
             base = upstream
             client_key = api_key
+        elif a.gateway_url:
+            base = a.gateway_url.rstrip("/"); client_key = a.client_key or api_key
+            assert wait_http(f"{base}/v1/models", 30, ok=(200, 401, 404, 405)), f"externí gateway {base} neodpovídá"
+            meta["gateway_version"] = "external " + base
         else:
             if a.gateway == "agentgateway" and not a.agentgateway_bin:
                 print("chybí binárka agentgateway (--agentgateway-bin nebo AGENTGATEWAY_BIN)"); sys.exit(2)

@@ -22,6 +22,14 @@ Tvrzení (krok p1-3 – identita):
   P13e  O-2 `identity` (--kc-url, --bao-addr) proti clusterovému Keycloaku a OpenBao: 5/5 (JWKS, HS256 odmítnut, transit podpis, padělek → HITL_INVALID_TOKEN)
   P13f  Obrazy, restarty – INFO
 
+Tvrzení (krok p1-4 – gateway):
+  P14a  agentgateway 2 repliky Ready; config = base ConfigMap + upstream mock na hostiteli + apiKey klíče z rolegen (zakázka P1-4); config.database → tabulka budget_usage v Postgresu (DB agentgateway)
+  P14b  Request s klíčem role přes NodePort → 200 od mocku na hostiteli; log nese role a zakazka; cizí klíč → 401; bez klíče (mode optional) → 200 bez role
+  P14c  budget_usage v Postgresu: 3 okna per klíč, used_amount = součet ceny z logů obou replik (flush ≤ 5 s)
+  P14d  P1-G: Block limit 0.01 USD na klíči Vývojáře – requesty střídavě přes obě repliky → 429 po překročení; změřen přestřel (requesty nad limit) daný flushem 5 s a čítači v paměti
+  P14e  Harness G1 (--gateway-url) proti clusterové gateway: kontrakt Anthropic Messages API beze změny
+  P14f  Pody, restarty – INFO
+
 Spuštění: viz README. Vyžaduje kubectl (KUBECTL), běžící kind cluster `platform` (infra/kind/), OPA_BIN, AGENTGATEWAY_BIN,
 venvy harnessů M1 a O1. `--create-kind` postaví obraz uzlu (runc obal), cluster a nahraje obrazy (docker daemon nutný).
 """
@@ -229,9 +237,124 @@ def step_p1_3(a, rep, env):
     rep.add("P13f", "Obrazy a restarty identity podů (kind: lokálně postavené obrazy, viz infra/README.md)", "INFO", {p["metadata"]["name"]: {"image": [c["image"] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])]} for p in pods if p["metadata"]["name"].split("-")[0] in ("keycloak", "openbao", "spire")})
 
 
+def gw_pod_logs(a):
+    pods = [p["metadata"]["name"] for p in json.loads(kubectl(a, "-n", NS, "get", "pods", "-l", "app=agentgateway", "-o", "json").stdout)["items"] if not p["metadata"].get("deletionTimestamp")]
+    out = {}
+    for p in pods:
+        lines = []
+        for l in kubectl(a, "-n", NS, "logs", p, "--tail=2000").stdout.splitlines():
+            try: lines.append(json.loads(l))
+            except Exception: pass
+        out[p] = lines
+    return out
+
+
+def step_p1_4(a, rep, env):
+    import psycopg, yaml
+    G1 = T / "harness_gateway_g1"; O2 = T / "harness_p0_o2"
+    bridge_ip = subprocess.run(["docker", "network", "inspect", "kind", "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"], capture_output=True, text=True).stdout.strip() or "172.18.0.1"
+    ip = node_ip(a); GW = f"http://{ip}:30410"
+    # mock upstream na hostiteli (bind 0.0.0.0, aby na něj dosáhly pody) – jen pro P14b–d; G1 si startuje vlastní
+    mock = subprocess.Popen([str(G1 / ".venv/bin/python"), str(G1 / "mock_upstream.py")], env=env | {"MOCK_HOST": "0.0.0.0", "MOCK_PORT": "9777", "MOCK_EVENT_DELAY": "0.02"}, stdout=open(LOGS / "mock-p14.log", "wb"), stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        assert wait_http("http://127.0.0.1:9777/health", 30), "mock nenaběhl"
+        # klíče role × zakázka z rolegen (zakázka P1-4), Block limit Vývojáře zmenšený pro P1-G
+        out = LOGS / "rolegen-P1-4"
+        rg = sh([sys.executable, str(T / "rolegen/rolegen.py"), "--roles", str(ROOT / "knowledge/organization/roles"), "--out", str(out), "--tenant", "acme", "--zakazka", "P1-4"]); assert rg.returncode == 0, rg.stderr
+        pol = yaml.safe_load((out / "agentgateway/apikeys-acme-P1-4.yaml").read_text())["policies"]["apiKey"]
+        import hashlib as _h
+        keys = {}
+        for k in list(pol["keys"]):
+            role = k["metadata"]["role"]
+            if role == "sre": pol["keys"].remove(k); continue
+            val = f"sk-gw-P1-4-{role}-{_h.sha256(os.urandom(16)).hexdigest()[:20]}"; keys[role] = val
+            k["keyHash"] = "sha256:" + _h.sha256(val.encode()).hexdigest()
+            for b in k["budgets"]:
+                if role == "vyvojar" and b["name"] == "vyvojar-24h-block": b["limit"]["amount"] = 0.01
+        pol["mode"] = "optional"   # G1 (Agent SDK v hostovaném prostředí posílá Bearer) běží bez klíče; s klíčem platí budgets
+        base_cm = next(d for d in yaml.safe_load_all((INFRA / "k8s/base/agentgateway/agentgateway.yaml").read_text()) if d and d.get("kind") == "ConfigMap")
+        cfg = yaml.safe_load(base_cm["data"]["config.yaml"])
+        cfg["llm"]["models"][0]["params"]["baseUrl"] = f"http://{bridge_ip}:9777/v1"
+        cfg["llm"]["policies"] = {"apiKey": pol}
+        cfg_path = LOGS / "agentgateway-p14.yaml"; cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+        cm = kubectl(a, "create", "configmap", "agentgateway-config", "-n", NS, f"--from-file=config.yaml={cfg_path}", "--dry-run=client", "-o", "yaml").stdout
+        subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=cm, text=True, capture_output=True)
+        kubectl(a, "-n", NS, "rollout", "restart", "deploy/agentgateway")
+        t0 = time.time(); ok_roll = kubectl(a, "-n", NS, "rollout", "status", "deploy/agentgateway", "--timeout=180s", timeout=200).returncode == 0
+        pods = [p for p in json.loads(kubectl(a, "-n", NS, "get", "pods", "-l", "app=agentgateway", "-o", "json").stdout)["items"] if not p["metadata"].get("deletionTimestamp")]
+        ready = [p["metadata"]["name"] for p in pods if all(c.get("ready") for c in p["status"].get("containerStatuses", []))]
+        with psycopg.connect(f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/agentgateway", autocommit=True, connect_timeout=10) as c:
+            tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
+            c.execute("DELETE FROM budget_usage")   # čistý start měření
+        rep.add("P14a", "agentgateway 2 repliky Ready s configem = base ConfigMap + upstream mock na hostiteli + apiKey klíče z rolegen (zakázka P1-4, mode optional); config.database přes env ($AGW_DATABASE_URL) → tabulka budget_usage v Postgresu", "PASS" if ok_roll and len(ready) == 2 and "budget_usage" in tables else "FAIL", {"pods_ready": ready, "tables": tables, "keys": sorted(keys), "upstream": cfg["llm"]["models"][0]["params"]["baseUrl"], "rollout_s": round(time.time() - t0, 1)})
+
+        H = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
+        body = {"model": a.model, "max_tokens": 32, "messages": [{"role": "user", "content": "ping"}]}
+        client = httpx.Client(transport=httpx.HTTPTransport(retries=3), timeout=30, limits=httpx.Limits(max_keepalive_connections=0))
+        warm = 0   # kube-proxy po rolloutu programuje endpointy se zpožděním – první spojení může spadnout na SYN timeout
+        for _ in range(30):
+            try:
+                if client.get(f"{GW}/v1/models", timeout=3).status_code in (200, 401, 404, 405): warm += 1
+            except Exception: warm = 0
+            if warm >= 3: break
+            time.sleep(1)
+        def req(key=None, zak="p14"):
+            h = dict(H) | {"x-zakazka": zak, "connection": "close"}   # nové TCP spojení na každý request → kube-proxy střídá repliky (keep-alive by držel jeden pod)
+            if key: h["x-api-key"] = key
+            return client.post(f"{GW}/v1/messages", json=body, headers=h)
+        r_ok = req(keys["vyvojar"], "p14b"); r_bad = req("sk-gw-neplatny", "p14b-bad"); r_none = req(None, "p14b-none")
+        time.sleep(1.5); logs = gw_pod_logs(a)
+        l_ok = [e for ls in logs.values() for e in ls if e.get("zakazka") == "p14b"]
+        l_none = [e for ls in logs.values() for e in ls if e.get("zakazka") == "p14b-none"]
+        rep.add("P14b", "Request s klíčem Vývojáře přes NodePort → 200 od mocku na hostiteli (pod → bridge IP), log nese role a zakazka; cizí klíč → 401; bez klíče (optional) → 200 bez role", "PASS" if r_ok.status_code == 200 and r_bad.status_code == 401 and r_none.status_code == 200 and l_ok and l_ok[-1].get("role") == "vyvojar" and l_none and not l_none[-1].get("role") else "FAIL", {"with_key": r_ok.status_code, "bad_key": r_bad.status_code, "no_key": r_none.status_code, "log_with_key": {k: l_ok[-1].get(k) for k in ("role", "zakazka", "agw.ai.usage.cost.total", "http.status")} if l_ok else None, "log_no_key_role": l_none[-1].get("role") if l_none else None})
+
+        # P1-G: Block přes dvě repliky
+        per_req = float(l_ok[-1]["agw.ai.usage.cost.total"]) if l_ok else 0.0030156
+        statuses, t1 = [], time.time()
+        for i in range(20):
+            r = req(keys["vyvojar"], f"p1g-{i:02d}"); statuses.append(r.status_code)
+            if r.status_code == 429: retry_after = r.headers.get("retry-after"); break
+            time.sleep(0.1)
+        else: retry_after = None
+        n200 = statuses.count(200)
+        time.sleep(7); logs = gw_pod_logs(a)
+        served = {p: sum(1 for e in ls if str(e.get("zakazka", "")).startswith("p1g-")) for p, ls in logs.items()}
+        served_200 = {p: sum(1 for e in ls if str(e.get("zakazka", "")).startswith("p1g-") and e.get("http.status") == 200) for p, ls in logs.items()}
+        vyv_hash = _h.sha256(keys["vyvojar"].encode()).hexdigest()
+        expected_charged = per_req * (n200 + 1)   # + 1 request z P14b na tomtéž klíči
+        t_db = time.time(); block_used, vyv_rows = None, []
+        while time.time() - t_db < 30:   # každá replika flushuje své delty po 5 s nezávisle – DB je konzistentní až po obou flushích
+            with psycopg.connect(f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/agentgateway", autocommit=True, connect_timeout=10) as c:
+                rows = c.execute("SELECT budget_id, unit, used_amount, window_end - window_start FROM budget_usage").fetchall()
+            vyv_rows = [(bid.rsplit(":", 1)[-1], used / 1e9) for bid, unit, used, w in rows if vyv_hash in bid]
+            block_used = next((u for n, u in vyv_rows if n == "vyvojar-24h-block"), None)
+            if block_used is not None and abs(block_used - expected_charged) < 1e-6: break
+            time.sleep(1)
+        db_lag_s = round(time.time() - t_db + 7, 1)
+        overshoot_reqs = (n200 + 1) - 0.01 / per_req if per_req else None
+        rep.add("P14c", "budget_usage v Postgresu (sdílená oběma replikami): 3 okna klíče Vývojáře, used_amount 24h-block = cena všech 200 odpovědí tohoto klíče z obou replik (nanodolary)", "PASS" if len(vyv_rows) == 3 and block_used is not None and abs(block_used - expected_charged) < 1e-6 else "FAIL", {"rows_vyvojar": vyv_rows, "expected_usd": round(expected_charged, 7), "per_request_usd": per_req, "served_200_by_pod": served_200, "db_consistent_after_s": db_lag_s})
+        both = sum(1 for v in served.values() if v > 0) == 2
+        rep.add("P14d", "P1-G: Block limit 0.01 USD na klíči Vývojáře přes 2 repliky (Service round-robin) → 429 s Retry-After; obě repliky obsloužily requesty; přestřel = kolik requestů nad limit prošlo (čítače v paměti + flush 5 s)", "PASS" if 429 in statuses and both and n200 <= 8 else "FAIL", {"statuses": statuses, "requests_200_before_429": n200, "limit_usd": 0.01, "charged_usd": block_used, "overshoot_requests": round(overshoot_reqs, 2) if overshoot_reqs is not None else None, "served_by_pod": served, "retry_after_s": retry_after, "wall_s": round(time.time() - t1, 1), "note": "kontrola used >= limit před requestem čte sdílený čítač z DB jen při obnově okna/flushi – přestřel ≈ requesty, které repliky stihnou mezi flushi"})
+        r_other = req(keys["reviewer"], "p14-reviewer")
+        rep.add("P14d2", "Jiný klíč (Reviewer) není blokem Vývojáře dotčen → 200", "PASS" if r_other.status_code == 200 else "FAIL", {"status": r_other.status_code})
+    finally:
+        mock.terminate()
+        try: mock.wait(10)
+        except Exception: mock.kill()
+    # G1 proti clusterové gateway (vlastní mock na 0.0.0.0:9777)
+    t2 = time.time()
+    r = sh([str(G1 / ".venv/bin/python"), str(G1 / "harness.py"), "--gateway", "agentgateway", "--mode", "mock", "--gateway-url", GW, "--mock-host", "0.0.0.0", "--client-key", keys["reviewer"], "--agentgateway-bin", a.agentgateway_bin], env=env, timeout=900)
+    (LOGS / "g1-k8s.log").write_text(r.stdout + "\n--- stderr\n" + r.stderr)
+    g1 = latest(G1 / "results", "agentgateway-mock-"); n = counts(g1)
+    rep.add("P14e", "Harness G1 proti clusterové gateway (2 repliky, Postgres DB, apiKey optional, klíč Reviewer): kontrakt Anthropic Messages API (passthrough, streaming, cache, chybová těla, Agent SDK) beze změny", "PASS" if r.returncode == 0 and n["FAIL"] == 0 and n["PASS"] >= 15 else "FAIL", {"exit": r.returncode, "counts": n, "failed": [c["id"] for c in (g1 or {}).get("checks", []) if c["status"] == "FAIL"], "wall_s": round(time.time() - t2, 1), "log": str(LOGS / "g1-k8s.log")})
+    pods = json.loads(kubectl(a, "-n", NS, "get", "pods", "-l", "app=agentgateway", "-o", "json").stdout)["items"]
+    rep.add("P14f", "Pody agentgateway", "INFO", {p["metadata"]["name"]: {"image": [c["image"] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])], "node_ip": ip, "bridge_ip": bridge_ip} for p in pods})
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4"], default="p1-2")
+    ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
     ap.add_argument("--kind", default=os.getenv("KIND", shutil.which("kind") or ""))
@@ -249,7 +372,7 @@ def main():
     if a.create_kind:
         assert a.kind, "chybí KIND"
         create_kind(a, env)
-    (step_p1_2 if a.step == "p1-2" else step_p1_3)(a, rep, env)
+    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4}[a.step](a, rep, env)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

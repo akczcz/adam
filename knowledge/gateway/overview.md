@@ -188,8 +188,11 @@ porušením kontraktu (passthrough režim) a výhradou k A1.
       účtování po odpovědi z vestavěného katalogu (i mock `claude-haiku-4-5` má `agw.ai.usage.cost.total`); `Block` = 429 s `Retry-After`
       do konce okna, `Audit` = warn log `API key budget exceeded`; `budget_usage` (sqlite/Postgres) nanodolary, okna v ms, flush 5 s;
       CEL pole logu `apiKey.<metadata>` a `request.headers[...]` dávají cenu per role × zakázka.
-- [ ] agentgateway: persistence USD rozpočtů mezi replikami (Postgres sdílený – čítače v paměti + flush delt, neověřeno pod zátěží);
-      explicitní potvrzení thinking a paralelních tool calls na `/v1/messages`; aktuální číslo verze (tagy v1.6 vs. docs mluvící o 2.x).
+- [x] ~~agentgateway: persistence USD rozpočtů mezi replikami~~ – **změřeno 2026-10-24 (P1-4 kind, 2 repliky, Postgres):** delty se
+      zapisují aditivně (upsert `used_amount + excluded`), součet správný po flushi obou replik (~7 s); vynucení `Block` je eventually
+      consistent – replika zná útratu druhé až po flushi/reconcile (`FLUSH_INTERVAL` 5 s, nekonfigurovatelné) → přestřel 3,7 requestu
+      u 2 replik vs. 0,7 u jedné. Dvě repliky nad prázdnou DB se perou o migrace (jedna restartuje). G1 proti clusterové gateway 21/21.
+- [ ] agentgateway: explicitní potvrzení thinking a paralelních tool calls na `/v1/messages`; aktuální číslo verze (tagy v1.6 vs. docs mluvící o 2.x).
 - [ ] Forward `traceparent` z gateway **k poskytovateli** – u žádného kandidáta nedoloženo.
 - [ ] Propagace identity koncového uživatele k poskytovateli u Agent Routeru a Bifrostu.
 - [ ] Microsoft Learn stránky o Claude ve Foundry (nebyly z prostředí dostupné) – potvrdit Entra ID a deployment names.
@@ -202,6 +205,7 @@ porušením kontraktu (passthrough režim) a výhradou k A1.
 - [x] ~~Změřit režii gateway P50/P95 vs. přímé volání~~ – mock, non-stream, n=20: agentgateway +0,7 ms, LiteLLM +13 ms p50.
 
 ## Changelog
+- 2026-10-24: P1-4 kind – agentgateway ×2 s Postgres: persistence rozpočtů aditivní, vynucení eventually consistent (flush 5 s); G1 21/21 proti clusteru.
 - 2026-10-24: rozpočty agentgateway změřeny za běhu v O-2 (`--scenario budget`): Block/Audit, `budget_usage`, cena per role × zakázka z logu.
 - 2026-10-22: rozhodnuto (Adam) – agentgateway, LiteLLM záloha.
 - 2026-10-22: harness G1 live na Adamově stroji – agentgateway 2/2 (cache, Agent SDK s nástrojem); G1 uzavřeno.

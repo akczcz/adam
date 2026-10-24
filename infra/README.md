@@ -46,7 +46,16 @@ Výsledek: `tools/harness_p1_k8s/results/p1-3-*.json` – Keycloak tokeny rolí 
 init/unseal + transit, SPIRE SVID `spiffe://platform/role/vyvojar` pro pod s labelem `role=vyvojar` (pod bez labelu „no identity issued“),
 O-2 `identity` 5/5 proti clusterovému Keycloaku a OpenBao.
 
+## P1-4 model gateway na kind (2026-10-24)
+
+`infra/k8s/base/agentgateway`: agentgateway 1.6.0, 2 repliky, LLM listener 4100, `config.database` z env `$AGW_DATABASE_URL` (Secret),
+logging CEL pole `role`/`zakazka`. ConfigMapu s `policies.apiKey` (klíče a rozpočty z rolegen) a upstreamem renderuje harness P1-4
+(`tools/harness_p1_k8s`), v cíli CI job rolegen. Obraz `platform/agentgateway:1.6.0` = busybox + statická binárka (`infra/images/agentgateway`).
+Výsledek 6/6: G1 21/21 proti clusteru; P1-G: rozpočty mezi replikami aditivní v Postgresu, vynucení eventually consistent (flush 5 s) – viz README harnessu.
+
 ## Pasti (kind v cloudovém kontejneru)
+- Dvě repliky agentgateway proti prázdné DB migrují současně → jedna spadne na `duplicate key … pg_type_typname_nsp_index` a restartuje se (jen při prvním nasazení).
+- Měření přes NodePort: klient s keep-alive drží jeden pod; pro střídání replik `Connection: close`. Po rolloutu chvíli trvá, než kube-proxy přeprogramuje endpointy (první SYN může vyhasnout) – warm-up.
 
 - **cgroup v1 na hostiteli**: kubelet v K8s 1.37 odmítne start (`failCgroupV1: true`) → kubeadm patch `KubeletConfiguration.failCgroupV1: false`.
   Na AKS (Azure Linux, cgroup v2) netřeba.

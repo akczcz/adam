@@ -74,6 +74,7 @@ export AGENTGATEWAY_BIN=/path/to/agentgateway
 
 .venv/bin/python harness.py --gateway direct          # kontrola harnessu
 .venv/bin/python harness.py --gateway agentgateway
+.venv/bin/python harness.py --gateway agentgateway --gateway-url http://<node>:30410 --mock-host 0.0.0.0 --client-key <klíč>   # externí gateway v kind (P1-4) – 21/21 2026-10-24
 .venv/bin/python harness.py --gateway litellm
 ANTHROPIC_API_KEY=sk-ant-... .venv/bin/python harness.py --gateway agentgateway --mode live
 ```

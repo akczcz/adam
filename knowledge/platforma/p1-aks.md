@@ -117,7 +117,7 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 
 | Riziko | Dopad | Mitigace |
 |---|---|---|
-| Persistence rozpočtů agentgateway mezi replikami (čítače v paměti + flush 5 s) | překročení limitu o součet replik × 5 s útraty | P1-G změřit; při selhání jedna replika + PDB, nebo `localRateLimit` tokens jako druhá brzda |
+| Persistence rozpočtů agentgateway mezi replikami (čítače v paměti + flush 5 s) | překročení limitu o součet replik × 5 s útraty | **P1-G změřeno 2026-10-24:** persistence aditivní a správná; přestřel u 2 replik 3,7 requestu (0,011 USD) vs. 0,7 u jedné → přijato jako měkký strop + audit; tvrdý strop = jedna replika listeneru s budgets (PDB) nebo `localRateLimit` per klíč |
 | Kata na AKS: `emptyDir` přes virtio-fs na hostu, `hostUsers: false` nepodporováno | pracovní data agenta na hostu; srt spoléhá na user namespaces v guestu | S1h-3 měří bwrap v guestu; cleanup emptyDir jako součást tombstone sandboxu |
 | Keycloak/OpenBao provozní režim (TLS, unseal, zálohy) | výpadek identity zastaví všechny zakázky (fail-closed = správně, ale drahé) | Key Vault auto-unseal, Postgres HA pro Keycloak, runbook v `knowledge/organization/procesy.md` X2 |
 | agentgateway 1.7 mění chybová těla (PR #2162) | kontrakt Claude Code | zůstat na 1.6.0, přeměřit G1 na 1.7 před upgrade |
@@ -154,10 +154,12 @@ Cena P1 po rozhodnutí (*spekulace*, PAYG): system D4as_v5 ≈ 0,19 USD/h + Kata
 |---|---|
 | P1-2 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` 6/6: M1 11/11 a O1 9/9 proti clusterovým službám beze změny checků; manifesty `infra/k8s/base/{postgres,clickhouse,otel-collector}` + overlay `kind` |
 | P1-3 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-3 5/5: Keycloak (realm p0, DB keycloak), OpenBao raft (init/unseal operátorem, audit stdout), SPIRE 1.14.2 (k8s_psat, SVID z pod-labelu); O-2 `identity` 5/5 proti clusteru. Obrazy pro kind z GitHub release artefaktů (`infra/images`), na AKS oficiální |
-| P1-4, P1-5 | ⬜ kind (další: agentgateway ×2 s Postgres DB + P1-G, pak Dapr + app) |
+| P1-4 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-4 6/6: agentgateway ×2, Postgres `budget_usage`, G1 21/21 proti clusteru; P1-G: aditivní persistence OK, vynucení mezi replikami eventually consistent (flush 5 s) → pro ostrý strop jedna replika listeneru s budgets nebo `localRateLimit` jako tvrdá brzda |
+| P1-5 | ⬜ kind (další: Dapr + aplikace zakázky + paměť + bridge) |
 | P1-1, P1-6 | ⬜ AKS (čeká na odpovědi níže) |
 
 ## Changelog
+- 2026-10-24: P1-4 hotovo na kind; P1-G: rozpočty mezi replikami eventually consistent (flush 5 s), riziko přijato jako měkký strop.
 - 2026-10-24: P1-3 hotovo na kind; SPIRE SVID per pod-label změřen (P1-6 dostane entries z rolegen); OpenBao KV auto-unseal a auth kubernetes odloženy na AKS/P1-5.
 - 2026-10-24: P1-2 hotovo na kind; zjištění: Collector v clusteru bez file exportéru (metriky i logy do ClickHouse), kind v kontejneru bez CAP_SYS_RESOURCE potřebuje obal runc.
 - 2026-10-24: první verze plánu P1 po uzavření P0 (návrh, Pozn. Adam).

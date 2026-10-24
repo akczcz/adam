@@ -60,7 +60,7 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 | P1-1 Cluster + Kata node pool + Cilium CNP default-deny; měří S1 `aks/` | ⬜ blokováno: subscription/region |
 | P1-2 Postgres (4 DB) + ClickHouse + Collector; měří M1, O1 proti clusteru | ✅ kind 2026-10-24: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) 6/6 – M1 11/11 proti clusterovému Postgresu 16 + pgvector, O1 9/9 proti Collectoru a ClickHouse 26.8; manifesty [`infra/k8s`](../../infra/README.md) |
 | P1-3 Keycloak + SPIRE + OpenBao (raft); měří O-2 `identity` proti clusteru + SVID per pod | ✅ kind 2026-10-24: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) P1-3 5/5 – O-2 `identity` 5/5 proti clusterovému Keycloaku a OpenBao; **SPIRE poprvé naostro**: SVID `spiffe://platform/role/vyvojar` z pod-labelu, pod bez labelu bez identity; zbývá KV auto-unseal a auth `kubernetes` (AKS, P1-5) |
-| P1-4 agentgateway ×2 s Postgres DB, budgets, egress, git TLS; měří G1, O-2 `budget`, nový P1-G (repliky) | ⬜ lze na `kind` |
+| P1-4 agentgateway ×2 s Postgres DB a budgets z rolegen; měří G1 proti clusteru + P1-G (repliky) | ✅ kind 2026-10-24: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) P1-4 6/6 – G1 21/21 proti clusterové gateway; **P1-G:** usage v Postgresu aditivní a správné, vynucení Block mezi replikami eventually consistent (flush 5 s → přestřel 3,7 requestu u 2 replik vs. 0,7 u jedné). Egress CONNECT a git TLS až s pody rolí (P1-6); O-2 `budget` externě až v P1-5 |
 | P1-5 Dapr + app zakázky + paměť + bridge (Helm chart `platform`); měří O-1, O-2 `p0`/`sre`/`github-hitl` | ⬜ lze na `kind` |
 | P1-6 Role jako Kata pody z rolegen, CI job rolegen → bundle/klíče; měří R1 v CI, O-2 live v clusteru | ⬜ AKS |
 
@@ -81,6 +81,7 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-24: P1-4 na kind hotovo – agentgateway ×2 s Postgres budget_usage, G1 21/21 proti clusteru, P1-G změřen (eventually consistent, přestřel ≤ útrata za 5 s).
 - 2026-10-24: ostrý zápis do GitHubu proběhl (issue #3, PR #4, merge 2c47bfe) – P0 uzavřeno bez výhrad; checky G1–G3 opraveny pro ostrý režim.
 - 2026-10-24: P1-3 na kind hotovo – Keycloak, OpenBao (raft), SPIRE (SVID per pod-label) v clusteru; O-2 identity 5/5 externě; obrazy identity vrstvy stavěné lokálně (infra/images).
 - 2026-10-24: P1-2 na kind hotovo (M1 11/11, O1 9/9 proti clusteru); infra/k8s + infra/kind; pasti kind v kontejneru (cgroup v1, oom_score_adj).

@@ -1,0 +1,84 @@
+# agentgateway 1.6.0 – model gateway a FinOps: LLM listener (Anthropic Messages API passthrough), rozpočty per klíč role × zakázka
+# (policies.apiKey.keys[].budgets – generuje rolegen, harness/CI je vloží do ConfigMapy agentgateway-config), useage v Postgresu
+# (config.database → tabulka budget_usage sdílená replikami). Egress CONNECT a git TLS (S1) přijdou s pody rolí (P1-6).
+# Config zde je výchozí bez klíčů (mode optional); overlay kind nastaví upstream na mock na hostiteli.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentgateway-secrets
+type: Opaque
+stringData:
+  ANTHROPIC_API_KEY: sk-ant-harness-mock      # kind: mock upstream; AKS: z OpenBao
+  AGW_DATABASE_URL: postgresql://postgres:platform-dev@postgres:5432/agentgateway
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentgateway-config
+data:
+  config.yaml: |
+    config:
+      enableIpv6: false
+      readinessAddr: 0.0.0.0:19001
+      statsAddr: 0.0.0.0:19002
+      database:
+        url: $AGW_DATABASE_URL
+      logging:
+        format: json
+        fields:
+          add:
+            zakazka: '"x-zakazka" in request.headers ? request.headers["x-zakazka"] : ""'
+            role: 'apiKey != null ? string(apiKey.role) : ""'
+    llm:
+      port: 4100
+      models:
+      - name: '*'
+        provider: anthropic
+        params:
+          baseUrl: https://api.anthropic.com/v1
+          apiKey: $ANTHROPIC_API_KEY
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway
+  labels: {app: agentgateway}
+spec:
+  selector: {app: agentgateway}
+  ports:
+  - {name: llm, port: 4100, targetPort: 4100}
+  - {name: stats, port: 19002, targetPort: 19002}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: agentgateway}
+  template:
+    metadata:
+      labels: {app: agentgateway}
+    spec:
+      containers:
+      - name: agentgateway
+        image: platform/agentgateway:1.6.0   # kind: busybox + statická binárka (infra/images); AKS: ghcr.io/agentgateway/agentgateway:1.6.0
+        args: ["-f", "/etc/agentgateway/config.yaml"]
+        envFrom:
+        - secretRef: {name: agentgateway-secrets}
+        ports:
+        - {containerPort: 4100, name: llm}
+        - {containerPort: 19001, name: ready}
+        - {containerPort: 19002, name: stats}
+        volumeMounts:
+        - {name: config, mountPath: /etc/agentgateway, readOnly: true}
+        readinessProbe:
+          httpGet: {path: /healthz/ready, port: 19001}
+          periodSeconds: 3
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {memory: 256Mi}
+      volumes:
+      - name: config
+        configMap: {name: agentgateway-config}
