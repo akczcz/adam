@@ -94,3 +94,10 @@ resource "azurerm_kubernetes_cluster_node_pool" "kata" {
 
   lifecycle { ignore_changes = [node_count] } # řídí autoscaler
 }
+
+# Adopce poolu kata: vznikl při apply 2026-10-25 (AllocationFailed → stav Failed), ale do tf state se nedostal („already exists – needs to be
+# imported“). Import blok je po úspěšném importu no-op; smazat při úklidu.
+import {
+  to = azurerm_kubernetes_cluster_node_pool.kata
+  id = "${data.azurerm_resource_group.rg.id}/providers/Microsoft.ContainerService/managedClusters/${var.cluster_name}/agentPools/kata"
+}
