@@ -170,7 +170,7 @@ Výsledek: **10/10 + 2 INFO** (`measure` run 40200765801, `results/p2-2-20261025
 obrazu role a boot VM 114 s), další role 24–27 s (obraz role na uzlu, start podu 2–3 s). Resources podu z definice role (2 CPU, 4 Gi).
 
 
-## P2-5 – eval gate a registr agentů (2026-10-25, AKS, `--step p2-5` = p2-2 + P25a–c)
+## P2-5 – eval gate a registr agentů (2026-10-25, AKS, `--step p2-5` = p2-2 + P25a–c) – **13/13**
 
 Evaly rolí ([`tools/role_evals`](../role_evals/README.md)) běží v CI (`rolegen.yml`) nad adversariálním mockem; výsledek `results/eval-status.json`
 jde přes `render_k8s.py` do ConfigMapy `rolegen-build` a aplikace roli bez `passed` nespustí (`role_gate`, ledger `ROLE_GATE`). Harness po
@@ -179,9 +179,12 @@ evalů, `org.agents` z ledgeru – SPIFFE ID instance role, model, klíč gatewa
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| P25a | `eval-status.json` v Gitu == ConfigMap v clusteru; role zakázky `passed`, aplikace to ověřila před každým během (`ROLE_GATE passed=true`); SRE `unevaluated` | ⏳ |
-| P25b | registr: `role_definitions` (active/proposed z gate), `eval_gates` (řádek per vrstva × role), `agents` (4 instance zakázky) | ⏳ |
-| P25c | negativní kontrola: Vývojář L3 bez PEP propadne (gate měří obranu, ne mock) | ⏳ |
+| P25a | `eval-status.json` v Gitu == ConfigMap v clusteru; role zakázky `passed`, aplikace to ověřila před každým během (`ROLE_GATE passed=true`, vrstvy L0–L3); SRE `unevaluated` (aplikace by ji odmítla) | ✅ |
+| P25b | registr v DB `org`: `role_definitions` 5 řádků (4 active, sre proposed), `eval_gates` 15 řádků (vrstva × role z CI evalů), `agents` 4 instance zakázky (SPIFFE ID, model, klíč gateway, sandbox profil `dev-kata-srt`, obraz `roles/<role>:0.1.0`) | ✅ |
+| P25c | negativní kontrola na runneru: Vývojář L3 bez PEP → `pass_k` 0,5 < 1,0, gate failed | ✅ |
+| P21a–h, P22a–c | regrese P2-1 a P2-2 | ✅ |
+
+Výsledek: **13/13 + 2 INFO** (`measure` run 40206756683, `results/p2-5-20261025-153648.json`).
 
 ## Spuštění
 

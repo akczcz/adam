@@ -74,7 +74,7 @@ Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-1
 | P2-2 obrazy rolí (build v CI) a pod spec přímo z rolegen | ✅ AKS 2026-10-25 10/10 ([p2-role.md](p2-role.md)): `roles/<role>:<verze>` v ACR z rolegen (Dockerfile + devcontainer.json, bez cloud CLI, options zapečené), pod role ze šablony rolegen; devcontainer CLI build odložen (ACR Tasks stačí) |
 | P2-3 SVID v Kata podu + OpenBao auto-unseal/auth kubernetes | ⬜ |
 | P2-4 egress naostro: git a mirror přes agentgateway CONNECT | ⬜ |
-| P2-5 evaly L0–L3 per role s gate (adversariální L3); registr agentů plněný z workflow | 🟡 2026-10-25 implementováno ([`tools/role_evals`](../../tools/role_evals/README.md): 4 role passed, SRE unevaluated, negativní kontrola propadá; gate = podmínka běhu role v aplikaci), měření na AKS běží |
+| P2-5 evaly L0–L3 per role s gate (adversariální L3); registr agentů plněný z workflow | ✅ AKS 2026-10-25 13/13 ([p2-role.md](p2-role.md), [`tools/role_evals`](../../tools/role_evals/README.md)): evaly v CI nad adversariálním mockem, gate z definice role; `eval-status.json` v Gitu = co smí Flux nasadit a aplikace spustit (SRE unevaluated → nespustí se); registr `org.role_definitions/eval_gates/agents` naplněn. Registr z workflow (ne harnessu) a živý model v L2 = P3 |
 | P2-6 FinOps: 30d strop jako součet klíčů zakázky, klíče z OpenBao | ⬜ |
 
 ## P3 – první externí zákazník
@@ -86,6 +86,7 @@ Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-1
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-25: P2-5 hotovo na AKS (13/13) – eval gate rolí v CI i v aplikaci, registr agentů poprvé naplněn.
 - 2026-10-25: P2-2 hotovo na AKS (10/10) – obrazy rolí a pod spec z rolegen; role běží z vlastního obrazu.
 - 2026-10-25: P2-1 hotovo na AKS (7/7) – role → Git → Flux, klíče per zakázka od aplikace; žádné bot commity (generované manifesty jsou součást PR).
 - 2026-10-25: P1-6 na AKS hotovo – role jako Kata pody, zakázka clusterem end-to-end; fáze P1 uzavřena (P1-1…P1-6 ✅). Cluster po měření zastaven.
