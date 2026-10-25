@@ -150,13 +150,15 @@ patches:
       - name: kms-plugin          # stáhne a ověří KMS plugin Azure Key Vault (sha256 z checksums releasu); jméno binárky normalizuje na openbao-plugin-kms-azure
         image: "${ACR_LOGIN_SERVER}/zakazka-app:p1"
         command: ["bash", "-ec"]
-        args:
+        args:                     # bez shellových proměnných: Flux postBuild substitute by $V/$A/$bin nahradil prázdným řetězcem (StatefulSet substitute potřebuje)
         - |
-          V=kms-azure-v0.1.0; A=openbao-plugin-kms-azure_linux_amd64_v1.tar.gz; B=https://github.com/openbao/openbao-plugins/releases/download/$V
-          cd /tmp && curl -fsSL -o "$A" "$B/$A" && curl -fsSL -o sums "$B/checksums-kms-azure.txt"
-          grep " $A\$" sums | sha256sum -c -
-          mkdir -p /tmp/x && tar -xzf "$A" -C /tmp/x && bin=$(find /tmp/x -type f -perm -u+x | head -1); [ -n "$bin" ] || bin=$(find /tmp/x -type f -size +1M | head -1)
-          cp "$bin" /openbao/plugins/openbao-plugin-kms-azure && chmod 755 /openbao/plugins/openbao-plugin-kms-azure && ls -la /openbao/plugins && sha256sum /openbao/plugins/openbao-plugin-kms-azure
+          cd /tmp
+          curl -fsSL -o plugin.tgz https://github.com/openbao/openbao-plugins/releases/download/kms-azure-v0.1.0/openbao-plugin-kms-azure_linux_amd64_v1.tar.gz
+          curl -fsSL -o sums https://github.com/openbao/openbao-plugins/releases/download/kms-azure-v0.1.0/checksums-kms-azure.txt
+          grep -F ' openbao-plugin-kms-azure_linux_amd64_v1.tar.gz' sums | sed 's/ .*/  plugin.tgz/' | sha256sum -c -
+          mkdir -p x && tar -xzf plugin.tgz -C x
+          find x -type f -size +1M -exec cp {} /openbao/plugins/openbao-plugin-kms-azure ';'
+          chmod 755 /openbao/plugins/openbao-plugin-kms-azure && ls -la /openbao/plugins && sha256sum /openbao/plugins/openbao-plugin-kms-azure
         volumeMounts: [{name: plugins, mountPath: /openbao/plugins}]
         resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 256Mi}}
 # P2-3: SPIRE OIDC discovery provider jako sidecar serveru (JWKS pro JWT-SVID rolí), server paměti přijímá i JWT-SVID
