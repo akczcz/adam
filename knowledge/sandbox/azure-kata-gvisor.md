@@ -111,3 +111,14 @@ Všechny částky potvrdit z `prices.azure.com` (`armRegionName eq 'westeurope' 
 
 ## Changelog
 - 2026-10-23: první verze – kolo 2 hloubka A.
+
+## Měření na AKS (P1-1, 2026-10-25, Poland Central, `tools/harness_sandbox_s1/aks`)
+
+| Check | Výsledek | Poznámka |
+|---|---|---|
+| S1h-1 vlastní guest kernel | PASS | uzel `6.6.137.mshv2-2.azl3`, guest `6.6.137.mshv1-1.azl3` (Kata nad Microsoft Hypervisorem, Azure Linux 3) |
+| S1h-2 start Kata podu apply→Ready | 2,2–2,6 s (3×, obraz na uzlu) | první start s pullem 408 MB obrazu ~14 s navíc; alokace uzlu z 0 autoscalerem ~2–3 min |
+| egress sandboxu | blokován | NetworkPolicy default-deny: `apt-get`/`npm` v podu „Network is unreachable“ → nástroje musí být v obrazu (`infra/images/sandbox-s1`) |
+| S1h-3a srt (bwrap) jako uid 1000 | FAIL | `bwrap: Can't mount proc on /newroot/proc: Operation not permitted` – kontejner má maskovaný `/proc` (`procMount: Default`), nový procfs v userns vyžaduje plně viditelný `/proc`; `procMount: Unmasked` jen s `hostUsers: false`, které Kata na AKS nepodporuje (#13303) |
+| S1h-3b srt jako root + CAP_SYS_ADMIN v guestu | měří se | hranice izolace = VM; viz výsledek v `tools/harness_sandbox_s1/results/aks-*.json` |
+| SKU | `Standard_D2ads_v7` v Poland Central jen zóna 1, `AllocationFailed`/`provisioning-state-failed` → `Standard_D4s_v5` (DSv5 kvóta 8 vCPU) | Dadsv7 pro Pod Sandboxing teoreticky OK (release notes 2026-06-19), prakticky bez kapacity |
