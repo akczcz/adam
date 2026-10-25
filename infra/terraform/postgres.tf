@@ -22,6 +22,9 @@ resource "azurerm_postgresql_flexible_server" "pg" {
   authentication {
     password_auth_enabled = true
   }
+
+  # Azure přidělí zónu sám; bez ignore by Terraform chtěl zónu „vrátit“ na null → "zone can only be changed when exchanged with standby" (apply 2026-10-25)
+  lifecycle { ignore_changes = [zone] }
 }
 
 resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {

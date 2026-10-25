@@ -51,6 +51,9 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 - Tf state obsahuje heslo PG → storage account bez veřejného blob přístupu, přístup jen identita Actions + Adam.
 
 ## Pasti (očekávané, ověří první `apply`)
+- **Kapacita Dadsv7 (změřeno 2026-10-25, Poland Central):** vznik poolu `kata` s 1 uzlem → `AllocationFailed`; pool se proto zakládá s 0 uzly
+  a VM alokuje autoscaler při prvním Kata podu (když selže i tam → `TF_VAR_kata_vm_size=Standard_D4s_v5`, kvóta rodiny DSv5).
+- **Zóna Flexible Serveru:** bez `zone` v konfiguraci Azure zónu přidělí a Terraform ji chce měnit → `lifecycle.ignore_changes = [zone]`.
 - **Jedna operace na cluster (změřeno 2026-10-25):** Terraform tvoří node pool `kata` a Flux extension paralelně → `409 OperationNotAllowed /
   AnotherOperationInProgress`; extension proto `depends_on` node pool. Flux extension vzniká ~17 min.
 - **Kvóty vCPU (změřeno 2026-10-25, Poland Central):** nová subscription má pro rodiny DASv5/DADSv7 kvótu 0 → `ErrCode_InsufficientVCPUQuota`.

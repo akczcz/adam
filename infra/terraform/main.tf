@@ -87,7 +87,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "kata" {
   auto_scaling_enabled  = true
   min_count             = 0
   max_count             = var.kata_max_count
-  node_count            = 1
+  node_count            = 0 # VM až při prvním Kata podu: Poland Central 2026-10-25 vrátil AllocationFailed pro D2ads_v7 při vzniku poolu
   node_labels           = { pool = "kata" }
   node_taints           = ["sandbox=kata:NoSchedule"]
   tags                  = var.tags
