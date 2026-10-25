@@ -636,7 +636,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in ks_now}
     flux_msg = {k["metadata"]["name"]: next((c.get("message", "")[:1500] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks_now}
     print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
-    assert flux and all(v == "True" for v in flux.values()) and all(r.endswith(want_sha[:12]) for r in flux_rev.values()), f"Flux neaplikoval HEAD {want_sha[:12]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
+    assert flux and all(v == "True" for v in flux.values()) and all((k.get("status", {}).get("lastAppliedRevision") or "").endswith(want_sha) for k in ks_now), f"Flux neaplikoval HEAD {want_sha[:12]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
     if kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620).returncode != 0:   # P2-3: nový config (seal plugin) → pod se restartuje
         st_ = kubectl(a, "-n", NS, "get", "pod", "openbao-0", "-o", "jsonpath={range .status.initContainerStatuses[*]}{.name}={.state}{'\\n'}{end}{range .status.containerStatuses[*]}{.name}={.state}{'\\n'}{end}").stdout
