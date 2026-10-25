@@ -1,0 +1,126 @@
+"""
+role_pod.py – role zakázky jako Kubernetes Pod (P1-6). Aplikace (Dapr aktivita) založí v ns rolí Secret (token role pro paměť,
+klíč gateway role × zakázka, token běhu) a Pod z obrazu platformy s `role_runner.py`: Kata RuntimeClass, uzel poolu `kata`,
+non-root, bez SA tokenu, drop ALL, seccomp RuntimeDefault, egress jen podle NetworkPolicy ns (gateway, paměť, aplikace, DNS).
+Artefakty zakázky si pod stáhne a vrátí přes HTTP API aplikace (/zakazky/{id}/files), výsledek pošle na /runs/{run_id}/result.
+Aplikace čeká na fázi podu (Succeeded/Failed), zapíše ROLE_POD do ledgeru (uzel, runtime, časy, egress probe) a pod i Secret smaže.
+
+SVID z SPIRE v podu role zatím není: Workload API je unix socket agenta přes hostPath, který do Kata VM nevede (P2: spiffe-csi/agent v VM).
+Proměnné aplikace: P0_ROLE_RUNTIME=pod, P0_ROLE_IMAGE, P0_ROLE_NAMESPACE (platform-roles), P0_ARTIFACT_API (FQDN služby zakazka),
+P0_ROLE_RUNTIME_CLASS (kata-vm-isolation; "none" = bez RuntimeClass, kind), P0_ROLE_NODE_SELECTOR (JSON), P0_ROLE_TIMEOUT_S, P0_ROLE_KEEP_PODS.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets as _secrets
+import time
+from datetime import datetime, timezone
+
+import httpx
+
+SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+RUNS: dict = {}   # run_id -> {"token", "result", "role", "zakazka"}
+
+
+def _host():
+    return f"https://{os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')}:{os.environ.get('KUBERNETES_SERVICE_PORT', '443')}"
+
+
+def k8s(method, path, body=None, raw=False, timeout=30):
+    """Kubernetes API s tokenem ServiceAccountu aplikace (čte se při každém volání – bound token rotuje)."""
+    tok = open(f"{SA_DIR}/token").read().strip()
+    r = httpx.request(method, _host() + path, json=body, headers={"Authorization": f"Bearer {tok}"}, verify=f"{SA_DIR}/ca.crt", timeout=timeout)
+    if r.status_code >= 300: raise RuntimeError(f"k8s {method} {path} → {r.status_code}: {r.text[:300]}")
+    return r.text if raw else (r.json() if r.text else {})
+
+
+def _ts(s):
+    try: return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except Exception: return None
+
+
+def new_run(role, zid):
+    rid = re.sub(r"[^a-z0-9]", "", zid.lower())[-10:] + _secrets.token_hex(3)
+    RUNS[rid] = {"token": _secrets.token_urlsafe(24), "result": None, "role": role, "zakazka": zid, "created": time.time()}
+    return rid
+
+
+def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json, srt_json):
+    ns = os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"); name = f"role-{role}-{run_id}"
+    rc = os.environ.get("P0_ROLE_RUNTIME_CLASS", "kata-vm-isolation")
+    env = {k: os.environ[k] for k in ("P0_LLM_URL", "P0_MEMORY_URL", "P0_MODEL", "P0_MAX_TURNS", "P0_CLI_MAX_RETRIES", "P0_GITHUB_REPO",
+                                      "ANTHROPIC_WORKSPACE_ID", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST") if os.environ.get(k)}
+    env |= {"P0_ROLE_RUNTIME": "local", "P0_ROLE": role, "P0_ZAKAZKA": json.dumps(z, ensure_ascii=False), "P0_PROMPT": prompt, "P0_TOOLS": ",".join(tool_names),
+            "P0_RUN_ID": run_id, "P0_ARTIFACT_API": os.environ.get("P0_ARTIFACT_API", "http://zakazka:8010"),
+            "P0_ROLE_OPTIONS_JSON": role_opts_json or "", "P0_SRT_SETTINGS_JSON": srt_json or "", "P0_SRT": os.environ.get("P0_ROLE_SRT", "/opt/node/bin/srt"),
+            "HOME": "/tmp/home", "O1_LEDGER": "/tmp/role-ledger.jsonl", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+    labels = {"app": "role", "platform.role": role, "role": role, "platform.zakazka": re.sub(r"[^A-Za-z0-9_.-]", "-", z["id"])[:63], "platform.run": run_id}
+    secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": ns, "labels": labels}, "type": "Opaque",
+              "stringData": {"P0_ROLE_TOKEN": token, "P0_ROLE_KEYS": json.dumps({"*": {role: key}}), "P0_RUN_TOKEN": RUNS[run_id]["token"]}}
+    spec = {"nodeSelector": json.loads(os.environ.get("P0_ROLE_NODE_SELECTOR", '{"pool": "kata"}')),
+            "tolerations": [{"key": "sandbox", "operator": "Equal", "value": "kata", "effect": "NoSchedule"}],
+            "automountServiceAccountToken": False, "restartPolicy": "Never", "activeDeadlineSeconds": int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")),
+            "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
+            "containers": [{"name": "role", "image": os.environ["P0_ROLE_IMAGE"], "command": ["python", "/app/harness_p0_o2/role_runner.py"],
+                            "env": [{"name": k, "value": v} for k, v in env.items()], "envFrom": [{"secretRef": {"name": name}}],
+                            "resources": {"requests": {"cpu": "250m", "memory": "512Mi"}, "limits": {"cpu": "2", "memory": os.environ.get("P0_ROLE_MEMORY", "1536Mi")}},
+                            "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+                            "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]}],
+            "volumes": [{"name": "tmp", "emptyDir": {}}]}
+    if rc and rc != "none": spec["runtimeClassName"] = rc
+    if not spec["nodeSelector"]: spec.pop("nodeSelector"); spec.pop("tolerations")
+    pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": ns, "labels": labels}, "spec": spec}
+    return ns, name, secret, pod
+
+
+def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
+    """Spustí roli jako pod a vrátí výsledek ve tvaru agent_run (text, cost, files, work, arts, error, budget_exceeded)."""
+    rid = new_run(role, z["id"])
+    od = os.environ.get("P0_ROLE_OPTIONS_DIR")
+    ro = open(f"{od}/{role}.json").read() if od and os.path.exists(f"{od}/{role}.json") else ""
+    srt = open(f"{od}/srt-{role}.json").read() if od and os.path.exists(f"{od}/srt-{role}.json") else ""
+    ns, name, secret, pod = manifests(rid, role, z, prompt, tool_names, token=token, key=key, role_opts_json=ro, srt_json=srt)
+    timeout = int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")) + 300   # + čas na alokaci Kata uzlu autoscalerem z 0
+    t0 = time.time(); p = {}; phase = "Pending"
+    try:
+        k8s("POST", f"/api/v1/namespaces/{ns}/secrets", secret)
+        k8s("POST", f"/api/v1/namespaces/{ns}/pods", pod)
+        ledger("ROLE_POD_CREATE", zakazka=z["id"], role=role, pod=name, namespace=ns, runtime_class=pod["spec"].get("runtimeClassName"), image=pod["spec"]["containers"][0]["image"], srt=bool(srt), role_options=bool(ro))
+        while time.time() - t0 < timeout:
+            p = k8s("GET", f"/api/v1/namespaces/{ns}/pods/{name}")
+            phase = p.get("status", {}).get("phase", "Pending")
+            if phase in ("Succeeded", "Failed"): break
+            time.sleep(3)
+    except Exception as e:
+        ledger("ROLE_POD_ERROR", zakazka=z["id"], role=role, pod=name, error=f"{type(e).__name__}: {str(e)[:300]}")
+    logs = ""
+    try: logs = k8s("GET", f"/api/v1/namespaces/{ns}/pods/{name}/log?tailLines=60", raw=True)
+    except Exception as e: logs = f"(log nedostupný: {str(e)[:120]})"
+    res = RUNS[rid]["result"]
+    if res is None:
+        for line in reversed(logs.splitlines()):
+            if line.startswith("RESULT::"):
+                try: res = json.loads(line[8:])
+                except Exception: pass
+                break
+    st = p.get("status", {}); cs = (st.get("containerStatuses") or [{}])[0]; term = (cs.get("state") or {}).get("terminated") or {}
+    created = _ts(p.get("metadata", {}).get("creationTimestamp", "")); sched = next((_ts(c.get("lastTransitionTime", "")) for c in st.get("conditions", []) if c.get("type") == "PodScheduled" and c.get("status") == "True"), None)
+    started, finished = _ts(term.get("startedAt", "")), _ts(term.get("finishedAt", ""))
+    ledger("ROLE_POD", zakazka=z["id"], role=role, pod=name, namespace=ns, phase=phase, node=p.get("spec", {}).get("nodeName"), runtime_class=p.get("spec", {}).get("runtimeClassName"),
+           run_as_user=(p.get("spec", {}).get("securityContext") or {}).get("runAsUser"), automount_sa=p.get("spec", {}).get("automountServiceAccountToken"),
+           exit_code=term.get("exitCode"), reason=term.get("reason"), result_received=res is not None,
+           t_schedule_s=round(sched - created, 1) if sched and created else None, t_start_s=round(started - created, 1) if started and created else None,
+           t_run_s=round(finished - started, 1) if finished and started else None, t_total_s=round(time.time() - t0, 1),
+           egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:])
+    if not os.environ.get("P0_ROLE_KEEP_PODS"):
+        for kind in ("pods", "secrets"):
+            try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")
+            except Exception: pass
+    RUNS.pop(rid, None)
+    work, arts = f"{root_dir}/work", f"{root_dir}/artifacts"
+    if res is None:
+        return {"text": f"AGENT_ERROR pod {phase}", "cost": None, "files": [], "work": work, "arts": arts,
+                "error": f"PodFailed: phase={phase} exit={term.get('exitCode')} reason={term.get('reason')}", "budget_exceeded": False}
+    return {"text": res.get("text", ""), "cost": res.get("cost"), "files": res.get("files") or [], "work": work, "arts": arts, "error": res.get("error"), "budget_exceeded": bool(res.get("budget_exceeded"))}

@@ -24,6 +24,13 @@ resource "azurerm_kubernetes_flux_configuration" "platform" {
     sync_interval_in_seconds = 120
   }
 
+  # ns rolí (P1-6): vlastní kustomization bez namespace transformeru overlay (NetworkPolicy, RBAC pro pody rolí)
+  kustomizations {
+    name                     = "roles"
+    path                     = "infra/k8s/roles"
+    sync_interval_in_seconds = 120
+  }
+
   kustomizations {
     name                     = "platform"
     path                     = var.gitops_path

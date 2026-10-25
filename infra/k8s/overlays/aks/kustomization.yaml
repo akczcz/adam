@@ -15,6 +15,7 @@ resources:
 - ../../base/opa
 - ../../base/dapr
 - ../../base/zakazka
+- ../../base/mock-upstream
 - postgres-external.yaml
 images:
 - {name: platform/keycloak, newName: "${ACR_LOGIN_SERVER}/keycloak", newTag: "26.8.1"}
@@ -88,3 +89,19 @@ patches:
 - target: {kind: DaemonSet, name: spire-agent}
   patch: |
     - {op: add, path: /spec/template/spec/containers/0/securityContext, value: {runAsUser: 0}}
+# P1-6: role jako Kata pody v ns platform-roles (infra/k8s/roles – vlastní Flux kustomization); služby přes FQDN, aby na ně dosáhl pod z jiného ns
+- target: {kind: ConfigMap, name: zakazka-env}
+  patch: |
+    - {op: add, path: /data/P0_ROLE_RUNTIME, value: pod}
+    - {op: add, path: /data/P0_ROLE_IMAGE, value: "${ACR_LOGIN_SERVER}/zakazka-app:p1"}
+    - {op: add, path: /data/P0_ROLE_NAMESPACE, value: platform-roles}
+    - {op: add, path: /data/P0_ARTIFACT_API, value: http://zakazka.platform-data.svc:8010}
+    - {op: replace, path: /data/P0_LLM_URL, value: http://agentgateway.platform-data.svc:4100}
+    - {op: replace, path: /data/P0_MEMORY_URL, value: http://memory.platform-data.svc:9900}
+# Konfiguraci gateway (klíče rolí, upstream) a tajemství aplikace vydává rolegen/harness za běhu (hot reload) – Flux je po vzniku nesmí přepisovat
+- target: {kind: ConfigMap, name: agentgateway-config}
+  patch: |
+    - {op: add, path: /metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile, value: disabled}
+- target: {kind: Secret, name: zakazka-secrets}
+  patch: |
+    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/reconcile: disabled}}

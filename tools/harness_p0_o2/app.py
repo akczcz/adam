@@ -108,6 +108,7 @@ _KC_CACHE: dict = {}
 def role_token(role):
     """Token role pro server paměti. V clusteru (P1-5) si ho aplikace bere sama z Keycloaku (client_credentials klienta agent-<role>,
     tajemství z P0_ROLE_CLIENT_SECRETS – v cíli z OpenBao) s cache do expirace; v harnessu P0 dostává hotové tokeny v P0_ROLE_TOKENS."""
+    if os.environ.get("P0_ROLE_TOKEN"): return os.environ["P0_ROLE_TOKEN"]   # pod role (P1-6): hotový token od aplikace, pod nemá client secret
     kc = os.environ.get("P0_KC_TOKEN_URL")
     if kc:
         secrets = json.loads(os.environ.get("P0_ROLE_CLIENT_SECRETS", "{}"))
@@ -146,6 +147,15 @@ def gateway_cost(zakazka_id):
 
 
 def agent_run(role, z, prompt, tool_names):
+    """Role: P0_ROLE_RUNTIME=pod → Kata pod v ns rolí (role_pod.py, P1-6), jinak v procesu aplikace (agent_run_local)."""
+    if os.environ.get("P0_ROLE_RUNTIME") == "pod":
+        import role_pod
+        root = f"/tmp/p0-o2/{z['id']}"; os.makedirs(f"{root}/work", exist_ok=True); os.makedirs(f"{root}/artifacts", exist_ok=True)
+        return role_pod.pod_run(role, z, prompt, tool_names, token=role_token(role), key=role_key(role, z["id"]), ledger=ledger, root_dir=root)
+    return agent_run_local(role, z, prompt, tool_names)
+
+
+def agent_run_local(role, z, prompt, tool_names):
     """Spustí roli jako Claude Agent SDK query s ClaudeAgentOptions vygenerovanými rolegenem (build/agent_sdk/<role>.json)."""
     import asyncio, subprocess
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, AssistantMessage, ToolUseBlock, create_sdk_mcp_server, query, tool
@@ -572,6 +582,60 @@ async def resume(zid: str, req: Request):
 @app.get("/_debug/ledger")
 async def dbg():
     return _ledger()
+
+
+# --- API pro pody rolí (P1-6): artefakty zakázky a výsledek běhu; autentizace tokenem běhu ze Secretu podu ---------------------
+def _run_auth(req: Request):
+    import role_pod
+    run = role_pod.RUNS.get(req.headers.get("X-Run-Id", ""))
+    if not run or not hmac.compare_digest(run["token"], req.headers.get("X-Run-Token", "")): raise HTTPException(403, "neplatný token běhu role")
+    return run
+
+
+def _zroot(zid):
+    root = os.path.realpath(f"/tmp/p0-o2/{zid}")
+    if not root.startswith(os.path.realpath("/tmp/p0-o2") + os.sep): raise HTTPException(400)
+    return root
+
+
+@app.get("/zakazky/{zid}/files")
+async def files_get(zid: str, req: Request):
+    run = _run_auth(req)
+    if run["zakazka"] != zid: raise HTTPException(403)
+    root = _zroot(zid); out = []
+    for rootname in ("artifacts", "work"):
+        base = os.path.join(root, rootname)
+        for d, dirs, names in os.walk(base):
+            dirs[:] = [x for x in dirs if not x.startswith(".")]
+            for n in names:
+                fp = os.path.join(d, n); rel = os.path.relpath(fp, base)
+                if rel.startswith(".") or os.path.getsize(fp) > 2_000_000: continue
+                out.append({"root": rootname, "path": rel, "content_b64": base64.b64encode(open(fp, "rb").read()).decode()})
+    return {"files": out}
+
+
+@app.post("/zakazky/{zid}/files")
+async def files_put(zid: str, req: Request):
+    run = _run_auth(req)
+    if run["zakazka"] != zid: raise HTTPException(403)
+    root = _zroot(zid); b = await req.json(); n = 0
+    for f in b.get("files", []):
+        if f.get("root") not in ("artifacts", "work"): continue
+        p = os.path.realpath(os.path.join(root, f["root"], f["path"]))
+        if not p.startswith(os.path.join(root, f["root"]) + os.sep): continue
+        os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "wb").write(base64.b64decode(f["content_b64"])); n += 1
+    return {"written": n}
+
+
+@app.post("/runs/{run_id}/result")
+async def run_result(run_id: str, req: Request):
+    run = _run_auth(req)
+    if req.headers.get("X-Run-Id") != run_id: raise HTTPException(403)
+    b = await req.json()
+    for e in b.get("ledger", []):
+        if isinstance(e, dict): ledger(e.pop("kind", "POD"), via="pod", pod_ts=e.pop("ts", None), **e)
+    run["result"] = b.get("result") or {}
+    return {"ok": True}
 
 
 @app.get("/health")
