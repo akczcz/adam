@@ -1,5 +1,6 @@
 # Terraform pro AKS dev platformu (infra/terraform): plan na PR, apply z main nebo ručně. Auth do Azure přes OIDC (bez tajemství v repu),
-# Pozor: refresh databází Flexible Serveru selže, když je PG zastavený (ServerStoppedError) → před plan/apply `cluster` start.
+# Pozor: refresh databází Flexible Serveru selže, když je PG zastavený (ServerStoppedError) → před apply `cluster` start; plan-only běh
+# (PR, ruční plan) při zastaveném PG padá na `-refresh=false` (kontrola konfigurace bez driftu).
 # state v Azure Storage. Identita: infra/bootstrap/azure-oidc.sh; proměnné repa: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
 # AZURE_PRINCIPAL_ID, TF_STATE_RG, TF_STATE_SA, NAME_SUFFIX, AZURE_LOCATION.
 name: infra
@@ -57,8 +58,17 @@ jobs:
         id: plan
         run: |
           set -o pipefail
-          terraform plan -input=false -no-color -out=tfplan ${{ inputs.action == 'destroy' && '-destroy' || '' }} | tee plan.txt
-          { echo '## terraform plan'; echo '```'; tail -n 60 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          D='${{ inputs.action == 'destroy' && '-destroy' || '' }}'; TITLE='## terraform plan'
+          if ! terraform plan -input=false -no-color -out=tfplan $D 2>&1 | tee plan.txt; then
+            # Zastavený Flexible Server (idle stav mezi měřeními) rozbije refresh databází; plan-only běh (PR, ruční plan) projde bez refreshe –
+            # ověří konfiguraci a ukáže zamýšlené změny, drift neověřuje. Apply z main refresh vyžaduje → před ním `cluster start`.
+            if grep -q ServerStoppedError plan.txt && { [ "${{ github.event_name }}" = pull_request ] || [ "${{ inputs.action }}" = plan ]; }; then
+              echo "::warning::Flexible Server je zastavený – plan bez refreshe (jen kontrola konfigurace, drift se neověřuje)"
+              TITLE='## terraform plan (PG zastavený → -refresh=false, drift neověřen)'
+              terraform plan -input=false -no-color -refresh=false -out=tfplan $D 2>&1 | tee plan.txt
+            else exit 1; fi
+          fi
+          { echo "$TITLE"; echo '```'; tail -n 60 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: terraform apply
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.action != 'plan')
         run: terraform apply -input=false -no-color tfplan

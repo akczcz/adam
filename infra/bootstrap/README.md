@@ -85,7 +85,8 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
   (6 credentials); při dalším podobném selhání porovnat subjekt z chyby s `az identity federated-credential list`.
 - `terraform plan` z PR cizího forku OIDC token nedostane (subjekt `pull_request` platí jen pro PR z vlastního repa) – záměr.
 - **Zastavený Flexible Server rozbije `terraform plan`/`apply` (2026-10-25, apply po merge PR #7):** refresh `azurerm_postgresql_flexible_server_database`
-  vrací `ServerStoppedError` (400). Před každým plan/apply (i automatickým po push do `main`) musí běžet PG → `cluster start`, apply, `cluster stop`.
+  vrací `ServerStoppedError` (400). Před každým apply (i automatickým po push do `main`) musí běžet PG → `cluster start`, apply, `cluster stop`.
+  Plan-only běh (PR, ruční `plan`) od P2-3 při zastaveném PG přejde na `-refresh=false` (kontrola konfigurace a zamýšlených změn, drift neověřen).
 - ConfigMap volume se propaguje per pod: po změně `agentgateway-keys` sondovat každou repliku přes headless Service (P21b 2026-10-25).
 - **`Microsoft.KeyVault` nebyl registrovaný (2026-10-25, P2-3):** `azurerm_key_vault` → `MissingSubscriptionRegistration`; identita Actions providery
   registrovat nesmí → `az provider register -n Microsoft.KeyVault` z Macu (bootstrap skript ho má od P2-3 v seznamu).
