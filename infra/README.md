@@ -88,6 +88,9 @@ zakázky (`gateway_keys.py`, RBAC jen na tento objekt + Secrety), Flux ji jen za
 (`gateway_merge.py`) slévá obě ConfigMapy do emptyDir, gateway hot-reloaduje. Harness/CI tak do clusteru nenosí žádnou konfiguraci – jen tajemství.
 
 ## Pasti (AKS + Flux)
+- ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
+  (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.
+- Každý generovaný objekt s cizími `${…}` (env rolí) potřebuje `kustomize.toolkit.fluxcd.io/substitute: disabled`, jinak Flux proměnné smaže.
 - `kubectl rollout restart` se hádá s Fluxem: SSA vrátí anotaci `restartedAt` a Deployment se přerolluje zpět (pod aplikace zemřel uprostřed běhu role).
   Restart = smazat pody (šablona beze změny), nebo změnit manifest v Gitu.
 - PVC na Azure Disku je root:root → kontejner s uid 1000 potřebuje `fsGroup`; kind `local-path` (0777) to skryl.

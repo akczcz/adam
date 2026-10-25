@@ -70,7 +70,7 @@ Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-1
 
 | Krok | Stav |
 |---|---|
-| P2-1 rolegen v CI naostro (`roles/*.yaml` → Git → Flux; harness nenosí konfiguraci) | ✅ v0 generátor + R1 v CI (P1-6); ⬜ CI → cluster bez harnessu |
+| P2-1 rolegen v CI naostro (`roles/*.yaml` → Git → Flux; harness nenosí konfiguraci) | ✅ AKS 2026-10-25 7/7 ([p2-role.md](p2-role.md)): `infra/k8s/rolegen` generovaný z rolí (CI hlídá shodu), Flux aplikuje, ConfigMapy v clusteru == Git; klíče gateway role × zakázka vydává aplikace při založení zakázky (ConfigMap + Secret, sidecar merge, hot reload); zakázka end-to-end beze změny |
 | P2-2 obrazy rolí (devcontainer build v CI) a pod spec přímo z rolegen | ⬜ |
 | P2-3 SVID v Kata podu + OpenBao auto-unseal/auth kubernetes | ⬜ |
 | P2-4 egress naostro: git a mirror přes agentgateway CONNECT | ⬜ |
@@ -86,6 +86,7 @@ Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-1
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-25: P2-1 hotovo na AKS (7/7) – role → Git → Flux, klíče per zakázka od aplikace; žádné bot commity (generované manifesty jsou součást PR).
 - 2026-10-25: P1-6 na AKS hotovo – role jako Kata pody, zakázka clusterem end-to-end; fáze P1 uzavřena (P1-1…P1-6 ✅). Cluster po měření zastaven.
 - 2026-10-24: P1-5 na kind hotovo – zakázka end-to-end v Kubernetes (6/6), durabilita workflow přes smazání podu změřena; na kind zbývá nic, P1-1 a P1-6 = AKS.
 - 2026-10-24: P1-4 na kind hotovo – agentgateway ×2 s Postgres budget_usage, G1 21/21 proti clusteru, P1-G změřen (eventually consistent, přestřel ≤ útrata za 5 s).
