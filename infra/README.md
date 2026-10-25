@@ -68,6 +68,26 @@ Cilium, Kata pool D2ads_v7 autoscale 0–1, Flexible Server PG 16 B1ms s DB a `v
 `.github/workflows/{infra,images,measure,cluster}.yml`. Overlay `aks` používá Flux proměnné `${ACR_LOGIN_SERVER}`, `${PG_HOST}`, `${PG_PASSWORD}`.
 Podrobnosti, postup a bezpečnostní model: [`infra/bootstrap/README.md`](bootstrap/README.md). Měření P1-1 = workflow `measure` (S1 na Katě).
 
+## P1-6 AKS: role jako Kata pody (2026-10-25)
+
+`infra/k8s/roles/` (vlastní Flux kustomization `roles`, bez namespace transformeru overlay): ns `platform-roles` (PSS restricted), NetworkPolicy
+default-deny + egress jen DNS/agentgateway/paměť/aplikace, Role + RoleBinding pro SA `zakazka` (pods, pods/log, secrets). Overlay `aks`: `zakazka-env`
+`P0_ROLE_RUNTIME=pod`, `P0_ROLE_IMAGE`, `P0_ARTIFACT_API` (FQDN služeb pro pod z jiného ns), `infra/k8s/base/mock-upstream` (mock Anthropic API v clusteru
+jako upstream gateway pro měření), `agentgateway-config` a `zakazka-secrets` s `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` (Flux založí, harness/rolegen
+přepisuje), `imagePullPolicy: Always` pro pohyblivý tag `zakazka-app:p1`, `fsGroup: 1000` na podu aplikace. Obraz `zakazka-app` má bubblewrap +
+`@anthropic-ai/sandbox-runtime` (srt weaker režim v Kata podu). Měření: workflow `measure` s `p16=true` → `tools/harness_p1_k8s --step p1-6`
+(výsledek a pasti v jeho README).
+
+## Pasti (AKS + Flux)
+- `kubectl rollout restart` se hádá s Fluxem: SSA vrátí anotaci `restartedAt` a Deployment se přerolluje zpět (pod aplikace zemřel uprostřed běhu role).
+  Restart = smazat pody (šablona beze změny), nebo změnit manifest v Gitu.
+- PVC na Azure Disku je root:root → kontejner s uid 1000 potřebuje `fsGroup`; kind `local-path` (0777) to skryl.
+- Pohyblivý tag (`p1`) bez `imagePullPolicy: Always` → uzel drží starý obraz po `az acr build`.
+- Objekty, které za běhu přepisuje harness/rolegen, musí mít `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` (ne `reconcile: disabled` – ten by je na
+  čerstvém clusteru vůbec nezaložil).
+- Smazání Kata podu je asynchronní (VM se vypíná, desítky sekund); pod zabité aplikace zůstane jako sirotek → GC v `role_pod.py`.
+- Flexible Server je z runneru GitHub Actions dosažitelný přímo (pravidlo „Allow Azure services“ 0.0.0.0) – pro schéma paměti a FinOps dotazy; záloha socat pod.
+
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.
   Mountovat `subPath` per soubor.

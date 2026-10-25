@@ -62,7 +62,7 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 | P1-3 Keycloak + SPIRE + OpenBao (raft); měří O-2 `identity` proti clusteru + SVID per pod | ✅ kind 2026-10-24: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) P1-3 5/5 – O-2 `identity` 5/5 proti clusterovému Keycloaku a OpenBao; **SPIRE poprvé naostro**: SVID `spiffe://platform/role/vyvojar` z pod-labelu, pod bez labelu bez identity; zbývá KV auto-unseal a auth `kubernetes` (AKS, P1-5) |
 | P1-4 agentgateway ×2 s Postgres DB a budgets z rolegen; měří G1 proti clusteru + P1-G (repliky) | ✅ kind 2026-10-24: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) P1-4 6/6 – G1 21/21 proti clusterové gateway; **P1-G:** usage v Postgresu aditivní a správné, vynucení Block mezi replikami eventually consistent (flush 5 s → přestřel 3,7 requestu u 2 replik vs. 0,7 u jedné). Egress CONNECT a git TLS až s pody rolí (P1-6); O-2 `budget` externě až v P1-5 |
 | P1-5 Dapr + app zakázky + paměť + bridge v clusteru | ✅ kind 2026-10-24: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) P1-5 6/6 – **celá zakázka uvnitř Kubernetes** (issue → `/schvaluji` → ADR → PR → review → merge executor → Dokonceno), tokeny rolí z clusterového Keycloaku, podpisy z OpenBao, paměť, FinOps z Postgresu gateway; **durabilita**: smazaný pod aplikace, workflow obnoveno ze stavu v Postgresu a doběhlo. Zjednodušení: role v procesu aplikace, `sandboxed_bash` bez srt (pod = hranice), Dapr bez operátoru/mTLS, mock GitHub |
-| P1-6 Role jako Kata pody z rolegen, CI job rolegen → bundle/klíče; měří R1 v CI, O-2 live v clusteru | ⬜ AKS |
+| P1-6 Role jako Kata pody z rolegen, CI job rolegen → bundle/klíče; měří R1 v CI, O-2 live v clusteru | ✅ AKS 2026-10-25: [`tools/harness_p1_k8s`](../../tools/harness_p1_k8s/README.md) P1-6 – **role jako Kata pody** (ns `platform-roles`, uid 1000, bez SA tokenu, egress jen gateway/paměť/aplikace), zakázka end-to-end clusterem jako lokálně (4 role, Dokonceno, 0,045 USD), R1 rolegen v CI (0,2 s); start Kata podu role 1–2 s, role celkem ~24 s. **Fáze P1 uzavřena.** Zbývá do P2: SVID v Kata podu, pod spec přímo z rolegen, egress CONNECT pro git, OpenBao auto-unseal |
 
 ## P2 – role naostro
 
@@ -81,6 +81,7 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 | O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
 
 ## Changelog
+- 2026-10-25: P1-6 na AKS hotovo – role jako Kata pody, zakázka clusterem end-to-end; fáze P1 uzavřena (P1-1…P1-6 ✅). Cluster po měření zastaven.
 - 2026-10-24: P1-5 na kind hotovo – zakázka end-to-end v Kubernetes (6/6), durabilita workflow přes smazání podu změřena; na kind zbývá nic, P1-1 a P1-6 = AKS.
 - 2026-10-24: P1-4 na kind hotovo – agentgateway ×2 s Postgres budget_usage, G1 21/21 proti clusteru, P1-G změřen (eventually consistent, přestřel ≤ útrata za 5 s).
 - 2026-10-24: ostrý zápis do GitHubu proběhl (issue #3, PR #4, merge 2c47bfe) – P0 uzavřeno bez výhrad; checky G1–G3 opraveny pro ostrý režim.

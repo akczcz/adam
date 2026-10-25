@@ -110,6 +110,7 @@ Všechny částky potvrdit z `prices.azure.com` (`armRegionName eq 'westeurope' 
 - [ ] gVisor #14033 stav v release-20261019.0; SPIRE k8s attestor pro Kata pod; Inspect chart `runtimeClassName` override.
 
 ## Changelog
+- 2026-10-25: P1-6 – role jako Kata pody na AKS změřeny (start 1–2 s, egress z podu, srt weaker); SVID v Kata podu → P2.
 - 2026-10-23: první verze – kolo 2 hloubka A.
 
 ## Měření na AKS (P1-1, 2026-10-25, Poland Central, `tools/harness_sandbox_s1/aks`)
@@ -124,7 +125,9 @@ Všechny částky potvrdit z `prices.azure.com` (`armRegionName eq 'westeurope' 
 | S1h-3c srt s `enableWeakerNestedSandbox: true` jako uid 1000 | funguje | netns jen `lo`, `NoNewPrivs: 1`, `Seccomp: 2`; chybí mount/pid izolace přes userns – v Katě ji nahrazuje VM |
 | S1h-5 pod `hostUsers: false` + `procMount: Unmasked` | FAIL | `FailedCreatePodSandBox: can't set spec.hostUsers: false, RuntimeClass handler "kata" does not support user namespaces` (potvrzeno #13303) |
 
-**Důsledek pro P1-6 (návrh):** v Kata podu na AKS je hranicí izolace VM; srt běží jen ve weaker režimu (síťová izolace + seccomp + no-new-privs),
+**P1-6 změřeno (2026-10-25, `tools/harness_p1_k8s --step p1-6`):** role zakázky běží jako Kata pody v ns `platform-roles` (uid 1000, bez SA tokenu, drop ALL, srt weaker režim z obrazu); pod role startuje 1–2 s (obraz na uzlu), běh role 11–12 s, egress ověřen z podu (internet timeout, gateway/paměť/aplikace open), zakázka clusterem end-to-end. SVID z SPIRE v Kata podu neřešeno (unix socket agenta přes hostPath do VM nevede → P2: spiffe-csi/agent v guestu nebo token exchange na gateway).
+
+**Důsledek pro P1-6 (návrh, potvrzeno měřením):** v Kata podu na AKS je hranicí izolace VM; srt běží jen ve weaker režimu (síťová izolace + seccomp + no-new-privs),
 userns/bwrap mount izolace není dostupná. Pro role pody: obraz s nástroji předem (bez egressu nelze instalovat), `enableWeakerNestedSandbox: true`,
 egress výhradně přes agentgateway (NetworkPolicy), zápis jen do emptyDir/`/tmp` podu. Alternativa gVisor (`runsc`) na AKS není (RuntimeClass chybí).
 | SKU | `Standard_D2ads_v7` v Poland Central jen zóna 1, `AllocationFailed`/`provisioning-state-failed` → `Standard_D4s_v5` (DSv5 kvóta 8 vCPU) | Dadsv7 pro Pod Sandboxing teoreticky OK (release notes 2026-06-19), prakticky bez kapacity |

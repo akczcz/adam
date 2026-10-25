@@ -15,6 +15,8 @@ python3 rolegen.py --roles ../../knowledge/organization/roles --out build --tena
 | `build/srt/<role>.json` | sandbox (srt settings) | `srt -s … -c echo` |
 | `build/claude/<role>-managed-settings.json` | Claude Code managed settings | – (JSON) |
 | `build/k8s/<role>-pod.yaml` | sandbox (Kata, non-root, SA token off, drop ALL, seccomp Localhost) | kontrola polí |
+
+P1-6 (2026-10-25): pody rolí na AKS zakládá aplikace zakázky (`tools/harness_p0_o2/role_pod.py`) se stejnými poli, ale spec staví z env, ne z `build/k8s/<role>-pod.yaml`; srt settings a ClaudeAgentOptions bere z ConfigMapy `rolegen-build` (`srt-<role>.json`, `<role>.json`). Sjednocení na jeden zdroj (`k8s/<role>-pod.yaml` jako šablona podu) = P2. R1 běží v CI (workflow `measure`, krok „R1 – rolegen bundle v CI“, 0,2 s).
 | `build/inspect/<role>-approval.yaml`, `<role>-evals.json` | evaluace (approval policy, vrstvy L0–L4 s gate) | `inspect_ai.approval_policies_from_config` |
 | `build/registry/roles.json` | registr agentů (T12), řádky `org.role_definitions` | sha zdroje, verze, vlastník |
 | `build/agent_sdk/<role>.json` | runtime role (`ClaudeAgentOptions`: `tools=[]`, `strict_mcp_config`, `setting_sources=[]`, `cwd`, MCP servery) – harness O-2 je načítá přes `P0_ROLE_OPTIONS` | R1g + O-2 scénář sre |
