@@ -17,14 +17,17 @@ case "${1:-}" in
     kubectl apply -f "$HERE/pod-kata.yaml"
     kubectl get runtimeclass runsc >/dev/null 2>&1 && kubectl apply -f "$HERE/pod-gvisor.yaml" || echo "RuntimeClass runsc není – gVisor přeskočen"
     kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s
-    NODE_KERNEL=$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.kernelVersion}')
-    GUEST=$(kubectl logs s1-kata | grep guest-kernel | cut -d= -f2)
-    SRTLINE=$(kubectl logs s1-kata | sed -n '2,3p' | tr '\n' ' ')
-    T=(); for i in $(seq 1 5); do kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null; S=$(date +%s%N); kubectl apply -f "$HERE/pod-kata.yaml" >/dev/null; kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s >/dev/null; T+=($(( ($(date +%s%N)-S)/1000000 ))); done
+    for i in $(seq 1 60); do kubectl logs s1-kata 2>/dev/null | grep -q '^s1-done' && break; sleep 5; done   # apt + npm v guestu ~1–2 min
+    kubectl logs s1-kata | tail -n 8
+    NODE_KERNEL=$(kubectl get node -l pool=kata -o jsonpath='{.items[0].status.nodeInfo.kernelVersion}')
+    GUEST=$(kubectl logs s1-kata | grep '^guest-kernel=' | cut -d= -f2 || true)
+    SRTLINE=$(kubectl logs s1-kata | sed -n '/^guest-kernel=/,/^s1-done/p' | sed -n '2,3p' | tr '\n' ' ')
+    T=(); for i in $(seq 1 3); do kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null; S=$(date +%s%N); kubectl apply -f "$HERE/pod-kata.yaml" >/dev/null; kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s >/dev/null; T+=($(( ($(date +%s%N)-S)/1000000 ))); done
+    kubectl delete pod s1-kata --ignore-not-found --wait=false >/dev/null   # úklid: autoscaler pak Kata uzel vrátí na 0
     jq -n --arg nk "$NODE_KERNEL" --arg gk "$GUEST" --arg srt "$SRTLINE" --argjson t "[$(IFS=,; echo "${T[*]}")]" \
       '{meta:{cluster:env.CLUSTER,sku:env.SKU,date:(now|todate)},checks:[
         {id:"S1h-1",name:"Kata pod má vlastní guest kernel",status:(if $nk!=$gk then "PASS" else "FAIL" end),detail:{node_kernel:$nk,guest_kernel:$gk}},
-        {id:"S1h-2",name:"start Kata podu (apply→Ready) ms, 5×",status:"INFO",detail:{ms:$t}},
+        {id:"S1h-2",name:"start Kata podu (apply→Ready) ms, 3×",status:"INFO",detail:{ms:$t}},
         {id:"S1h-3",name:"srt uvnitř Kata podu: lo-only netns, seccomp, bez enableWeakerNestedSandbox",status:(if ($srt|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srt}}]}' | tee "$OUT"
     echo "zapsáno $OUT – přidej S1h-4 (egress přes NetworkPolicy) po nasazení agentgateway do ns platform" ;;
   destroy) az group delete -n "$RG" --yes --no-wait ;;

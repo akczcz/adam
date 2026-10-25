@@ -10,9 +10,7 @@ spec:
   - {key: sandbox, operator: Equal, value: kata, effect: NoSchedule}
   automountServiceAccountToken: false      # žádná identita K8s v sandboxu (vzor AISI chartu)
   securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    seccompProfile: { type: RuntimeDefault }
+    seccompProfile: { type: RuntimeDefault }   # instalace nástrojů jako root v guestu (apt, npm -g); srt pak běží jako uid 1000 přes setpriv
   containers:
   - name: sandbox
     image: node:22-bookworm
@@ -26,13 +24,13 @@ spec:
       {"network":{"allowedDomains":["pkg.harness.test"],"deniedDomains":[],"parentProxy":{"http":"http://agentgateway.platform.svc:3128","https":"http://agentgateway.platform.svc:3128"}},
        "filesystem":{"denyRead":[],"allowRead":[],"allowWrite":["/tmp"],"denyWrite":[]},"enableWeakerNestedSandbox":false,"allowNestedUserNamespaces":false}
       J
-      echo "guest-kernel=$(uname -r)"
-      SRT_DEBUG=1 srt -s /tmp/srt.json -c 'tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; echo; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo' 2>/tmp/srt.err || true
+      chmod 644 /tmp/srt.json; echo "guest-kernel=$(uname -r)"
+      setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp SRT_DEBUG=1 srt -s /tmp/srt.json -c 'tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; echo; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo' 2>/tmp/srt.err || true
       grep -i "weaker\|EPERM\|mount" /tmp/srt.err | head -5 || true
+      echo "s1-done"
       sleep 3600
     resources:
       requests: { cpu: "500m", memory: "1Gi" }
       limits: { cpu: "2", memory: "2Gi" }        # Kata: limit = RAM VM
     securityContext:
       allowPrivilegeEscalation: false
-      capabilities: { drop: ["ALL"] }
