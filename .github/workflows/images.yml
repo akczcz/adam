@@ -29,7 +29,7 @@ jobs:
           imp ghcr.io/openbao/openbao:2.7.1                            openbao:2.7.1
           imp ghcr.io/spiffe/spire-server:1.14.2                       spire-server:1.14.2
           imp ghcr.io/spiffe/spire-agent:1.14.2                        spire-agent:1.14.2
-          imp ghcr.io/agentgateway/agentgateway:1.6.0                  agentgateway:1.6.0
+          imp ghcr.io/agentgateway/agentgateway:v1.6.0                 agentgateway:1.6.0
           imp docker.io/openpolicyagent/opa:1.11.0-static              opa:1.11.0
           imp docker.io/otel/opentelemetry-collector-contrib:0.163.2  otel-collector-contrib:0.163.2
           imp docker.io/library/clickhouse:26.8                        clickhouse:26.8
