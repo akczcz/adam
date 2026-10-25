@@ -13,13 +13,11 @@ spec:
     seccompProfile: { type: RuntimeDefault }   # instalace nástrojů jako root v guestu (apt, npm -g); srt pak běží jako uid 1000 přes setpriv
   containers:
   - name: sandbox
-    image: node:22-bookworm
+    image: S1_IMAGE                          # dosazuje run-s1-aks.sh (ACR sandbox-s1:p1, infra/images/sandbox-s1); bez egressu nelze instalovat za běhu
     command: ["bash", "-lc"]
     args:
     - |
       set -e
-      apt-get update -qq && apt-get install -y -qq bubblewrap socat ripgrep curl >/dev/null
-      npm i -g --silent @anthropic-ai/sandbox-runtime@0.0.81
       cat > /tmp/srt.json <<'J'
       {"network":{"allowedDomains":["pkg.harness.test"],"deniedDomains":[],"parentProxy":{"http":"http://agentgateway.platform.svc:3128","https":"http://agentgateway.platform.svc:3128"}},
        "filesystem":{"denyRead":[],"allowRead":[],"allowWrite":["/tmp"],"denyWrite":[]},"enableWeakerNestedSandbox":false,"allowNestedUserNamespaces":false}
