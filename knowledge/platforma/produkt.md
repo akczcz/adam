@@ -66,11 +66,16 @@ Adamovo potvrzení rozsahu, subscription a pořadí „kind nejdřív“).
 
 ## P2 – role naostro
 
+Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-10-25, čeká na Adamovo potvrzení).
+
 | Krok | Stav |
 |---|---|
-| Generátor: `roles/*.yaml` → OPA data bundle, gateway klíče a rozpočty, srt settings, Inspect eval sady | ✅ v0 (`tools/rolegen`); zbývá CI job, OPA bundle balení, hash klíčů z OpenBao |
-| Obrazy rolí (devcontainer build v CI) v interním registru | ⬜ |
-| Evaly L0–L3 per role s gate; registr agentů plněný z workflow | ⬜ |
+| P2-1 rolegen v CI naostro (`roles/*.yaml` → Git → Flux; harness nenosí konfiguraci) | ✅ v0 generátor + R1 v CI (P1-6); ⬜ CI → cluster bez harnessu |
+| P2-2 obrazy rolí (devcontainer build v CI) a pod spec přímo z rolegen | ⬜ |
+| P2-3 SVID v Kata podu + OpenBao auto-unseal/auth kubernetes | ⬜ |
+| P2-4 egress naostro: git a mirror přes agentgateway CONNECT | ⬜ |
+| P2-5 evaly L0–L3 per role s gate (adversariální L3); registr agentů plněný z workflow | ⬜ |
+| P2-6 FinOps: 30d strop jako součet klíčů zakázky, klíče z OpenBao | ⬜ |
 
 ## P3 – první externí zákazník
 

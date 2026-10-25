@@ -1,4 +1,5 @@
 # Terraform pro AKS dev platformu (infra/terraform): plan na PR, apply z main nebo ručně. Auth do Azure přes OIDC (bez tajemství v repu),
+# Pozor: refresh databází Flexible Serveru selže, když je PG zastavený (ServerStoppedError) → před plan/apply `cluster` start.
 # state v Azure Storage. Identita: infra/bootstrap/azure-oidc.sh; proměnné repa: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
 # AZURE_PRINCIPAL_ID, TF_STATE_RG, TF_STATE_SA, NAME_SUFFIX, AZURE_LOCATION.
 name: infra
