@@ -1,0 +1,42 @@
+# Měření P1 na AKS (spouští se ručně, čte ho i Claude přes GitHub API): stav podů platformy (Flux), S1 na Katě (S1h checky),
+# výsledky jako artifact. Vyžaduje roli „Azure Kubernetes Service Cluster Admin Role“ pro identitu (Terraform, var deployer_principal_id).
+name: measure
+on:
+  workflow_dispatch:
+    inputs:
+      s1:
+        description: spustit S1 na Katě (tools/harness_sandbox_s1/aks)
+        type: boolean
+        default: true
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  measure:
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    env:
+      RG: ${{ vars.TF_STATE_RG }}
+      CLUSTER: aks-platform-dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
+      - name: stav clusteru a platformy
+        run: |
+          { echo '## nodes'; kubectl get nodes -o wide; echo; echo '## runtimeclass'; kubectl get runtimeclass; echo; echo '## flux'; kubectl -n flux-system get kustomizations,gitrepositories 2>/dev/null || true; echo; echo '## pody platform-data'; kubectl -n platform-data get pods -o wide; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: S1 na Katě
+        if: inputs.s1
+        run: |
+          sudo apt-get install -y -q jq >/dev/null
+          RG="$RG" CLUSTER="$CLUSTER" SKU=Standard_D2ads_v7 tools/harness_sandbox_s1/aks/run-s1-aks.sh run | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: measure-${{ github.run_id }}
+          path: tools/harness_sandbox_s1/results/aks-*.json
+          if-no-files-found: ignore

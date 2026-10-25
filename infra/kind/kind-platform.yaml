@@ -19,6 +19,12 @@ nodes:
     hostPort: 30080
   - containerPort: 30200   # openbao (P1-3)
     hostPort: 30200
+  - containerPort: 30410   # agentgateway LLM (P1-4)
+    hostPort: 30410
+  - containerPort: 30810   # zakazka app (P1-5)
+    hostPort: 30810
+  - containerPort: 30990   # memory (P1-5)
+    hostPort: 30990
 kubeadmConfigPatches:
 - |
   kind: KubeletConfiguration

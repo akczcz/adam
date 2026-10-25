@@ -10,6 +10,10 @@ resources:
 - ../../base/keycloak
 - ../../base/openbao
 - ../../base/spire
+- ../../base/agentgateway
+- ../../base/opa
+- ../../base/dapr
+- ../../base/zakazka
 patches:
 - target: {kind: Service, name: postgres}
   patch: |
@@ -57,3 +61,43 @@ patches:
     - op: add
       path: /spec/ports/0/nodePort
       value: 30200
+- target: {kind: Service, name: agentgateway}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30410
+- target: {kind: Service, name: zakazka}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30810
+- target: {kind: Service, name: memory}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30990
+- target: {kind: Service, name: mock-github}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30801
+- target: {kind: Service, name: bridge}
+  patch: |
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30802

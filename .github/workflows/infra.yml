@@ -1,0 +1,61 @@
+# Terraform pro AKS dev platformu (infra/terraform): plan na PR, apply z main nebo ručně. Auth do Azure přes OIDC (bez tajemství v repu),
+# state v Azure Storage. Identita: infra/bootstrap/azure-oidc.sh; proměnné repa: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+# AZURE_PRINCIPAL_ID, TF_STATE_RG, TF_STATE_SA, NAME_SUFFIX, AZURE_LOCATION.
+name: infra
+on:
+  pull_request:
+    paths: ["infra/terraform/**", ".github/workflows/infra.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/terraform/**", ".github/workflows/infra.yml"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: plan | apply | destroy
+        default: plan
+        type: choice
+        options: [plan, apply, destroy]
+permissions:
+  id-token: write
+  contents: read
+concurrency: { group: terraform-platform-dev, cancel-in-progress: false }
+env:
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_name_suffix: ${{ vars.NAME_SUFFIX }}
+  TF_VAR_location: ${{ vars.AZURE_LOCATION || 'polandcentral' }}
+  TF_VAR_deployer_principal_id: ${{ vars.AZURE_PRINCIPAL_ID }}
+  TF_IN_AUTOMATION: "true"
+jobs:
+  terraform:
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    environment: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'dev' || '' }}
+    defaults: { run: { working-directory: infra/terraform } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.13.*", terraform_wrapper: false }
+      - name: terraform init (backend azurerm, OIDC)
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=platform-dev.tfstate"
+      - run: terraform fmt -check -recursive
+      - run: terraform validate -no-color
+      - name: terraform plan
+        id: plan
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -out=tfplan ${{ inputs.action == 'destroy' && '-destroy' || '' }} | tee plan.txt
+          { echo '## terraform plan'; echo '```'; tail -n 60 plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: terraform apply
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.action != 'plan')
+        run: terraform apply -input=false -no-color tfplan
+      - name: outputs
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+        run: terraform output -no-color | tee -a "$GITHUB_STEP_SUMMARY"

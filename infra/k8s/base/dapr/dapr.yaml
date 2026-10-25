@@ -1,0 +1,82 @@
+# Dapr 1.18.9 control plane pro kind (P1-5): placement a scheduler jako StatefulSety ze statických binárek, daprd jako explicitní
+# sidecar v podu aplikace s komponentami z ConfigMapy (stejný tvar jako harness O-1/O-2 lokálně). Bez operátoru, injectoru a sentry
+# (mTLS) – na AKS Dapr Helm chart (daprio/*), sidecar injection anotacemi, Component CRD.
+apiVersion: v1
+kind: Service
+metadata:
+  name: placement
+  labels: {app: placement}
+spec:
+  selector: {app: placement}
+  ports:
+  - {name: grpc, port: 50005, targetPort: 50005}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: placement
+spec:
+  serviceName: placement
+  replicas: 1
+  selector:
+    matchLabels: {app: placement}
+  template:
+    metadata:
+      labels: {app: placement}
+    spec:
+      containers:
+      - name: placement
+        image: platform/dapr:1.18.9
+        command: ["placement", "--port", "50005", "--metrics-port", "9091", "--healthz-port", "8081", "--log-level", "warn"]
+        ports:
+        - {containerPort: 50005, name: grpc}
+        readinessProbe:
+          httpGet: {path: /healthz, port: 8081}
+          periodSeconds: 3
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler
+  labels: {app: scheduler}
+spec:
+  selector: {app: scheduler}
+  ports:
+  - {name: grpc, port: 50006, targetPort: 50006}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: scheduler
+spec:
+  serviceName: scheduler
+  replicas: 1
+  selector:
+    matchLabels: {app: scheduler}
+  template:
+    metadata:
+      labels: {app: scheduler}
+    spec:
+      securityContext: {fsGroup: 1000}
+      containers:
+      - name: scheduler
+        image: platform/dapr:1.18.9
+        command: ["scheduler", "--port", "50006", "--etcd-data-dir", "/dapr/data/etcd", "--metrics-port", "9092", "--healthz-port", "8082", "--log-level", "warn", "--listen-address", "0.0.0.0", "--etcd-client-port", "2379"]
+        ports:
+        - {containerPort: 50006, name: grpc}
+        volumeMounts:
+        - {name: data, mountPath: /dapr/data}
+        readinessProbe:
+          httpGet: {path: /healthz, port: 8082}
+          periodSeconds: 3
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}
+  volumeClaimTemplates:
+  - metadata: {name: data}
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources: {requests: {storage: 1Gi}}

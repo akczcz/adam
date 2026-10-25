@@ -50,7 +50,7 @@ SRT = HERE / "node_modules" / ".bin" / "srt"
 APP_PORT, OPA_PORT, MEM_PORT, MOCK_PORT, CONNECT_PORT, LLM_PORT, GIT_PORT, PKG_PORT, EVIL_PORT = 8010, 8181, 9900, 9777, 3128, 4100, 9560, 8443, 8444
 GH_PORT, BRIDGE_PORT, WEBHOOK_SECRET = 9801, 9802, "bridge-webhook-secret"
 KC_PORT, BAO_PORT = int(os.getenv("O2_KC_PORT", "8089")), int(os.getenv("O2_BAO_PORT", "8210"))
-KC_ISSUER = f"http://127.0.0.1:{KC_PORT}/realms/p0"
+KC_ISSUER = KC_URL = f"http://127.0.0.1:{KC_PORT}/realms/p0"   # KC_URL = kam voláme, KC_ISSUER = iss v tokenech (z discovery)
 BAO = f"http://127.0.0.1:{BAO_PORT}"
 ROLE_CLIENTS = {"account": "p0-account-secret", "architekt": "p0-architekt-secret", "vyvojar": "p0-vyvojar-secret", "reviewer": "p0-reviewer-secret"}  # testovací tajemství z configs/realm-p0.json
 HTTP_PORT, GRPC_PORT = 3500, 50001
@@ -203,7 +203,7 @@ def start_keycloak(kc_home, env):
 
 def kc_token(client_id, secret=None, user=None, password=None):
     data = {"grant_type": "client_credentials"} if secret else {"grant_type": "password", "client_id": client_id, "username": user, "password": password}
-    r = httpx.post(f"{KC_ISSUER}/protocol/openid-connect/token", data=data, auth=((client_id, secret) if secret else None), timeout=10)
+    r = httpx.post(f"{KC_URL}/protocol/openid-connect/token", data=data, auth=((client_id, secret) if secret else None), timeout=10)
     assert r.status_code == 200, f"Keycloak token {client_id}: {r.status_code} {r.text[:200]}"
     return r.json()["access_token"]
 
@@ -240,7 +240,7 @@ def scenario_identity(a, rep, led_fn, procs, pg, ctx):
     MEM = f"http://127.0.0.1:{MEM_PORT}"
     try:
         import jwt
-        jwks = httpx.get(f"{KC_ISSUER}/protocol/openid-connect/certs", timeout=10).json()
+        jwks = httpx.get(f"{KC_URL}/protocol/openid-connect/certs", timeout=10).json()
         kids = {k["kid"] for k in jwks["keys"]}
         claims = {r: jwt.decode(t, options={"verify_signature": False}) for r, t in kc_tokens.items()}
         hdrs = {r: jwt.get_unverified_header(t) for r, t in kc_tokens.items()}
@@ -500,11 +500,13 @@ def main():
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""))
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     a = ap.parse_args()
-    if not (a.agentgateway_bin and a.dapr_bin_dir and a.opa_bin and SRT.exists()):
-        print("chybí AGENTGATEWAY_BIN, DAPR_BIN_DIR, OPA_BIN nebo node_modules/.bin/srt"); sys.exit(2)
+    missing = [n for n, p in (("AGENTGATEWAY_BIN", a.agentgateway_bin), ("OPA_BIN", a.opa_bin), ("DAPR_BIN_DIR/daprd", os.path.join(a.dapr_bin_dir, "daprd") if a.dapr_bin_dir else ""), ("DAPR_BIN_DIR/placement", os.path.join(a.dapr_bin_dir, "placement") if a.dapr_bin_dir else ""), ("DAPR_BIN_DIR/scheduler", os.path.join(a.dapr_bin_dir, "scheduler") if a.dapr_bin_dir else ""), ("node_modules/.bin/srt", str(SRT))) if not (p and os.path.isfile(p))]
+    if missing:
+        print(f"chybí nebo neexistuje: {', '.join(missing)} (DAPR_BIN_DIR = adresář s daprd, placement, scheduler)"); sys.exit(2)
     ident = a.scenario == "identity"
-    global KC_ISSUER, BAO
-    if a.kc_url: KC_ISSUER = a.kc_url.rstrip("/") + "/realms/p0"
+    global KC_ISSUER, KC_URL, BAO
+    KC_URL = f"http://127.0.0.1:{KC_PORT}/realms/p0"
+    if a.kc_url: KC_URL = KC_ISSUER = a.kc_url.rstrip("/") + "/realms/p0"
     if a.bao_addr: BAO = a.bao_addr.rstrip("/")
     kc_ok = a.kc_url or (a.kc_home and Path(a.kc_home, "bin/kc.sh").exists())
     bao_ok = (a.bao_addr and a.bao_root_token) or (a.bao_bin and Path(a.bao_bin).exists())
@@ -548,7 +550,10 @@ def main():
         app_uri = su.replace("postgresql://postgres:@", "postgresql://memory_app:@")
         procs.append(Proc("opa", [a.opa_bin, "run", "--server", "--addr", f"127.0.0.1:{OPA_PORT}", "--set", "decision_logs.console=true", str(HERE / "policies")], env, LOGS / "opa.log"))
         assert wait_http(f"http://127.0.0.1:{OPA_PORT}/health", 30)
-        mem_auth = {"MEMORY_JWKS_URL": f"{KC_ISSUER}/protocol/openid-connect/certs", "MEMORY_ISSUER": KC_ISSUER, "MEMORY_AUDIENCE": "memory"} if ident else {"MEMORY_JWT_SECRET": m1.SECRET}
+        if ident:
+            assert wait_http(f"{KC_URL}/.well-known/openid-configuration", 180), "Keycloak nenaběhl (logs/keycloak.log)"
+            KC_ISSUER = httpx.get(f"{KC_URL}/.well-known/openid-configuration", timeout=10).json()["issuer"]
+        mem_auth = {"MEMORY_JWKS_URL": f"{KC_URL}/protocol/openid-connect/certs", "MEMORY_ISSUER": KC_ISSUER, "MEMORY_AUDIENCE": "memory"} if ident else {"MEMORY_JWT_SECRET": m1.SECRET}
         procs.append(Proc("memory", [sys.executable, str(M1 / "memory_server.py")], env | mem_auth | {"MEMORY_DB_URI": app_uri, "MEMORY_OPA_URL": f"http://127.0.0.1:{OPA_PORT}/v1/data/memory/decision", "MEMORY_PORT": str(MEM_PORT)}, LOGS / "memory.log"))
         # egress mocky + model mock + gateway (S1 config)
         procs.append(Proc("mocks", [sys.executable, str(S1 / "mock_servers.py")], env | {"S1_CERTS": str(s1.CERTS), "GIT_PORT": str(GIT_PORT), "PKG_PORT": str(PKG_PORT), "EVIL_PORT": str(EVIL_PORT)}, LOGS / "mocks.log"))
@@ -582,7 +587,8 @@ def main():
         assert rg.returncode == 0, rg.stderr
         role_opts = LOGS / "rolegen/agent_sdk"   # ClaudeAgentOptions každé role vznikají z roles/<role>.yaml, ne ručně v app
         if ident:
-            assert wait_http(f"{KC_ISSUER}/.well-known/openid-configuration", 180), "Keycloak nenaběhl (logs/keycloak.log)"
+            assert wait_http(f"{KC_URL}/.well-known/openid-configuration", 180), "Keycloak nenaběhl (logs/keycloak.log)"
+            KC_ISSUER = httpx.get(f"{KC_URL}/.well-known/openid-configuration", timeout=10).json()["issuer"]   # externí Keycloak může mít pevný KC_HOSTNAME (P1-5: http://keycloak:8080)
             t0 = time.time(); role_tokens = {r: kc_token(f"agent-{r}", s) for r, s in ROLE_CLIENTS.items()}; ictx["lat"]["kc_token_ms"] = round((time.time() - t0) * 1000 / len(ROLE_CLIENTS), 1)
             ictx["kc_tokens"] = dict(role_tokens); ictx["m1"] = m1
             t0 = time.time(); _b = httpx.post(f"{BAO}/v1/transit/sign/approval", json={"input": "cHJvYmU="}, headers={"X-Vault-Token": bao_app}, timeout=10); ictx["lat"]["sign_ms"] = round((time.time() - t0) * 1000, 1); assert _b.status_code == 200, _b.text

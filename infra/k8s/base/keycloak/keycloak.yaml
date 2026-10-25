@@ -45,6 +45,7 @@ spec:
         - {name: KC_BOOTSTRAP_ADMIN_USERNAME, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_USERNAME}}}
         - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_PASSWORD}}}
         - {name: KC_HTTP_PORT, value: "8080"}
+        - {name: KC_HOSTNAME, value: http://keycloak:8080}   # pevný issuer pro tokeny uvnitř clusteru (server paměti ověřuje iss); z hostitele přes NodePort stejný iss
         - {name: JAVA_OPTS_APPEND, value: "-Xms256m -Xmx768m"}
         ports:
         - {containerPort: 8080, name: http}

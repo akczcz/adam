@@ -1,0 +1,265 @@
+{
+ "meta": {
+  "started": "2026-10-24T19:32:26",
+  "step": "p1-5",
+  "context": "kind-platform",
+  "kind": "kind v0.33.0 go1.26.7 linux/amd64",
+  "images": [
+   "pgvector/pgvector:pg16",
+   "clickhouse:26.8",
+   "otel/opentelemetry-collector-contrib:0.163.2"
+  ]
+ },
+ "checks": [
+  {
+   "id": "P15a",
+   "name": "OPA, Dapr placement + scheduler, aplikace zakázky (app + daprd sidecar, komponenty z ConfigMapy), server paměti, mock GitHub a bridge Ready; Dapr state store Postgres (DB dapr_state) má tabulky",
+   "status": "PASS",
+   "detail": {
+    "rollouts": {
+     "deployment/keycloak": true,
+     "deployment/opa": true,
+     "statefulset/placement": true,
+     "statefulset/scheduler": true,
+     "deployment/memory": true,
+     "deployment/mock-github": true,
+     "deployment/bridge": true,
+     "deployment/zakazka": true
+    },
+    "health": {
+     "app": 200,
+     "memory": 200,
+     "mock_github": 200,
+     "bridge": 200
+    },
+    "dapr_state_tables": [
+     "dapr_metadata",
+     "state"
+    ],
+    "rollout_s": 39.5
+   }
+  },
+  {
+   "id": "P15b",
+   "name": "Zakázka v clusteru end-to-end přes GitHub HITL (mock GitHub v clusteru): issue → /schvaluji → ADR → H2 → PR → review APPROVED na head SHA → merge executor → H5 → Dokonceno; 4 role přes Agent SDK v podu s tokeny z clusterového Keycloaku, paměť v clusteru (200), approval tokeny z clusterového OpenBao",
+   "status": "PASS",
+   "detail": {
+    "output": {
+     "id": "P15-193126-1",
+     "stav": "Dokonceno",
+     "artefakty": [
+      "issue://P15-193126-1",
+      "adr://P15-193126-1/001",
+      "pr://P15-193126-1/1",
+      "review://P15-193126-1/1"
+     ],
+     "cost_usd": 0.045233999999999996
+    },
+    "merged_in_mock_github": true,
+    "issue": 1,
+    "pr": 5,
+    "roles": {
+     "account": {
+      "tools": [
+       "mcp__harness__search_memory",
+       "mcp__harness__write_artifact"
+      ],
+      "error": null,
+      "cost_usd": 0.009046799999999999
+     },
+     "architekt": {
+      "tools": [
+       "mcp__harness__read_artifact",
+       "mcp__harness__search_memory",
+       "mcp__harness__write_artifact"
+      ],
+      "error": null,
+      "cost_usd": 0.0120624
+     },
+     "vyvojar": {
+      "tools": [
+       "mcp__harness__search_memory",
+       "mcp__harness__sandboxed_bash",
+       "mcp__harness__create_memory"
+      ],
+      "error": null,
+      "cost_usd": 0.0120624
+     },
+     "reviewer": {
+      "tools": [
+       "mcp__harness__read_artifact",
+       "mcp__harness__run_evals",
+       "mcp__harness__write_artifact"
+      ],
+      "error": null,
+      "cost_usd": 0.0120624
+     }
+    },
+    "memory_calls_200": 4,
+    "signs": 4,
+    "wall_s": 17.3
+   }
+  },
+  {
+   "id": "P15c",
+   "name": "Durabilita workflow: pod aplikace smazán, když zakázka čeká na H2 (po ADR) → nový pod (jiné jméno) obnoví instanci ze stavu v Postgresu (Dapr Workflow replay), schválení H2 doručeno novému podu, Vývojář a Reviewer běží v novém podu, zakázka Dokonceno",
+   "status": "PASS",
+   "detail": {
+    "old_pod": "zakazka-78f5c49687-tt9vv",
+    "new_pod": "zakazka-78f5c49687-949j7",
+    "status_after_restart": "RUNNING",
+    "output": {
+     "id": "P15-193126-2",
+     "stav": "Dokonceno",
+     "artefakty": [
+      "issue://P15-193126-2",
+      "adr://P15-193126-2/001",
+      "pr://P15-193126-2/1",
+      "review://P15-193126-2/1"
+     ],
+     "cost_usd": 0.045233999999999996
+    },
+    "roles_after": [
+     "account",
+     "architekt",
+     "reviewer",
+     "vyvojar"
+    ],
+    "wall_s": 41.8
+   }
+  },
+  {
+   "id": "P15d",
+   "name": "Paměť v clusteru: zápisy rolí (Keycloak service-account tokeny, aud=memory, iss keycloak:8080) uložené jako proposed; člověk (password grant, token z NodePortu se stejným iss) je vidí s include_unverified; seed approved",
+   "status": "PASS",
+   "detail": {
+    "http": 200,
+    "records": 3,
+    "proposed": 2,
+    "iss": "http://keycloak:8080/realms/p0"
+   }
+  },
+  {
+   "id": "P15e",
+   "name": "FinOps v clusteru: requesty rolí šly přes clusterovou gateway s klíči role × zakázka P1-5 → budget_usage v Postgresu nese útratu každé role (zdroj pravdy pro cenu zakázky místo logu na disku)",
+   "status": "PASS",
+   "detail": {
+    "spend_usd_by_role": {
+     "account": 0.0180936,
+     "architekt": 0.0241248,
+     "reviewer": 0.0120624,
+     "vyvojar": 0.0241248
+    },
+    "total_usd": 0.078406
+   }
+  },
+  {
+   "id": "P15f",
+   "name": "Bridge v clusteru jako PEP: /schvaluji od bota a cizího člověka odmítnuto, review cizího odmítnuta; schválení od člověka z allow-listu předáno pro H1 i H4 (poll i webhook v clusteru)",
+   "status": "PASS",
+   "detail": {
+    "rejected": [
+     [
+      "H1",
+      "platform-bot",
+      "not_allowlisted_human"
+     ],
+     [
+      "H1",
+      "stranger",
+      "not_allowlisted_human"
+     ],
+     [
+      "H4",
+      "stranger",
+      "not_allowlisted_human"
+     ]
+    ],
+    "forwarded": [
+     [
+      "H1",
+      "adam"
+     ],
+     [
+      "H4",
+      "adam"
+     ],
+     [
+      "H1",
+      "adam"
+     ],
+     [
+      "H4",
+      "adam"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "P15g",
+   "name": "Pody P1-5",
+   "status": "INFO",
+   "detail": {
+    "bridge-564fdfc744-8hm5t": {
+     "image": [
+      "zakazka-app:p1"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "memory-855479b5-p7wgl": {
+     "image": [
+      "zakazka-app:p1"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "mock-github-86b6978b9c-s59sp": {
+     "image": [
+      "zakazka-app:p1"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "opa-64d476c44f-d4v4d": {
+     "image": [
+      "opa:1"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "placement-0": {
+     "image": [
+      "dapr:1.18.9"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "scheduler-0": {
+     "image": [
+      "dapr:1.18.9"
+     ],
+     "restarts": [
+      0
+     ]
+    },
+    "zakazka-78f5c49687-949j7": {
+     "image": [
+      "zakazka-app:p1",
+      "dapr:1.18.9"
+     ],
+     "restarts": [
+      0,
+      0
+     ]
+    },
+    "wall_s": 107.8
+   }
+  }
+ ]
+}

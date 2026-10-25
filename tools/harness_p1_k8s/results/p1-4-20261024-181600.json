@@ -1,0 +1,164 @@
+{
+ "meta": {
+  "started": "2026-10-24T18:16:00",
+  "step": "p1-4",
+  "context": "kind-platform",
+  "kind": "kind v0.33.0 go1.26.7 linux/amd64",
+  "images": [
+   "pgvector/pgvector:pg16",
+   "clickhouse:26.8",
+   "otel/opentelemetry-collector-contrib:0.163.2"
+  ]
+ },
+ "checks": [
+  {
+   "id": "P14a",
+   "name": "agentgateway 2 repliky Ready s configem = base ConfigMap + upstream mock na hostiteli + apiKey klíče z rolegen (zakázka P1-4, mode optional); config.database přes env ($AGW_DATABASE_URL) → tabulka budget_usage v Postgresu",
+   "status": "PASS",
+   "detail": {
+    "pods_ready": [
+     "agentgateway-854d49565d-mqwxz",
+     "agentgateway-854d49565d-rcvnt"
+    ],
+    "tables": [
+     "_agentgateway_request_log_migrations",
+     "budget_usage",
+     "request_log_payloads",
+     "request_logs"
+    ],
+    "keys": [
+     "account",
+     "architekt",
+     "reviewer",
+     "vyvojar"
+    ],
+    "upstream": "http://172.18.0.1:9777/v1",
+    "rollout_s": 2.3
+   }
+  },
+  {
+   "id": "P14b",
+   "name": "Request s klíčem Vývojáře přes NodePort → 200 od mocku na hostiteli (pod → bridge IP), log nese role a zakazka; cizí klíč → 401; bez klíče (optional) → 200 bez role",
+   "status": "PASS",
+   "detail": {
+    "with_key": 200,
+    "bad_key": 401,
+    "no_key": 200,
+    "log_with_key": {
+     "role": "vyvojar",
+     "zakazka": "p14b",
+     "agw.ai.usage.cost.total": "0.0030156",
+     "http.status": 200
+    },
+    "log_no_key_role": ""
+   }
+  },
+  {
+   "id": "P14c",
+   "name": "budget_usage v Postgresu (sdílená oběma replikami): 3 okna klíče Vývojáře, used_amount 24h-block = cena všech 200 odpovědí tohoto klíče z obou replik (nanodolary)",
+   "status": "PASS",
+   "detail": {
+    "rows_vyvojar": [
+     [
+      "vyvojar-24h-audit",
+      0.0211092
+     ],
+     [
+      "vyvojar-24h-block",
+      0.0211092
+     ],
+     [
+      "vyvojar-30d-block",
+      0.0211092
+     ]
+    ],
+    "expected_usd": 0.0211092,
+    "per_request_usd": 0.0030156,
+    "served_200_by_pod": {
+     "agentgateway-854d49565d-mqwxz": 3,
+     "agentgateway-854d49565d-rcvnt": 3
+    },
+    "db_consistent_after_s": 7.0
+   }
+  },
+  {
+   "id": "P14d",
+   "name": "P1-G: Block limit 0.01 USD na klíči Vývojáře přes 2 repliky (Service round-robin) → 429 s Retry-After; obě repliky obsloužily requesty; přestřel = kolik requestů nad limit prošlo (čítače v paměti + flush 5 s)",
+   "status": "PASS",
+   "detail": {
+    "statuses": [
+     200,
+     200,
+     200,
+     200,
+     200,
+     200,
+     429
+    ],
+    "requests_200_before_429": 6,
+    "limit_usd": 0.01,
+    "charged_usd": 0.0211092,
+    "overshoot_requests": 3.68,
+    "served_by_pod": {
+     "agentgateway-854d49565d-mqwxz": 3,
+     "agentgateway-854d49565d-rcvnt": 4
+    },
+    "retry_after_s": "20659",
+    "wall_s": 7.9,
+    "note": "kontrola used >= limit před requestem čte sdílený čítač z DB jen při obnově okna/flushi – přestřel ≈ requesty, které repliky stihnou mezi flushi"
+   }
+  },
+  {
+   "id": "P14d2",
+   "name": "Jiný klíč (Reviewer) není blokem Vývojáře dotčen → 200",
+   "status": "PASS",
+   "detail": {
+    "status": 200
+   }
+  },
+  {
+   "id": "P14e",
+   "name": "Harness G1 proti clusterové gateway (2 repliky, Postgres DB, apiKey optional, klíč Reviewer): kontrakt Anthropic Messages API (passthrough, streaming, cache, chybová těla, Agent SDK) beze změny",
+   "status": "PASS",
+   "detail": {
+    "exit": 0,
+    "counts": {
+     "PASS": 21,
+     "FAIL": 0,
+     "INFO": 6,
+     "SKIP": 0
+    },
+    "failed": [],
+    "wall_s": 11.2,
+    "log": "/home/user/adam/tools/harness_p1_k8s/logs/g1-k8s.log"
+   }
+  },
+  {
+   "id": "P14f",
+   "name": "Pody agentgateway",
+   "status": "INFO",
+   "detail": {
+    "agentgateway-854d49565d-mqwxz": {
+     "image": [
+      "platform/agentgateway:1.6.0"
+     ],
+     "restarts": [
+      0
+     ],
+     "node_ip": "172.18.0.2",
+     "bridge_ip": "172.18.0.1"
+    },
+    "agentgateway-854d49565d-rcvnt": {
+     "image": [
+      "platform/agentgateway:1.6.0"
+     ],
+     "restarts": [
+      0
+     ],
+     "node_ip": "172.18.0.2",
+     "bridge_ip": "172.18.0.1"
+    }
+   }
+  }
+ ]
+}

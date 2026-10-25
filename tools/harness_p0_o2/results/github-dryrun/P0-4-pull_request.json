@@ -16,5 +16,6 @@
   ],
   "commit_message": "P0-4: implementace úkolu 1\n\nAI-Agent: vyvojar@0.1.0 on-behalf-of Adam Kolařík\nArtifact-Hash: 578d9f593c4d7ee9",
   "body": "> Tento pull request vytvořil AI agent (role Vývojář, verze 0.1.0) platformy adam-platform jménem Adam Kolařík. Sloučení schvaluje člověk.\n\n`zakazka_id`: P0-4 · artefakt `pr://P0-4/1` · hash `578d9f593c4d7ee9`\n\nSoubory: zakazky/P0-4/NOTES.md\n\nSloučení = HITL H4 (člověk) → merge-executor."
- }
+ },
+ "published": false
 }

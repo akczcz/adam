@@ -1,0 +1,41 @@
+# Provozní úkony dev prostředí (šetření: AKS stop = uzly se neúčtují; Flexible Server stop = max. 7 dní, pak se sám zapne).
+# Spouští se ručně; Claude ho může spustit přes GitHub API. Jména zdrojů = Terraform (infra/terraform/variables.tf, main.tf).
+name: cluster
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: stop | start | status
+        default: status
+        type: choice
+        options: [stop, start, status]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  cluster:
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    env:
+      RG: ${{ vars.TF_STATE_RG }}
+      CLUSTER: aks-platform-dev
+      PG: pg-platform-dev-${{ vars.NAME_SUFFIX }}-${{ vars.AZURE_LOCATION || 'polandcentral' }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - if: inputs.action == 'stop'
+        run: |
+          az aks stop -g "$RG" -n "$CLUSTER" -o none && echo "AKS stopped"
+          az postgres flexible-server stop -g "$RG" -n "$PG" -o none && echo "PG stopped"
+      - if: inputs.action == 'start'
+        run: |
+          az postgres flexible-server start -g "$RG" -n "$PG" -o none && echo "PG started"
+          az aks start -g "$RG" -n "$CLUSTER" -o none && echo "AKS started"
+      - name: status
+        run: |
+          { echo "## $CLUSTER"; az aks show -g "$RG" -n "$CLUSTER" --query '{power:powerState.code, k8s:kubernetesVersion, provisioning:provisioningState}' -o table
+            az aks nodepool list -g "$RG" --cluster-name "$CLUSTER" --query '[].{pool:name, vm:vmSize, count:count, min:minCount, max:maxCount, runtime:workloadRuntime, state:powerState.code}' -o table
+            echo; echo "## $PG"; az postgres flexible-server show -g "$RG" -n "$PG" --query '{state:state, sku:sku.name, version:version}' -o table; } | tee -a "$GITHUB_STEP_SUMMARY"

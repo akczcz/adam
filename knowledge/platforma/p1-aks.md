@@ -77,7 +77,7 @@ flowchart TB
 
 | # | Krok | Co vzniká | Harness, který to změří | Hotovo, když |
 |---|---|---|---|---|
-| P1-1 | Cluster + Kata node pool + Cilium CNP default-deny | `az aks create --os-sku AzureLinux --workload-runtime KataVmIsolation`, node pool `Standard_D4ads_v7`; `infra/aks/` skripty | **S1 aks/** (`run-s1-aks.sh`): S1h-1…6 | Kata pod běží s vlastním kernelem, srt uvnitř bez `enableWeakerNestedSandbox`, egress jen přes gateway |
+| P1-1 | Cluster + Kata node pool + Cilium CNP default-deny | Terraform `infra/terraform` (AKS Azure Linux + Cilium, node pool `kata` `workload_runtime = "KataVmIsolation"` `Standard_D2ads_v7`), GitHub Actions OIDC, Flux | **S1 aks/** (`run-s1-aks.sh`): S1h-1…6 | Kata pod běží s vlastním kernelem, srt uvnitř bez `enableWeakerNestedSandbox`, egress jen přes gateway |
 | P1-2 | Datová vrstva: Postgres (4 schémata), ClickHouse, Collector | Helm values + migrace schémat z M1 (`SCHEMA`), O1 (`otelcol.yaml`) | **M1** proti clusterovému Postgresu (`MEMORY_DB_URI`), **O1** end-to-end (Agent SDK → Collector → ClickHouse) | M1 11/11, O1 9/9 na clusterových službách |
 | P1-3 | Identita: Keycloak (realm `p0`), SPIRE, OpenBao (raft + KV auto-unseal) | Helm values, realm import, transit klíč, policy `approval-signer`, auth `kubernetes` | **I2** proti clusteru; **O-2 identity** s `KC_HOME`/`BAO` nahrazenými URL | 5/5 identity, SVID per pod role vidět v tokenu (I2e varianta) |
 | P1-4 | agentgateway ×2 s Postgres `config.database`, apiKey budgets, egress CONNECT, git TLS | config z `tools/harness_p0_o2/configs/agentgateway.yaml` → ConfigMap, certy z cert-manager | **G1** proti clusteru; **O-2 budget**; nový check **P1-G**: tentýž klíč přes dvě repliky → jeden `budget_usage` | G1 21/21, budget 5/5, P1-G PASS |
@@ -117,7 +117,7 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 
 | Riziko | Dopad | Mitigace |
 |---|---|---|
-| Persistence rozpočtů agentgateway mezi replikami (čítače v paměti + flush 5 s) | překročení limitu o součet replik × 5 s útraty | P1-G změřit; při selhání jedna replika + PDB, nebo `localRateLimit` tokens jako druhá brzda |
+| Persistence rozpočtů agentgateway mezi replikami (čítače v paměti + flush 5 s) | překročení limitu o součet replik × 5 s útraty | **P1-G změřeno 2026-10-24:** persistence aditivní a správná; přestřel u 2 replik 3,7 requestu (0,011 USD) vs. 0,7 u jedné → přijato jako měkký strop + audit; tvrdý strop = jedna replika listeneru s budgets (PDB) nebo `localRateLimit` per klíč |
 | Kata na AKS: `emptyDir` přes virtio-fs na hostu, `hostUsers: false` nepodporováno | pracovní data agenta na hostu; srt spoléhá na user namespaces v guestu | S1h-3 měří bwrap v guestu; cleanup emptyDir jako součást tombstone sandboxu |
 | Keycloak/OpenBao provozní režim (TLS, unseal, zálohy) | výpadek identity zastaví všechny zakázky (fail-closed = správně, ale drahé) | Key Vault auto-unseal, Postgres HA pro Keycloak, runbook v `knowledge/organization/procesy.md` X2 |
 | agentgateway 1.7 mění chybová těla (PR #2162) | kontrakt Claude Code | zůstat na 1.6.0, přeměřit G1 na 1.7 před upgrade |
@@ -127,9 +127,10 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 
 | Otázka | Rozhodnutí | Důsledek |
 |---|---|---|
-| Subscription, region, kdo platí | Adamova subscription (soukromá karta, přihlášen na svém Macu); region vybrat v EU podle ceny a dostupnosti nested-virt SKU + Pod Sandboxing | **Azure kroky běží z Adamova Macu** (Remote Control session): cloudové prostředí Adama nemá `az` ani síť na `management.azure.com`. Kandidát regionu: **Sweden Central** (obvykle ~10 % pod West Europe, *sek.*), záloha West Europe; potvrdit `az vm list-skus -l swedencentral --size Standard_D2ads_v7` a `az aks` s `--workload-runtime KataVmIsolation` |
+| Subscription, region, kdo platí | Adamova subscription (soukromá karta, přihlášen na svém Macu); region vybrat v EU podle ceny a dostupnosti nested-virt SKU + Pod Sandboxing | **Poland Central** (od 2026-10-25, záloha Italy North). Měřeno 2026-10-24/25 (`az vm list-skus`, `apply`): Sweden Central – kapacita (PG B1ms `RegionalAllocationFailed`, AKS D4as_v5 `Creating` 90 min); West Europe – `locationineligible` (region nepřijímá nové subscription); Germany West Central, France Central – `NotAvailableForSubscription`; North Europe – SKU nevypsány; Italy North a Poland Central – bez restrikcí. Region řídí repo variable `AZURE_LOCATION` (`TF_VAR_location`), PG může mít vlastní `pg_location` |
+| Jak se Azure ovládá | **DevOps (Adam 2026-10-24):** IaC v Terraformu, GitHub Actions, GitHub ↔ Azure přes OIDC, dál nahoru operátory (GitOps) – ne imperativní skripty z Macu | `infra/terraform` + `.github/workflows` + Flux (AKS GitOps extension); Mac jen 1× `infra/bootstrap/azure-oidc.sh` (RG, tfstate, identita s federací na `repo:akczcz/adam`, Contributor + UAA jen na RG). Claude workflow spouští a čte přes GitHub API, cloudové prostředí Azure nepotřebuje. Tajemství: žádný client secret; heslo PG v tf state a Flux substitute (dev), P2 External Secrets |
 | Postgres | **Azure Database for PostgreSQL Flexible Server** | schéma M1, RLS a role `memory_app` beze změny; nejmenší SKU `Standard_B1ms` (~15 USD/měs., *sek.*), heslo z OpenBao |
-| GitHub ostrý zápis | PAT vydá Adam | fine-grained PAT jen na `akczcz/adam`; běh na Macu s tokenem v env jednoho příkazu (viz níže), ne v chatu ani v cloudovém prostředí |
+| GitHub ostrý zápis | PAT vydá Adam | fine-grained PAT jen na `akczcz/adam`; běh na Macu s tokenem v env jednoho příkazu (viz níže), ne v chatu ani v cloudovém prostředí. **Provedeno 2026-10-24: issue #3, PR #4, merge `2c47bfe`.** |
 | Pořadí | kind nejdřív (P1-4, P1-5 v cloudovém kontejneru); Mac k dispozici | AKS až P1-1 a P1-6 |
 | Kata SKU | co nejmenší | Kata pool `Standard_D2ads_v7` autoscale 0–1 (nested virt, 8 GiB), system pool 1× `Standard_D4as_v5` (platformní komponenty ~6 GiB RAM); cluster vypínat (`az aks stop`) mimo práci |
 | PR do `main` | podle mého uvážení | PR po P1-3 (15 commitů), další práce v nové větvi |
@@ -154,10 +155,19 @@ Cena P1 po rozhodnutí (*spekulace*, PAYG): system D4as_v5 ≈ 0,19 USD/h + Kata
 |---|---|
 | P1-2 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` 6/6: M1 11/11 a O1 9/9 proti clusterovým službám beze změny checků; manifesty `infra/k8s/base/{postgres,clickhouse,otel-collector}` + overlay `kind` |
 | P1-3 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-3 5/5: Keycloak (realm p0, DB keycloak), OpenBao raft (init/unseal operátorem, audit stdout), SPIRE 1.14.2 (k8s_psat, SVID z pod-labelu); O-2 `identity` 5/5 proti clusteru. Obrazy pro kind z GitHub release artefaktů (`infra/images`), na AKS oficiální |
-| P1-4, P1-5 | ⬜ kind (další: agentgateway ×2 s Postgres DB + P1-G, pak Dapr + app) |
-| P1-1, P1-6 | ⬜ AKS (čeká na odpovědi níže) |
+| P1-4 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-4 6/6: agentgateway ×2, Postgres `budget_usage`, G1 21/21 proti clusteru; P1-G: aditivní persistence OK, vynucení mezi replikami eventually consistent (flush 5 s) → pro ostrý strop jedna replika listeneru s budgets nebo `localRateLimit` jako tvrdá brzda |
+| P1-5 | ✅ kind 2026-10-24 – `tools/harness_p1_k8s` P1-5 6/6: OPA, Dapr (placement, scheduler, daprd sidecar, Postgres state), aplikace zakázky, paměť, mock GitHub, bridge; zakázka end-to-end v clusteru, durabilita (smazaný pod → workflow obnoveno), FinOps z Postgresu. Obraz `platform/zakazka-app` (Python + Node + CLI) |
+| P1-1 | 🟡 **infrastruktura stojí (2026-10-25, Poland Central)**: 7. `apply` z GitHub Actions přes OIDC – ACR `acrplatformdevakcz`, AKS `aks-platform-dev` (Azure Linux, Cilium overlay, workload identity, system 1× D4as_v5), node pool `kata` (D2ads_v7 `KataVmIsolation`, autoscale 0–1, 0 uzlů), Flexible Server `pg-platform-dev-akcz-polandcentral` (B1ms PG16, 5 DB, VECTOR), Flux extension + konfigurace `platform` na `main:infra/k8s/overlays/aks`. Zbývá: merge PR #5 (Flux čeká na overlay v `main`), workflow `images` (ACR), `measure` (S1 na Katě – kapacita Dadsv7 v regionu nejistá, 2026-10-25 `AllocationFailed`) |
+| P1-6 | ⬜ AKS (po P1-1): role jako Kata pody z rolegen, srt uvnitř, egress CONNECT gateway, SPIRE entries z rolegen |
 
 ## Changelog
+- 2026-10-25: P1-1 infrastruktura vytvořena v Poland Central po 7 bězích `apply` (kapacita Sweden Central, locationineligible West Europe, kvóty vCPU 0 → navýšeny, jedna operace na AKS cluster naráz, rezervované jméno PG, `zone` drift, orphan node pool → import). Všechny pasti zapsány v `infra/bootstrap/README.md`.
+- 2026-10-25: druhý `apply` (West Europe) → `RequestDisallowedByAzure: region not accepting new customers`; SKU průzkum 5 regionů → Poland Central.
+- 2026-10-25: první `apply` ve Sweden Central selhal na kapacitě (PG B1ms RegionalAllocationFailed, AKS Creating > 90 min); přesun do West Europe, PG bez pinované zóny, AKS create timeout 40 min. Řetězec Actions → OIDC → tfstate → `plan` ověřen (16 zdrojů).
+- 2026-10-24: P1-1 přepsáno z imperativních skriptů na Terraform + GitHub Actions (OIDC) + Flux na Adamův podnět; bootstrap jediný ruční krok. Validováno offline (`terraform validate`), proti Azure neověřeno.
+- 2026-10-24: P1-1 připraveno (infra/aks skripty + overlay aks), čeká na běh z Macu; měření S1h na Katě. (nahrazeno IaC, viz výše)
+- 2026-10-24: P1-5 hotovo na kind – kind fáze uzavřena (P1-2…P1-5); durabilita Dapr Workflow v clusteru změřena; dál jen AKS (P1-1, P1-6).
+- 2026-10-24: P1-4 hotovo na kind; P1-G: rozpočty mezi replikami eventually consistent (flush 5 s), riziko přijato jako měkký strop.
 - 2026-10-24: P1-3 hotovo na kind; SPIRE SVID per pod-label změřen (P1-6 dostane entries z rolegen); OpenBao KV auto-unseal a auth kubernetes odloženy na AKS/P1-5.
 - 2026-10-24: P1-2 hotovo na kind; zjištění: Collector v clusteru bez file exportéru (metriky i logy do ClickHouse), kind v kontejneru bez CAP_SYS_RESOURCE potřebuje obal runc.
 - 2026-10-24: první verze plánu P1 po uzavření P0 (návrh, Pozn. Adam).

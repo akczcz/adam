@@ -1,0 +1,15 @@
+# Aplikace zakázky pro AKS (build v ACR: `az acr build`): oficiální python:3.12-slim + Node 22 + Claude Code CLI z npm.
+# Na kind se používá Dockerfile (bez Docker Hubu a apt); obsah a cesty jsou stejné (/app, /opt/venv, uživatel 1000).
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-certificates xz-utils && rm -rf /var/lib/apt/lists/*
+ARG NODE_VERSION=22.23.4
+RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /opt && ln -s /opt/node-v${NODE_VERSION}-linux-x64 /opt/node
+ENV PATH=/opt/venv/bin:/opt/node/bin:$PATH
+RUN npm install -g @anthropic-ai/claude-code && claude --version
+COPY requirements.txt /tmp/requirements.txt
+RUN python -m venv /opt/venv && pip install --no-cache-dir -r /tmp/requirements.txt \
+ && pip install --no-cache-dir --force-reinstall --no-deps "dapr-ext-workflow==1.18.3" durabletask-dapr \
+ && useradd -u 1000 -m app && mkdir -p /app /tmp/p0-o2 && chown -R app /app /tmp/p0-o2
+COPY src/ /app/
+USER 1000
+WORKDIR /app

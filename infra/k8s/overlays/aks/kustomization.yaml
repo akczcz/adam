@@ -1,0 +1,69 @@
+# Overlay pro AKS dev cluster (Terraform infra/terraform, nasazuje Flux): oficiální obrazy z ACR, Postgres = Azure Database for PostgreSQL
+# Flexible Server (ExternalName), bez NodePortů (přístup přes kubectl port-forward / interní LB později). Proměnné ${ACR_LOGIN_SERVER},
+# ${PG_HOST}, ${PG_PASSWORD} dosazuje Flux postBuild substitute (infra/terraform/flux.tf); kustomize je nechává beze změny.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: platform-data
+resources:
+- namespace.yaml
+- ../../base/clickhouse
+- ../../base/otel-collector
+- ../../base/keycloak
+- ../../base/openbao
+- ../../base/spire
+- ../../base/agentgateway
+- ../../base/opa
+- ../../base/dapr
+- ../../base/zakazka
+- postgres-external.yaml
+images:
+- {name: platform/keycloak, newName: "${ACR_LOGIN_SERVER}/keycloak", newTag: "26.8.1"}
+- {name: platform/openbao, newName: "${ACR_LOGIN_SERVER}/openbao", newTag: "2.7.1"}
+- {name: platform/agentgateway, newName: "${ACR_LOGIN_SERVER}/agentgateway", newTag: "1.6.0"}
+- {name: platform/opa, newName: "${ACR_LOGIN_SERVER}/opa", newTag: "1.11.0"}
+- {name: platform/zakazka-app, newName: "${ACR_LOGIN_SERVER}/zakazka-app", newTag: p1}
+- {name: otel/opentelemetry-collector-contrib, newName: "${ACR_LOGIN_SERVER}/otel-collector-contrib", newTag: "0.163.2"}
+- {name: clickhouse, newName: "${ACR_LOGIN_SERVER}/clickhouse", newTag: "26.8"}
+patches:
+# Flux postBuild substitute nahrazuje i cizí ${var}/$var (nedefinované → prázdný řetězec): agentgateway config ($AGW_DATABASE_URL,
+# $ANTHROPIC_API_KEY = env expanze gateway) a realm Keycloaku (${username}, ${email} = i18n) musí zůstat beze změny
+- target: {kind: ConfigMap, name: agentgateway-config}
+  patch: |
+    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/substitute: disabled}}
+- target: {kind: ConfigMap, name: keycloak-realm}
+  patch: |
+    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/substitute: disabled}}
+# platform/dapr a platform/spire jsou na kind jeden obraz pro více binárek – oficiální obrazy jsou per komponenta
+- target: {kind: StatefulSet, name: placement}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/placement:1.18.9"}
+- target: {kind: StatefulSet, name: scheduler}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/scheduler:1.18.9"}
+- target: {kind: Deployment, name: zakazka}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/1/image, value: "${ACR_LOGIN_SERVER}/daprd:1.18.9"}
+- target: {kind: StatefulSet, name: spire-server}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-server:1.14.2"}
+- target: {kind: DaemonSet, name: spire-agent}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-agent:1.14.2"}
+    - {op: replace, path: /spec/template/spec/containers/0/command/0, value: /opt/spire/bin/spire-agent}
+- target: {kind: StatefulSet, name: spire-server}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/command/0, value: /opt/spire/bin/spire-server}
+# Postgres jako Azure služba: heslo admin účtu Flexible Serveru (dev), SSL vyžadováno
+- target: {kind: Secret, name: agentgateway-secrets}
+  patch: |
+    - {op: replace, path: /stringData/AGW_DATABASE_URL, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/agentgateway?sslmode=require"}
+- target: {kind: ConfigMap, name: dapr-components}
+  patch: |
+    - {op: replace, path: /data/statestore.yaml, value: "apiVersion: dapr.io/v1alpha1\nkind: Component\nmetadata:\n  name: statestore\nspec:\n  type: state.postgresql\n  version: v1\n  metadata:\n  - name: connectionString\n    value: \"host=postgres user=platform password=${PG_PASSWORD} port=5432 dbname=dapr_state sslmode=require\"\n  - name: actorStateStore\n    value: \"true\"\n"}
+- target: {kind: Deployment, name: keycloak}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: platform}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_DB_URL_PROPERTIES, value: "?sslmode=require"}}
+- target: {kind: Deployment, name: memory}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/2/value, value: "postgresql://memory_app:memory_app@postgres:5432/memory?sslmode=require"}

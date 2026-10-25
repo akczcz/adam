@@ -115,7 +115,7 @@ adam/
 | Organizace | procesy jako Dapr Workflows, role jako YAML svazek, executor nevratných akcí s approval tokenem, autonomie rozšiřovaná měřením | `harness_org_o1` (9/9) |
 
 Všechny harnessy běží lokálně bez Dockeru; výsledky (JSON) a sekce „Pasti“ jsou v README každého harnessu.
-Fáze produktu P0 (dogfooding) je uzavřená (2026-10-24, výhrada: ostrý zápis do GitHubu): harness [`tools/harness_p0_o2`](tools/harness_p0_o2/README.md)
+Fáze produktu P0 (dogfooding) je uzavřená (2026-10-24; platforma dodala zakázku P0-4 do tohoto repa sama: issue #3, PR #4, merge přes executor): harness [`tools/harness_p0_o2`](tools/harness_p0_o2/README.md)
 skládá všechny vrstvy do jednoho běhu zakázky (scénáře p0, sre, github, github-hitl, identity, budget), [`tools/rolegen`](tools/rolegen/README.md)
 generuje z definic rolí konfigurace všech vrstev (stav v [knowledge/platforma/produkt.md](knowledge/platforma/produkt.md),
 plán P1 v [knowledge/platforma/p1-aks.md](knowledge/platforma/p1-aks.md)).

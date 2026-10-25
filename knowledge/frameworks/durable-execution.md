@@ -209,6 +209,7 @@ pro ADK; rozdíl je jen v tom, že u Dapru je to dokumentovaná vlastnost aktivi
       → 2026-10-21: Dapr Agents změřeno pro krátkou pauzu (viz dapr-agents.md), 14 dní zbývá.
 
 ## Changelog
+- 2026-10-24: P1-5 kind – Dapr Workflow 1.18.9 v clusteru s `state.postgresql`: pod aplikace smazán uprostřed zakázky (čekání na HITL), nový pod obnovil instanci ze stavu v Postgresu a zakázka doběhla (`tools/harness_p1_k8s` P15c). Bez operátoru a sentry (daprd jako sidecar, komponenty z ConfigMapy).
 - 2026-09-27: první verze.
 - 2026-10-21: harness na Dapr Agents potvrdil at-least-once při restartu během nástroje.
 - 2026-09-29: doplněn Google ADK – store konverzace není durable execution, resume je

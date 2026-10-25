@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # S1 na AKS: Kata Pod Sandboxing + srt uvnitř. Spouští se ručně (vyžaduje az, kubectl, jq). Výstup: results/aks-<datum>.json
 set -euo pipefail
-RG=${RG:-rg-harness-s1}; LOC=${LOC:-westeurope}; CLUSTER=${CLUSTER:-aks-harness-s1}; SKU=${SKU:-Standard_D4s_v5}
+RG=${RG:-rg-harness-s1}; LOC=${LOC:-westeurope}; CLUSTER=${CLUSTER:-aks-harness-s1}; SKU=${SKU:-Standard_D4s_v5}   # P1-1: RG=rg-platform-dev CLUSTER=aks-platform-dev SKU=Standard_D2ads_v7 a jen `run` (workflow .github/workflows/measure.yml)
 HERE=$(cd "$(dirname "$0")" && pwd); OUT="$HERE/../results/aks-$(date +%Y%m%d-%H%M%S).json"
 case "${1:-}" in
   create)
