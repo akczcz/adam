@@ -28,6 +28,9 @@ spec:
       echo "srt-uid1000=$(setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
       # varianta B: srt jako root v guestu s CAP_SYS_ADMIN (hranice izolace = VM); bwrap pak mountuje proc bez userns
       echo "srt-root=$(HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      # varianta C: srt s enableWeakerNestedSandbox (bez userns) jako uid 1000 – co zbývá z izolace
+      sed 's/"enableWeakerNestedSandbox":false/"enableWeakerNestedSandbox":true/' /tmp/srt.json > /tmp/srt-weak.json; chmod 644 /tmp/srt-weak.json
+      echo "srt-weak=$(setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp srt -s /tmp/srt-weak.json -c "$PROBE" 2>&1 | tr "\n" " ")"
       echo "s1-done"
       sleep 3600
     resources:

@@ -1,0 +1,43 @@
+# Varianta D měření S1: pod-level userns + Unmasked /proc (jediná cesta k bwrap bez SYS_ADMIN). Kata na AKS: změřit, zda vůbec nastartuje.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: s1-kata-userns
+  labels: { app: s1-sandbox, task: harness-s1 }
+spec:
+  runtimeClassName: kata-vm-isolation      # AKS Pod Sandboxing (Azure Linux node pool, --workload-runtime KataVmIsolation)
+  nodeSelector: {pool: kata}               # P1-1 cluster (infra/terraform/main.tf): Kata pool má label pool=kata a taint sandbox=kata
+  tolerations:
+  - {key: sandbox, operator: Equal, value: kata, effect: NoSchedule}
+  automountServiceAccountToken: false      # žádná identita K8s v sandboxu (vzor AISI chartu)
+  hostUsers: false                         # pod-level user namespace (KEP-127) – na Kata/AKS očekávaně nepodporováno (#13303), měříme
+  securityContext:
+    seccompProfile: { type: RuntimeDefault }
+  containers:
+  - name: sandbox
+    image: S1_IMAGE                          # dosazuje run-s1-aks.sh (ACR sandbox-s1:p1, infra/images/sandbox-s1); bez egressu nelze instalovat za běhu
+    command: ["bash", "-lc"]
+    args:
+    - |
+      set -e
+      cat > /tmp/srt.json <<'J'
+      {"network":{"allowedDomains":["pkg.harness.test"],"deniedDomains":[],"parentProxy":{"http":"http://agentgateway.platform.svc:3128","https":"http://agentgateway.platform.svc:3128"}},
+       "filesystem":{"denyRead":[],"allowRead":[],"allowWrite":["/tmp"],"denyWrite":[]},"enableWeakerNestedSandbox":false,"allowNestedUserNamespaces":false}
+      J
+      chmod 644 /tmp/srt.json; echo "guest-kernel=$(uname -r)"
+      PROBE='tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo'
+      # varianta A: srt jako uid 1000 (userns + bwrap) – v Kata guestu s maskovaným /proc selže na mount proc (změřeno 2026-10-25)
+      echo "srt-uid1000=$(setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      # varianta B: srt jako root v guestu s CAP_SYS_ADMIN (hranice izolace = VM); bwrap pak mountuje proc bez userns
+      echo "srt-root=$(HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      # varianta C: srt s enableWeakerNestedSandbox (bez userns) jako uid 1000 – co zbývá z izolace
+      sed 's/"enableWeakerNestedSandbox":false/"enableWeakerNestedSandbox":true/' /tmp/srt.json > /tmp/srt-weak.json; chmod 644 /tmp/srt-weak.json
+      echo "srt-weak=$(setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp srt -s /tmp/srt-weak.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      echo "s1-done"
+      sleep 3600
+    resources:
+      requests: { cpu: "500m", memory: "1Gi" }
+      limits: { cpu: "2", memory: "2Gi" }        # Kata: limit = RAM VM
+    securityContext:
+      allowPrivilegeEscalation: false
+      procMount: Unmasked                 # nový procfs v userns potřebuje plně viditelný /proc; povoleno jen s hostUsers: false
