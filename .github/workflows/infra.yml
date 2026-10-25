@@ -15,6 +15,10 @@ on:
         default: plan
         type: choice
         options: [plan, apply, destroy]
+      gitops_branch:
+        description: větev, kterou má Flux sledovat (prázdné = main); pro ladění overlay z feature větve bez merge
+        default: ""
+        type: string
 permissions:
   id-token: write
   contents: read
@@ -27,6 +31,7 @@ env:
   TF_VAR_name_suffix: ${{ vars.NAME_SUFFIX }}
   TF_VAR_location: ${{ vars.AZURE_LOCATION || 'polandcentral' }}
   TF_VAR_deployer_principal_id: ${{ vars.AZURE_PRINCIPAL_ID }}
+  TF_VAR_gitops_branch: ${{ inputs.gitops_branch || 'main' }}
   TF_IN_AUTOMATION: "true"
 jobs:
   terraform:

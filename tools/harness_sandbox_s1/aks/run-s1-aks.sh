@@ -14,18 +14,42 @@ case "${1:-}" in
     kubectl get runtimeclass ;;
   run)
     kubectl apply -f "$HERE/networkpolicy.yaml"
-    kubectl apply -f "$HERE/pod-kata.yaml"
+    : "${S1_IMAGE:?S1_IMAGE=<acr>.azurecr.io/sandbox-s1:p1 (infra/images/sandbox-s1, workflow images)}"
+    POD=$(mktemp); sed "s#image: S1_IMAGE.*#image: $S1_IMAGE#" "$HERE/pod-kata.yaml" > "$POD"
+    kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null   # pod spec nelze měnit přes apply (Forbidden) – vždy čerstvý pod
+    kubectl apply -f "$POD"
     kubectl get runtimeclass runsc >/dev/null 2>&1 && kubectl apply -f "$HERE/pod-gvisor.yaml" || echo "RuntimeClass runsc není – gVisor přeskočen"
     kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s
-    NODE_KERNEL=$(kubectl get node -o jsonpath='{.items[0].status.nodeInfo.kernelVersion}')
-    GUEST=$(kubectl logs s1-kata | grep guest-kernel | cut -d= -f2)
-    SRTLINE=$(kubectl logs s1-kata | sed -n '2,3p' | tr '\n' ' ')
-    T=(); for i in $(seq 1 5); do kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null; S=$(date +%s%N); kubectl apply -f "$HERE/pod-kata.yaml" >/dev/null; kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s >/dev/null; T+=($(( ($(date +%s%N)-S)/1000000 ))); done
-    jq -n --arg nk "$NODE_KERNEL" --arg gk "$GUEST" --arg srt "$SRTLINE" --argjson t "[$(IFS=,; echo "${T[*]}")]" \
-      '{meta:{cluster:env.CLUSTER,sku:env.SKU,date:(now|todate)},checks:[
+    for i in $(seq 1 60); do kubectl logs s1-kata 2>/dev/null | grep -q '^s1-done' && break; sleep 5; done   # apt + npm v guestu ~1–2 min
+    kubectl logs s1-kata | tail -n 8
+    NODE_KERNEL=$(kubectl get node -l pool=kata -o jsonpath='{.items[0].status.nodeInfo.kernelVersion}')
+    GUEST=$(kubectl logs s1-kata | grep '^guest-kernel=' | cut -d= -f2 || true)
+    SRT_A=$(kubectl logs s1-kata | grep '^srt-uid1000=' | cut -d= -f2- || true)
+    SRT_B=$(kubectl logs s1-kata | grep '^srt-root=' | cut -d= -f2- || true)
+    SRT_C=$(kubectl logs s1-kata | grep '^srt-weak=' | cut -d= -f2- || true)
+    # varianta D: pod s hostUsers:false + procMount Unmasked – startuje na Kata/AKS?
+    PODU=$(mktemp); sed "s#image: S1_IMAGE.*#image: $S1_IMAGE#" "$HERE/pod-kata-userns.yaml" > "$PODU"
+    kubectl delete pod s1-kata-userns --ignore-not-found --wait=true >/dev/null
+    if kubectl apply -f "$PODU" 2>/tmp/userns-apply.err; then
+      kubectl wait --for=condition=Ready pod/s1-kata-userns --timeout=180s >/dev/null 2>&1 || true
+      for i in $(seq 1 24); do kubectl logs s1-kata-userns 2>/dev/null | grep -q '^s1-done' && break; sleep 5; done
+      USERNS_PHASE=$(kubectl get pod s1-kata-userns -o jsonpath='{.status.phase}{" "}{.status.containerStatuses[0].state}' 2>/dev/null | cut -c1-300)
+      USERNS_EVENT=$(kubectl get events --field-selector involvedObject.name=s1-kata-userns --sort-by=.lastTimestamp -o jsonpath='{range .items[-1:]}{.reason}{": "}{.message}{end}' 2>/dev/null | cut -c1-300)
+      SRT_D=$(kubectl logs s1-kata-userns 2>/dev/null | grep '^srt-uid1000=' | cut -d= -f2- || true)
+    else
+      USERNS_PHASE="apply rejected"; USERNS_EVENT=$(tr '\n' ' ' </tmp/userns-apply.err | cut -c1-300); SRT_D=""
+    fi
+    kubectl delete pod s1-kata-userns --ignore-not-found --wait=false >/dev/null
+    T=(); for i in $(seq 1 3); do kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null; S=$(date +%s%N); kubectl apply -f "$POD" >/dev/null; kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s >/dev/null; T+=($(( ($(date +%s%N)-S)/1000000 ))); done
+    kubectl delete pod s1-kata --ignore-not-found --wait=false >/dev/null   # úklid: autoscaler pak Kata uzel vrátí na 0
+    jq -n --arg nk "$NODE_KERNEL" --arg gk "$GUEST" --arg srta "$SRT_A" --arg srtb "$SRT_B" --arg srtc "$SRT_C" --arg srtd "$SRT_D" --arg uph "$USERNS_PHASE" --arg uev "$USERNS_EVENT" --argjson t "[$(IFS=,; echo "${T[*]}")]" \
+      '{meta:{cluster:env.CLUSTER,sku:env.SKU,image:env.S1_IMAGE,date:(now|todate)},checks:[
         {id:"S1h-1",name:"Kata pod má vlastní guest kernel",status:(if $nk!=$gk then "PASS" else "FAIL" end),detail:{node_kernel:$nk,guest_kernel:$gk}},
-        {id:"S1h-2",name:"start Kata podu (apply→Ready) ms, 5×",status:"INFO",detail:{ms:$t}},
-        {id:"S1h-3",name:"srt uvnitř Kata podu: lo-only netns, seccomp, bez enableWeakerNestedSandbox",status:(if ($srt|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srt}}]}' | tee "$OUT"
+        {id:"S1h-2",name:"start Kata podu (apply→Ready) ms, 3×",status:"INFO",detail:{ms:$t}},
+        {id:"S1h-3a",name:"srt jako uid 1000 (userns+bwrap) uvnitř Kata podu: lo-only netns, seccomp",status:(if ($srta|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srta}},
+        {id:"S1h-3b",name:"srt jako root s CAP_SYS_ADMIN uvnitř Kata podu (VM = hranice): lo-only netns, seccomp",status:(if ($srtb|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srtb}},
+        {id:"S1h-3c",name:"srt s enableWeakerNestedSandbox (bez userns) jako uid 1000: co zbývá z izolace",status:"INFO",detail:{srt:$srtc}},
+        {id:"S1h-5",name:"pod hostUsers:false + procMount Unmasked na Kata/AKS: startuje? srt v userns?",status:(if ($srtd|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{phase:$uph,last_event:$uev,srt:$srtd}}]}' | tee "$OUT"
     echo "zapsáno $OUT – přidej S1h-4 (egress přes NetworkPolicy) po nasazení agentgateway do ns platform" ;;
   destroy) az group delete -n "$RG" --yes --no-wait ;;
   *) echo "použití: $0 create|run|destroy"; exit 2 ;;

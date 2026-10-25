@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["infra/images/app/**", "tools/harness_p0_o2/app.py", "tools/harness_p0_o2/github_bridge.py", "tools/harness_p0_o2/mock_github.py", "tools/harness_memory_m1/memory_server.py", ".github/workflows/images.yml"]
+    paths: ["infra/images/app/**", "infra/images/sandbox-s1/**", "tools/harness_p0_o2/app.py", "tools/harness_p0_o2/github_bridge.py", "tools/harness_p0_o2/mock_github.py", "tools/harness_memory_m1/memory_server.py", ".github/workflows/images.yml"]
 permissions:
   id-token: write
   contents: read
@@ -13,6 +13,7 @@ jobs:
   images:
     if: vars.AZURE_CLIENT_ID != ''
     runs-on: ubuntu-latest
+    environment: dev # OIDC subjekt repo:…:environment:dev má federaci; ref jiné větve než main ne
     env:
       ACR: acrplatformdev${{ vars.NAME_SUFFIX }}
     steps:
@@ -29,7 +30,7 @@ jobs:
           imp ghcr.io/openbao/openbao:2.7.1                            openbao:2.7.1
           imp ghcr.io/spiffe/spire-server:1.14.2                       spire-server:1.14.2
           imp ghcr.io/spiffe/spire-agent:1.14.2                        spire-agent:1.14.2
-          imp ghcr.io/agentgateway/agentgateway:1.6.0                  agentgateway:1.6.0
+          imp ghcr.io/agentgateway/agentgateway:v1.6.0                 agentgateway:1.6.0
           imp docker.io/openpolicyagent/opa:1.11.0-static              opa:1.11.0
           imp docker.io/otel/opentelemetry-collector-contrib:0.163.2  otel-collector-contrib:0.163.2
           imp docker.io/library/clickhouse:26.8                        clickhouse:26.8
@@ -43,4 +44,6 @@ jobs:
           cp tools/harness_memory_m1/memory_server.py "$B/src/harness_memory_m1/"; cp tools/harness_gateway_g1/mock_upstream.py "$B/src/harness_gateway_g1/"
           cp infra/images/app/requirements.txt infra/images/app/Dockerfile.aks "$B/"
           az acr build -r "$ACR" -t zakazka-app:p1 -t "zakazka-app:${GITHUB_SHA::7}" -f "$B/Dockerfile.aks" "$B"
+      - name: build měřicího obrazu sandboxu S1 (az acr build)
+        run: az acr build -r "$ACR" -t sandbox-s1:p1 -f infra/images/sandbox-s1/Dockerfile infra/images/sandbox-s1
       - run: az acr repository list -n "$ACR" -o table | tee -a "$GITHUB_STEP_SUMMARY"

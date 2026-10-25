@@ -10,29 +10,32 @@ spec:
   - {key: sandbox, operator: Equal, value: kata, effect: NoSchedule}
   automountServiceAccountToken: false      # žádná identita K8s v sandboxu (vzor AISI chartu)
   securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    seccompProfile: { type: RuntimeDefault }
+    seccompProfile: { type: RuntimeDefault }   # instalace nástrojů jako root v guestu (apt, npm -g); srt pak běží jako uid 1000 přes setpriv
   containers:
   - name: sandbox
-    image: node:22-bookworm
+    image: S1_IMAGE                          # dosazuje run-s1-aks.sh (ACR sandbox-s1:p1, infra/images/sandbox-s1); bez egressu nelze instalovat za běhu
     command: ["bash", "-lc"]
     args:
     - |
       set -e
-      apt-get update -qq && apt-get install -y -qq bubblewrap socat ripgrep curl >/dev/null
-      npm i -g --silent @anthropic-ai/sandbox-runtime@0.0.81
       cat > /tmp/srt.json <<'J'
       {"network":{"allowedDomains":["pkg.harness.test"],"deniedDomains":[],"parentProxy":{"http":"http://agentgateway.platform.svc:3128","https":"http://agentgateway.platform.svc:3128"}},
        "filesystem":{"denyRead":[],"allowRead":[],"allowWrite":["/tmp"],"denyWrite":[]},"enableWeakerNestedSandbox":false,"allowNestedUserNamespaces":false}
       J
-      echo "guest-kernel=$(uname -r)"
-      SRT_DEBUG=1 srt -s /tmp/srt.json -c 'tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; echo; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo' 2>/tmp/srt.err || true
-      grep -i "weaker\|EPERM\|mount" /tmp/srt.err | head -5 || true
+      chmod 644 /tmp/srt.json; echo "guest-kernel=$(uname -r)"
+      PROBE='tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo'
+      # varianta A: srt jako uid 1000 (userns + bwrap) – v Kata guestu s maskovaným /proc selže na mount proc (změřeno 2026-10-25)
+      echo "srt-uid1000=$(setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      # varianta B: srt jako root v guestu s CAP_SYS_ADMIN (hranice izolace = VM); bwrap pak mountuje proc bez userns
+      echo "srt-root=$(HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      # varianta C: srt s enableWeakerNestedSandbox (bez userns) jako uid 1000 – co zbývá z izolace
+      sed 's/"enableWeakerNestedSandbox":false/"enableWeakerNestedSandbox":true/' /tmp/srt.json > /tmp/srt-weak.json; chmod 644 /tmp/srt-weak.json
+      echo "srt-weak=$(setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp srt -s /tmp/srt-weak.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      echo "s1-done"
       sleep 3600
     resources:
       requests: { cpu: "500m", memory: "1Gi" }
       limits: { cpu: "2", memory: "2Gi" }        # Kata: limit = RAM VM
     securityContext:
       allowPrivilegeEscalation: false
-      capabilities: { drop: ["ALL"] }
+      capabilities: { add: ["SYS_ADMIN"] }   # jen pro variantu B měření; VM je hranice, ne kontejner

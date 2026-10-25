@@ -79,18 +79,19 @@ resource "azurerm_role_assignment" "deployer_aks_admin" {
 
 # --- node pool kata: Pod Sandboxing (KataVmIsolation), autoscale 0–1, taint pro pody rolí ---------------------------------------
 resource "azurerm_kubernetes_cluster_node_pool" "kata" {
-  name                  = "kata"
-  kubernetes_cluster_id = azurerm_kubernetes_cluster.aks.id
-  vm_size               = var.kata_vm_size
-  os_sku                = "AzureLinux"
-  workload_runtime      = "KataVmIsolation"
-  auto_scaling_enabled  = true
-  min_count             = 0
-  max_count             = var.kata_max_count
-  node_count            = 0 # VM až při prvním Kata podu: Poland Central 2026-10-25 vrátil AllocationFailed pro D2ads_v7 při vzniku poolu
-  node_labels           = { pool = "kata" }
-  node_taints           = ["sandbox=kata:NoSchedule"]
-  tags                  = var.tags
+  name                        = "kata"
+  kubernetes_cluster_id       = azurerm_kubernetes_cluster.aks.id
+  vm_size                     = var.kata_vm_size
+  os_sku                      = "AzureLinux"
+  workload_runtime            = "KataVmIsolation"
+  temporary_name_for_rotation = "katatmp" # změna vm_size = rotace poolu přes dočasný pool (azurerm 5)
+  auto_scaling_enabled        = true
+  min_count                   = 0
+  max_count                   = var.kata_max_count
+  node_count                  = 0 # VM až při prvním Kata podu: Poland Central 2026-10-25 vrátil AllocationFailed pro D2ads_v7 při vzniku poolu
+  node_labels                 = { pool = "kata" }
+  node_taints                 = ["sandbox=kata:NoSchedule"]
+  tags                        = var.tags
 
   lifecycle { ignore_changes = [node_count] } # řídí autoscaler
 }

@@ -51,7 +51,16 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 - Tf state obsahuje heslo PG → storage account bez veřejného blob přístupu, přístup jen identita Actions + Adam.
 
 ## Pasti (očekávané, ověří první `apply`)
-- **Kapacita Dadsv7 (změřeno 2026-10-25, Poland Central):** vznik poolu `kata` s 1 uzlem → `AllocationFailed`; pool se proto zakládá s 0 uzly
+- **Oficiální obrazy ≠ kind buildy (změřeno 2026-10-25, první Flux nasazení):** `daprio/{placement,scheduler,daprd}` mají binárku v `/` a ne v PATH
+  (`exec: "placement": executable file not found`) → command `/placement`, `/scheduler`, `/daprd`; `quay.io/keycloak` není předbuildovaný pro Postgres →
+  `start` bez `--optimized` + `KC_DB=postgres` (+ `KC_HEALTH_ENABLED`); `ghcr.io/spiffe/*` běží jako uid 1000 → server `fsGroup: 1000` (PVC data_dir),
+  agent `runAsUser: 0` (hostPath socket). Všechno v overlay `aks`, base zůstává pro kind.
+- **StatefulSet s podem v CrashLoopBackOff rolling update nenahradí** (kubernetes/kubernetes#67250): Flux změnu aplikuje, pod zůstává na staré revizi.
+  Workflow `measure` pody uvázlé na `currentRevision != updateRevision` smaže; StatefulSet si je znovu vytvoří.
+- **Ladění overlay bez merge:** `infra` má vstup `gitops_branch` → Flux sleduje feature větev; push do `main` (bez vstupu) ho vrátí na `main`.
+- **Workflow z feature větve** potřebuje `environment: dev` (OIDC subjekt `environment:dev` má federaci, `ref:refs/heads/<větev>` ne).
+- **Workflow se v GitHubu registruje až z `main`** (nebo prvním během): `workflow_dispatch` na soubor, který je jen ve větvi, vrací 404.
+- **Kapacita Dadsv7 (změřeno 2026-10-25, Poland Central):** `az vm list-skus`: D2ads_v7/D4ads_v7 jen zóna 1, DSv5/DDSv5 zóny 1–3; autoscaler `provisioning-state-failed` i po hodinách → Kata pool přepnut na `Standard_D4s_v5` (kvóta DSv5 8 vCPU, `az quota create` schváleno automaticky za ~1 min). vznik poolu `kata` s 1 uzlem → `AllocationFailed`; pool se proto zakládá s 0 uzly
   a VM alokuje autoscaler při prvním Kata podu (když selže i tam → `TF_VAR_kata_vm_size=Standard_D4s_v5`, kvóta rodiny DSv5).
 - **Zóna Flexible Serveru:** bez `zone` v konfiguraci Azure zónu přidělí a Terraform ji chce měnit → `lifecycle.ignore_changes = [zone]`.
 - **Jedna operace na cluster (změřeno 2026-10-25):** Terraform tvoří node pool `kata` a Flux extension paralelně → `409 OperationNotAllowed /

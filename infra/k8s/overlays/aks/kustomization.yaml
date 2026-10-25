@@ -43,6 +43,7 @@ patches:
 - target: {kind: Deployment, name: zakazka}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/1/image, value: "${ACR_LOGIN_SERVER}/daprd:1.18.9"}
+    - {op: replace, path: /spec/template/spec/containers/1/command/0, value: /daprd}
 - target: {kind: StatefulSet, name: spire-server}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-server:1.14.2"}
@@ -67,3 +68,23 @@ patches:
 - target: {kind: Deployment, name: memory}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/env/2/value, value: "postgresql://memory_app:memory_app@postgres:5432/memory?sslmode=require"}
+# Oficiální obrazy se liší od kind buildů (měřeno 2026-10-25, první Flux nasazení): daprio/* mají binárku v / (ne v PATH),
+# quay.io/keycloak není předbuildovaný pro Postgres (start bez --optimized + KC_DB), ghcr.io/spiffe obrazy běží jako uid 1000
+# (PVC data_dir potřebuje fsGroup, hostPath socket agenta root).
+- target: {kind: StatefulSet, name: placement}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/command/0, value: /placement}
+- target: {kind: StatefulSet, name: scheduler}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/command/0, value: /scheduler}
+- target: {kind: Deployment, name: keycloak}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/args, value: ["start", "--import-realm", "--http-enabled=true", "--hostname-strict=false", "--proxy-headers=xforwarded"]}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_DB, value: postgres}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_HEALTH_ENABLED, value: "true"}}
+- target: {kind: StatefulSet, name: spire-server}
+  patch: |
+    - {op: add, path: /spec/template/spec/securityContext, value: {fsGroup: 1000, runAsUser: 1000, runAsNonRoot: true}}
+- target: {kind: DaemonSet, name: spire-agent}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/securityContext, value: {runAsUser: 0}}
