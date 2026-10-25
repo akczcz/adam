@@ -88,7 +88,9 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
                                              "volumeMounts": [{"name": "spire-agent-config", "mountPath": "/run/spire/config", "readOnly": True}, {"name": "spire-sockets", "mountPath": "/run/spire/sockets"},
                                                               {"name": "spire-data", "mountPath": "/run/spire/data"}, {"name": "spire-token", "mountPath": "/var/run/secrets/tokens", "readOnly": True}],
                                              "resources": {"requests": {"cpu": "20m", "memory": "32Mi"}, "limits": {"memory": "128Mi"}}}]}
-        runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "spire-sockets", "emptyDir": {}}, {"name": "spire-data", "emptyDir": {}},
+        # Kata: emptyDir bez media je adresář hostitele přes virtiofs – unix socket na něm nejde (agent se atestoval, workload „failed to connect“, P23c 2026-10-25);
+        # medium Memory = tmpfs uvnitř guestu
+        runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "spire-sockets", "emptyDir": {"medium": "Memory", "sizeLimit": "4Mi"}}, {"name": "spire-data", "emptyDir": {"medium": "Memory", "sizeLimit": "16Mi"}},
                                                              {"name": "spire-agent-config", "configMap": {"name": os.environ.get("P0_ROLE_SPIRE_AGENT_CONFIG", "spire-agent-pod")}},
                                                              {"name": "spire-token", "projected": {"sources": [{"serviceAccountToken": {"path": "spire-agent", "expirationSeconds": 7200, "audience": "spire-server"}}]}}]
     tpl = _template(role); overrides = []
