@@ -51,6 +51,8 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 - Tf state obsahuje heslo PG → storage account bez veřejného blob přístupu, přístup jen identita Actions + Adam.
 
 ## Pasti (očekávané, ověří první `apply`)
+- **Jedna operace na cluster (změřeno 2026-10-25):** Terraform tvoří node pool `kata` a Flux extension paralelně → `409 OperationNotAllowed /
+  AnotherOperationInProgress`; extension proto `depends_on` node pool. Flux extension vzniká ~17 min.
 - **Kvóty vCPU (změřeno 2026-10-25, Poland Central):** nová subscription má pro rodiny DASv5/DADSv7 kvótu 0 → `ErrCode_InsufficientVCPUQuota`.
   Navýšení: `az provider register -n Microsoft.Quota`, `az quota create --resource-name standardDASv5Family … --limit-object value=8` (DADSv7 → 4);
   identita Actions na to nemá práva (Contributor jen na RG) – buď Adam ručně, nebo role „Quota Request Operator“ na subscription.
