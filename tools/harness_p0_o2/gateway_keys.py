@@ -46,6 +46,18 @@ def _sub(v, zid):
     return v
 
 
+def _probe_targets():
+    """URL všech replik gateway (headless služba → A záznamy podů); když DNS nic nevrátí, aspoň ClusterIP URL."""
+    import socket
+    from urllib.parse import urlparse
+    base = os.environ.get("P0_LLM_URL", "http://agentgateway:4100").rstrip("/"); u = urlparse(base)
+    headless = os.environ.get("P0_GATEWAY_HEADLESS", "agentgateway-headless")
+    if "." in (u.hostname or "") and not headless.count("."): headless = headless + "." + u.hostname.split(".", 1)[1]   # agentgateway.platform-data.svc → agentgateway-headless.platform-data.svc
+    try: ips = sorted({ai[4][0] for ai in socket.getaddrinfo(headless, u.port or 4100, type=socket.SOCK_STREAM)})
+    except OSError: ips = []
+    return [f"http://{ip}:{u.port or 4100}" for ip in ips] or [base]
+
+
 def issue(zid, ledger=None):
     """Vrátí {role: klíč} pro zakázku; vydá je, pokud ještě nejsou (idempotentní přes Secret)."""
     with _LOCK:
@@ -73,17 +85,22 @@ def issue(zid, ledger=None):
                 if "409" not in str(e) or attempt == 5: raise
                 time.sleep(0.5)
         role_pod.k8s("POST", f"/api/v1/namespaces/{ns}/secrets", {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": sname, "labels": {"app": "zakazka-keys", "platform.zakazka": _safe(zid)}}, "type": "Opaque", "stringData": {"keys.json": json.dumps(keys)}})
-        # propagace: ConfigMap volume (kubelet sync) → sidecar merge → hot reload; sonda s klíčem první role
-        probe_role = next(iter(keys)); wait_s = None; status = None
-        url = os.environ.get("P0_LLM_URL", "http://agentgateway:4100").rstrip("/") + "/v1/messages"
+        # propagace: ConfigMap volume (kubelet sync, per pod nezávisle) → sidecar merge → hot reload. Sonda s klíčem první role proti KAŽDÉ replice
+        # (headless služba → IP podů); přes ClusterIP by sonda trefila jednu repliku a role pak dostala 401 z druhé (P21b 2026-10-25).
+        probe_role = next(iter(keys)); t1 = time.time()
+        targets = _probe_targets()
         body = {"model": os.environ.get("P0_MODEL", "claude-haiku-4-5"), "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]}
-        t1 = time.time()
-        while time.time() - t1 < float(os.environ.get("P0_GATEWAY_KEYS_WAIT_S", "240")):
-            try:
-                r = httpx.post(url, json=body, headers={"x-api-key": keys[probe_role], "anthropic-version": "2023-06-01", "x-zakazka": zid}, timeout=20); status = r.status_code
-                if status != 401: wait_s = round(time.time() - t1, 1); break
-            except Exception: status = "conn"
-            time.sleep(3)
+        status = {t: None for t in targets}; done = {}
+        while time.time() - t1 < float(os.environ.get("P0_GATEWAY_KEYS_WAIT_S", "240")) and len(done) < len(targets):
+            for t in targets:
+                if t in done: continue
+                try:
+                    r = httpx.post(f"{t}/v1/messages", json=body, headers={"x-api-key": keys[probe_role], "anthropic-version": "2023-06-01", "x-zakazka": zid}, timeout=20); status[t] = r.status_code
+                    if r.status_code != 401: done[t] = round(time.time() - t1, 1)
+                except Exception: status[t] = "conn"
+            if len(done) < len(targets): time.sleep(3)
+        wait_s = max(done.values()) if len(done) == len(targets) else None
         if ledger: ledger("GATEWAY_KEYS_ISSUED", zakazka=zid, roles=sorted(keys), hashes=[e["keyHash"][7:19] for e in entries], configmap_rv=cm.get("metadata", {}).get("resourceVersion"),
-                          secret=sname, propagation_s=wait_s, probe_status=status, total_s=round(time.time() - t0, 1), budgets_block_24h={e["metadata"]["role"]: next((b["limit"]["amount"] for b in e["budgets"] if b["name"].endswith("24h-block")), None) for e in entries})
+                          secret=sname, propagation_s=wait_s, probe_status=200 if len(done) == len(targets) and all(v == 200 for v in status.values()) else status, replicas_probed=len(targets), propagation_by_replica=done,
+                          total_s=round(time.time() - t0, 1), budgets_block_24h={e["metadata"]["role"]: next((b["limit"]["amount"] for b in e["budgets"] if b["name"].endswith("24h-block")), None) for e in entries})
         _CACHE[zid] = keys; return keys

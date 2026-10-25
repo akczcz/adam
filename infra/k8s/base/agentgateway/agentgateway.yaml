@@ -58,6 +58,19 @@ spec:
   - {name: llm, port: 4100, targetPort: 4100}
   - {name: stats, port: 19002, targetPort: 19002}
 ---
+# Headless služba: DNS vrací IP všech replik – aplikace po vydání klíčů (gateway_keys.py) sonduje každou repliku zvlášť, protože ConfigMap
+# volume se do podů propaguje nezávisle (P21b 2026-10-25: sonda přes ClusterIP trefila aktualizovanou repliku, role pak 401 z té druhé)
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentgateway-headless
+  labels: {app: agentgateway}
+spec:
+  clusterIP: None
+  selector: {app: agentgateway}
+  ports:
+  - {name: llm, port: 4100, targetPort: 4100}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
