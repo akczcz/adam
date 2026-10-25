@@ -655,6 +655,14 @@ def step_p2_1(a, rep, env):
     cfg_git = {n: cm_data(n, rendered) for n in ("rolegen-build", "agentgateway-config")}
     cfg_cluster = {n: (kj("-n", NS, "get", "configmap", n).get("data") or None) for n in ("rolegen-build", "agentgateway-config")}
     config_from_git = {n: cfg_git[n] is not None and cfg_git[n] == cfg_cluster[n] for n in cfg_git}
+    import difflib
+    config_diff = {}
+    for n in cfg_git:
+        g, c = cfg_git[n] or {}, cfg_cluster[n] or {}
+        for k in sorted(set(g) | set(c)):
+            if g.get(k) != c.get(k):
+                d = [l for l in difflib.unified_diff((g.get(k) or "").splitlines(), (c.get(k) or "").splitlines(), "git", "cluster", lineterm="", n=0) if not l.startswith(("---", "+++"))]
+                config_diff[f"{n}/{k}"] = d[:6] if d else "jen whitespace/konec řádku"
     gw_cfg = _y.safe_load((cfg_cluster["agentgateway-config"] or {}).get("config.yaml") or "{}")
     gw_env = {e["name"]: e.get("value") for e in (kj("-n", NS, "get", "deploy", "agentgateway").get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("env", [])}
     sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "zakazka-secrets",
@@ -681,7 +689,7 @@ def step_p2_1(a, rep, env):
         with psycopg.connect(dsn("dapr_state"), autocommit=True, connect_timeout=10) as c:
             dapr_tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
         gw_ok = all(config_from_git.values()) and gw_cfg.get("llm", {}).get("models", [{}])[0].get("params", {}).get("baseUrl") == "$LLM_UPSTREAM_URL" and "apiKey" in (gw_cfg.get("llm", {}).get("policies") or {}) and "apikeys-template.yaml" in (cfg_cluster["rolegen-build"] or {}) and any(k.startswith("srt-") for k in (cfg_cluster["rolegen-build"] or {}))
-        rep.add("P21a", "AKS: Flux kustomizations platform + roles Ready na HEAD; ConfigMapy agentgateway-config a rolegen-build v clusteru == render infra/k8s/overlays/aks z HEAD (konfigurace z Gitu, harness nic nerenderuje); gateway má apiKey policy a upstream z env LLM_UPSTREAM_URL; rolegen-build nese apikeys-template a srt; platforma vč. mock-upstream Ready; OpenBao init/unseal/transit; schéma paměti M1 na Flexible Serveru; harness dodal jen tajemství", "PASS" if all(v == "True" for v in flux.values()) and gw_ok and all(rolls.values()) and all(v == 200 for v in health.values()) and dapr_tables else "FAIL", {"flux": flux, "flux_rev": flux_rev, "config_from_git": config_from_git, "gateway_upstream_env": gw_env.get("LLM_UPSTREAM_URL"), "rolegen_build_keys": sorted(cfg_cluster["rolegen-build"] or {}), "rollouts": rolls, "health": health, "pg": {"host": pg_host, "version": pg_ver, "via": pg_via}, "dapr_state_tables": dapr_tables, "rollout_s": round(time.time() - t0, 1)})
+        rep.add("P21a", "AKS: Flux kustomizations platform + roles Ready na HEAD; ConfigMapy agentgateway-config a rolegen-build v clusteru == render infra/k8s/overlays/aks z HEAD (konfigurace z Gitu, harness nic nerenderuje); gateway má apiKey policy a upstream z env LLM_UPSTREAM_URL; rolegen-build nese apikeys-template a srt; platforma vč. mock-upstream Ready; OpenBao init/unseal/transit; schéma paměti M1 na Flexible Serveru; harness dodal jen tajemství", "PASS" if all(v == "True" for v in flux.values()) and gw_ok and all(rolls.values()) and all(v == 200 for v in health.values()) and dapr_tables else "FAIL", {"flux": flux, "flux_rev": flux_rev, "config_from_git": config_from_git, "config_diff": config_diff, "gateway_upstream_env": gw_env.get("LLM_UPSTREAM_URL"), "rolegen_build_keys": sorted(cfg_cluster["rolegen-build"] or {}), "rollouts": rolls, "health": health, "pg": {"host": pg_host, "version": pg_ver, "via": pg_via}, "dapr_state_tables": dapr_tables, "rollout_s": round(time.time() - t0, 1)})
 
         def led(): return http("GET", f"{APP}/_debug/ledger", timeout=20).json()
         def hash_of(zid, typ):
