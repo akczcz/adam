@@ -622,8 +622,14 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
         time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
+    kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620)   # P2-3: nový config (seal plugin) → pod se restartuje
     pf_bao = PortForward(a, "openbao", 18200, 8200); BAO = "http://127.0.0.1:18200"
-    seal0 = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json(); seal_type = seal0.get("type")
+    seal0 = None
+    for _ in range(40):
+        try: seal0 = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json(); break
+        except Exception: time.sleep(3); pf_bao.start()
+    assert seal0 is not None, "OpenBao neodpovídá na seal-status (pod padá? kubectl -n platform-data logs openbao-0)"
+    seal_type = seal0.get("type")
     st = httpx.get(f"{BAO}/v1/sys/init", timeout=10).json()
     if not st.get("initialized"):
         body = {"recovery_shares": 1, "recovery_threshold": 1} if seal_type and seal_type != "shamir" else {"secret_shares": 1, "secret_threshold": 1}   # auto-unseal (P2-3): recovery klíče místo unseal klíčů

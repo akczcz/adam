@@ -17,7 +17,14 @@ data:
       path    = "/openbao/data"
       node_id = "openbao-0"
     }
-    seal "azurekeyvault" {}           # vault_name/key_name/tenant/auth z env – klíč openbao-unseal v Key Vaultu, identita podu (UAMI)
+    # OpenBao 2.7 už nemá cloud KMS sealy zabudované (changelog 2.7.0) → externí KMS plugin openbao-plugin-kms-azure (openbao-plugins,
+    # release kms-azure-v0.1.0), binárku stahuje init kontejner kms-plugin do emptyDir; jméno seal stanzy = jméno pluginu
+    plugin_directory = "/openbao/plugins"
+    plugin "kms" "azurekeyvault" {
+      command = "openbao-plugin-kms-azure"
+      version = "v0.1.0"
+    }
+    seal "azurekeyvault" {}           # vault_name/key_name/tenant/auth z env (VAULT_AZUREKEYVAULT_*, AZURE_* z webhooku) – klíč openbao-unseal, identita podu (UAMI)
     audit "stdout" {
       type    = "file"
       path    = "file/"
