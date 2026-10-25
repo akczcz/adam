@@ -40,6 +40,16 @@ Tvrzení (krok p1-5 – workflow, paměť, bridge v clusteru):
   P15f  Bridge: /schvaluji od bota a cizího člověka odmítnuto, od člověka z allow-listu předáno; review cizího odmítnuta
   P15g  Pody, restarty – INFO
 
+--step p1-6 (AKS přes kubectl port-forward, bez NodePortů; role = Kata pody v ns platform-roles – role_pod.py):
+  P16a  Flux Ready; platforma (vč. mock-upstream v clusteru) Ready; OpenBao init do Secretu openbao-init + unseal; paměť na Flexible Serveru
+  P16b  Zakázka end-to-end jako P15b, role běží jako pody: 4× ROLE_POD Succeeded s výsledkem, AGENT_RUN z podu (via=pod), Dokonceno
+  P16c  Izolace podů rolí: uzel poolu kata, RuntimeClass kata-vm-isolation, uid 1000, bez SA tokenu, srt v podu, po běhu uklizeno
+  P16d  Egress podu role: internet blokován (NetworkPolicy), gateway/paměť/aplikace průchozí
+  P16e  Časy podu role: schedule (vč. scale-up poolu kata z 0), start, běh – INFO
+  P16f  Paměť: fakta rolí z podů jako proposed, člověk je vidí
+  P16g  FinOps: budget_usage nese útratu klíčů role × zakázka P1-6 (requesty z podů přes clusterovou gateway)
+  P16h  Pody, uzly – INFO
+
 Spuštění: viz README. Vyžaduje kubectl (KUBECTL), běžící kind cluster `platform` (infra/kind/), OPA_BIN, AGENTGATEWAY_BIN,
 venvy harnessů M1 a O1. `--create-kind` postaví obraz uzlu (runc obal), cluster a nahraje obrazy (docker daemon nutný).
 """
@@ -554,19 +564,213 @@ def step_p1_5(a, rep, env):
         except Exception: mock.kill()
 
 
+class PortForward:
+    """kubectl port-forward na Service (AKS bez NodePortů); při pádu (restart podu) se znovu spustí."""
+    def __init__(self, a, svc, local, remote, ns=NS):
+        self.a, self.svc, self.local, self.remote, self.ns, self.p = a, svc, local, remote, ns, None
+        self.start()
+    def start(self):
+        if self.p and self.p.poll() is None: self.p.terminate()
+        self.p = subprocess.Popen([self.a.kubectl, "--context", self.a.context, "-n", self.ns, "port-forward", f"svc/{self.svc}", f"{self.local}:{self.remote}"], stdout=subprocess.DEVNULL, stderr=open(LOGS / f"pf-{self.svc}.log", "ab"))
+        import socket as _s
+        for _ in range(60):
+            with _s.socket() as so:
+                if so.connect_ex(("127.0.0.1", self.local)) == 0: return True
+            time.sleep(0.5)
+        return False
+    def stop(self):
+        if self.p: self.p.terminate()
+
+
+def step_p1_6(a, rep, env):
+    """P1-6 na AKS: tytéž checky jako P1-5 (zakázka přes clusterovou platformu), ale role běží jako Kata pody; měří se izolace, egress a časy podů."""
+    import psycopg, jwt, hashlib as _h, base64 as _b
+    O2 = T / "harness_p0_o2"; M1 = T / "harness_memory_m1"
+    o2 = __import__("importlib.util").util.spec_from_file_location("o2h", O2 / "harness.py"); o2m = __import__("importlib.util").util.module_from_spec(o2); o2.loader.exec_module(o2m)
+    m1 = __import__("importlib.util").util.spec_from_file_location("m1h", M1 / "harness.py"); m1m = __import__("importlib.util").util.module_from_spec(m1); m1.loader.exec_module(m1m)
+    RNS = "platform-roles"; t_all = time.time()
+    def kj(*args):
+        r = kubectl(a, *args, "-o", "json"); return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
+    def secret(name, key, ns=NS):
+        v = kubectl(a, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}").stdout.strip(); return _b.b64decode(v).decode() if v else None
+    # Flux: obě kustomizations Ready a mock-upstream (nový objekt overlay) existuje
+    t0 = time.time(); flux = {}
+    while time.time() - t0 < 420:
+        ks = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
+        flux = {k["metadata"]["name"]: next((c["status"] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks}
+        if flux and all(v == "True" for v in flux.values()) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
+        time.sleep(10)
+    flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}
+    # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
+    pf_bao = PortForward(a, "openbao", 18200, 8200); BAO = "http://127.0.0.1:18200"
+    st = httpx.get(f"{BAO}/v1/sys/init", timeout=10).json()
+    if not st.get("initialized"):
+        init = httpx.post(f"{BAO}/v1/sys/init", json={"secret_shares": 1, "secret_threshold": 1}, timeout=30).json()
+        sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "openbao-init", f"--from-literal=init.json={json.dumps(init)}", "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
+        subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
+    init_s = secret("openbao-init", "init\\.json"); assert init_s, "OpenBao je inicializovaný, ale Secret openbao-init chybí – smazat PVC data-openbao-0 a pod openbao-0, nebo Secret doplnit"
+    init = json.loads(init_s)
+    if httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json().get("sealed"): httpx.post(f"{BAO}/v1/sys/unseal", json={"key": init["keys_base64"][0]}, timeout=30)
+    o2m.BAO = BAO; bao_app = o2m.bao_setup(init["root_token"], LOGS / "openbao-audit-aks.log")
+    # Postgres = Flexible Server: admin `platform`, heslo ze Secretu postgres-auth (Flux substitute), TLS; z runneru přímo (pravidlo Allow Azure services),
+    # jinak přes socat pod + port-forward
+    pg_host = kubectl(a, "-n", NS, "get", "svc", "postgres", "-o", "jsonpath={.spec.externalName}").stdout.strip(); pg_pw = secret("postgres-auth", "POSTGRES_PASSWORD")
+    assert pg_host and pg_pw, "chybí svc postgres (ExternalName) nebo Secret postgres-auth"
+    pg_via = "direct"; pf_pg = None
+    def dsn(db, host=pg_host, port=5432): return f"postgresql://platform:{pg_pw}@{host}:{port}/{db}?sslmode=require"
+    try:
+        psycopg.connect(dsn("memory"), connect_timeout=10).close()
+    except Exception as e:
+        pg_via = f"socat-forward ({type(e).__name__})"
+        kubectl(a, "-n", NS, "delete", "pod", "pgfwd", "--ignore-not-found", "--wait=true")
+        assert a.acr, "přímé spojení na Flexible Server selhalo a chybí --acr pro socat pod"
+        kubectl(a, "-n", NS, "run", "pgfwd", f"--image={a.acr}/sandbox-s1:p1", "--restart=Never", "--", "socat", "TCP-LISTEN:5432,fork,reuseaddr", f"TCP:{pg_host}:5432")
+        kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod/pgfwd", "--timeout=120s", timeout=130)
+        pf_pg = subprocess.Popen([a.kubectl, "--context", a.context, "-n", NS, "port-forward", "pod/pgfwd", "15432:5432"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(3)
+        dsn = lambda db, host="127.0.0.1", port=15432: f"postgresql://platform:{pg_pw}@{host}:{port}/{db}?sslmode=require"
+    with psycopg.connect(dsn("memory"), autocommit=True, connect_timeout=10) as c:
+        c.execute(m1m.SCHEMA); c.execute("ALTER ROLE memory_app PASSWORD 'memory_app'")
+        txt = "ACME konvence: každý endpoint má test a vrací JSON; splatnost faktur 30 dní."
+        c.execute("""INSERT INTO memory_records (id,tenant_id,scope,type,content,content_hash,sources,created_by,created_at,verification,confidence,valid_from,status,sensitivity,pipeline_version,embedding)
+                     VALUES ('seed-acme','acme','zakaznik','fakt',%s,'h','[{"ref":"doc://acme/konvence","kind":"document"}]','{"sub":"seed"}',now(),'{"method":"human","by":"adam"}',0.95,now(),'approved','internal','seed',%s::vector)
+                     ON CONFLICT (id) DO NOTHING""", (txt, m1m._embed_sql(txt)))
+        pg_ver = c.execute("SHOW server_version").fetchone()[0]
+    # objekty harnessu (Flux je zakládá jen jednou – ssa: IfNotPresent): gateway config s klíči P1-6 a upstream mock v clusteru, rolegen build vč. srt, tajemství aplikace
+    keys = render_gateway(a, ["P1-6"], mock_upstream="http://mock-upstream:9777/v1")
+    rb = LOGS / "rolegen-P1-6"
+    srt_files = [f"--from-file=srt-{f.name}={f}" for f in (rb / "srt").glob("*.json")] if (rb / "srt").exists() else []
+    cm1 = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "configmap", "rolegen-build", *[f"--from-file={f}" for f in (rb / "agent_sdk").glob("*.json")], *srt_files, f"--from-file=roles.json={rb / 'registry/roles.json'}", "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
+    subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=cm1, text=True, capture_output=True)
+    sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "zakazka-secrets",
+                          "--from-literal=P0_ROLE_CLIENT_SECRETS=" + json.dumps({r: f"p0-{r}-secret" for r in ROLE_CLIENTS}), f"--from-literal=P0_BAO_TOKEN={bao_app}",
+                          "--from-literal=P0_ROLE_KEYS=" + json.dumps({"*": keys["P1-6"]}), "--from-literal=P0_API_KEY=sk-ant-harness-mock", "--from-literal=BRIDGE_WEBHOOK_SECRET=bridge-webhook-secret",
+                          "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
+    subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
+    kubectl(a, "-n", NS, "rollout", "restart", "deploy/zakazka", "deploy/memory", "deploy/bridge", "deploy/mock-github")
+    t0 = time.time()
+    rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=600s", timeout=620).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/agentgateway", "deployment/mock-upstream", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
+    pfs = {n: PortForward(a, n, lp, rp) for n, lp, rp in (("zakazka", 18010, 8010), ("memory", 19900, 9900), ("mock-github", 19801, 9801), ("bridge", 19802, 9802), ("keycloak", 18080, 8080))}
+    APP, MEM, GHM, GHS, KC = "http://127.0.0.1:18010", "http://127.0.0.1:19900", "http://127.0.0.1:19801/repos/akczcz/adam", "http://127.0.0.1:19801/_debug/state", "http://127.0.0.1:18080"
+    def http(method, url, **kw):
+        for i in range(3):
+            try: return httpx.request(method, url, **kw)
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError):
+                if i == 2: raise
+                for pf in pfs.values(): pf.start()
+                time.sleep(2)
+    try:
+        health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
+        with psycopg.connect(dsn("dapr_state"), autocommit=True, connect_timeout=10) as c:
+            dapr_tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
+        rep.add("P16a", "AKS: Flux kustomizations platform + roles Ready; platforma vč. mock-upstream v clusteru Ready; OpenBao init (klíče v Secretu openbao-init) + unseal + transit; schéma paměti M1 a seed na Flexible Serveru (admin platform, TLS); gateway config, rolegen build (vč. srt) a tajemství aplikace z harnessu", "PASS" if all(v == "True" for v in flux.values()) and all(rolls.values()) and all(v == 200 for v in health.values()) and dapr_tables else "FAIL", {"flux": flux, "flux_rev": flux_rev, "rollouts": rolls, "health": health, "pg": {"host": pg_host, "version": pg_ver, "via": pg_via}, "dapr_state_tables": dapr_tables, "rollout_s": round(time.time() - t0, 1)})
+
+        def led(): return http("GET", f"{APP}/_debug/ledger", timeout=20).json()
+        def hash_of(zid, typ):
+            for e in reversed(led()):
+                if e.get("kind") == "HANDOFF" and e.get("zakazka") == zid and str(e.get("artifact", "")).startswith(typ): return e["hash"]
+        def wait_handoff(zid, typ, timeout=900):
+            t = time.time()
+            while time.time() - t < timeout:
+                h = hash_of(zid, typ)
+                if h: return h
+                time.sleep(3)
+        def pub(zid, kind, timeout=1200):
+            t = time.time()
+            while time.time() - t < timeout:
+                e = next((e for e in led() if e["kind"] == "PUBLISHED" and e["zakazka"] == zid and e.get("publish_kind") == kind), None)
+                if e: return e
+                time.sleep(3)
+        def status(zid):
+            r = http("GET", f"{APP}/zakazky/{zid}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+        def wait_status(zid, want, timeout=300):
+            t = time.time()
+            while time.time() - t < timeout:
+                st = status(zid)
+                if st.get("status") in want: return st
+                time.sleep(2)
+            return status(zid)
+        def approve(zid, bod, hh): http("POST", f"{APP}/zakazky/{zid}/approve/{bod}", json={"by": "adam", "by_kind": "human", "artifact_hash": hh, "exp_s": 86400}, timeout=15)
+        def gh_post(path, payload, user): return http("POST", f"{GHM}{path}", json=payload, headers={"X-Mock-User": user}, timeout=15).json()
+
+        # P16b – zakázka end-to-end, role jako pody (první pod čeká na scale-up poolu kata z 0 → dlouhé timeouty)
+        run_tag = time.strftime("%H%M%S"); zid = f"P16-{run_tag}-1"; t1 = time.time()
+        http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS a role běžely jako Kata pody.", "hitl_timeout_s": 7200}, timeout=15)
+        issue = pub(zid, "issue"); assert issue, f"issue nebylo publikováno; ledger: {[(e['kind'], e.get('role'), e.get('error') or e.get('phase')) for e in led() if e.get('zakazka') == zid][-8:]}"
+        gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "stranger")
+        time.sleep(5); adr_early = hash_of(zid, "adr://")
+        gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji – zadání odpovídá"}, "adam")
+        adr = wait_handoff(zid, "adr://", 900); assert adr, "Architekt nedodal ADR"
+        approve(zid, "H2", adr)
+        pr = pub(zid, "pull_request", 1500); assert pr, "PR nebyl publikován"
+        wait_handoff(zid, "review://", 900)
+        gh_post(f"/pulls/{pr['number']}/reviews", {"event": "APPROVE", "commit_id": pr["head_sha"], "body": "LGTM"}, "adam")
+        t = time.time(); merged = False
+        while time.time() - t < 180 and not merged:
+            merged = http("GET", GHS, timeout=10).json()["pulls"][str(pr["number"])]["merged"]; time.sleep(2)
+        approve(zid, "H5", hash_of(zid, "pr://")); st = wait_status(zid, {"COMPLETED", "FAILED"}, 300)
+        L = led(); runs = {e["role"]: e for e in L if e["kind"] == "AGENT_RUN" and e["zakazka"] == zid}
+        pods_led = {e["role"]: e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zid}
+        pod_err = [e for e in L if e["kind"] == "ROLE_POD_ERROR" and e["zakazka"] == zid]
+        mem_calls = [e for e in L if e["kind"] == "TOOL" and e["zakazka"] == zid and e["tool"] in ("search_memory", "create_memory")]
+        signs = [e for e in L if e["kind"] == "SIGN" and e["zakazka"] == zid]
+        ok_pods = set(pods_led) == set(ROLE_CLIENTS) and all(p.get("phase") == "Succeeded" and p.get("result_received") for p in pods_led.values())
+        rep.add("P16b", "Zakázka na AKS end-to-end přes GitHub HITL (mock GitHub v clusteru): issue → /schvaluji → ADR → H2 → PR → review → merge → H5 → Dokonceno; 4 role jako pody v ns platform-roles (ROLE_POD Succeeded s výsledkem), AGENT_RUN z podu přeposlán do ledgeru aplikace (via=pod), paměť 200, approval tokeny z OpenBao", "PASS" if (st.get("output") or {}).get("stav") == "Dokonceno" and merged and not adr_early and set(runs) == set(ROLE_CLIENTS) and not any(r.get("error") for r in runs.values()) and all(r.get("via") == "pod" for r in runs.values()) and ok_pods and not pod_err and mem_calls and all(c.get("http") == 200 for c in mem_calls) and signs and all(s["backend"] == "openbao-transit" for s in signs) else "FAIL", {"output": st.get("output"), "merged_in_mock_github": merged, "issue": issue.get("number"), "pr": pr.get("number"), "roles": {k: {"tools": r.get("tool_uses"), "error": r.get("error"), "cost_usd": r.get("cost_usd"), "via": r.get("via")} for k, r in runs.items()}, "pods": {k: {"phase": p.get("phase"), "exit": p.get("exit_code"), "result": p.get("result_received"), "log_tail": p.get("log_tail")} for k, p in pods_led.items()}, "pod_errors": [e.get("error") for e in pod_err][:3], "memory_calls_200": sum(1 for c in mem_calls if c.get("http") == 200), "signs": len(signs), "wall_s": round(time.time() - t1, 1)})
+
+        # P16c – izolace podů rolí
+        nodes = {n["metadata"]["name"]: n["metadata"]["labels"].get("pool") for n in kj("get", "nodes").get("items", [])}
+        left = [p["metadata"]["name"] for p in kj("-n", RNS, "get", "pods").get("items", [])]; left_sec = [s["metadata"]["name"] for s in kj("-n", RNS, "get", "secrets").get("items", []) if s["metadata"]["name"].startswith("role-")]
+        iso = {k: {"node": p.get("node"), "pool": nodes.get(p.get("node")), "runtime_class": p.get("runtime_class"), "uid": p.get("pod_uid"), "run_as_user": p.get("run_as_user"), "automount_sa": p.get("automount_sa"), "srt": p.get("pod_srt")} for k, p in pods_led.items()}
+        rep.add("P16c", "Izolace podů rolí: každý pod role na uzlu poolu kata (autoscaler z 0), RuntimeClass kata-vm-isolation, běží jako uid 1000 bez SA tokenu, srt (weaker nested sandbox) v podu k dispozici; po běhu pod i Secret smazány", "PASS" if pods_led and all(v["pool"] == "kata" and v["runtime_class"] == "kata-vm-isolation" and v["uid"] == 1000 and v["run_as_user"] == 1000 and v["automount_sa"] is False and v["srt"] not in (None, "none") for v in iso.values()) and not left and not left_sec else "FAIL", {"pods": iso, "left_pods": left, "left_secrets": left_sec, "kata_nodes": [n for n, p in nodes.items() if p == "kata"]})
+
+        # P16d – egress
+        eg = {k: p.get("egress_probe") for k, p in pods_led.items()}
+        def blocked(r): return bool(r) and r.get("result") != "open"
+        ok_eg = bool(eg) and all(e and blocked(e.get("internet_1.1.1.1:443")) and blocked(e.get("internet_dns_github.com:443")) and all((e.get(n) or {}).get("result") == "open" for n in ("memory", "gateway", "app")) for e in eg.values())
+        rep.add("P16d", "Egress podu role (NetworkPolicy ns platform-roles): internet (1.1.1.1:443, github.com:443) blokován, agentgateway, paměť a aplikace zakázky průchozí – model jen přes gateway", "PASS" if ok_eg else "FAIL", {"probe": eg})
+
+        # P16e – časy
+        tm = {k: {"schedule_s": p.get("t_schedule_s"), "start_s": p.get("t_start_s"), "run_s": p.get("t_run_s"), "total_s": p.get("t_total_s")} for k, p in pods_led.items()}
+        rep.add("P16e", "Časy podů rolí: schedule = čekání na uzel (první role zahrnuje scale-up poolu kata z 0), start = tah obrazu + boot Kata VM, run = běh role", "INFO", tm)
+
+        # P16f – paměť
+        human = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "harness-human", "username": "adam", "password": "adam"}, timeout=15); assert human.status_code == 200, human.text[:200]
+        human = human.json()["access_token"]
+        unv = http("POST", f"{MEM}/tools/search_memory", json={"query": "ACME endpoint", "include_unverified": True, "limit": 20}, headers={"Authorization": f"Bearer {human}"}, timeout=15)
+        recs = unv.json().get("records", []) if unv.status_code == 200 else []
+        proposed = [r for r in recs if r.get("status") == "proposed" or r.get("unverified")]
+        rep.add("P16f", "Paměť na Flexible Serveru: zápisy rolí z podů (Keycloak service-account tokeny) jako proposed; člověk (password grant přes port-forward, iss KC_HOSTNAME) je vidí s include_unverified", "PASS" if unv.status_code == 200 and recs and proposed else "FAIL", {"http": unv.status_code, "records": len(recs), "proposed": len(proposed), "iss": jwt.decode(human, options={"verify_signature": False}).get("iss")})
+
+        # P16g – FinOps
+        with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c:
+            rows = c.execute("SELECT budget_id, used_amount FROM budget_usage").fetchall()
+        spend = {}
+        for role, val in keys["P1-6"].items():
+            h = _h.sha256(val.encode()).hexdigest()
+            spend[role] = next((used / 1e9 for bid, used in rows if h in bid and bid.endswith("24h-block")), 0.0)
+        rep.add("P16g", "FinOps na AKS: requesty rolí z podů šly přes clusterovou gateway s klíči role × zakázka P1-6 → budget_usage na Flexible Serveru nese útratu každé role", "PASS" if all(v > 0 for v in spend.values()) else "FAIL", {"spend_usd_by_role": spend, "total_usd": round(sum(spend.values()), 6)})
+
+        pods = kj("-n", NS, "get", "pods").get("items", [])
+        rep.add("P16h", "Pody P1-6 a uzly", "INFO", {p["metadata"]["name"]: {"image": [c["image"].split("/")[-1] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])]} for p in pods if p["metadata"]["name"].split("-")[0] in ("zakazka", "memory", "bridge", "mock", "opa", "placement", "scheduler", "agentgateway")} | {"nodes": nodes, "wall_s": round(time.time() - t_all, 1)})
+    finally:
+        for pf in pfs.values(): pf.stop()
+        pf_bao.stop()
+        if pf_pg: pf_pg.terminate(); kubectl(a, "-n", NS, "delete", "pod", "pgfwd", "--ignore-not-found", "--wait=false")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
     ap.add_argument("--kind", default=os.getenv("KIND", shutil.which("kind") or ""))
-    ap.add_argument("--context", default="kind-platform")
+    ap.add_argument("--context", default="kind-platform", help="p1-6: kontext AKS, např. aks-platform-dev-admin")
+    ap.add_argument("--acr", default=os.getenv("ACR_LOGIN_SERVER", ""), help="p1-6: login server ACR (socat pod pro Postgres, když runner nedosáhne na Flexible Server)")
     ap.add_argument("--create-kind", action="store_true", help="postavit obraz uzlu, cluster a nahrát obrazy (docker daemon)")
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not (a.kubectl and a.opa_bin and a.agentgateway_bin):
+    if not a.kubectl or (a.step != "p1-6" and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -575,7 +779,7 @@ def main():
     if a.create_kind:
         assert a.kind, "chybí KIND"
         create_kind(a, env)
-    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5}[a.step](a, rep, env)
+    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p1_6}[a.step](a, rep, env)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

@@ -98,10 +98,11 @@ patches:
     - {op: add, path: /data/P0_ARTIFACT_API, value: http://zakazka.platform-data.svc:8010}
     - {op: replace, path: /data/P0_LLM_URL, value: http://agentgateway.platform-data.svc:4100}
     - {op: replace, path: /data/P0_MEMORY_URL, value: http://memory.platform-data.svc:9900}
-# Konfiguraci gateway (klíče rolí, upstream) a tajemství aplikace vydává rolegen/harness za běhu (hot reload) – Flux je po vzniku nesmí přepisovat
+# Konfiguraci gateway (klíče rolí, upstream) a tajemství aplikace vydává rolegen/harness za běhu (hot reload): Flux objekt založí
+# s placeholdery (čerstvý cluster), ale už ho nikdy nepřepíše (ssa: IfNotPresent)
 - target: {kind: ConfigMap, name: agentgateway-config}
   patch: |
-    - {op: add, path: /metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile, value: disabled}
+    - {op: add, path: /metadata/annotations/kustomize.toolkit.fluxcd.io~1ssa, value: IfNotPresent}
 - target: {kind: Secret, name: zakazka-secrets}
   patch: |
-    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/reconcile: disabled}}
+    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/ssa: IfNotPresent}}

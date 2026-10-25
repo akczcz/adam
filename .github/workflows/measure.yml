@@ -1,5 +1,5 @@
 # Měření P1 na AKS (spouští se ručně, čte ho i Claude přes GitHub API): stav podů platformy (Flux), S1 na Katě (S1h checky),
-# výsledky jako artifact. Vyžaduje roli „Azure Kubernetes Service Cluster Admin Role“ pro identitu (Terraform, var deployer_principal_id).
+# P1-6 (rolegen bundle v CI = R1; zakázka přes cluster s rolemi jako Kata pody = harness_p1_k8s --step p1-6), výsledky jako artifact. Vyžaduje roli „Azure Kubernetes Service Cluster Admin Role“ pro identitu (Terraform, var deployer_principal_id).
 name: measure
 on:
   workflow_dispatch:
@@ -8,6 +8,10 @@ on:
         description: spustit S1 na Katě (tools/harness_sandbox_s1/aks)
         type: boolean
         default: true
+      p16:
+        description: spustit P1-6 (rolegen v CI + zakázka end-to-end s rolemi jako Kata pody; ~20–40 min, škáluje pool kata z 0)
+        type: boolean
+        default: false
 permissions:
   id-token: write
   contents: read
@@ -46,6 +50,26 @@ jobs:
           set -o pipefail
           sudo apt-get install -y -q jq >/dev/null
           RG="$RG" CLUSTER="$CLUSTER" SKU=Standard_D4s_v5 S1_IMAGE="acrplatformdev${{ vars.NAME_SUFFIX }}.azurecr.io/sandbox-s1:p1" tools/harness_sandbox_s1/aks/run-s1-aks.sh run | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@v5
+        if: inputs.p16
+        with: {python-version: "3.12"}
+      - name: R1 – rolegen bundle v CI (role → ClaudeAgentOptions, srt settings, gateway klíče, k8s pod, registr)
+        if: inputs.p16
+        run: |
+          pip install -q pyyaml
+          t0=$(date +%s.%N)
+          python tools/rolegen/rolegen.py --roles knowledge/organization/roles --out "$RUNNER_TEMP/rolegen" --tenant acme --zakazka P1-6-ci
+          t1=$(date +%s.%N)
+          { echo "## R1 – rolegen v CI"; echo "čas: $(python -c "print(round($t1-$t0,2))") s"; echo '```'; find "$RUNNER_TEMP/rolegen" -type f | sed "s|$RUNNER_TEMP/rolegen/||" | sort; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: P1-6 – zakázka end-to-end v AKS, role jako Kata pody (harness_p1_k8s --step p1-6)
+        id: p16
+        if: inputs.p16
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]'
+          python tools/harness_p1_k8s/harness.py --step p1-6 --context "$CLUSTER-admin" --acr "acrplatformdev${{ vars.NAME_SUFFIX }}.azurecr.io" 2>&1 | tee "$RUNNER_TEMP/p16.log"
+          { echo "## P1-6"; echo '```'; grep -E "^  (✅|❌|ℹ️|⏭️)|^== výsledek" "$RUNNER_TEMP/p16.log" | cut -c1-1500; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: diagnostika (pody, které nejsou Ready; události; s1-kata; autoscaler)
         if: always()
         run: |
@@ -60,6 +84,8 @@ jobs:
             done
             echo '### události platform-data (posledních 40)'; echo '```'; kubectl -n platform-data get events --sort-by=.lastTimestamp 2>/dev/null | tail -40; echo '```'
             echo '### s1-kata'; echo '```'; kubectl get pod s1-kata -o wide 2>&1; kubectl describe pod s1-kata 2>&1 | sed -n '/^Events:/,$p' | tail -25; echo '```'
+            echo '### platform-roles (pody rolí, které zbyly; události)'; echo '```'; kubectl -n platform-roles get pods -o wide 2>&1; kubectl -n platform-roles get events --sort-by=.lastTimestamp 2>/dev/null | tail -30; echo '```'
+            echo '### ledger aplikace (posledních 40 záznamů ROLE_POD*/AGENT_RUN/WF*)'; echo '```'; kubectl -n platform-data exec deploy/zakazka -c app -- sh -c 'grep -E "ROLE_POD|AGENT_RUN|ERROR" /data/ledger.jsonl | tail -40 | cut -c1-600' 2>&1; echo '```'
             echo '### autoscaler'; echo '```'; kubectl -n kube-system get configmap cluster-autoscaler-status -o jsonpath='{.data.status}' 2>/dev/null | head -60; echo; kubectl get events -A --field-selector reason=TriggeredScaleUp,reason=NotTriggerScaleUp,reason=FailedScaleUp 2>/dev/null | tail -10; echo '```'
             echo '### node pool kata'; echo '```'; az aks nodepool show -g "$RG" --cluster-name "$CLUSTER" -n kata --query '{state:provisioningState, count:count, min:minCount, max:maxCount, vm:vmSize}' -o table 2>&1; echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -67,9 +93,12 @@ jobs:
         if: always()
         with:
           name: measure-${{ github.run_id }}
-          path: tools/harness_sandbox_s1/results/aks-*.json
+          path: |
+            tools/harness_sandbox_s1/results/aks-*.json
+            tools/harness_p1_k8s/results/p1-6-*.json
           if-no-files-found: ignore
       - name: výsledek
         if: always()
         run: |
           if [ "${{ inputs.s1 }}" = "true" ] && [ "${{ steps.s1.outcome }}" != "success" ]; then echo "S1 selhalo"; exit 1; fi
+          if [ "${{ inputs.p16 }}" = "true" ] && [ "${{ steps.p16.outcome }}" != "success" ]; then echo "P1-6 selhalo"; exit 1; fi
