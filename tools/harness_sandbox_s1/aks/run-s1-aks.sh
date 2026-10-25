@@ -14,6 +14,7 @@ case "${1:-}" in
     kubectl get runtimeclass ;;
   run)
     kubectl apply -f "$HERE/networkpolicy.yaml"
+    kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null   # pod spec nelze měnit přes apply (Forbidden) – vždy čerstvý pod
     kubectl apply -f "$HERE/pod-kata.yaml"
     kubectl get runtimeclass runsc >/dev/null 2>&1 && kubectl apply -f "$HERE/pod-gvisor.yaml" || echo "RuntimeClass runsc není – gVisor přeskočen"
     kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s
