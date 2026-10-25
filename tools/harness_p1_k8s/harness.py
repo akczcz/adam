@@ -85,6 +85,7 @@ INFRA = ROOT / "infra"
 RESULTS, LOGS = HERE / "results", HERE / "logs"
 M1, O1 = T / "harness_memory_m1", T / "harness_observability_o1"
 NS = "platform-data"
+SPIRE_SERVER_BIN = "/opt/spire/bin/spire-server"   # oficiální obraz ghcr.io/spiffe/spire-server (AKS): binárka není v PATH
 PG_PORT, CH_HTTP, CH_NATIVE, OTLP_GRPC, OTLP_HTTP = 30432, 30123, 30900, 30317, 30318
 PG_PASSWORD = "platform-dev"   # infra/k8s/base/postgres/postgres.yaml – dev heslo jen pro kind
 ROLE_CLIENTS = ("account", "architekt", "vyvojar", "reviewer")   # modelové role P0 (klienti agent-<role> v realmu p0)
@@ -721,9 +722,9 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
         import yaml as _ys
         ents = json.loads((kj("-n", NS, "get", "configmap", "rolegen-build").get("data") or {}).get("spire-entries.json") or "[]")
         for e in ents:
-            show = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", "spire-server", "entry", "show", "-spiffeID", e["spiffe_id"], "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+            show = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-spiffeID", e["spiffe_id"], "-socketPath", "/tmp/spire-server/private/api.sock").stdout
             if e["spiffe_id"] in show: continue
-            args = ["spire-server", "entry", "create", "-socketPath", "/tmp/spire-server/private/api.sock", "-spiffeID", e["spiffe_id"]] + (["-node"] if e.get("node") else ["-parentID", e["parent_id"]])
+            args = [SPIRE_SERVER_BIN, "entry", "create", "-socketPath", "/tmp/spire-server/private/api.sock", "-spiffeID", e["spiffe_id"]] + (["-node"] if e.get("node") else ["-parentID", e["parent_id"]])
             for sel in e["selectors"]: args += ["-selector", sel]
             if e.get("x509_svid_ttl"): args += ["-x509SVIDTTL", str(e["x509_svid_ttl"])]
             if e.get("jwt_svid_ttl"): args += ["-jwtSVIDTTL", str(e["jwt_svid_ttl"])]
@@ -829,6 +830,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
             by_pods = all(pulled.get(r, "").startswith(f"{a.acr}/roles/{r}:{versions[r]}") for r in ROLE_CLIENTS)
             rep.add("P22a", "Obrazy rolí v ACR: roles/<role>:<verze z roles/*.yaml> pro každou roli (CI images.yml: az acr build vrstvy nad zakazka-app z infra/images/roles, které generuje rolegen – Dockerfile + devcontainer.json + etc/platform); důkaz = tagy z ACR (identita Actions s AcrPull) nebo aspoň pody, které obraz stáhly a doběhly", "PASS" if by_tags or by_pods else "FAIL", {"source": "acr_tags" if by_tags else ("pods" if by_pods else None), "tags": tags, "pulled": pulled, "versions_yaml": versions})
             ALLOWED = {"image.registry", "securityContext.seccompProfile", "securityContext.runAsGroup", "securityContext.fsGroup", "env+", "command", "envFrom", "imagePullPolicy", "volumeMounts", "nodeSelector", "tolerations", "restartPolicy", "activeDeadlineSeconds", "volumes"}
+            if identity: ALLOWED |= {"initContainers", "serviceAccountName", "shareProcessNamespace"}   # P2-3: sidecar SPIRE agenta (SA role jen pro projektovaný token sidecaru, sdílený PID ns pro unix attestor)
             tplinfo = {k: {"template": p.get("template"), "image": p.get("image"), "overrides": p.get("overrides"), "unexpected": sorted(set(p.get("overrides") or []) - ALLOWED), "resources": p.get("resources"), "image_role": p.get("image_role")} for k, p in pods_led.items()}
             ok_tpl = bool(tplinfo) and all(v["template"] and not v["unexpected"] and (v["image"] or "").startswith(f"{a.acr}/roles/{k}:{versions[k]}") and (v["image_role"] or {}).get("role") == k and (v["image_role"] or {}).get("version") == versions[k] and (v["image_role"] or {}).get("managed_settings") for k, v in tplinfo.items())
             rep.add("P22b", "Pod role ze šablony rolegen (pod-<role>.yaml z build/k8s): RuntimeClass, non-root, SA token off, drop ALL, resources, env a labels z definice role; aplikace doplní jen běh (jméno, Secret, env běhu, uzel, timeout, registry obrazu, seccomp Localhost → RuntimeDefault na Katě); obraz = roles/<role>:<verze> a /etc/platform/role.json v obrazu nese tutéž roli a verzi, managed settings zapečené", "PASS" if ok_tpl else "FAIL", tplinfo)
@@ -855,13 +857,13 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
             rep.add("P23b", "Aplikace zakázky bez tokenu OpenBao v Secretu: login auth/kubernetes projektovaným SA tokenem (role zakazka → policy approval-signer, TTL 1 h), approval tokeny podepsané transitem jako dřív (ledger SIGN backend openbao-transit)", "PASS" if bl and all(b.get("method") == "kubernetes" and "approval-signer" in (b.get("policies") or []) for b in bl) and signs_ok and "P0_BAO_TOKEN" not in sec_keys_app else "FAIL", {"bao_logins": [{k: b.get(k) for k in ("role", "policies", "ttl_s", "sa")} for b in bl][:3], "signs": len(signs), "secret_keys": sorted(sec_keys_app)})
             ids = {k: (p.get("identity") or {}) for k, p in pods_led.items()}
             ok_svid = bool(ids) and all(v.get("kind") == "svid" and v.get("spiffe_id") == f"spiffe://platform/role/{k}/acme" and v.get("iss") == "http://spire-oidc.platform-data.svc:8082" and p.get("svid_sidecar") for k, v in ids.items() for p in [pods_led[k]])
-            rep.add("P23c", "Identita role v Kata podu = SVID: sidecar spire-agent (atestace k8s_psat projektovaným tokenem SA role, alias uzlu per role z rolegen entries, workload unix uid 1000) vydá X.509-SVID a JWT-SVID spiffe://platform/role/<role>/acme; role s ním volá paměť (server paměti ověřuje JWT-SVID přes spire-oidc /keys, tenant z cesty SPIFFE ID), Keycloak token ze Secretu nepoužit", "PASS" if ok_svid and mem_calls and all(c.get("http") == 200 for c in mem_calls) else "FAIL", {"identity": ids, "spire_entries_applied_now": spire_applied, "memory_calls_200": sum(1 for c in mem_calls if c.get("http") == 200)})
+            rep.add("P23c", "Identita role v Kata podu = SVID: sidecar spire-agent (atestace k8s_psat projektovaným tokenem SA role, alias uzlu per role z rolegen entries, workload unix uid 1000) vydá X.509-SVID a JWT-SVID spiffe://platform/role/<role>/acme; role s ním volá paměť (server paměti ověřuje JWT-SVID přes spire-oidc /keys, tenant z cesty SPIFFE ID), Keycloak token ze Secretu nepoužit", "PASS" if ok_svid and mem_calls and all(c.get("http") == 200 for c in mem_calls) else "FAIL", {"identity": ids, "spire_entries_applied_now": spire_applied, "memory_calls_200": sum(1 for c in mem_calls if c.get("http") == 200)} | ({} if ok_svid else {"sidecar": {k: p.get("svid_sidecar_state") for k, p in pods_led.items()}, "spire_server_log": [l_[-300:] for l_ in kubectl(a, "-n", NS, "logs", "spire-server-0", "-c", "spire-server", "--since=20m").stdout.splitlines() if "attest" in l_.lower() or "error" in l_.lower()][-12:]}))
             pf_oidc = PortForward(a, "spire-oidc", 18082, 8082)
             try:
                 jwks = http("GET", "http://127.0.0.1:18082/keys", headers={"Host": "spire-oidc"}, timeout=10); jk = jwks.json() if jwks.status_code == 200 else {}
                 disc = http("GET", "http://127.0.0.1:18082/.well-known/openid-configuration", headers={"Host": "spire-oidc"}, timeout=10)
             finally: pf_oidc.stop()
-            ents_now = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", "spire-server", "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+            ents_now = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
             rep.add("P23d", "SPIRE OIDC discovery provider (sidecar serveru) vydává JWKS pro JWT-SVID; registrace z rolegen (alias uzlu + workload per role) v serveru", "PASS" if jk.get("keys") and disc.status_code == 200 and all(f"spiffe://platform/role/{r}/acme" in ents_now for r in ROLE_CLIENTS) else "FAIL", {"jwks_keys": len(jk.get("keys", [])), "discovery": disc.status_code, "entries": ents_now.count("Entry ID")})
 
         if registry:
