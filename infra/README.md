@@ -73,10 +73,19 @@ Podrobnosti, postup a bezpečnostní model: [`infra/bootstrap/README.md`](bootst
 `infra/k8s/roles/` (vlastní Flux kustomization `roles`, bez namespace transformeru overlay): ns `platform-roles` (PSS restricted), NetworkPolicy
 default-deny + egress jen DNS/agentgateway/paměť/aplikace, Role + RoleBinding pro SA `zakazka` (pods, pods/log, secrets). Overlay `aks`: `zakazka-env`
 `P0_ROLE_RUNTIME=pod`, `P0_ROLE_IMAGE`, `P0_ARTIFACT_API` (FQDN služeb pro pod z jiného ns), `infra/k8s/base/mock-upstream` (mock Anthropic API v clusteru
-jako upstream gateway pro měření), `agentgateway-config` a `zakazka-secrets` s `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` (Flux založí, harness/rolegen
+jako upstream gateway pro měření), `zakazka-secrets` a `agentgateway-keys` s `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` (Flux založí, harness/aplikace
 přepisuje), `imagePullPolicy: Always` pro pohyblivý tag `zakazka-app:p1`, `fsGroup: 1000` na podu aplikace. Obraz `zakazka-app` má bubblewrap +
-`@anthropic-ai/sandbox-runtime` (srt weaker režim v Kata podu). Měření: workflow `measure` s `p16=true` → `tools/harness_p1_k8s --step p1-6`
+`@anthropic-ai/sandbox-runtime` (srt weaker režim v Kata podu). Měření: workflow `measure` s `p21=true` → `tools/harness_p1_k8s --step p2-1` (p1-6 = alias)
 (výsledek a pasti v jeho README).
+
+## P2-1: role → Git → Flux (2026-10-25)
+
+`infra/k8s/rolegen/` je **generovaný** kustomize component (`tools/rolegen/render_k8s.py`, CI `rolegen.yml` s `--check`): ConfigMap `rolegen-build`
+(ClaudeAgentOptions, srt settings, registr, OPA data, šablona klíčů gateway s rozpočty per role a placeholderem `{zakazka}`) a patch
+`agentgateway-config` (base config + `baseUrl: $LLM_UPSTREAM_URL` + prázdná apiKey policy). Upstream modelu nastavuje overlay env proměnnou
+gateway (`aks`: mock-upstream v clusteru; živé API = změna v Gitu). Klíče role × zakázka: ConfigMap `agentgateway-keys` vlastní aplikace
+zakázky (`gateway_keys.py`, RBAC jen na tento objekt + Secrety), Flux ji jen založí (`ssa: IfNotPresent`); sidecar `config-merge`
+(`gateway_merge.py`) slévá obě ConfigMapy do emptyDir, gateway hot-reloaduje. Harness/CI tak do clusteru nenosí žádnou konfiguraci – jen tajemství.
 
 ## Pasti (AKS + Flux)
 - `kubectl rollout restart` se hádá s Fluxem: SSA vrátí anotaci `restartedAt` a Deployment se přerolluje zpět (pod aplikace zemřel uprostřed běhu role).

@@ -1,0 +1,29 @@
+# P2-1: role → konfigurace clusteru přes Git. Při změně definic rolí nebo rolegen ověří, že vygenerované manifesty v infra/k8s/rolegen
+# (ConfigMap rolegen-build, patch agentgateway-config) odpovídají knowledge/organization/roles/*.yaml (render_k8s.py --check) a že overlaye
+# renderují. Změna role = PR s regenerovanými soubory (N6: dva schvalovatelé); po merge je aplikuje Flux. Žádné bot commity, žádná smyčka.
+name: rolegen
+on:
+  pull_request:
+    paths: ["knowledge/organization/roles/**", "tools/rolegen/**", "infra/k8s/rolegen/**", "infra/k8s/base/agentgateway/**", ".github/workflows/rolegen.yml"]
+  push:
+    branches: [main]
+    paths: ["knowledge/organization/roles/**", "tools/rolegen/**", "infra/k8s/rolegen/**", "infra/k8s/base/agentgateway/**"]
+permissions:
+  contents: read
+jobs:
+  rolegen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: R1 – rolegen bundle
+        run: |
+          pip install -q pyyaml
+          python tools/rolegen/rolegen.py --roles knowledge/organization/roles --out "$RUNNER_TEMP/rolegen" --tenant acme --zakazka P2-1-ci | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: vygenerované manifesty odpovídají rolím (render_k8s.py --check)
+        run: python tools/rolegen/render_k8s.py --check | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: overlaye renderují (kustomize)
+        run: |
+          kubectl kustomize infra/k8s/overlays/aks > /dev/null && kubectl kustomize infra/k8s/overlays/kind > /dev/null && kubectl kustomize infra/k8s/roles > /dev/null
+          echo "kustomize OK: overlays/aks, overlays/kind, roles" | tee -a "$GITHUB_STEP_SUMMARY"

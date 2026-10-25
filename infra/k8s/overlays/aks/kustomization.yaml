@@ -25,7 +25,13 @@ images:
 - {name: platform/zakazka-app, newName: "${ACR_LOGIN_SERVER}/zakazka-app", newTag: p1}
 - {name: otel/opentelemetry-collector-contrib, newName: "${ACR_LOGIN_SERVER}/otel-collector-contrib", newTag: "0.163.2"}
 - {name: clickhouse, newName: "${ACR_LOGIN_SERVER}/clickhouse", newTag: "26.8"}
+components:
+- ../../rolegen   # P2-1: ConfigMap rolegen-build + patch agentgateway-config z Gitu (generuje tools/rolegen/render_k8s.py)
 patches:
+# P2-1: upstream modelu gateway přes env (config z rolegen má baseUrl $LLM_UPSTREAM_URL)
+- target: {kind: Deployment, name: agentgateway}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: http://mock-upstream:9777/v1}
 # Flux postBuild substitute nahrazuje i cizí ${var}/$var (nedefinované → prázdný řetězec): agentgateway config ($AGW_DATABASE_URL,
 # $ANTHROPIC_API_KEY = env expanze gateway) a realm Keycloaku (${username}, ${email} = i18n) musí zůstat beze změny
 - target: {kind: ConfigMap, name: agentgateway-config}
@@ -98,12 +104,13 @@ patches:
     - {op: add, path: /data/P0_ARTIFACT_API, value: http://zakazka.platform-data.svc:8010}
     - {op: replace, path: /data/P0_LLM_URL, value: http://agentgateway.platform-data.svc:4100}
     - {op: replace, path: /data/P0_MEMORY_URL, value: http://memory.platform-data.svc:9900}
-# Konfiguraci gateway (klíče rolí, upstream) a tajemství aplikace vydává rolegen/harness za běhu (hot reload): Flux objekt založí
-# s placeholdery (čerstvý cluster), ale už ho nikdy nepřepíše (ssa: IfNotPresent)
-- target: {kind: ConfigMap, name: agentgateway-config}
-  patch: |
-    - {op: add, path: /metadata/annotations/kustomize.toolkit.fluxcd.io~1ssa, value: IfNotPresent}
+# Tajemství aplikace vydává harness za běhu: Flux objekt založí s placeholdery (čerstvý cluster), ale už ho nikdy nepřepíše (ssa: IfNotPresent).
+# Konfigurace gateway je od P2-1 z Gitu (infra/k8s/rolegen); klíče per zakázka zapisuje aplikace do ConfigMapy agentgateway-keys, kterou Flux
+# po založení nepřepisuje a sidecar config-merge ji slévá do configu
 - target: {kind: Secret, name: zakazka-secrets}
+  patch: |
+    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/ssa: IfNotPresent}}
+- target: {kind: ConfigMap, name: agentgateway-keys}
   patch: |
     - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/ssa: IfNotPresent}}
 # Tag zakazka-app:p1 je pohyblivý (images.yml ho přepisuje) – bez Always by uzel použil starý obraz z cache (AKS 2026-10-25)

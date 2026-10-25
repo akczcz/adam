@@ -54,7 +54,7 @@ přes gateway) → P2-6 (FinOps součet klíčů). Měřítko zůstává: **kaž
 
 | Krok | Stav |
 |---|---|
-| P2-1 | ⬜ |
+| P2-1 | 🟡 implementováno 2026-10-25 (render_k8s.py → `infra/k8s/rolegen` component, CI `rolegen.yml --check`, klíče vydává aplikace do `agentgateway-keys` + sidecar `config-merge`), čeká na měření P21 na AKS |
 | P2-2 | ⬜ |
 | P2-3 | ⬜ |
 | P2-4 | ⬜ |
@@ -62,4 +62,5 @@ přes gateway) → P2-6 (FinOps součet klíčů). Měřítko zůstává: **kaž
 | P2-6 | ⬜ |
 
 ## Changelog
+- 2026-10-25: P2-1 implementováno (konfigurace z Gitu přes Flux, klíče per zakázka od aplikace, sidecar merge); rozhodnutí: žádné bot commity – generované manifesty jsou součást PR, CI jen kontroluje shodu s rolemi.
 - 2026-10-25: první verze plánu P2 po uzavření P1 (návrh, čeká na Adamovo potvrzení rozsahu a pořadí).

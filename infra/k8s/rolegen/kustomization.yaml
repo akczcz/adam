@@ -1,0 +1,7 @@
+# GENEROVÁNO: python tools/rolegen/render_k8s.py z knowledge/organization/roles/*.yaml – neupravovat ručně (CI kontroluje `--check`).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+- rolegen-build.yaml
+patches:
+- path: agentgateway-config.yaml

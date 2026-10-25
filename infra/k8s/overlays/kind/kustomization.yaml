@@ -14,7 +14,13 @@ resources:
 - ../../base/opa
 - ../../base/dapr
 - ../../base/zakazka
+components:
+- ../../rolegen   # P2-1: ConfigMap rolegen-build + patch agentgateway-config z Gitu (generuje tools/rolegen/render_k8s.py)
 patches:
+# P2-1: upstream modelu gateway přes env (config z rolegen má baseUrl $LLM_UPSTREAM_URL)
+- target: {kind: Deployment, name: agentgateway}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: http://172.18.0.1:9777/v1}
 - target: {kind: Service, name: postgres}
   patch: |
     - op: add
