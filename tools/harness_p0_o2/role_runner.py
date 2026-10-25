@@ -51,14 +51,19 @@ def main():
     identity = {"kind": "keycloak-token"}
     if os.environ.get("P0_ROLE_IDENTITY") == "svid":
         # P2-3: identita role = JWT-SVID (aud memory) z Workload API sidecaru spire-agent; Keycloak token ze Secretu zůstává záloha
-        t_id = time.time(); err = None
+        t_id = time.time(); err = None; stale = []
+        want_id = f"spiffe://platform/role/{role}/{os.environ.get('P0_TENANT', 'acme')}"
         for _ in range(60):
             try:
                 from spiffe import WorkloadApiClient
                 with WorkloadApiClient() as c:
                     x = c.fetch_x509_svid(); j = c.fetch_jwt_svid(audience={os.environ.get("P0_SVID_AUDIENCE", "memory")})
+                    # k8s_psat dává agent ID z UID uzlu: sidecar nového podu role na tomtéž uzlu Kata se re-atestuje pod stejným ID a prvních ~5 s
+                    # (cache serveru) dostane entry předchozí role → čekat na SVID své role, cizí zahodit (měřeno P23c 2026-10-25)
+                    if str(x.spiffe_id) != want_id or str(j.spiffe_id) != want_id:
+                        stale.append(str(j.spiffe_id)); err = f"StaleSvid: {j.spiffe_id} != {want_id}"; time.sleep(2); continue
                     pl = json.loads(base64.urlsafe_b64decode(j.token.split(".")[1] + "==").decode())
-                    identity = {"kind": "svid", "spiffe_id": str(j.spiffe_id), "x509_spiffe_id": str(x.spiffe_id), "iss": pl.get("iss"), "aud": pl.get("aud"), "exp_in_s": int(pl.get("exp", 0) - time.time()), "wait_s": round(time.time() - t_id, 1)}
+                    identity = {"kind": "svid", "spiffe_id": str(j.spiffe_id), "x509_spiffe_id": str(x.spiffe_id), "iss": pl.get("iss"), "aud": pl.get("aud"), "exp_in_s": int(pl.get("exp", 0) - time.time()), "wait_s": round(time.time() - t_id, 1), "stale_svids": stale}
                     os.environ["P0_ROLE_TOKEN"] = j.token; err = None; break
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:120]}"; time.sleep(2)

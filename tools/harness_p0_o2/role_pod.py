@@ -79,7 +79,7 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
     # k8s_psat projektovaným tokenem SA `role` (jen v sidecaru; kontejner role token nemá), workload přes unix uid ve sdíleném PID ns.
     svid = os.environ.get("P0_ROLE_IDENTITY") == "svid"
     if svid:
-        env |= {"P0_ROLE_IDENTITY": "svid", "SPIFFE_ENDPOINT_SOCKET": "unix:///run/spire/sockets/agent.sock"}
+        env |= {"P0_ROLE_IDENTITY": "svid", "SPIFFE_ENDPOINT_SOCKET": "unix:///run/spire/sockets/agent.sock", "P0_TENANT": tenant}
         runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "spire-sockets", "mountPath": "/run/spire/sockets"}]
         runtime_spec |= {"serviceAccountName": os.environ.get("P0_ROLE_SA", "role"), "shareProcessNamespace": True,
                          "initContainers": [{"name": "spire-agent", "image": os.environ.get("P0_ROLE_SPIRE_AGENT_IMAGE", "ghcr.io/spiffe/spire-agent:1.14.2"), "restartPolicy": "Always",
