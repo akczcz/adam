@@ -379,6 +379,11 @@ def kc_token_ext(ip, client_id, secret=None, user=None, password=None):
     return r.json()["access_token"]
 
 
+def restart_pods(a, *apps):
+    """Nové pody se stejnou šablonou (smazání podů podle labelu app=…): nemění spec Deploymentu, takže se nehádá s Fluxem (SSA by `rollout restart` anotaci vrátilo)."""
+    for app in apps: kubectl(a, "-n", NS, "delete", "pod", "-l", f"app={app}", "--wait=false")
+
+
 def render_gateway(a, zids, patch=None, mock_upstream="http://172.18.0.1:9777/v1"):
     """ConfigMap agentgateway = base config + upstream + apiKey klíče z rolegen pro dané zakázky (hodnoty vydá harness). Vrací {zid: {role: key}}."""
     import yaml, hashlib as _h
@@ -405,7 +410,7 @@ def render_gateway(a, zids, patch=None, mock_upstream="http://172.18.0.1:9777/v1
     cfg_path = LOGS / f"agentgateway-{'-'.join(zids)}.yaml"; cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
     cm = kubectl(a, "create", "configmap", "agentgateway-config", "-n", NS, f"--from-file=config.yaml={cfg_path}", "--dry-run=client", "-o", "yaml").stdout
     subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=cm, text=True, capture_output=True)
-    kubectl(a, "-n", NS, "rollout", "restart", "deploy/agentgateway")
+    restart_pods(a, "agentgateway")   # ne `rollout restart`: Flux by anotaci restartedAt vrátil a Deployment znovu přerolloval (AKS 2026-10-25)
     assert kubectl(a, "-n", NS, "rollout", "status", "deploy/agentgateway", "--timeout=180s", timeout=200).returncode == 0
     return keys
 
@@ -594,12 +599,14 @@ def step_p1_6(a, rep, env):
     def secret(name, key, ns=NS):
         v = kubectl(a, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}").stdout.strip(); return _b.b64decode(v).decode() if v else None
     # Flux: obě kustomizations Ready a mock-upstream (nový objekt overlay) existuje
+    want_sha = os.environ.get("GITHUB_SHA") or sh(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).stdout.strip()
     t0 = time.time(); flux = {}
-    while time.time() - t0 < 420:
+    while time.time() - t0 < 600:
         ks = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
         flux = {k["metadata"]["name"]: next((c["status"] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks}
-        if flux and all(v == "True" for v in flux.values()) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
-        time.sleep(10)
+        revs = [(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks]
+        if flux and all(v == "True" for v in flux.values()) and all(r.endswith(want_sha) for r in revs) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
+        time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
     pf_bao = PortForward(a, "openbao", 18200, 8200); BAO = "http://127.0.0.1:18200"
@@ -646,18 +653,20 @@ def step_p1_6(a, rep, env):
                           "--from-literal=P0_ROLE_KEYS=" + json.dumps({"*": keys["P1-6"]}), "--from-literal=P0_API_KEY=sk-ant-harness-mock", "--from-literal=BRIDGE_WEBHOOK_SECRET=bridge-webhook-secret",
                           "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
     subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
-    kubectl(a, "-n", NS, "rollout", "restart", "deploy/zakazka", "deploy/memory", "deploy/bridge", "deploy/mock-github")
+    restart_pods(a, "zakazka", "memory", "bridge", "mock-github"); time.sleep(5)
     t0 = time.time()
     rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=600s", timeout=620).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/agentgateway", "deployment/mock-upstream", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
+    for n, p in (("zakazka", 8010), ("memory", 9900), ("mock-github", 9801), ("bridge", 9802)):
+        kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", f"app={n}", "--timeout=300s", timeout=320)
     pfs = {n: PortForward(a, n, lp, rp) for n, lp, rp in (("zakazka", 18010, 8010), ("memory", 19900, 9900), ("mock-github", 19801, 9801), ("bridge", 19802, 9802), ("keycloak", 18080, 8080))}
     APP, MEM, GHM, GHS, KC = "http://127.0.0.1:18010", "http://127.0.0.1:19900", "http://127.0.0.1:19801/repos/akczcz/adam", "http://127.0.0.1:19801/_debug/state", "http://127.0.0.1:18080"
     def http(method, url, **kw):
-        for i in range(3):
+        for i in range(12):
             try: return httpx.request(method, url, **kw)
             except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError):
-                if i == 2: raise
+                if i == 11: raise
+                time.sleep(5)
                 for pf in pfs.values(): pf.start()
-                time.sleep(2)
     try:
         health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
         with psycopg.connect(dsn("dapr_state"), autocommit=True, connect_timeout=10) as c:

@@ -92,6 +92,7 @@ spec:
       labels: {app: zakazka}
     spec:
       serviceAccountName: zakazka   # RBAC jen na pody rolí v ns platform-roles (infra/k8s/roles/rbac.yaml); kind: bez role, pody rolí se tam nespouští
+      securityContext: {fsGroup: 1000}   # PVC /data (Azure Disk) patří rootu, obraz běží jako uid 1000 – bez fsGroup ledger nezapíše (AKS 2026-10-25)
       containers:
       - name: app
         image: platform/zakazka-app:p1
