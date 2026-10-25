@@ -152,8 +152,26 @@ def gateway_cost(zakazka_id):
     return {"total_usd": round(sum(by_role.values()), 6), "by_role": {k: round(v, 6) for k, v in by_role.items()}, "requests": n}
 
 
+def role_gate(role):
+    """Eval gate (P2-5): role běží jen s prošlými evaly. Stav z tools/role_evals/results/eval-status.json → ConfigMap rolegen-build
+    (P0_ROLE_OPTIONS_DIR/eval-status.json). Bez souboru nebo s P0_ROLE_GATE=off se nehlídá (kind, P0). Vrací (ok, detail)."""
+    od = os.environ.get("P0_ROLE_OPTIONS_DIR"); p = os.path.join(od, "eval-status.json") if od else None
+    if os.environ.get("P0_ROLE_GATE", "on") == "off" or not p or not os.path.exists(p): return True, {"gate": "off" if os.environ.get("P0_ROLE_GATE") == "off" else "no-status-file"}
+    try: st = json.loads(open(p).read()).get(role)
+    except Exception as e: return False, {"gate": "unreadable", "error": str(e)[:120]}
+    if not st: return False, {"gate": "missing", "role": role}
+    layers = {l: v.get("passed") for l, v in (st.get("layers") or {}).items() if "passed" in v}
+    return st.get("status") == "passed", {"gate": st.get("status"), "version": st.get("version"), "layers": layers, "on_fail": st.get("on_fail"), "model": st.get("model")}
+
+
 def agent_run(role, z, prompt, tool_names):
-    """Role: P0_ROLE_RUNTIME=pod → Kata pod v ns rolí (role_pod.py, P1-6), jinak v procesu aplikace (agent_run_local)."""
+    """Role: P0_ROLE_RUNTIME=pod → Kata pod v ns rolí (role_pod.py, P1-6), jinak v procesu aplikace (agent_run_local).
+    Před během eval gate (P2-5): role bez prošlých evalů se nespustí (ledger ROLE_GATE blocked, výsledek AGENT_ERROR)."""
+    ok, gate = role_gate(role)
+    ledger("ROLE_GATE", zakazka=z["id"], role=role, passed=ok, **gate)
+    if not ok:
+        root = f"/tmp/p0-o2/{z['id']}"
+        return {"text": f"AGENT_ERROR role {role} bez prošlého eval gate ({gate.get('gate')})", "cost": None, "files": [], "work": f"{root}/work", "arts": f"{root}/artifacts", "error": f"RoleGate: {gate}", "budget_exceeded": False}
     if os.environ.get("P0_ROLE_RUNTIME") == "pod":
         import role_pod
         root = f"/tmp/p0-o2/{z['id']}"; os.makedirs(f"{root}/work", exist_ok=True); os.makedirs(f"{root}/artifacts", exist_ok=True)

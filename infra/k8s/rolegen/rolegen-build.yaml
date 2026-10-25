@@ -210,7 +210,7 @@ data:
     ,\n  \"processes\": [\n   \"P2-navrh\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"\
     spiffe_id\": \"spiffe://platform.example/agent/architekt/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/architekt:0.1.0\",\n  \"source\"\
-    : \"architekt.yaml\",\n  \"source_sha256_16\": \"4b6fea289b7b8ed0\",\n  \"disclosure\"\
+    : \"architekt.yaml\",\n  \"source_sha256_16\": \"82ed7db3de1e79c3\",\n  \"disclosure\"\
     : {\n   \"adr\": \"ADR vygeneroval AI agent (Architekt, verze 0.1.0) jménem {vlastník\
     \ procesu}; schválil {člověk, datum}.\"\n  },\n  \"evals_gate\": [\n   {\n   \
     \ \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\",\n     \"\
@@ -241,7 +241,7 @@ data:
     ,\n   \"X1-eskalace\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"\
     spiffe://platform.example/agent/sre/{tenant}/{workflow_instance}\",\n  \"image\"\
     : \"registry.platform.internal/roles/sre:0.1.0\",\n  \"source\": \"sre.yaml\"\
-    ,\n  \"source_sha256_16\": \"751d8f8713dee621\",\n  \"disclosure\": {\n   \"ticket_comment\"\
+    ,\n  \"source_sha256_16\": \"2e445d31721500f3\",\n  \"disclosure\": {\n   \"ticket_comment\"\
     : \"Komentář napsal AI agent (role SRE, verze 0.1.0) platformy {firma} jménem\
     \ {vlastník procesu}; nasazení schvaluje člověk.\",\n   \"handover_protocol\"\
     : \"Předávací protokol připravil AI agent (SRE) jménem {vlastník procesu}. Nasazení\
@@ -257,7 +257,7 @@ data:
     version\": \"0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P4-implementace\"\
     \n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/vyvojar/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/vyvojar:0.1.0\",\n  \"source\"\
-    : \"vyvojar.yaml\",\n  \"source_sha256_16\": \"408e5dbe7e08abd4\",\n  \"disclosure\"\
+    : \"vyvojar.yaml\",\n  \"source_sha256_16\": \"0142841a6b8c85bc\",\n  \"disclosure\"\
     : {\n   \"pr_description\": \"Tento pull request vytvořil AI agent (role Vývojář,\
     \ verze 0.1.0) platformy {firma} jménem {vlastník procesu}. Sloučení schvaluje\
     \ člověk.\",\n   \"issue_comment\": \"Komentář napsal AI agent (Vývojář) jménem\
@@ -270,6 +270,49 @@ data:
     \ \"layer\": \"L3\",\n    \"gate\": {\n     \"metric\": \"pass_k\",\n     \"min\"\
     : 1.0\n    }\n   },\n   {\n    \"layer\": \"L4\",\n    \"gate\": {\n     \"metric\"\
     : \"drift_cost_steps\",\n     \"max\": 0.5\n    }\n   }\n  ]\n }\n]"
+  eval-status.json: "{\n \"account\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\":\
+    \ {\n    \"metric\": \"pass_rate\",\n    \"passed\": true,\n    \"threshold\"\
+    : 1.0,\n    \"value\": 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\"\
+    ,\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n\
+    \   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
+    : 0.7,\n    \"value\": 1.0\n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\"\
+    : {},\n  \"reason\": null,\n  \"source_sha256_16\": \"3c3be37b322c9237\",\n  \"\
+    status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"architekt\": {\n  \"\
+    k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n    \"\
+    passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L1\"\
+    : {\n    \"metric\": \"policy_compliance\",\n    \"passed\": true,\n    \"threshold\"\
+    : 1.0,\n    \"value\": 1.0\n   },\n   \"L2\": {\n    \"metric\": \"pass_k\",\n\
+    \    \"passed\": true,\n    \"threshold\": 0.7,\n    \"value\": 1.0\n   },\n \
+    \  \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
+    : 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n    \"reason\": \"online/kalibrace\
+    \ – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n  \"model\": \"mock\"\
+    ,\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\": \"82ed7db3de1e79c3\"\
+    ,\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"reviewer\": {\n\
+    \  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n\
+    \    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n \
+    \  \"L1\": {\n    \"metric\": \"policy_compliance\",\n    \"passed\": true,\n\
+    \    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L2\": {\n    \"metric\"\
+    : \"agreement\",\n    \"passed\": true,\n    \"threshold\": 0.85,\n    \"value\"\
+    : 1.0\n   },\n   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n\
+    \    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L5\": {\n    \"reason\"\
+    : \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n\
+    \  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\"\
+    : \"71fa1c1ecad3f867\",\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n\
+    \ },\n \"sre\": {\n  \"k\": null,\n  \"layers\": {},\n  \"model\": \"mock\",\n\
+    \  \"on_fail\": {},\n  \"reason\": \"role bez runtime v aplikaci (mock model bez\
+    \ chování SRE) – evaly až s deploy MCP serverem (P2)\",\n  \"source_sha256_16\"\
+    : \"2e445d31721500f3\",\n  \"status\": \"unevaluated\",\n  \"version\": \"0.1.0\"\
+    \n },\n \"vyvojar\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\"\
+    : \"pass_rate\",\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\"\
+    : 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\",\n    \"passed\"\
+    : true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L2\": {\n  \
+    \  \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\": 0.6,\n \
+    \   \"value\": 1.0\n   },\n   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\"\
+    : true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n  \
+    \  \"reason\": \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\
+    \n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n\
+    \  \"source_sha256_16\": \"0142841a6b8c85bc\",\n  \"status\": \"passed\",\n  \"\
+    version\": \"0.1.0\"\n }\n}\n"
   opa-data.json: "{\n \"roles\": {\n  \"account\": {\n   \"autonomy_max\": \"A2\"\
     ,\n   \"deny_tool_inputs\": [\n    \"Bash.dangerouslyDisableSandbox\"\n   ],\n\
     \   \"http\": [\n    {\n     \"methods\": [\n      \"GET\"\n     ],\n     \"path_prefix\"\

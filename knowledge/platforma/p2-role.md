@@ -58,10 +58,11 @@ přes gateway) → P2-6 (FinOps součet klíčů). Měřítko zůstává: **kaž
 | P2-2 | ✅ **2026-10-25 AKS 10/10** (`--step p2-2`, `measure` run 40200765801): obrazy rolí `roles/<role>:0.1.0` z rolegen (`infra/images/roles`, `az acr build` vrstvy nad obrazem platformy, options/srt/managed settings zapečené, bez cloud CLI – ověřeno sondou z podu), pod role ze šablony `pod-<role>.yaml` z rolegen (aplikace doplní jen běh), zakázka end-to-end beze změny. Zbývá: devcontainer CLI build místo ACR Tasks (volitelné), digest obrazu v SPIRE selektoru (P2-3), AcrPull pro `az acr repository` z runneru (role přidána, zatím bez efektu) |
 | P2-3 | ⬜ |
 | P2-4 | ⬜ |
-| P2-5 | ⬜ |
+| P2-5 | 🟡 implementováno 2026-10-25: `tools/role_evals` (Inspect AI, sady L0–L3 per role, adversariální mock, PEP a approval policy jako data z definice role, gate z `evals.layers`), `results/eval-status.json` → ConfigMap `rolegen-build` → `app.role_gate` (role bez prošlého gate se nespustí), CI `rolegen.yml` (`--check`, negativní kontrola), registr `org.role_definitions/eval_gates/agents` (`registry.py`, seed z harnessu); čeká na měření P25 na AKS |
 | P2-6 | ⬜ |
 
 ## Changelog
+- 2026-10-25: P2-5 implementováno (evaly rolí s gate v CI, eval-status jako podmínka běhu role, registr org.*); rozhodnutí: L3 měří obranu platformy adversariálním mockem, ne model; L4/L5 zůstávají provozní (SKIP).
 - 2026-10-25: P2-2 hotovo 10/10 na AKS; seccomp `Localhost` ze šablony se na Katě nahrazuje `RuntimeDefault` (profil na uzlu není, Kata guest ho neaplikuje) – zapsáno jako vědomý doplněk aplikace.
 - 2026-10-25: P2-2 implementováno (obrazy rolí z rolegen přes `az acr build`, pod spec ze šablony rolegen); rozhodnutí: devcontainer CLI build odložen – Dockerfile je devcontainer-kompatibilní, staví ho ACR Tasks jako ostatní obrazy.
 - 2026-10-25: P2-1 hotovo 7/7 na AKS; pasti: Flux substitute v generované ConfigMapě (`substitute: disabled`), propagace ConfigMap per replika (headless sonda).

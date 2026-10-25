@@ -74,7 +74,7 @@ Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-1
 | P2-2 obrazy rolí (build v CI) a pod spec přímo z rolegen | ✅ AKS 2026-10-25 10/10 ([p2-role.md](p2-role.md)): `roles/<role>:<verze>` v ACR z rolegen (Dockerfile + devcontainer.json, bez cloud CLI, options zapečené), pod role ze šablony rolegen; devcontainer CLI build odložen (ACR Tasks stačí) |
 | P2-3 SVID v Kata podu + OpenBao auto-unseal/auth kubernetes | ⬜ |
 | P2-4 egress naostro: git a mirror přes agentgateway CONNECT | ⬜ |
-| P2-5 evaly L0–L3 per role s gate (adversariální L3); registr agentů plněný z workflow | ⬜ |
+| P2-5 evaly L0–L3 per role s gate (adversariální L3); registr agentů plněný z workflow | 🟡 2026-10-25 implementováno ([`tools/role_evals`](../../tools/role_evals/README.md): 4 role passed, SRE unevaluated, negativní kontrola propadá; gate = podmínka běhu role v aplikaci), měření na AKS běží |
 | P2-6 FinOps: 30d strop jako součet klíčů zakázky, klíče z OpenBao | ⬜ |
 
 ## P3 – první externí zákazník
