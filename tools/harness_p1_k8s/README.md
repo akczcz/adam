@@ -150,7 +150,7 @@ Výsledek: **7/7 + 2 INFO** (`measure` run 40195984513, `results/p2-1-20261025-1
 - Pozorováno, neprověřeno: v běhu s 401 u dvou rolí hlásil výstup zakázky `cost_usd` 1,62 USD místo ~0,02 (sčítání ceny při chybě role).
 
 
-## P2-2 – obrazy rolí a pod spec z rolegen (2026-10-25, AKS, `--step p2-2` = p2-1 + P22a–c)
+## P2-2 – obrazy rolí a pod spec z rolegen (2026-10-25, AKS, `--step p2-2` = p2-1 + P22a–c) – **10/10**
 
 rolegen nově generuje `build/images/<role>/` (Dockerfile = vrstva nad obrazem platformy s `/etc/platform/{role,srt,managed-settings}.json`,
 OCI labely role/verze/sha zdroje, bez cloud CLI; devcontainer.json) a `render_k8s.py` je zapisuje do `infra/images/roles/` (CI hlídá shodu).
@@ -161,9 +161,13 @@ env a labels z definice role; aplikace doplní jen běh (jméno, Secret, env bě
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| P22a | ACR má `roles/<role>:<verze z roles/*.yaml>` pro každou roli | ⏳ |
-| P22b | Pod role ze šablony rolegen; doplňky aplikace jen z povolené množiny; obraz `roles/<role>:<verze>`; `/etc/platform/role.json` v obrazu nese tutéž roli/verzi, managed settings zapečené | ⏳ |
-| P22c | Obsah obrazu (sonda z podu): git, node, python3, srt, bwrap, claude ano; az, gcloud, aws, kubectl, docker, helm, terraform ne | ⏳ |
+| P22a | ACR má `roles/<role>:0.1.0` pro každou roli – důkaz z podů (obraz stažen, pod doběhl); `az acr repository show-tags` z runneru stále bez AAD data-plane auth i po přidání AcrPull (propagace role / token exchange), záložní důkaz stačí | ✅ (pods) |
+| P22b | Pod role ze šablony rolegen; doplňky aplikace jen z povolené množiny (registry obrazu, seccomp Localhost → RuntimeDefault, runAsGroup/fsGroup, env běhu, command, envFrom, imagePullPolicy, volumes, uzel, timeout); obraz `roles/<role>:0.1.0`; `/etc/platform/role.json` v obrazu nese tutéž roli/verzi, managed settings zapečené | ✅ |
+| P22c | Obsah obrazu (sonda z podu): git, node, python3, srt, bwrap, claude ano; az, gcloud, aws, kubectl, docker, helm, terraform ne | ✅ |
+| P21a–h | regrese P2-1 (konfigurace z Gitu, klíče od aplikace – propagace 63 s, zakázka Dokonceno, izolace, egress, paměť, FinOps) | ✅ |
+
+Výsledek: **10/10 + 2 INFO** (`measure` run 40200765801, `results/p2-2-20261025-141907.json`). Časy: první role 139 s (scale-up uzlu 87 s + pull
+obrazu role a boot VM 114 s), další role 24–27 s (obraz role na uzlu, start podu 2–3 s). Resources podu z definice role (2 CPU, 4 Gi).
 
 ## Spuštění
 
