@@ -67,7 +67,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]'
+          pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]' fastapi opentelemetry-sdk   # fastapi/otel: m1m._embed_sql importuje memory_server
           python tools/harness_p1_k8s/harness.py --step p1-6 --context "$CLUSTER-admin" --acr "acrplatformdev${{ vars.NAME_SUFFIX }}.azurecr.io" 2>&1 | tee "$RUNNER_TEMP/p16.log"
           { echo "## P1-6"; echo '```'; grep -E "^  (✅|❌|ℹ️|⏭️)|^== výsledek" "$RUNNER_TEMP/p16.log" | cut -c1-1500; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: diagnostika (pody, které nejsou Ready; události; s1-kata; autoscaler)
