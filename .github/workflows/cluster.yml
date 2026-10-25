@@ -27,14 +27,17 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # idempotentní: start/stop jen když je zdroj v opačném stavu (PG „Stopping“ těsně po stopu → start ho nezachytí, viz 2026-10-25); čeká na dokončení přechodu
       - if: inputs.action == 'stop'
         run: |
-          az aks stop -g "$RG" -n "$CLUSTER" -o none && echo "AKS stopped"
-          az postgres flexible-server stop -g "$RG" -n "$PG" -o none && echo "PG stopped"
+          aks=$(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv); [ "$aks" = "Running" ] && az aks stop -g "$RG" -n "$CLUSTER" -o none && echo "AKS stopped" || echo "AKS: $aks"
+          for i in $(seq 1 30); do pg=$(az postgres flexible-server show -g "$RG" -n "$PG" --query state -o tsv); case "$pg" in Starting|Stopping|Updating) sleep 20;; *) break;; esac; done
+          [ "$pg" = "Ready" ] && az postgres flexible-server stop -g "$RG" -n "$PG" -o none && echo "PG stopped" || echo "PG: $pg"
       - if: inputs.action == 'start'
         run: |
-          az postgres flexible-server start -g "$RG" -n "$PG" -o none && echo "PG started"
-          az aks start -g "$RG" -n "$CLUSTER" -o none && echo "AKS started"
+          for i in $(seq 1 30); do pg=$(az postgres flexible-server show -g "$RG" -n "$PG" --query state -o tsv); case "$pg" in Starting|Stopping|Updating) sleep 20;; *) break;; esac; done
+          [ "$pg" = "Stopped" ] && az postgres flexible-server start -g "$RG" -n "$PG" -o none && echo "PG started" || echo "PG: $pg"
+          aks=$(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv); [ "$aks" = "Stopped" ] && az aks start -g "$RG" -n "$CLUSTER" -o none && echo "AKS started" || echo "AKS: $aks"
       - name: status
         run: |
           { echo "## $CLUSTER"; az aks show -g "$RG" -n "$CLUSTER" --query '{power:powerState.code, k8s:kubernetesVersion, provisioning:provisioningState}' -o table
