@@ -123,6 +123,18 @@ overlay aks), `infra/k8s/roles`: SA `role` (bez automountu), ConfigMap `spire-ag
   čerstvém clusteru vůbec nezaložil).
 - Smazání Kata podu je asynchronní (VM se vypíná, desítky sekund); pod zabité aplikace zůstane jako sirotek → GC v `role_pod.py`.
 - Flexible Server je z runneru GitHub Actions dosažitelný přímo (pravidlo „Allow Azure services“ 0.0.0.0) – pro schéma paměti a FinOps dotazy; záloha socat pod.
+- **OpenBao 2.7 nemá cloud sealy zabudované** (`Error configuring seal "azurekeyvault": unknown wrapper`; changelog 2.7.0, P2-3 2026-10-25) →
+  `seal "azurekeyvault"` je externí KMS plugin `openbao-plugin-kms-azure` (repo openbao-plugins, release `kms-azure-v0.1.0`): `plugin_directory`
+  + stanza `plugin "kms" "azurekeyvault" { command version }`; binárku stáhne a ověří (sha256 z `checksums-kms-azure.txt`) init kontejner do emptyDir.
+- Flux `postBuild.substitute` maže i `$V`/`$A`/`$bin` ve **shellovém skriptu uvnitř manifestu**, který substituci potřebuje (StatefulSet s `${KV_NAME}`) →
+  skript bez shellových proměnných (literály, `find -exec`), nebo skript v ConfigMapě se `substitute: disabled`.
+- **StatefulSet s podem v CrashLoopBackOff rolling update nikdy nenahradí** (kubernetes/kubernetes#67250) a pod může stát na *mezilehlé* revizi
+  (předchozí rollout se nedokončil) → mazat pody s `controller-revision-hash != updateRevision`, ne jen `currentRevision` (3 běhy P2-3 propadly na
+  starém podu). Flux `wait` health check pak hlásí `StatefulSet … status: 'Failed'` a `lastAppliedRevision` zůstane na posledním zdravém commitu,
+  i když objekty applynuté jsou → odblokování (measure.yml krok + harness ve smyčce čekání na Flux) musí běžet před čekáním na Ready.
+- `oidc-discovery-provider`: `domains` **bez portu** (`host:port` → `not a valid domain name: idna`, port z `Host` provider odřezává). Padající sidecar
+  udělá pod spire-server NotReady → Service bez endpointů → agenti DaemonSetu padají na `connection refused` (P2-3 2026-10-25).
+- Oficiální obrazy `ghcr.io/spiffe/spire-*` nemají binárky v PATH: `kubectl exec … /opt/spire/bin/spire-server entry create …`.
 
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.
