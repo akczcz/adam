@@ -127,7 +127,7 @@ Poznámky k pořadí: P1-1 je jediný krok, který nejde udělat bez Azure (nest
 
 | Otázka | Rozhodnutí | Důsledek |
 |---|---|---|
-| Subscription, region, kdo platí | Adamova subscription (soukromá karta, přihlášen na svém Macu); region vybrat v EU podle ceny a dostupnosti nested-virt SKU + Pod Sandboxing | Kandidát regionu: **Sweden Central** (obvykle ~10 % pod West Europe, *sek.*), záloha West Europe (`TF_VAR_location`); ověří první `plan`/`apply` |
+| Subscription, region, kdo platí | Adamova subscription (soukromá karta, přihlášen na svém Macu); region vybrat v EU podle ceny a dostupnosti nested-virt SKU + Pod Sandboxing | **West Europe** (od 2026-10-25). Sweden Central zkoušen první (~10 % levnější, *sek.*), ale první `apply` 2026-10-24 selhal na kapacitě: Flexible Server B1ms `RegionalAllocationFailed`, AKS system pool D4as_v5 zaseknutý v `Creating` 90 min → smazán. Region řídí repo variable `AZURE_LOCATION` (`TF_VAR_location`), PG může mít vlastní `pg_location` |
 | Jak se Azure ovládá | **DevOps (Adam 2026-10-24):** IaC v Terraformu, GitHub Actions, GitHub ↔ Azure přes OIDC, dál nahoru operátory (GitOps) – ne imperativní skripty z Macu | `infra/terraform` + `.github/workflows` + Flux (AKS GitOps extension); Mac jen 1× `infra/bootstrap/azure-oidc.sh` (RG, tfstate, identita s federací na `repo:akczcz/adam`, Contributor + UAA jen na RG). Claude workflow spouští a čte přes GitHub API, cloudové prostředí Azure nepotřebuje. Tajemství: žádný client secret; heslo PG v tf state a Flux substitute (dev), P2 External Secrets |
 | Postgres | **Azure Database for PostgreSQL Flexible Server** | schéma M1, RLS a role `memory_app` beze změny; nejmenší SKU `Standard_B1ms` (~15 USD/měs., *sek.*), heslo z OpenBao |
 | GitHub ostrý zápis | PAT vydá Adam | fine-grained PAT jen na `akczcz/adam`; běh na Macu s tokenem v env jednoho příkazu (viz níže), ne v chatu ani v cloudovém prostředí. **Provedeno 2026-10-24: issue #3, PR #4, merge `2c47bfe`.** |
@@ -161,6 +161,7 @@ Cena P1 po rozhodnutí (*spekulace*, PAYG): system D4as_v5 ≈ 0,19 USD/h + Kata
 | P1-6 | ⬜ AKS (po P1-1): role jako Kata pody z rolegen, srt uvnitř, egress CONNECT gateway, SPIRE entries z rolegen |
 
 ## Changelog
+- 2026-10-25: první `apply` ve Sweden Central selhal na kapacitě (PG B1ms RegionalAllocationFailed, AKS Creating > 90 min); přesun do West Europe, PG bez pinované zóny, AKS create timeout 40 min. Řetězec Actions → OIDC → tfstate → `plan` ověřen (16 zdrojů).
 - 2026-10-24: P1-1 přepsáno z imperativních skriptů na Terraform + GitHub Actions (OIDC) + Flux na Adamův podnět; bootstrap jediný ruční krok. Validováno offline (`terraform validate`), proti Azure neověřeno.
 - 2026-10-24: P1-1 připraveno (infra/aks skripty + overlay aks), čeká na běh z Macu; měření S1h na Katě. (nahrazeno IaC, viz výše)
 - 2026-10-24: P1-5 hotovo na kind – kind fáze uzavřena (P1-2…P1-5); durabilita Dapr Workflow v clusteru změřena; dál jen AKS (P1-1, P1-6).

@@ -6,15 +6,15 @@ resource "random_password" "pg" {
 }
 
 resource "azurerm_postgresql_flexible_server" "pg" {
-  name                          = local.pg_name
-  resource_group_name           = data.azurerm_resource_group.rg.name
-  location                      = var.location
-  version                       = "16"
-  sku_name                      = var.pg_sku_name
-  storage_mb                    = 32768
-  administrator_login           = var.pg_admin
-  administrator_password        = random_password.pg.result
-  zone                          = "1"
+  name                   = local.pg_name
+  resource_group_name    = data.azurerm_resource_group.rg.name
+  location               = coalesce(var.pg_location, var.location)
+  version                = "16"
+  sku_name               = var.pg_sku_name
+  storage_mb             = 32768
+  administrator_login    = var.pg_admin
+  administrator_password = random_password.pg.result
+  # zónu nepinujeme: Sweden Central 2026-10-24 vrátil RegionalAllocationFailed pro B1ms v zóně 1; Azure si zónu vybere
   backup_retention_days         = 7
   public_network_access_enabled = true
   tags                          = var.tags

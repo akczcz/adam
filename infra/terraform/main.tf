@@ -54,6 +54,9 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 
   tags = var.tags
+
+  # AKS vzniká 5–10 min; výchozích 90 min jen prodlužuje zaseknutý Creating (Sweden Central 2026-10-24)
+  timeouts { create = "40m" }
 }
 
 # kubelet smí tahat z ACR

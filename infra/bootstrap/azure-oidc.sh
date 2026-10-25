@@ -3,7 +3,7 @@
 # s OIDC federací na repo akczcz/adam a role jen na resource group. Vypíše hodnoty pro GitHub repository variables.
 # Idempotentní. Vyžaduje az ≥ 2.80 a oprávnění Owner na subscription (zakládá role assignments).
 set -euo pipefail
-LOC=${LOC:-swedencentral}; RG=${RG:-rg-platform-dev}; REPO=${REPO:-akczcz/adam}
+LOC=${LOC:-westeurope}; RG=${RG:-rg-platform-dev}; REPO=${REPO:-akczcz/adam}
 SUFFIX=${SUFFIX:-$(az account show --query user.name -o tsv | cut -d@ -f1 | tr -cd 'a-z0-9' | cut -c1-8)}
 SA=${SA:-sttfstate${SUFFIX}}; ID=${ID:-id-github-${REPO##*/}}
 SUB=$(az account show --query id -o tsv); TENANT=$(az account show --query tenantId -o tsv)

@@ -1,8 +1,13 @@
-# Rozhodnutí 2026-10-24 (knowledge/platforma/p1-aks.md): Sweden Central, system pool D4as_v5, Kata pool D2ads_v7 autoscale 0–1,
+# Rozhodnutí 2026-10-24 (knowledge/platforma/p1-aks.md): West Europe (Sweden Central bez kapacity), system pool D4as_v5, Kata pool D2ads_v7 autoscale 0–1,
 # Flexible Server B1ms, Contributor jen na resource group (RG zakládá bootstrap, Terraform ji jen čte).
 variable "location" {
   type    = string
-  default = "swedencentral"
+  default = "westeurope" # 2026-10-24: Sweden Central bez kapacity (AKS D4as_v5 zaseknutý v Creating 90 min, PG B1ms RegionalAllocationFailed)
+}
+variable "pg_location" {
+  type        = string
+  default     = null
+  description = "Region Flexible Serveru, pokud se má lišit od clusteru (kapacita Burstable SKU); null = var.location"
 }
 variable "resource_group_name" {
   type        = string
