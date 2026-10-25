@@ -8,6 +8,7 @@ Z jednoho zdroje pravdy (YAML role v gitu) vzniká:
   build/agentgateway/egress-allowlist.yaml             tcpRoutes.hostnames = sjednocení sandbox.egress_allow
   build/srt/<role>.json                ~/.srt-settings.json (schéma srt 0.0.81)
   build/claude/<role>-managed-settings.json            Claude Code managed settings (sandbox.*, permissions.deny)
+  build/images/<role>/{Dockerfile,devcontainer.json,etc/platform/*}   obraz role (P2-2): vrstva nad obrazem platformy, options/srt/managed settings zapečené, bez cloud CLI
   build/k8s/<role>-pod.yaml            pod spec (RuntimeClass, non-root, SA token off, labely, limity)
   build/inspect/<role>-approval.yaml   approval policy; build/inspect/<role>-evals.json vrstvy a gate
   build/agent_sdk/<role>.json          ClaudeAgentOptions pro runtime role (tools=[], strict_mcp_config, setting_sources=[], cwd, mcp_servers) – nález O-2 live
@@ -102,6 +103,27 @@ def pod(r, tenant):
                      "restartPolicy": "Never"}}
 
 
+def image_files(r, agent_sdk_json):
+    """Obraz role (P2-2): vrstva nad obrazem platformy – ClaudeAgentOptions, srt settings a managed settings zapečené v /etc/platform,
+    OCI labely s rolí/verzí/hashem zdroje, bez cloud CLI. Dockerfile je devcontainer-kompatibilní (devcontainer.json ukazuje na něj)."""
+    s = r["sandbox"]; img = s.get("image", f"registry.platform.internal/roles/{r['role']}:{r['version']}")
+    dockerfile = f"""# GENEROVÁNO rolegen z {r['_file']} (sha256 {r['_sha']}) – obraz role {r['role']} {r['version']}; cíl: {img}
+ARG BASE_IMAGE=platform/zakazka-app:p1
+FROM ${{BASE_IMAGE}}
+LABEL org.opencontainers.image.title="platform role {r['role']}" org.opencontainers.image.version="{r['version']}" \
+      platform.role="{r['role']}" platform.role.version="{r['version']}" platform.role.source_sha256_16="{r['_sha']}" platform.role.owner="{r['owner']}"
+USER 0
+COPY etc/platform/ /etc/platform/
+RUN mkdir -p /etc/claude && cp /etc/platform/managed-settings.json /etc/claude/managed-settings.json \
+ && for b in az gcloud aws kubectl docker helm terraform; do p=$(command -v "$b" 2>/dev/null) && rm -f "$p"; done; true   # žádný cloud CLI v obrazu role (role.md sandbox)
+USER 1000
+"""
+    devc = {"name": f"role-{r['role']}", "build": {"dockerfile": "Dockerfile", "args": {"BASE_IMAGE": "platform/zakazka-app:p1"}}, "remoteUser": "app",
+            "containerEnv": {k: str(v) for k, v in s.get("env", {}).items()}, "customizations": {"platform": {"role": r["role"], "version": r["version"], "image": img}}}
+    etc = {"role.json": agent_sdk_json, "srt.json": json.dumps(s.get("srt_settings") or {}, indent=1, sort_keys=True), "managed-settings.json": json.dumps(s.get("claude_settings") or {}, indent=1, sort_keys=True)}
+    return dockerfile, json.dumps(devc, ensure_ascii=False, indent=1), etc
+
+
 def inspect_files(r):
     approval = {"approvers": []}
     rules = r["sandbox"].get("approval", {}).get("inspect_approval_policy") or ["sandboxed_bash(cmd=*git-receive-pack*) → reject", "* → approve"]  # výchozí z autonomie.md: push/merge nikdy přes nástroj role
@@ -118,7 +140,7 @@ def main():
     ap.add_argument("--out", default="build"); ap.add_argument("--tenant", default="acme"); ap.add_argument("--zakazka", default="Z1")
     a = ap.parse_args()
     roles = load_roles(Path(a.roles)); out = Path(a.out)
-    for d in ("opa", "agentgateway", "srt", "claude", "k8s", "inspect", "registry", "agent_sdk"): (out / d).mkdir(parents=True, exist_ok=True)
+    for d in ("opa", "agentgateway", "srt", "claude", "k8s", "inspect", "registry", "agent_sdk", "images"): (out / d).mkdir(parents=True, exist_ok=True)
     (out / "opa/data.json").write_text(json.dumps(opa_data(roles), ensure_ascii=False, indent=1, sort_keys=True))
     (out / f"agentgateway/apikeys-{a.tenant}-{a.zakazka}.yaml").write_text(yaml.safe_dump(gateway_keys(roles, a.tenant, a.zakazka), sort_keys=False, allow_unicode=True))
     (out / "agentgateway/egress-allowlist.yaml").write_text(yaml.safe_dump(egress(roles), sort_keys=False))
@@ -132,9 +154,14 @@ def main():
         if p: (out / f"k8s/{r['role']}-pod.yaml").write_text(yaml.safe_dump(p, sort_keys=False))
         sdk = r["sandbox"].get("agent_sdk") or {}
         if sdk.get("tools", []) != []: raise SystemExit(f"{r['_file']}: sandbox.agent_sdk.tools musí být [] – vestavěné nástroje CLI běží mimo sandbox (O-2 live 2026-10-24)")
-        (out / f"agent_sdk/{r['role']}.json").write_text(json.dumps({"role": r["role"], "version": r["version"], "tools": [], "strict_mcp_config": True, "setting_sources": sdk.get("setting_sources", []),
-                                                                     "cwd": sdk.get("cwd", "/work"), "mcp_servers": sdk.get("mcp_servers", []), "permission_mode": "bypassPermissions",
-                                                                     "env": r["sandbox"].get("env", {}), "managed_settings": r["sandbox"].get("claude_settings", {})}, ensure_ascii=False, indent=1))
+        sdk_json = json.dumps({"role": r["role"], "version": r["version"], "tools": [], "strict_mcp_config": True, "setting_sources": sdk.get("setting_sources", []),
+                               "cwd": sdk.get("cwd", "/work"), "mcp_servers": sdk.get("mcp_servers", []), "permission_mode": "bypassPermissions",
+                               "env": r["sandbox"].get("env", {}), "managed_settings": r["sandbox"].get("claude_settings", {})}, ensure_ascii=False, indent=1)
+        (out / f"agent_sdk/{r['role']}.json").write_text(sdk_json)
+        dockerfile, devc, etc = image_files(r, sdk_json)
+        (out / f"images/{r['role']}/etc/platform").mkdir(parents=True, exist_ok=True)
+        (out / f"images/{r['role']}/Dockerfile").write_text(dockerfile); (out / f"images/{r['role']}/devcontainer.json").write_text(devc)
+        for n, c in etc.items(): (out / f"images/{r['role']}/etc/platform/{n}").write_text(c)
         approval, evals = inspect_files(r)
         (out / f"inspect/{r['role']}-approval.yaml").write_text(yaml.safe_dump(approval, sort_keys=False))
         (out / f"inspect/{r['role']}-evals.json").write_text(json.dumps(evals, ensure_ascii=False, indent=1))

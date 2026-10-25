@@ -6,7 +6,7 @@ Artefakty zakázky si pod stáhne a vrátí přes HTTP API aplikace (/zakazky/{i
 Aplikace čeká na fázi podu (Succeeded/Failed), zapíše ROLE_POD do ledgeru (uzel, runtime, časy, egress probe) a pod i Secret smaže.
 
 SVID z SPIRE v podu role zatím není: Workload API je unix socket agenta přes hostPath, který do Kata VM nevede (P2: spiffe-csi/agent v VM).
-Proměnné aplikace: P0_ROLE_RUNTIME=pod, P0_ROLE_IMAGE, P0_ROLE_NAMESPACE (platform-roles), P0_ARTIFACT_API (FQDN služby zakazka),
+Proměnné aplikace: P0_ROLE_RUNTIME=pod, P0_ROLE_IMAGE (bez šablony), P0_ROLE_IMAGE_REGISTRY (P2-2: registry.platform.internal → ACR v šabloně), P0_ROLE_NAMESPACE (platform-roles), P0_ARTIFACT_API (FQDN služby zakazka),
 P0_ROLE_RUNTIME_CLASS (kata-vm-isolation; "none" = bez RuntimeClass, kind), P0_ROLE_NODE_SELECTOR (JSON), P0_ROLE_TIMEOUT_S, P0_ROLE_KEEP_PODS.
 """
 from __future__ import annotations
@@ -47,8 +47,18 @@ def new_run(role, zid):
     return rid
 
 
+def _template(role):
+    """Šablona podu z rolegen (ConfigMap rolegen-build, pod-<role>.yaml = build/k8s/<role>-pod.yaml) – P2-2: pole z definice role, ne z env."""
+    od = os.environ.get("P0_ROLE_OPTIONS_DIR"); p = f"{od}/pod-{role}.yaml" if od else None
+    if p and os.path.exists(p):
+        import yaml
+        return yaml.safe_load(open(p).read())
+    return None
+
+
 def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json, srt_json):
-    ns = os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"); name = f"role-{role}-{run_id}"
+    """Secret + Pod běhu role. Vrací (ns, name, secret, pod, info); info = {template, overrides, image} pro ledger a check P22b."""
+    ns = os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"); name = f"role-{role}-{run_id}"; tenant = os.environ.get("P0_TENANT", "acme")
     rc = os.environ.get("P0_ROLE_RUNTIME_CLASS", "kata-vm-isolation")
     env = {k: os.environ[k] for k in ("P0_LLM_URL", "P0_MEMORY_URL", "P0_MODEL", "P0_MAX_TURNS", "P0_CLI_MAX_RETRIES", "P0_GITHUB_REPO",
                                       "ANTHROPIC_WORKSPACE_ID", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST") if os.environ.get(k)}
@@ -59,20 +69,41 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
     labels = {"app": "role", "platform.role": role, "role": role, "platform.zakazka": re.sub(r"[^A-Za-z0-9_.-]", "-", z["id"])[:63], "platform.run": run_id}
     secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": ns, "labels": labels}, "type": "Opaque",
               "stringData": {"P0_ROLE_TOKEN": token, "P0_ROLE_KEYS": json.dumps({"*": {role: key}}), "P0_RUN_TOKEN": RUNS[run_id]["token"]}}
-    spec = {"nodeSelector": json.loads(os.environ.get("P0_ROLE_NODE_SELECTOR", '{"pool": "kata"}')),
-            "tolerations": [{"key": "sandbox", "operator": "Equal", "value": "kata", "effect": "NoSchedule"}],
-            "automountServiceAccountToken": False, "restartPolicy": "Never", "activeDeadlineSeconds": int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")),
-            "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
-            "containers": [{"name": "role", "image": os.environ["P0_ROLE_IMAGE"], "imagePullPolicy": os.environ.get("P0_ROLE_IMAGE_PULL", "Always"), "command": ["python", "/app/harness_p0_o2/role_runner.py"],
-                            "env": [{"name": k, "value": v} for k, v in env.items()], "envFrom": [{"secretRef": {"name": name}}],
-                            "resources": {"requests": {"cpu": "250m", "memory": "512Mi"}, "limits": {"cpu": "2", "memory": os.environ.get("P0_ROLE_MEMORY", "1536Mi")}},
-                            "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
-                            "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]}],
-            "volumes": [{"name": "tmp", "emptyDir": {}}]}
-    if rc and rc != "none": spec["runtimeClassName"] = rc
-    if not spec["nodeSelector"]: spec.pop("nodeSelector"); spec.pop("tolerations")
-    pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": ns, "labels": labels}, "spec": spec}
-    return ns, name, secret, pod
+    runtime_c = {"command": ["python", "/app/harness_p0_o2/role_runner.py"], "envFrom": [{"secretRef": {"name": name}}], "imagePullPolicy": os.environ.get("P0_ROLE_IMAGE_PULL", "Always"),
+                 "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]}
+    runtime_spec = {"nodeSelector": json.loads(os.environ.get("P0_ROLE_NODE_SELECTOR", '{"pool": "kata"}')),
+                    "tolerations": [{"key": "sandbox", "operator": "Equal", "value": "kata", "effect": "NoSchedule"}],
+                    "restartPolicy": "Never", "activeDeadlineSeconds": int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")), "volumes": [{"name": "tmp", "emptyDir": {}}]}
+    if not runtime_spec["nodeSelector"]: runtime_spec.pop("nodeSelector"); runtime_spec.pop("tolerations")
+    tpl = _template(role); overrides = []
+    if tpl:
+        # P2-2: pole z definice role (RuntimeClass, non-root, SA token, drop ALL, resources, env, labels, image) jsou ze šablony; aplikace doplní jen běh
+        spec = tpl["spec"]; c = spec["containers"][0]
+        reg = os.environ.get("P0_ROLE_IMAGE_REGISTRY")
+        if reg and c["image"].startswith("registry.platform.internal/"): c["image"] = reg.rstrip("/") + c["image"][len("registry.platform.internal"):]; overrides.append("image.registry")
+        elif not reg and os.environ.get("P0_ROLE_IMAGE"): c["image"] = os.environ["P0_ROLE_IMAGE"]; overrides.append("image")   # kind bez registru rolí
+        sc = spec.setdefault("securityContext", {})
+        if (sc.get("seccompProfile") or {}).get("type") == "Localhost": sc["seccompProfile"] = {"type": "RuntimeDefault"}; overrides.append("securityContext.seccompProfile")   # profil na uzlu není; v Kata guestu se profil podu neaplikuje
+        for k, v in (("runAsGroup", sc.get("runAsUser", 1000)), ("fsGroup", sc.get("runAsUser", 1000))):
+            if k not in sc: sc[k] = v; overrides.append(f"securityContext.{k}")
+        tl = {k: str(v).replace("{{wf}}", run_id).replace("{tenant}", tenant).replace("{workflow_instance}", run_id) for k, v in (tpl.get("metadata", {}).get("labels") or {}).items()}
+        labels = tl | labels
+        tenv = {e["name"]: e.get("value", "") for e in c.get("env", [])}
+        c["env"] = [{"name": k, "value": v} for k, v in (tenv | env).items()]; overrides.append("env+")
+        c.update(runtime_c); overrides += ["command", "envFrom", "imagePullPolicy", "volumeMounts"]
+        if rc and rc != "none" and spec.get("runtimeClassName") != rc: spec["runtimeClassName"] = rc; overrides.append("runtimeClassName")
+        if rc == "none": spec.pop("runtimeClassName", None); overrides.append("runtimeClassName-")
+        spec.update(runtime_spec); overrides += [f"{k}" for k in runtime_spec]
+        pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": ns, "labels": labels, "annotations": {"platform.template": f"pod-{role}.yaml"}}, "spec": spec}
+    else:
+        spec = {"automountServiceAccountToken": False,
+                "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
+                "containers": [{"name": "role", "image": os.environ["P0_ROLE_IMAGE"], "env": [{"name": k, "value": v} for k, v in env.items()],
+                                "resources": {"requests": {"cpu": "250m", "memory": "512Mi"}, "limits": {"cpu": "2", "memory": os.environ.get("P0_ROLE_MEMORY", "1536Mi")}},
+                                "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}} | runtime_c], **runtime_spec}
+        if rc and rc != "none": spec["runtimeClassName"] = rc
+        pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": ns, "labels": labels}, "spec": spec}
+    return ns, name, secret, pod, {"template": bool(tpl), "overrides": overrides, "image": pod["spec"]["containers"][0]["image"]}
 
 
 def gc_orphans(ns, ledger):
@@ -107,13 +138,13 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
     od = os.environ.get("P0_ROLE_OPTIONS_DIR")
     ro = open(f"{od}/{role}.json").read() if od and os.path.exists(f"{od}/{role}.json") else ""
     srt = open(f"{od}/srt-{role}.json").read() if od and os.path.exists(f"{od}/srt-{role}.json") else ""
-    ns, name, secret, pod = manifests(rid, role, z, prompt, tool_names, token=token, key=key, role_opts_json=ro, srt_json=srt)
+    ns, name, secret, pod, info = manifests(rid, role, z, prompt, tool_names, token=token, key=key, role_opts_json=ro, srt_json=srt)
     timeout = int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")) + 300   # + čas na alokaci Kata uzlu autoscalerem z 0
     t0 = time.time(); p = {}; phase = "Pending"
     try:
         k8s("POST", f"/api/v1/namespaces/{ns}/secrets", secret)
         k8s("POST", f"/api/v1/namespaces/{ns}/pods", pod)
-        ledger("ROLE_POD_CREATE", zakazka=z["id"], role=role, pod=name, namespace=ns, runtime_class=pod["spec"].get("runtimeClassName"), image=pod["spec"]["containers"][0]["image"], srt=bool(srt), role_options=bool(ro))
+        ledger("ROLE_POD_CREATE", zakazka=z["id"], role=role, pod=name, namespace=ns, runtime_class=pod["spec"].get("runtimeClassName"), image=info["image"], srt=bool(srt), role_options=bool(ro), template=info["template"], overrides=info["overrides"])
         while time.time() - t0 < timeout:
             p = k8s("GET", f"/api/v1/namespaces/{ns}/pods/{name}")
             phase = p.get("status", {}).get("phase", "Pending")
@@ -139,7 +170,9 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
            exit_code=term.get("exitCode"), reason=term.get("reason"), result_received=res is not None,
            t_schedule_s=round(sched - created, 1) if sched and created else None, t_start_s=round(started - created, 1) if started and created else None,
            t_run_s=round(finished - started, 1) if finished and started else None, t_total_s=round(time.time() - t0, 1),
-           egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:])
+           egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:],
+           image=info["image"], template=info["template"], overrides=info["overrides"], image_tools=(res or {}).get("image_tools"), image_role=(res or {}).get("image_role"),
+           resources=pod["spec"]["containers"][0].get("resources"))
     if not os.environ.get("P0_ROLE_KEEP_PODS"):
         for kind in ("pods", "secrets"):
             try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")

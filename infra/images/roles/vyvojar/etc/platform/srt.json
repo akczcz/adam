@@ -1,0 +1,33 @@
+{
+ "allowNestedUserNamespaces": false,
+ "credentials": {
+  "envVars": []
+ },
+ "enableWeakerNestedSandbox": true,
+ "filesystem": {
+  "allowRead": [],
+  "allowWrite": [
+   "/work"
+  ],
+  "denyRead": [],
+  "denyWrite": [
+   "/work/.git/hooks",
+   "/work/.git/config",
+   "/work/.claude",
+   "/work/.mcp.json"
+  ]
+ },
+ "mandatoryDenySearchDepth": 3,
+ "network": {
+  "allowedDomains": [
+   "git.platform.internal",
+   "mirror.platform.internal"
+  ],
+  "deniedDomains": [],
+  "parentProxy": {
+   "http": "http://agentgateway.platform.svc:3128",
+   "https": "http://agentgateway.platform.svc:3128"
+  },
+  "strictAllowlist": true
+ }
+}

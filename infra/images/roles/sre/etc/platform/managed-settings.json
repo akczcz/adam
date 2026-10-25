@@ -1,0 +1,23 @@
+{
+ "permissions": {
+  "deny": [
+   "Bash",
+   "WebFetch",
+   "Write",
+   "Edit"
+  ]
+ },
+ "sandbox": {
+  "allowUnsandboxedCommands": false,
+  "enabled": true,
+  "failIfUnavailable": true,
+  "filesystem": {
+   "allowManagedReadPathsOnly": true
+  },
+  "network": {
+   "allowManagedDomainsOnly": true,
+   "strictAllowlist": true
+  }
+ },
+ "skipWebFetchPreflight": true
+}

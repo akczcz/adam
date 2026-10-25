@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["infra/images/app/**", "infra/images/sandbox-s1/**", "tools/harness_p0_o2/app.py", "tools/harness_p0_o2/role_pod.py", "tools/harness_p0_o2/role_runner.py", "tools/harness_p0_o2/gateway_keys.py", "tools/harness_p0_o2/gateway_merge.py", "tools/harness_p0_o2/github_bridge.py", "tools/harness_p0_o2/mock_github.py", "tools/harness_memory_m1/memory_server.py", ".github/workflows/images.yml"]
+    paths: ["infra/images/app/**", "infra/images/roles/**", "infra/images/sandbox-s1/**", "tools/harness_p0_o2/app.py", "tools/harness_p0_o2/role_pod.py", "tools/harness_p0_o2/role_runner.py", "tools/harness_p0_o2/gateway_keys.py", "tools/harness_p0_o2/gateway_merge.py", "tools/harness_p0_o2/github_bridge.py", "tools/harness_p0_o2/mock_github.py", "tools/harness_memory_m1/memory_server.py", ".github/workflows/images.yml"]
 permissions:
   id-token: write
   contents: read
@@ -44,6 +44,13 @@ jobs:
           cp tools/harness_memory_m1/memory_server.py "$B/src/harness_memory_m1/"; cp tools/harness_gateway_g1/mock_upstream.py "$B/src/harness_gateway_g1/"
           cp infra/images/app/requirements.txt infra/images/app/Dockerfile.aks "$B/"
           az acr build -r "$ACR" -t zakazka-app:p1 -t "zakazka-app:${GITHUB_SHA::7}" -f "$B/Dockerfile.aks" "$B"
+      - name: obrazy rolí (P2-2, az acr build – vrstva nad zakazka-app z infra/images/roles, generuje rolegen)
+        run: |
+          for d in infra/images/roles/*/; do
+            r=$(basename "$d"); v=$(python3 -c "import json;print(json.load(open('$d/devcontainer.json'))['customizations']['platform']['version'])")
+            echo "== roles/$r:$v"
+            az acr build -r "$ACR" -t "roles/$r:$v" -t "roles/$r:${GITHUB_SHA::7}" --build-arg "BASE_IMAGE=$ACR.azurecr.io/zakazka-app:p1" -f "$d/Dockerfile" "$d" --no-logs -o none
+          done
       - name: build měřicího obrazu sandboxu S1 (az acr build)
         run: az acr build -r "$ACR" -t sandbox-s1:p1 -f infra/images/sandbox-s1/Dockerfile infra/images/sandbox-s1
       - run: az acr repository list -n "$ACR" -o table | tee -a "$GITHUB_STEP_SUMMARY"

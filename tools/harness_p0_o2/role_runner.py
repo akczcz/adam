@@ -97,7 +97,13 @@ def main():
             try: led.append(json.loads(l))
             except Exception: pass
     out = {k: res.get(k) for k in ("text", "cost", "files", "error", "budget_exceeded")}
-    out |= {"egress_probe": probe, "pod": os.environ.get("HOSTNAME"), "srt": os.environ.get("P0_SRT"), "uid": os.getuid(), "agent_s": agent_s, "uploaded": len(up), "kernel": os.uname().release}
+    import shutil
+    tools_present = {b: bool(shutil.which(b)) for b in ("git", "node", "python3", "srt", "bwrap", "claude")}
+    tools_absent = {b: shutil.which(b) is None for b in ("az", "gcloud", "aws", "kubectl", "docker", "helm", "terraform")}   # obraz role bez cloud CLI (role.md sandbox)
+    try: image_role = json.loads(open("/etc/platform/role.json").read()); image_role = {"role": image_role.get("role"), "version": image_role.get("version"), "managed_settings": os.path.exists("/etc/claude/managed-settings.json")}
+    except Exception: image_role = None
+    out |= {"egress_probe": probe, "pod": os.environ.get("HOSTNAME"), "srt": os.environ.get("P0_SRT"), "uid": os.getuid(), "agent_s": agent_s, "uploaded": len(up), "kernel": os.uname().release,
+            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role}
     try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": led}, headers=H, timeout=120)
     except Exception as e: print(f"result post error: {e}", flush=True)
     print("RESULT::" + json.dumps(out, ensure_ascii=False)[:30000], flush=True)

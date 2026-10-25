@@ -77,6 +77,14 @@ resource "azurerm_role_assignment" "deployer_aks_admin" {
   principal_id         = var.deployer_principal_id
 }
 
+# identita Actions čte tagy obrazů rolí z ACR (harness P22a: `az acr repository show-tags`) – data-plane role, Contributor na RG ji nedává (2026-10-25)
+resource "azurerm_role_assignment" "deployer_acr_pull" {
+  count                = var.deployer_principal_id == null ? 0 : 1
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = var.deployer_principal_id
+}
+
 # --- node pool kata: Pod Sandboxing (KataVmIsolation), autoscale 0–1, taint pro pody rolí ---------------------------------------
 resource "azurerm_kubernetes_cluster_node_pool" "kata" {
   name                        = "kata"

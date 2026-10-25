@@ -1,0 +1,20 @@
+{
+ "permissions": {
+  "deny": [
+   "Bash(git push*)",
+   "Bash(git commit*)",
+   "Edit",
+   "Write",
+   "WebFetch"
+  ]
+ },
+ "sandbox": {
+  "allowUnsandboxedCommands": false,
+  "enabled": true,
+  "failIfUnavailable": true,
+  "network": {
+   "allowManagedDomainsOnly": true,
+   "strictAllowlist": true
+  }
+ }
+}

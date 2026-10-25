@@ -55,13 +55,15 @@ přes gateway) → P2-6 (FinOps součet klíčů). Měřítko zůstává: **kaž
 | Krok | Stav |
 |---|---|
 | P2-1 | ✅ **2026-10-25 AKS 7/7** (`tools/harness_p1_k8s --step p2-1`, `measure` run 40195984513): konfigurace gateway a rolegen build z Gitu přes Flux (`infra/k8s/rolegen` component z `render_k8s.py`, CI `rolegen.yml --check`), ConfigMapy v clusteru == render HEAD; klíče role × zakázka vydává aplikace do `agentgateway-keys` (sidecar `config-merge` → hot reload, propagace na obě repliky 69 s), rozpočty == `roles/*.yaml`; harness dodal jen tajemství. Zbývá: klíče z OpenBao (P2-6), zrušit `render_gateway` v kind harnessu |
-| P2-2 | ⬜ |
+| P2-2 | ✅ **2026-10-25 AKS 10/10** (`--step p2-2`, `measure` run 40200765801): obrazy rolí `roles/<role>:0.1.0` z rolegen (`infra/images/roles`, `az acr build` vrstvy nad obrazem platformy, options/srt/managed settings zapečené, bez cloud CLI – ověřeno sondou z podu), pod role ze šablony `pod-<role>.yaml` z rolegen (aplikace doplní jen běh), zakázka end-to-end beze změny. Zbývá: devcontainer CLI build místo ACR Tasks (volitelné), digest obrazu v SPIRE selektoru (P2-3), AcrPull pro `az acr repository` z runneru (role přidána, zatím bez efektu) |
 | P2-3 | ⬜ |
 | P2-4 | ⬜ |
 | P2-5 | ⬜ |
 | P2-6 | ⬜ |
 
 ## Changelog
+- 2026-10-25: P2-2 hotovo 10/10 na AKS; seccomp `Localhost` ze šablony se na Katě nahrazuje `RuntimeDefault` (profil na uzlu není, Kata guest ho neaplikuje) – zapsáno jako vědomý doplněk aplikace.
+- 2026-10-25: P2-2 implementováno (obrazy rolí z rolegen přes `az acr build`, pod spec ze šablony rolegen); rozhodnutí: devcontainer CLI build odložen – Dockerfile je devcontainer-kompatibilní, staví ho ACR Tasks jako ostatní obrazy.
 - 2026-10-25: P2-1 hotovo 7/7 na AKS; pasti: Flux substitute v generované ConfigMapě (`substitute: disabled`), propagace ConfigMap per replika (headless sonda).
 - 2026-10-25: P2-1 implementováno (konfigurace z Gitu přes Flux, klíče per zakázka od aplikace, sidecar merge); rozhodnutí: žádné bot commity – generované manifesty jsou součást PR, CI jen kontroluje shodu s rolemi.
 - 2026-10-25: první verze plánu P2 po uzavření P1 (návrh, čeká na Adamovo potvrzení rozsahu a pořadí).

@@ -100,6 +100,7 @@ patches:
   patch: |
     - {op: add, path: /data/P0_ROLE_RUNTIME, value: pod}
     - {op: add, path: /data/P0_ROLE_IMAGE, value: "${ACR_LOGIN_SERVER}/zakazka-app:p1"}
+    - {op: add, path: /data/P0_ROLE_IMAGE_REGISTRY, value: "${ACR_LOGIN_SERVER}"}   # P2-2: šablona podu z rolegen má registry.platform.internal/roles/<role>:<verze> → ACR
     - {op: add, path: /data/P0_ROLE_NAMESPACE, value: platform-roles}
     - {op: add, path: /data/P0_ARTIFACT_API, value: http://zakazka.platform-data.svc:8010}
     - {op: replace, path: /data/P0_LLM_URL, value: http://agentgateway.platform-data.svc:4100}

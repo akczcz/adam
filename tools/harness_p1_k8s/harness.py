@@ -45,6 +45,8 @@ Tvrzení (krok p1-5 – workflow, paměť, bridge v clusteru):
   P21b2 Klíče role × zakázka vydala aplikace (ConfigMap agentgateway-keys + Secret), rozpočty == roles/*.yaml, gateway klíč přijala
   P21b–h jako P16b–h (zakázka end-to-end s rolemi jako Kata pody, izolace, egress, časy, paměť, FinOps podle hashů z ConfigMapy)
 
+--step p2-2 = p2-1 + obrazy rolí (P2-2): P22a roles/<role>:<verze> v ACR, P22b pod ze šablony rolegen (jen povolené doplňky běhu), P22c obsah obrazu (bez cloud CLI)
+
 --step p1-6 (původní znění checků P16, dnes alias p2-1):
   P16a  Flux Ready; platforma (vč. mock-upstream v clusteru) Ready; OpenBao init do Secretu openbao-init + unseal; paměť na Flexible Serveru
   P16b  Zakázka end-to-end jako P15b, role běží jako pody: 4× ROLE_POD Succeeded s výsledkem, AGENT_RUN z podu (via=pod), Dokonceno
@@ -592,7 +594,7 @@ class PortForward:
         if self.p: self.p.terminate()
 
 
-def step_p2_1(a, rep, env):
+def step_p2_1(a, rep, env, images=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů."""
     import psycopg, jwt, hashlib as _h, base64 as _b
@@ -720,7 +722,7 @@ def step_p2_1(a, rep, env):
         def gh_post(path, payload, user): return http("POST", f"{GHM}{path}", json=payload, headers={"X-Mock-User": user}, timeout=15).json()
 
         # P21b – zakázka end-to-end, role jako pody (první pod čeká na scale-up poolu kata z 0 → dlouhé timeouty)
-        run_tag = time.strftime("%H%M%S"); zid = f"P21-{run_tag}-1"; t1 = time.time()
+        run_tag = time.strftime("%H%M%S"); zid = f"{'P22' if images else 'P21'}-{run_tag}-1"; t1 = time.time()
         http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS s konfigurací rolí z Gitu.", "hitl_timeout_s": 7200}, timeout=15)
         issue = pub(zid, "issue"); assert issue, f"issue nebylo publikováno; ledger: {[(e['kind'], e.get('role'), e.get('error') or e.get('phase')) for e in led() if e.get('zakazka') == zid][-8:]}"
         gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "stranger")
@@ -753,6 +755,28 @@ def step_p2_1(a, rep, env):
         got_block = {(k.get("metadata") or {}).get("role"): next((b["limit"]["amount"] for b in k.get("budgets", []) if b["name"].endswith("24h-block")), None) for k in mine}
         sec_keys = kubectl(a, "-n", NS, "get", "secret", f"zakazka-keys-{zid.lower()}", "-o", "jsonpath={.metadata.name}").stdout.strip()
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and sec_keys else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
+
+        if images:
+            # P2-2 – obrazy rolí z rolegen (az acr build) a pod spec ze šablony rolegen
+            import yaml as _y2
+            versions = {}
+            for f in sorted((ROOT / "knowledge/organization/roles").glob("*.yaml")):
+                r = _y2.safe_load(f.read_text()); versions[r["role"]] = str(r["version"])
+            acr_name = (a.acr or "").split(".")[0]; tags = {}
+            for role in ROLE_CLIENTS:
+                r = sh(["az", "acr", "repository", "show-tags", "-n", acr_name, "--repository", f"roles/{role}", "-o", "json"]) if acr_name and shutil.which("az") else None
+                try: tags[role] = json.loads(r.stdout) if r and r.returncode == 0 else (r.stderr[-200:] if r else "az chybí")
+                except Exception: tags[role] = r.stdout[-200:]
+            pulled = {k: (p.get("image") or "") for k, p in pods_led.items() if p.get("phase") == "Succeeded"}   # záložní důkaz: pod roli z obrazu roles/<role>:<verze> skutečně stáhl a doběhl
+            by_tags = all(isinstance(tags.get(r), list) and versions[r] in tags[r] for r in ROLE_CLIENTS)
+            by_pods = all(pulled.get(r, "").startswith(f"{a.acr}/roles/{r}:{versions[r]}") for r in ROLE_CLIENTS)
+            rep.add("P22a", "Obrazy rolí v ACR: roles/<role>:<verze z roles/*.yaml> pro každou roli (CI images.yml: az acr build vrstvy nad zakazka-app z infra/images/roles, které generuje rolegen – Dockerfile + devcontainer.json + etc/platform); důkaz = tagy z ACR (identita Actions s AcrPull) nebo aspoň pody, které obraz stáhly a doběhly", "PASS" if by_tags or by_pods else "FAIL", {"source": "acr_tags" if by_tags else ("pods" if by_pods else None), "tags": tags, "pulled": pulled, "versions_yaml": versions})
+            ALLOWED = {"image.registry", "securityContext.seccompProfile", "securityContext.runAsGroup", "securityContext.fsGroup", "env+", "command", "envFrom", "imagePullPolicy", "volumeMounts", "nodeSelector", "tolerations", "restartPolicy", "activeDeadlineSeconds", "volumes"}
+            tplinfo = {k: {"template": p.get("template"), "image": p.get("image"), "overrides": p.get("overrides"), "unexpected": sorted(set(p.get("overrides") or []) - ALLOWED), "resources": p.get("resources"), "image_role": p.get("image_role")} for k, p in pods_led.items()}
+            ok_tpl = bool(tplinfo) and all(v["template"] and not v["unexpected"] and (v["image"] or "").startswith(f"{a.acr}/roles/{k}:{versions[k]}") and (v["image_role"] or {}).get("role") == k and (v["image_role"] or {}).get("version") == versions[k] and (v["image_role"] or {}).get("managed_settings") for k, v in tplinfo.items())
+            rep.add("P22b", "Pod role ze šablony rolegen (pod-<role>.yaml z build/k8s): RuntimeClass, non-root, SA token off, drop ALL, resources, env a labels z definice role; aplikace doplní jen běh (jméno, Secret, env běhu, uzel, timeout, registry obrazu, seccomp Localhost → RuntimeDefault na Katě); obraz = roles/<role>:<verze> a /etc/platform/role.json v obrazu nese tutéž roli a verzi, managed settings zapečené", "PASS" if ok_tpl else "FAIL", tplinfo)
+            tools_ok = bool(pods_led) and all((p.get("image_tools") or {}).get("present") and all((p["image_tools"]["present"]).values()) and all((p["image_tools"]["absent"]).values()) for p in pods_led.values())
+            rep.add("P22c", "Obsah obrazu role (sonda z podu): git, node, python3, srt, bwrap, claude přítomny; az, gcloud, aws, kubectl, docker, helm, terraform nepřítomny (role.md: obraz role bez cloud CLI)", "PASS" if tools_ok else "FAIL", {k: p.get("image_tools") for k, p in pods_led.items()})
 
         # P21c – izolace podů rolí
         nodes = {n["metadata"]["name"]: n["metadata"]["labels"].get("pool") for n in kj("get", "nodes").get("items", [])}
@@ -802,7 +826,7 @@ def step_p2_1(a, rep, env):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -813,7 +837,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -822,7 +846,7 @@ def main():
     if a.create_kind:
         assert a.kind, "chybí KIND"
         create_kind(a, env)
-    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True)}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}
