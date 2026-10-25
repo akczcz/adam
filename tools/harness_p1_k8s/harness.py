@@ -614,6 +614,10 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
         v = kubectl(a, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}").stdout.strip(); return _b.b64decode(v).decode() if v else None
     # Flux: obě kustomizations Ready a mock-upstream (nový objekt overlay) existuje
     want_sha = os.environ.get("GITHUB_SHA") or sh(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).stdout.strip()
+    # Flux sleduje hlavu větve: commit pushnutý během měření (např. jen docs) by jinak měření shodil; přijmout i aktuální hlavu větve z originu
+    head_now = (sh(["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{os.environ.get('GITHUB_REF_NAME', '')}"]).stdout.split() or [""])[0] if os.environ.get("GITHUB_REF_NAME") else ""
+    want_shas = {want_sha} | ({head_now} if head_now else set())
+    def rev_ok(r): return any(r.endswith(w) for w in want_shas)
     # StatefulSet s podem v CrashLoopBackOff rolling update nenahradí (kubernetes/kubernetes#67250): po Flux applyi smazat pody, které nejsou na updateRevision
     # (ne jen currentRevision – pod může stát na mezilehlé revizi, když se nedokončil ani předchozí rollout; měřeno 2026-10-25). Flux health check
     # (wait) kustomizace platform projde až s novým podem → mazání musí běžet uvnitř čekání na Flux.
@@ -631,13 +635,13 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
         ks = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
         flux = {k["metadata"]["name"]: next((c["status"] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks}
         revs = [(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks]
-        if flux and all(v == "True" for v in flux.values()) and all(r.endswith(want_sha) for r in revs) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
+        if flux and all(v == "True" for v in flux.values()) and all(rev_ok(r) for r in revs) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
         sts_unstick(); time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
     ks_now = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in ks_now}
     flux_msg = {k["metadata"]["name"]: next((c.get("message", "")[:1500] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks_now}
     print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
-    assert flux and all(v == "True" for v in flux.values()) and all((k.get("status", {}).get("lastAppliedRevision") or "").endswith(want_sha) for k in ks_now), f"Flux neaplikoval HEAD {want_sha[:12]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
+    assert flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now), f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
     if kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620).returncode != 0:   # P2-3: nový config (seal plugin) → pod se restartuje
         st_ = kubectl(a, "-n", NS, "get", "pod", "openbao-0", "-o", "jsonpath={range .status.initContainerStatuses[*]}{.name}={.state}{'\\n'}{end}{range .status.containerStatuses[*]}{.name}={.state}{'\\n'}{end}").stdout
