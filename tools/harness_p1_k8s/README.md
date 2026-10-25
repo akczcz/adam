@@ -169,6 +169,23 @@ env a labels z definice role; aplikace doplní jen běh (jméno, Secret, env bě
 Výsledek: **10/10 + 2 INFO** (`measure` run 40200765801, `results/p2-2-20261025-141907.json`). Časy: první role 139 s (scale-up uzlu 87 s + pull
 obrazu role a boot VM 114 s), další role 24–27 s (obraz role na uzlu, start podu 2–3 s). Resources podu z definice role (2 CPU, 4 Gi).
 
+
+## P2-5 – eval gate a registr agentů (2026-10-25, AKS, `--step p2-5` = p2-2 + P25a–c) – **13/13**
+
+Evaly rolí ([`tools/role_evals`](../role_evals/README.md)) běží v CI (`rolegen.yml`) nad adversariálním mockem; výsledek `results/eval-status.json`
+jde přes `render_k8s.py` do ConfigMapy `rolegen-build` a aplikace roli bez `passed` nespustí (`role_gate`, ledger `ROLE_GATE`). Harness po
+zakázce naplní registr v DB `org` na Flexible Serveru (`registry.py`: `org.role_definitions` ze YAML rolí + gate, `org.eval_gates` z výsledků
+evalů, `org.agents` z ledgeru – SPIFFE ID instance role, model, klíč gateway, sandbox profil, obraz, uzel) a spustí negativní kontrolu gate.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P25a | `eval-status.json` v Gitu == ConfigMap v clusteru; role zakázky `passed`, aplikace to ověřila před každým během (`ROLE_GATE passed=true`, vrstvy L0–L3); SRE `unevaluated` (aplikace by ji odmítla) | ✅ |
+| P25b | registr v DB `org`: `role_definitions` 5 řádků (4 active, sre proposed), `eval_gates` 15 řádků (vrstva × role z CI evalů), `agents` 4 instance zakázky (SPIFFE ID, model, klíč gateway, sandbox profil `dev-kata-srt`, obraz `roles/<role>:0.1.0`) | ✅ |
+| P25c | negativní kontrola na runneru: Vývojář L3 bez PEP → `pass_k` 0,5 < 1,0, gate failed | ✅ |
+| P21a–h, P22a–c | regrese P2-1 a P2-2 | ✅ |
+
+Výsledek: **13/13 + 2 INFO** (`measure` run 40206756683, `results/p2-5-20261025-153648.json`).
+
 ## Spuštění
 
 ```bash
@@ -179,7 +196,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
-python harness.py --step p2-2 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-2); p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
+python harness.py --step p2-5 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-5); p2-2 bez registru, p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
 ```
 
 Pasti prostředí (cgroup v1, chybějící `CAP_SYS_RESOURCE`, proxy uzlu): [`infra/README.md`](../../infra/README.md).

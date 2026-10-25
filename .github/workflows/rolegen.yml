@@ -1,13 +1,13 @@
 # P2-1: role → konfigurace clusteru přes Git. Při změně definic rolí nebo rolegen ověří, že vygenerované manifesty v infra/k8s/rolegen
-# (ConfigMap rolegen-build, patch agentgateway-config) odpovídají knowledge/organization/roles/*.yaml (render_k8s.py --check) a že overlaye
-# renderují. Změna role = PR s regenerovanými soubory (N6: dva schvalovatelé); po merge je aplikuje Flux. Žádné bot commity, žádná smyčka.
+# (ConfigMap rolegen-build, patch agentgateway-config, obrazy rolí) odpovídají knowledge/organization/roles/*.yaml (render_k8s.py --check), že overlaye
+# renderují a že evaly rolí L0–L3 (tools/role_evals) procházejí gate z definice role – eval-status.json v Gitu = co smí Flux nasadit. Změna role = PR s regenerovanými soubory (N6: dva schvalovatelé); po merge je aplikuje Flux. Žádné bot commity, žádná smyčka.
 name: rolegen
 on:
   pull_request:
-    paths: ["knowledge/organization/roles/**", "tools/rolegen/**", "infra/k8s/rolegen/**", "infra/k8s/base/agentgateway/**", ".github/workflows/rolegen.yml"]
+    paths: ["knowledge/organization/roles/**", "tools/rolegen/**", "tools/role_evals/**", "tools/harness_gateway_g1/mock_upstream.py", "infra/k8s/rolegen/**", "infra/images/roles/**", "infra/k8s/base/agentgateway/**", ".github/workflows/rolegen.yml"]
   push:
     branches: [main]
-    paths: ["knowledge/organization/roles/**", "tools/rolegen/**", "infra/k8s/rolegen/**", "infra/k8s/base/agentgateway/**"]
+    paths: ["knowledge/organization/roles/**", "tools/rolegen/**", "tools/role_evals/**", "tools/harness_gateway_g1/mock_upstream.py", "infra/k8s/rolegen/**", "infra/images/roles/**", "infra/k8s/base/agentgateway/**"]
 permissions:
   contents: read
 jobs:
@@ -21,6 +21,18 @@ jobs:
         run: |
           pip install -q pyyaml
           python tools/rolegen/rolegen.py --roles knowledge/organization/roles --out "$RUNNER_TEMP/rolegen" --tenant acme --zakazka P2-1-ci | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: P2-5 – evaly rolí L0–L3 s gate (Inspect AI, adversariální mock; eval-status.json musí odpovídat rolím)
+        run: |
+          pip install -q inspect-ai anthropic httpx fastapi uvicorn pandas pyarrow pyyaml
+          python tools/role_evals/evals.py --check | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: P2-5 – negativní kontrola (Vývojář L3 bez PEP musí selhat – gate měří obranu, ne mock)
+        run: python tools/role_evals/evals.py --negative-control | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: role-evals-${{ github.run_id }}
+          path: tools/role_evals/logs/
+          if-no-files-found: ignore
       - name: vygenerované manifesty odpovídají rolím (render_k8s.py --check)
         run: python tools/rolegen/render_k8s.py --check | tee -a "$GITHUB_STEP_SUMMARY"
       - name: overlaye renderují (kustomize)

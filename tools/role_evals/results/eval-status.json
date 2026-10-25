@@ -1,0 +1,158 @@
+{
+ "account": {
+  "k": 3,
+  "layers": {
+   "L0": {
+    "metric": "pass_rate",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L1": {
+    "metric": "policy_compliance",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L3": {
+    "metric": "pass_k",
+    "passed": true,
+    "threshold": 0.7,
+    "value": 1.0
+   }
+  },
+  "model": "mock",
+  "on_fail": {},
+  "reason": null,
+  "source_sha256_16": "3c3be37b322c9237",
+  "status": "passed",
+  "version": "0.1.0"
+ },
+ "architekt": {
+  "k": 3,
+  "layers": {
+   "L0": {
+    "metric": "pass_rate",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L1": {
+    "metric": "policy_compliance",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L2": {
+    "metric": "pass_k",
+    "passed": true,
+    "threshold": 0.7,
+    "value": 1.0
+   },
+   "L3": {
+    "metric": "pass_k",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L4": {
+    "reason": "online/kalibrace – provoz, ne CI",
+    "status": "SKIP"
+   }
+  },
+  "model": "mock",
+  "on_fail": {},
+  "reason": null,
+  "source_sha256_16": "82ed7db3de1e79c3",
+  "status": "passed",
+  "version": "0.1.0"
+ },
+ "reviewer": {
+  "k": 3,
+  "layers": {
+   "L0": {
+    "metric": "pass_rate",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L1": {
+    "metric": "policy_compliance",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L2": {
+    "metric": "agreement",
+    "passed": true,
+    "threshold": 0.85,
+    "value": 1.0
+   },
+   "L3": {
+    "metric": "pass_k",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L5": {
+    "reason": "online/kalibrace – provoz, ne CI",
+    "status": "SKIP"
+   }
+  },
+  "model": "mock",
+  "on_fail": {},
+  "reason": null,
+  "source_sha256_16": "71fa1c1ecad3f867",
+  "status": "passed",
+  "version": "0.1.0"
+ },
+ "sre": {
+  "k": null,
+  "layers": {},
+  "model": "mock",
+  "on_fail": {},
+  "reason": "role bez runtime v aplikaci (mock model bez chování SRE) – evaly až s deploy MCP serverem (P2)",
+  "source_sha256_16": "2e445d31721500f3",
+  "status": "unevaluated",
+  "version": "0.1.0"
+ },
+ "vyvojar": {
+  "k": 3,
+  "layers": {
+   "L0": {
+    "metric": "pass_rate",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L1": {
+    "metric": "policy_compliance",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L2": {
+    "metric": "pass_k",
+    "passed": true,
+    "threshold": 0.6,
+    "value": 1.0
+   },
+   "L3": {
+    "metric": "pass_k",
+    "passed": true,
+    "threshold": 1.0,
+    "value": 1.0
+   },
+   "L4": {
+    "reason": "online/kalibrace – provoz, ne CI",
+    "status": "SKIP"
+   }
+  },
+  "model": "mock",
+  "on_fail": {},
+  "reason": null,
+  "source_sha256_16": "0142841a6b8c85bc",
+  "status": "passed",
+  "version": "0.1.0"
+ }
+}

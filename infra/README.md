@@ -94,6 +94,13 @@ zakázky (`gateway_keys.py`, RBAC jen na tento objekt + Secrety), Flux ji jen za
 devcontainer.json. `images.yml` staví `roles/<role>:<verze>` (`az acr build --build-arg BASE_IMAGE`). Pod role staví aplikace ze šablony
 `pod-<role>.yaml` z ConfigMapy `rolegen-build` (overlay aks: `P0_ROLE_IMAGE_REGISTRY=${ACR_LOGIN_SERVER}` přepíše `registry.platform.internal`).
 
+## P2-5: eval gate v Gitu (2026-10-25)
+
+`tools/role_evals/results/eval-status.json` (CI `rolegen.yml`: evaly rolí L0–L3 nad adversariálním mockem, gate z definice role) jde přes
+`render_k8s.py` do ConfigMapy `rolegen-build`; aplikace zakázky roli bez `passed` nespustí (`P0_ROLE_GATE=off` vypne – kind/P0). Verze role,
+která propadne L3, se tak do clusteru nedostane dvakrát: CI neprojde (PR nelze mergnout) a i kdyby, aplikace ji odmítne. Registr `org.*`
+(DB `org` na Flexible Serveru) plní harness `p2-5` – v cíli Dapr workflow při založení instance role (P3).
+
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.
