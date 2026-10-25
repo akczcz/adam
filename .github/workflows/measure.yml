@@ -27,6 +27,14 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
+      - name: StatefulSety uvázlé na rozbitém podu (rolling update nenahradí pod v CrashLoopBackOff – kubernetes/kubernetes#67250) → smazat starý pod
+        run: |
+          for sts in $(kubectl -n platform-data get sts -o jsonpath='{.items[*].metadata.name}'); do
+            cur=$(kubectl -n platform-data get sts "$sts" -o jsonpath='{.status.currentRevision}'); upd=$(kubectl -n platform-data get sts "$sts" -o jsonpath='{.status.updateRevision}')
+            if [ -n "$upd" ] && [ "$cur" != "$upd" ]; then
+              for p in $(kubectl -n platform-data get pods -l "controller-revision-hash=$cur" -o jsonpath='{.items[*].metadata.name}'); do echo "sts $sts: mažu pod $p (revize $cur → $upd)"; kubectl -n platform-data delete pod "$p" --wait=false; done
+            fi
+          done
       - name: stav clusteru a platformy
         run: |
           { echo '## nodes'; kubectl get nodes -o wide; echo; echo '## runtimeclass'; kubectl get runtimeclass; echo; echo '## flux'; kubectl -n flux-system get kustomizations,gitrepositories 2>/dev/null || true; echo; echo '## pody platform-data'; kubectl -n platform-data get pods -o wide; } | tee -a "$GITHUB_STEP_SUMMARY"

@@ -43,6 +43,7 @@ patches:
 - target: {kind: Deployment, name: zakazka}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/1/image, value: "${ACR_LOGIN_SERVER}/daprd:1.18.9"}
+    - {op: replace, path: /spec/template/spec/containers/1/command/0, value: /daprd}
 - target: {kind: StatefulSet, name: spire-server}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-server:1.14.2"}
