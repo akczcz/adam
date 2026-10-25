@@ -613,25 +613,31 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
         v = kubectl(a, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}").stdout.strip(); return _b.b64decode(v).decode() if v else None
     # Flux: obě kustomizations Ready a mock-upstream (nový objekt overlay) existuje
     want_sha = os.environ.get("GITHUB_SHA") or sh(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).stdout.strip()
+    # StatefulSet s podem v CrashLoopBackOff rolling update nenahradí (kubernetes/kubernetes#67250): po Flux applyi smazat pody, které nejsou na updateRevision
+    # (ne jen currentRevision – pod může stát na mezilehlé revizi, když se nedokončil ani předchozí rollout; měřeno 2026-10-25). Flux health check
+    # (wait) kustomizace platform projde až s novým podem → mazání musí běžet uvnitř čekání na Flux.
+    sts_deleted = {}
+    def sts_unstick():
+        for sts in kj("-n", NS, "get", "sts").get("items", []):
+            upd = sts.get("status", {}).get("updateRevision"); n = sts["metadata"]["name"]
+            if not upd or sts.get("status", {}).get("currentRevision") == upd: continue
+            for p_ in kj("-n", NS, "get", "pods", "-l", f"app={n}").get("items", []) or kj("-n", NS, "get", "pods", "-l", f"statefulset.kubernetes.io/pod-name={n}-0").get("items", []):
+                h = p_["metadata"].get("labels", {}).get("controller-revision-hash")
+                if h and h != upd and not p_["metadata"].get("deletionTimestamp"):
+                    kubectl(a, "-n", NS, "delete", "pod", p_["metadata"]["name"], "--wait=false"); sts_deleted.setdefault(n, []).append(f"{p_['metadata']['name']}@{h}→{upd}")
     t0 = time.time(); flux = {}
-    while time.time() - t0 < 600:
+    while time.time() - t0 < 900:
         ks = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
         flux = {k["metadata"]["name"]: next((c["status"] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks}
         revs = [(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks]
         if flux and all(v == "True" for v in flux.values()) and all(r.endswith(want_sha) for r in revs) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
-        time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
+        sts_unstick(); time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
     ks_now = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in ks_now}
     flux_msg = {k["metadata"]["name"]: next((c.get("message", "")[:1500] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks_now}
-    print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
+    print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
     assert flux and all(v == "True" for v in flux.values()) and all(r.endswith(want_sha[:12]) for r in flux_rev.values()), f"Flux neaplikoval HEAD {want_sha[:12]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
-    # StatefulSet s podem v CrashLoopBackOff rolling update nenahradí (kubernetes/kubernetes#67250) – po Flux applyi smazat pody staré revize
-    for sts in kj("-n", NS, "get", "sts").get("items", []):
-        cur, upd = sts.get("status", {}).get("currentRevision"), sts.get("status", {}).get("updateRevision")
-        old = [p_["metadata"]["name"] for p_ in kj("-n", NS, "get", "pods", "-l", f"controller-revision-hash={cur}").get("items", [])] if upd and cur != upd else []
-        for p_ in old: kubectl(a, "-n", NS, "delete", "pod", p_, "--wait=false")
-        print(f"  sts {sts['metadata']['name']}: current={cur} update={upd} smazané pody staré revize={old}")
     if kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620).returncode != 0:   # P2-3: nový config (seal plugin) → pod se restartuje
         st_ = kubectl(a, "-n", NS, "get", "pod", "openbao-0", "-o", "jsonpath={range .status.initContainerStatuses[*]}{.name}={.state}{'\\n'}{end}{range .status.containerStatuses[*]}{.name}={.state}{'\\n'}{end}").stdout
         raise AssertionError(f"openbao-0 nenaběhl:\n{st_}\n{kubectl(a, '-n', NS, 'logs', 'openbao-0', '--all-containers', '--tail=40', '--prefix').stdout[-3000:]}")

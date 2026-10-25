@@ -32,12 +32,12 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
-      - name: StatefulSety uvázlé na rozbitém podu (rolling update nenahradí pod v CrashLoopBackOff – kubernetes/kubernetes#67250) → smazat starý pod
+      - name: StatefulSety uvázlé na rozbitém podu (rolling update nenahradí pod v CrashLoopBackOff – kubernetes/kubernetes#67250) → smazat pody mimo updateRevision
         run: |
           for sts in $(kubectl -n platform-data get sts -o jsonpath='{.items[*].metadata.name}'); do
             cur=$(kubectl -n platform-data get sts "$sts" -o jsonpath='{.status.currentRevision}'); upd=$(kubectl -n platform-data get sts "$sts" -o jsonpath='{.status.updateRevision}')
-            if [ -n "$upd" ] && [ "$cur" != "$upd" ]; then
-              for p in $(kubectl -n platform-data get pods -l "controller-revision-hash=$cur" -o jsonpath='{.items[*].metadata.name}'); do echo "sts $sts: mažu pod $p (revize $cur → $upd)"; kubectl -n platform-data delete pod "$p" --wait=false; done
+            if [ -n "$upd" ] && [ "$cur" != "$upd" ]; then   # pod může stát i na mezilehlé revizi (ne currentRevision) – mazat vše, co není updateRevision
+              for p in $(kubectl -n platform-data get pods -l "app=$sts,controller-revision-hash!=$upd" -o jsonpath='{.items[*].metadata.name}'); do echo "sts $sts: mažu pod $p (revize → $upd)"; kubectl -n platform-data delete pod "$p" --wait=false; done
             fi
           done
       - name: stav clusteru a platformy
