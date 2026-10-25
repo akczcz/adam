@@ -83,7 +83,7 @@ class Report:
     def __init__(self): self.checks = []
     def add(self, cid, name, status, detail):
         self.checks.append({"id": cid, "name": name, "status": status, "detail": detail})
-        print(f"  {dict(PASS='✅', FAIL='❌', INFO='ℹ️', SKIP='⏭️')[status]} {cid} {name}: {json.dumps(detail, ensure_ascii=False)[:420]}")
+        print(f"  {dict(PASS='✅', FAIL='❌', INFO='ℹ️', SKIP='⏭️')[status]} {cid} {name}: {json.dumps(detail, ensure_ascii=False)[:420 if status != 'FAIL' else 6000]}")   # FAIL celý detail (CI log)
 
 
 def sh(cmd, env=None, timeout=600, check=False):
@@ -727,9 +727,14 @@ def step_p1_6(a, rep, env):
 
         # P16c – izolace podů rolí
         nodes = {n["metadata"]["name"]: n["metadata"]["labels"].get("pool") for n in kj("get", "nodes").get("items", [])}
-        left = [p["metadata"]["name"] for p in kj("-n", RNS, "get", "pods").get("items", [])]; left_sec = [s["metadata"]["name"] for s in kj("-n", RNS, "get", "secrets").get("items", []) if s["metadata"]["name"].startswith("role-")]
+        tc = time.time()
+        while time.time() - tc < 120:   # smazání podu je asynchronní (Terminating, Kata VM se vypíná) – počkat na zmizení
+            left = [p["metadata"]["name"] for p in kj("-n", RNS, "get", "pods").get("items", [])]; left_sec = [s["metadata"]["name"] for s in kj("-n", RNS, "get", "secrets").get("items", []) if s["metadata"]["name"].startswith("role-")]
+            if not left and not left_sec: break
+            time.sleep(5)
+        cleanup_s = round(time.time() - tc, 1)
         iso = {k: {"node": p.get("node"), "pool": nodes.get(p.get("node")), "runtime_class": p.get("runtime_class"), "uid": p.get("pod_uid"), "run_as_user": p.get("run_as_user"), "automount_sa": p.get("automount_sa"), "srt": p.get("pod_srt")} for k, p in pods_led.items()}
-        rep.add("P16c", "Izolace podů rolí: každý pod role na uzlu poolu kata (autoscaler z 0), RuntimeClass kata-vm-isolation, běží jako uid 1000 bez SA tokenu, srt (weaker nested sandbox) v podu k dispozici; po běhu pod i Secret smazány", "PASS" if pods_led and all(v["pool"] == "kata" and v["runtime_class"] == "kata-vm-isolation" and v["uid"] == 1000 and v["run_as_user"] == 1000 and v["automount_sa"] is False and v["srt"] not in (None, "none") for v in iso.values()) and not left and not left_sec else "FAIL", {"pods": iso, "left_pods": left, "left_secrets": left_sec, "kata_nodes": [n for n, p in nodes.items() if p == "kata"]})
+        rep.add("P16c", "Izolace podů rolí: každý pod role na uzlu poolu kata (autoscaler z 0), RuntimeClass kata-vm-isolation, běží jako uid 1000 bez SA tokenu, srt (weaker nested sandbox) v podu k dispozici; po běhu pod i Secret smazány", "PASS" if pods_led and all(v["pool"] == "kata" and v["runtime_class"] == "kata-vm-isolation" and v["uid"] == 1000 and v["run_as_user"] == 1000 and v["automount_sa"] is False and v["srt"] not in (None, "none") for v in iso.values()) and not left and not left_sec else "FAIL", {"pods": iso, "left_pods": left, "left_secrets": left_sec, "cleanup_wait_s": cleanup_s, "kata_nodes": [n for n, p in nodes.items() if p == "kata"]})
 
         # P16d – egress
         eg = {k: p.get("egress_probe") for k, p in pods_led.items()}
