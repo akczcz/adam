@@ -39,7 +39,8 @@ def render(tenant="acme"):
         tpl = yaml.safe_load((b / f"agentgateway/apikeys-{tenant}-{{zakazka}}.yaml").read_text())
         tpl["policies"]["apiKey"]["mode"] = "optional"   # bez klíče projde request bez role (harnessy G1); klíče rolí jsou strict per budget
         data["apikeys-template.yaml"] = yaml.safe_dump(tpl, sort_keys=False, allow_unicode=True)
-    build_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "rolegen-build"}, "data": data}
+    # Flux postBuild.substitute by nedefinované ${VAR} v datech (env rolí, např. ${SVID_JWT}) nahradil prázdným řetězcem (P21a 2026-10-25) → vypnout
+    build_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "rolegen-build", "annotations": {"kustomize.toolkit.fluxcd.io/substitute": "disabled"}}, "data": data}
     base_cm = next(d for d in yaml.safe_load_all((ROOT / "infra/k8s/base/agentgateway/agentgateway.yaml").read_text()) if d and d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "agentgateway-config")
     cfg = yaml.safe_load(base_cm["data"]["config.yaml"])
     cfg["llm"]["models"][0]["params"]["baseUrl"] = "$LLM_UPSTREAM_URL"   # env gateway (Deployment): aks mock-upstream v clusteru / živé API

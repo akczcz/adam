@@ -3,6 +3,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: rolegen-build
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 data:
   account.json: "{\n \"role\": \"account\",\n \"version\": \"0.1.0\",\n \"tools\"\
     : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
