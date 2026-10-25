@@ -60,7 +60,7 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 - **Ladění overlay bez merge:** `infra` má vstup `gitops_branch` → Flux sleduje feature větev; push do `main` (bez vstupu) ho vrátí na `main`.
 - **Workflow z feature větve** potřebuje `environment: dev` (OIDC subjekt `environment:dev` má federaci, `ref:refs/heads/<větev>` ne).
 - **Workflow se v GitHubu registruje až z `main`** (nebo prvním během): `workflow_dispatch` na soubor, který je jen ve větvi, vrací 404.
-- **Kapacita Dadsv7 (změřeno 2026-10-25, Poland Central):** vznik poolu `kata` s 1 uzlem → `AllocationFailed`; pool se proto zakládá s 0 uzly
+- **Kapacita Dadsv7 (změřeno 2026-10-25, Poland Central):** `az vm list-skus`: D2ads_v7/D4ads_v7 jen zóna 1, DSv5/DDSv5 zóny 1–3; autoscaler `provisioning-state-failed` i po hodinách → Kata pool přepnut na `Standard_D4s_v5` (kvóta DSv5 8 vCPU, `az quota create` schváleno automaticky za ~1 min). vznik poolu `kata` s 1 uzlem → `AllocationFailed`; pool se proto zakládá s 0 uzly
   a VM alokuje autoscaler při prvním Kata podu (když selže i tam → `TF_VAR_kata_vm_size=Standard_D4s_v5`, kvóta rodiny DSv5).
 - **Zóna Flexible Serveru:** bez `zone` v konfiguraci Azure zónu přidělí a Terraform ji chce měnit → `lifecycle.ignore_changes = [zone]`.
 - **Jedna operace na cluster (změřeno 2026-10-25):** Terraform tvoří node pool `kata` a Flux extension paralelně → `409 OperationNotAllowed /

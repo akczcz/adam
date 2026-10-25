@@ -161,6 +161,7 @@ Cena P1 po rozhodnutí (*spekulace*, PAYG): system D4as_v5 ≈ 0,19 USD/h + Kata
 | P1-6 | ⬜ AKS (po P1-1): role jako Kata pody z rolegen, srt uvnitř, egress CONNECT gateway, SPIRE entries z rolegen |
 
 ## Changelog
+- 2026-10-25: Kata pool přepnut z D2ads_v7 (Poland Central jen zóna 1, AllocationFailed/provisioning-state-failed) na Standard_D4s_v5 (DSv5 kvóta 8 vCPU). Platforma z Fluxu běží; overlay `aks` upraven pro oficiální obrazy (dapr cesty, Keycloak KC_DB, SPIRE uid 1000).
 - 2026-10-25: P1-1 infrastruktura vytvořena v Poland Central po 7 bězích `apply` (kapacita Sweden Central, locationineligible West Europe, kvóty vCPU 0 → navýšeny, jedna operace na AKS cluster naráz, rezervované jméno PG, `zone` drift, orphan node pool → import). Všechny pasti zapsány v `infra/bootstrap/README.md`.
 - 2026-10-25: druhý `apply` (West Europe) → `RequestDisallowedByAzure: region not accepting new customers`; SKU průzkum 5 regionů → Poland Central.
 - 2026-10-25: první `apply` ve Sweden Central selhal na kapacitě (PG B1ms RegionalAllocationFailed, AKS Creating > 90 min); přesun do West Europe, PG bez pinované zóny, AKS create timeout 40 min. Řetězec Actions → OIDC → tfstate → `plan` ověřen (16 zdrojů).

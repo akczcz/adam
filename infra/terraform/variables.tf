@@ -1,4 +1,4 @@
-# Rozhodnutí 2026-10-25 (knowledge/platforma/p1-aks.md): Poland Central (záloha Italy North), system pool D4as_v5, Kata pool D2ads_v7 autoscale 0–1,
+# Rozhodnutí 2026-10-25 (knowledge/platforma/p1-aks.md): Poland Central (záloha Italy North), system pool D4as_v5, Kata pool D4s_v5 autoscale 0–1 (D2ads_v7 bez kapacity),
 # Flexible Server B1ms, Contributor jen na resource group (RG zakládá bootstrap, Terraform ji jen čte).
 variable "location" {
   type    = string
@@ -36,7 +36,7 @@ variable "system_vm_size" {
 }
 variable "kata_vm_size" {
   type        = string
-  default     = "Standard_D2ads_v7" # nested virt (Dadsv7 pro Pod Sandboxing od 2026-06); záloha Standard_D4s_v5
+  default     = "Standard_D4s_v5" # nested virt, Pod Sandboxing (docs); D2ads_v7 v Poland Central jen zóna 1 a 2026-10-25 AllocationFailed → DSv5 (kvóta 8 vCPU)
   description = "SKU pro node pool kata (KataVmIsolation)"
 }
 variable "kata_max_count" {
