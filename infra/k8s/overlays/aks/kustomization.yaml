@@ -15,6 +15,7 @@ resources:
 - ../../base/opa
 - ../../base/dapr
 - ../../base/zakazka
+- ../../base/mock-upstream
 - postgres-external.yaml
 images:
 - {name: platform/keycloak, newName: "${ACR_LOGIN_SERVER}/keycloak", newTag: "26.8.1"}
@@ -88,3 +89,36 @@ patches:
 - target: {kind: DaemonSet, name: spire-agent}
   patch: |
     - {op: add, path: /spec/template/spec/containers/0/securityContext, value: {runAsUser: 0}}
+# P1-6: role jako Kata pody v ns platform-roles (infra/k8s/roles – vlastní Flux kustomization); služby přes FQDN, aby na ně dosáhl pod z jiného ns
+- target: {kind: ConfigMap, name: zakazka-env}
+  patch: |
+    - {op: add, path: /data/P0_ROLE_RUNTIME, value: pod}
+    - {op: add, path: /data/P0_ROLE_IMAGE, value: "${ACR_LOGIN_SERVER}/zakazka-app:p1"}
+    - {op: add, path: /data/P0_ROLE_NAMESPACE, value: platform-roles}
+    - {op: add, path: /data/P0_ARTIFACT_API, value: http://zakazka.platform-data.svc:8010}
+    - {op: replace, path: /data/P0_LLM_URL, value: http://agentgateway.platform-data.svc:4100}
+    - {op: replace, path: /data/P0_MEMORY_URL, value: http://memory.platform-data.svc:9900}
+# Konfiguraci gateway (klíče rolí, upstream) a tajemství aplikace vydává rolegen/harness za běhu (hot reload): Flux objekt založí
+# s placeholdery (čerstvý cluster), ale už ho nikdy nepřepíše (ssa: IfNotPresent)
+- target: {kind: ConfigMap, name: agentgateway-config}
+  patch: |
+    - {op: add, path: /metadata/annotations/kustomize.toolkit.fluxcd.io~1ssa, value: IfNotPresent}
+- target: {kind: Secret, name: zakazka-secrets}
+  patch: |
+    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/ssa: IfNotPresent}}
+# Tag zakazka-app:p1 je pohyblivý (images.yml ho přepisuje) – bez Always by uzel použil starý obraz z cache (AKS 2026-10-25)
+- target: {kind: Deployment, name: zakazka}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: memory}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: mock-github}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: bridge}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: mock-upstream}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}

@@ -1,7 +1,7 @@
 # Harness P1 – platforma v Kubernetes (kind → AKS)
 
 Měří kroky fáze P1 ([plán](../../knowledge/platforma/p1-aks.md)). Měřítko není nová funkce, ale **tytéž harnessy z P0 spuštěné
-proti clusteru**. Manifesty: [`infra/k8s`](../../infra/README.md).
+proti clusteru** – P1-2…P1-5 na kind, P1-6 na AKS (fáze P1 uzavřena 2026-10-25). Manifesty: [`infra/k8s`](../../infra/README.md).
 
 ## Krok P1-2 – datová vrstva (2026-10-24, kind, `results/p1-2-20261024-154408.json`)
 
@@ -92,6 +92,39 @@ Zjištění a pasti P1-5 (zapsané i v `infra/README.md`):
 - Pokud role selže (např. 503 z gateway), aplikace přesto publikuje issue bez hashe a bridge `/schvaluji` odmítne (`no_artifact_hash_in_issue`) – správně fail-closed, ale zakázka visí; chybějící stav „role selhala → eskalace“ je úkol pro P2 (procesy X1).
 - Apps v obrazu bez `curl`/`git`: mock Vývojář volá curl (push/exfil) – selže, soubory přesto vzniknou; sandbox a egress se měří v S1/P1-6, ne tady.
 
+
+## P1-6 – role jako Kata pody na AKS (2026-10-25, Poland Central, workflow `measure` run 40187983339 → `results/p1-6-20261025-112356.json`, **6/6 + 2 INFO**)
+
+Nic z P1-5 se nemění, jen `P0_ROLE_RUNTIME=pod`: Dapr aktivita role místo `agent_run` v procesu založí v ns `platform-roles` Secret
+(token role pro paměť, klíč gateway role × zakázka, token běhu) a Pod z obrazu platformy s `role_runner.py` (`tools/harness_p0_o2/role_pod.py`).
+Pod: RuntimeClass `kata-vm-isolation`, uzel poolu `kata` (autoscale 0–1), uid 1000, bez SA tokenu, drop ALL, seccomp RuntimeDefault, `/tmp` emptyDir,
+NetworkPolicy ns default-deny + egress jen DNS, agentgateway, paměť a HTTP API aplikace. Artefakty zakázky si pod stáhne a vrátí přes
+`/zakazky/{id}/files`, výsledek a ledger běhu pošle na `/runs/{id}/result` (hlavičky `X-Run-Id`/`X-Run-Token`). Harness běží na runneru GitHub Actions
+(`kubectl port-forward`, OpenBao init do Secretu `openbao-init`, schéma M1 na Flexible Serveru přímo z runneru, pravidlo „Allow Azure services“).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P16a | Flux kustomizations `platform` + `roles` Ready na revizi HEAD; platforma vč. mock upstreamu modelu v clusteru Ready; OpenBao init/unseal/transit; paměť na Flexible Serveru (admin `platform`, TLS) | ✅ |
+| P16b | **Zakázka end-to-end na AKS**, 4 role jako pody: issue → `/schvaluji` → ADR → H2 → PR → review → merge → H5 → Dokonceno; `ROLE_POD` Succeeded s výsledkem pro každou roli, `AGENT_RUN` z podu (`via=pod`), paměť 200, podpisy OpenBao | ✅ 0,045 USD |
+| P16c | Izolace: každý pod na uzlu `aks-kata-…`, RuntimeClass `kata-vm-isolation`, uid 1000, `automountServiceAccountToken: false`, srt v podu; po běhu pod i Secret smazány (sirotek z přerušeného běhu uklizen GC) | ✅ |
+| P16d | Egress podu role: `1.1.1.1:443` a `github.com:443` timeout (NetworkPolicy), paměť 13 ms, gateway 8 ms, aplikace 18 ms open | ✅ |
+| P16e | Časy: **první role se scale-upem poolu kata z 0**: schedule 82 s + start 102 s (nový uzel, pull 400 MB obrazu, boot Kata VM) = 127 s; další role na běžícím uzlu: start 2 s, běh 11–12 s, 24 s celkem | ℹ️ |
+| P16f | Paměť: zápisy rolí z podů `proposed`, člověk (password grant přes port-forward, iss `keycloak:8080` z `KC_HOSTNAME`) je vidí | ✅ |
+| P16g | FinOps: `budget_usage` na Flexible Serveru nese útratu každé role (account 0,009, architekt/vývojář/reviewer 0,012 USD) | ✅ |
+| P16h | Pody a uzly | ℹ️ |
+
+Zjištění a pasti P1-6 (i v `infra/README.md`):
+- **`kubectl rollout restart` vs. Flux**: Flux (SSA) vrátí anotaci `restartedAt` → Deployment se přerolluje zpět, pod aplikace zemřel uprostřed běhu role.
+  Harness restartuje smazáním podů (`restart_pods`), šablona se nemění.
+- **Sirotčí pody rolí**: po zabití aplikace zůstal pod role (Succeeded) i Secret běhu → `role_pod.gc_orphans` před každým během maže pody Succeeded/Failed
+  nebo starší než timeout a Secrety bez podu (ledger `ROLE_POD_GC`). Mazání podu je asynchronní (Kata VM se vypíná) – check čeká až 120 s.
+- **PVC na Azure Disku patří rootu** → `fsGroup: 1000` na podu aplikace, jinak `PermissionError` na ledgeru (kind local-path to maskoval).
+- **Pohyblivý tag obrazu `p1`** → `imagePullPolicy: Always` (Deploymenty i pody rolí), jinak uzel drží starý obraz.
+- **Objekty vlastněné harnessem** (`agentgateway-config`, `zakazka-secrets`): `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` – Flux je založí, nikdy nepřepíše.
+- Runner potřebuje i `fastapi`/`opentelemetry-sdk` (embedding M1 importuje `memory_server`).
+- SVID z SPIRE v Kata podu zatím není: Workload API je unix socket agenta přes hostPath, do VM nevede (P2: spiffe-csi/agent v guestu).
+- Pod spec staví `role_pod.py` z env, ne přímo `build/k8s/<role>-pod.yaml` z rolegen – stejná pole, jeden zdroj pravdy až v P2.
+
 ## Spuštění
 
 ```bash
@@ -102,6 +135,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
+python harness.py --step p1-6 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: spouští workflow measure (p16=true); pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk
 ```
 
 Pasti prostředí (cgroup v1, chybějící `CAP_SYS_RESOURCE`, proxy uzlu): [`infra/README.md`](../../infra/README.md).

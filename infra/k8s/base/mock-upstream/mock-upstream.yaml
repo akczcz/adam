@@ -1,0 +1,40 @@
+# Mock Anthropic Messages API (tools/harness_gateway_g1/mock_upstream.py) jako upstream clusterové gateway pro měření bez živého modelu
+# (P1-5 ho měl na hostiteli kind; na AKS běží v clusteru). Živý model = baseUrl api.anthropic.com + klíč v gateway (po rozhodnutí Adama).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-upstream
+  labels: {app: mock-upstream}
+spec:
+  selector: {app: mock-upstream}
+  ports:
+  - {name: http, port: 9777, targetPort: 9777}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-upstream
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mock-upstream}
+  template:
+    metadata:
+      labels: {app: mock-upstream}
+    spec:
+      containers:
+      - name: mock
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/harness_gateway_g1/mock_upstream.py"]
+        env:
+        - {name: MOCK_HOST, value: "0.0.0.0"}
+        - {name: MOCK_PORT, value: "9777"}
+        - {name: MOCK_EVENT_DELAY, value: "0.02"}
+        ports:
+        - {containerPort: 9777, name: http}
+        readinessProbe:
+          httpGet: {path: /health, port: 9777}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 512Mi}

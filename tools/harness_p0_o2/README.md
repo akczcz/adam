@@ -194,7 +194,7 @@ to předpokládá) – řeší se buď sdíleným klíčem zakázky pro 30d okno
 | Harness | Cíl |
 |---|---|
 | mock model / živý přes API klíč | Claude přes agentgateway s token exchange za SVID role (I2) |
-| aplikace, paměť a bridge jako lokální procesy; v P1-5 už jako pody v kind (`infra/k8s/base/zakazka`): tokeny rolí si app bere z Keycloaku (`P0_KC_TOKEN_URL`), `P0_SRT=none` = bash v podu, bind přes `APP_HOST`/`MEMORY_HOST`/`BRIDGE_HOST` | role jako Kata pody (P1-6), srt uvnitř |
+| aplikace, paměť a bridge jako lokální procesy; v P1-5 už jako pody v kind (`infra/k8s/base/zakazka`): tokeny rolí si app bere z Keycloaku (`P0_KC_TOKEN_URL`), `P0_SRT=none` = bash v podu, bind přes `APP_HOST`/`MEMORY_HOST`/`BRIDGE_HOST` | ✅ P1-6 (2026-10-25): `P0_ROLE_RUNTIME=pod` → role jako Kata pod (`role_pod.py` + `role_runner.py`, env `P0_ROLE_IMAGE`, `P0_ROLE_NAMESPACE`, `P0_ARTIFACT_API`, `P0_ROLE_RUNTIME_CLASS`, `P0_ROLE_NODE_SELECTOR`, `P0_ROLE_TIMEOUT_S`, `P0_ROLE_KEEP_PODS`); srt weaker režim uvnitř |
 | JWT role podepsaný HMAC (M1); ve scénáři `identity` už Keycloak JWKS + `tenant_id` z user attribute | SVID ze SPIRE jako druhý credential, exchange v gateway, tajemství klientů z OpenBao |
 | srt v kontejneru harnessu | Kata pod na AKS (`kata-vm-isolation`) + srt uvnitř non-root (`harness_sandbox_s1/aks/`) |
 | Account, Architekt, Reviewer, SRE = aktivity bez modelu | role přes Agent SDK podle `knowledge/organization/roles/*.yaml` |

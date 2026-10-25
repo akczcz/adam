@@ -1,0 +1,9 @@
+# ns pro pody rolí (P1-6): aplikace zakázky (SA zakazka v platform-data) sem zakládá Pod + Secret per běh role (role_pod.py).
+# Samostatná Flux kustomization (infra/terraform/flux.tf), protože overlay aks má namespace transformer na platform-data.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-roles
+  labels:
+    pod-security.kubernetes.io/enforce: restricted   # non-root, drop ALL, seccomp, bez privilegií – pod role to splňuje
+    pod-security.kubernetes.io/warn: restricted
