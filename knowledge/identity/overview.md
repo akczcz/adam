@@ -147,7 +147,7 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
 - [x] ~~Aktuální harmonogram EU AI Act a technické požadavky na audit a lidský dohled~~ → [regulace.md](regulace.md), 2026-10-22; text OJ zbývá ověřit.
 
 ## Changelog
-- 2026-10-25: P2-3 (implementace, měření na AKS probíhá) – SVID v Kata podu přes SPIRE agenta jako sidecar (k8s_psat per pod, alias uzlu per role, unix uid), JWT-SVID přijímá server paměti jako druhý vydavatel (spire-oidc), OpenBao auto-unseal Key Vault + auth kubernetes; token exchange SVID→Keycloak v gateway zůstává otevřený (P3).
+- 2026-10-25: P2-3 **změřeno na AKS (17/17, `measure` run 40234528827)** – SVID v Kata podu přes SPIRE agenta jako sidecar (k8s_psat per pod, alias uzlu per role, unix uid), JWT-SVID přijímá server paměti jako druhý vydavatel (spire-oidc), OpenBao auto-unseal Key Vault (externí KMS plugin – OpenBao 2.7 cloud sealy zabudované nemá) + auth kubernetes; token exchange SVID→Keycloak v gateway zůstává otevřený (P3). Zjištěné omezení: agent ID `k8s_psat` je UID uzlu → sidecary podů na jednom uzlu Kata sdílejí agent ID (re-atestace, ~5 s stará entry); pro paralelní pody rolí na uzlu je nutná identita agenta per pod (join token s `-spiffeID`, nebo vlastní attestor) – P3. Socket Workload API v Kata podu musí být emptyDir `medium: Memory`.
 - 2026-10-24: P1-3 kind – Keycloak, OpenBao (raft) a SPIRE 1.14.2 v clusteru; SVID z pod-labelu změřen (I1); O-2 identity 5/5 proti clusteru.
 - 2026-10-23: rozhodnuto (Adam): SPIRE + Keycloak + exchange v agentgateway + OPA-Envoy + OpenBao; agent jako druhý credential.
 - 2026-10-22: kolo 2 + harness I2 – Keycloak, agentgateway PEP, SPIRE; `act` nevzniká, upscope potvrzen, OPA 503 při výpadku.

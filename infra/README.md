@@ -109,7 +109,8 @@ může první apply shodit). Flux substitute `${KV_NAME}`, `${OPENBAO_CLIENT_ID}
 `azure.workload.identity/use`, config se `seal "azurekeyvault" {}` (parametry z env), `auth/kubernetes` nastavuje harness.
 SPIRE: `jwt_issuer`, `allowed_pod_label_keys`, allow-list `platform-roles:role`, OIDC discovery provider jako sidecar serveru (`spire-oidc:8082`,
 overlay aks), `infra/k8s/roles`: SA `role` (bez automountu), ConfigMap `spire-agent-pod` (agent per pod, `insecure_bootstrap` v dev), egress na
-`spire-server:8081`. Server paměti přijímá JWT-SVID (`MEMORY_SPIRE_*`). Měření: workflow `measure` s `e2e=p2-3`.
+`spire-server:8081`. Server paměti přijímá JWT-SVID (`MEMORY_SPIRE_*`). Měření: workflow `measure` s `e2e=p2-3` – **17/17 2026-10-25**
+(run 40234528827); seal `azurekeyvault` = externí KMS plugin `openbao-plugin-kms-azure` stažený init kontejnerem (viz pasti níže).
 
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku

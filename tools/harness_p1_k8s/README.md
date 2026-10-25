@@ -207,10 +207,13 @@ Výsledek: **13/13 + 2 INFO** (`measure` run 40206756683, `results/p2-5-20261025
 |---|---|---|
 | P23a | seal `azurekeyvault`, recovery seal; po `delete pod openbao-0` unsealed bez operátora | ✅ `seal_type=azurekeyvault recovery_seal=true`, unsealed 38 s po smazání podu (init kontejner stáhne KMS plugin, pak start), OpenBao 2.7.1 |
 | P23b | `BAO_LOGIN method=kubernetes role=zakazka policies=[approval-signer]`, podpisy `openbao-transit`, Secret bez `P0_BAO_TOKEN` | ✅ login SA `zakazka` → policies `[approval-signer, default]`, TTL 3600 s; 4 podpisy transitem; `zakazka-secrets` = `P0_API_KEY`, `P0_ROLE_CLIENT_SECRETS`, `BRIDGE_WEBHOOK_SECRET` |
-| P23c | 4 role: `identity.kind=svid`, `spiffe://platform/role/<role>/acme`, iss `spire-oidc`, sidecar přítomen; paměť 200 | viz níže |
+| P23c | 4 role: `identity.kind=svid`, `spiffe://platform/role/<role>/acme`, iss `spire-oidc`, sidecar přítomen; paměť 200 | ✅ všechny 4 role JWT-SVID i X.509-SVID vlastní role (aud `memory`, exp 1800 s), SVID k dispozici 0,5–5 s po startu role, 4 volání paměti 200 s JWT-SVID; sidecar `Completed` 0 restartů |
 | P23d | `spire-oidc` `/keys` + discovery; entries z rolegen v serveru | ✅ JWKS 1 klíč, discovery 200, 10 entries (5 aliasů + 5 workloadů z rolegen) |
 
-Co měření P23c ukázalo (9 běhů, 2026-10-25):
+Výsledek: **17/17 + 2 INFO** (`measure` run 40234528827, `results/p2-3-20261025-213412.json`; 10 běhů – pasti v `infra/README.md`).
+Časy podů rolí se sidecarem: start 2–15 s, běh 11–17 s (shodně s P2-2); útrata 4 rolí 0,051 USD (mock upstream).
+
+Co měření P23c ukázalo (běhy 8–10, 2026-10-25):
 - **Agent ID `k8s_psat` je UID uzlu**, ne podu: sidecary postupných podů rolí na tomtéž uzlu Kata se re-atestují pod jedním agent ID
   (`CanReattest: true`). Server tak má pro agenta vždy selektory *posledního* sidecaru a prvních ~5 s (cache entries serveru) vydá
   předchozí entry – Architekt dostal `spiffe://platform/role/account/acme`. `role_runner.py` proto čeká na SVID vlastní role (`stale_svids`
