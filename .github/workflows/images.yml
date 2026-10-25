@@ -13,6 +13,7 @@ jobs:
   images:
     if: vars.AZURE_CLIENT_ID != ''
     runs-on: ubuntu-latest
+    environment: dev # OIDC subjekt repo:…:environment:dev má federaci; ref jiné větve než main ne
     env:
       ACR: acrplatformdev${{ vars.NAME_SUFFIX }}
     steps:
