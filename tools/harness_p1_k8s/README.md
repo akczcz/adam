@@ -201,13 +201,22 @@ Výsledek: **13/13 + 2 INFO** (`measure` run 40206756683, `results/p2-5-20261025
   (sdílený PID ns) – entries generuje rolegen (`spire-entries.json` v `rolegen-build`), aplikuje harness. Role si v `role_runner.py` vezme
   X.509-SVID a JWT-SVID (aud `memory`, py-spiffe) a volá paměť s ním; server paměti ověřuje JWT-SVID přes `spire-oidc` (OIDC discovery provider
   jako sidecar spire-server, JWKS `/keys`), tenant z cesty SPIFFE ID. Keycloak token zůstává záloha (`P0_ROLE_IDENTITY=svid` v overlay aks).
+  Socket Workload API i data agenta jsou emptyDir `medium: Memory` (tmpfs v guestu) – na emptyDir přes virtiofs se workload na unix socket nepřipojí.
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| P23a | seal `azurekeyvault`, recovery seal; po `delete pod openbao-0` unsealed bez operátora | ⏳ |
-| P23b | `BAO_LOGIN method=kubernetes role=zakazka policies=[approval-signer]`, podpisy `openbao-transit`, Secret bez `P0_BAO_TOKEN` | ⏳ |
-| P23c | 4 role: `identity.kind=svid`, `spiffe://platform/role/<role>/acme`, iss `spire-oidc`, sidecar přítomen; paměť 200 | ⏳ |
-| P23d | `spire-oidc` `/keys` + discovery; entries z rolegen v serveru | ⏳ |
+| P23a | seal `azurekeyvault`, recovery seal; po `delete pod openbao-0` unsealed bez operátora | ✅ `seal_type=azurekeyvault recovery_seal=true`, unsealed 38 s po smazání podu (init kontejner stáhne KMS plugin, pak start), OpenBao 2.7.1 |
+| P23b | `BAO_LOGIN method=kubernetes role=zakazka policies=[approval-signer]`, podpisy `openbao-transit`, Secret bez `P0_BAO_TOKEN` | ✅ login SA `zakazka` → policies `[approval-signer, default]`, TTL 3600 s; 4 podpisy transitem; `zakazka-secrets` = `P0_API_KEY`, `P0_ROLE_CLIENT_SECRETS`, `BRIDGE_WEBHOOK_SECRET` |
+| P23c | 4 role: `identity.kind=svid`, `spiffe://platform/role/<role>/acme`, iss `spire-oidc`, sidecar přítomen; paměť 200 | viz níže |
+| P23d | `spire-oidc` `/keys` + discovery; entries z rolegen v serveru | ✅ JWKS 1 klíč, discovery 200, 10 entries (5 aliasů + 5 workloadů z rolegen) |
+
+Co měření P23c ukázalo (9 běhů, 2026-10-25):
+- **Agent ID `k8s_psat` je UID uzlu**, ne podu: sidecary postupných podů rolí na tomtéž uzlu Kata se re-atestují pod jedním agent ID
+  (`CanReattest: true`). Server tak má pro agenta vždy selektory *posledního* sidecaru a prvních ~5 s (cache entries serveru) vydá
+  předchozí entry – Architekt dostal `spiffe://platform/role/account/acme`. `role_runner.py` proto čeká na SVID vlastní role (`stale_svids`
+  v identitě). **Omezení:** dva pody rolí na jednom uzlu Kata současně by se přetahovaly → v P3 agent identita per pod (join token s
+  `-spiffeID` aliasu, vydávaný aplikací, nebo vlastní attestor), ne `k8s_psat`.
+- Sidecar se atestuje za < 1 s, SVID role má do 5 s; start podu role se sidecarem 2–15 s (shodně s P2-2).
 
 ## Spuštění
 
