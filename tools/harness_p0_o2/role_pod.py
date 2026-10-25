@@ -75,8 +75,34 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
     return ns, name, secret, pod
 
 
+def gc_orphans(ns, ledger):
+    """Sirotci po pádu/restartu aplikace (pod aplikace zabit uprostřed běhu role → pod a Secret běhu nikdo nesmazal; AKS 2026-10-25):
+    smazat pody rolí ve fázi Succeeded/Failed nebo starší než timeout + 10 min, a Secrety běhů bez živého podu. Aktivní běhy tohoto procesu se nechávají."""
+    active = {f"role-{r['role']}-{rid}" for rid, r in RUNS.items()}
+    try:
+        pods = k8s("GET", f"/api/v1/namespaces/{ns}/pods?labelSelector=app%3Drole").get("items", [])
+        alive = set()
+        for p in pods:
+            name = p["metadata"]["name"]; ph = p.get("status", {}).get("phase"); age = time.time() - (_ts(p["metadata"].get("creationTimestamp", "")) or time.time())
+            if name in active: alive.add(name); continue
+            if ph in ("Succeeded", "Failed") or age > int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")) + 600:
+                for kind in ("pods", "secrets"):
+                    try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")
+                    except Exception: pass
+                ledger("ROLE_POD_GC", pod=name, phase=ph, age_s=round(age), zakazka=p["metadata"].get("labels", {}).get("platform.zakazka"))
+            else: alive.add(name)
+        for sec in k8s("GET", f"/api/v1/namespaces/{ns}/secrets?labelSelector=app%3Drole").get("items", []):
+            name = sec["metadata"]["name"]
+            if name not in alive and name not in active:
+                try: k8s("DELETE", f"/api/v1/namespaces/{ns}/secrets/{name}"); ledger("ROLE_POD_GC", secret=name)
+                except Exception: pass
+    except Exception as e:
+        ledger("ROLE_POD_GC_ERROR", error=f"{type(e).__name__}: {str(e)[:200]}")
+
+
 def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
     """Spustí roli jako pod a vrátí výsledek ve tvaru agent_run (text, cost, files, work, arts, error, budget_exceeded)."""
+    gc_orphans(os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"), ledger)
     rid = new_run(role, z["id"])
     od = os.environ.get("P0_ROLE_OPTIONS_DIR")
     ro = open(f"{od}/{role}.json").read() if od and os.path.exists(f"{od}/{role}.json") else ""
