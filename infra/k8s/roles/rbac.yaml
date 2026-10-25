@@ -13,7 +13,7 @@ rules:
   verbs: [get]
 - apiGroups: [""]
   resources: [secrets]
-  verbs: [create, get, delete]
+  verbs: [create, get, list, delete]   # list: GC sirotčích Secretů běhů (role_pod.gc_orphans) – jen v tomto ns
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
