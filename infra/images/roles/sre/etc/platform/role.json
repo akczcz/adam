@@ -1,0 +1,47 @@
+{
+ "role": "sre",
+ "version": "0.1.0",
+ "tools": [],
+ "strict_mcp_config": true,
+ "setting_sources": [],
+ "cwd": "/work",
+ "mcp_servers": [
+  "platform-memory",
+  "platform-deploy",
+  "platform-runbook",
+  "platform-clickhouse",
+  "platform-tickets"
+ ],
+ "permission_mode": "bypassPermissions",
+ "env": {
+  "ANTHROPIC_BASE_URL": "http://agentgateway.platform.svc:4100",
+  "ANTHROPIC_CUSTOM_HEADERS": "x-agent-svid: ${SVID_JWT}",
+  "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+  "CLAUDE_CODE_PROPAGATE_TRACEPARENT": "1"
+ },
+ "managed_settings": {
+  "sandbox": {
+   "enabled": true,
+   "failIfUnavailable": true,
+   "allowUnsandboxedCommands": false,
+   "network": {
+    "strictAllowlist": true,
+    "allowManagedDomainsOnly": true
+   },
+   "filesystem": {
+    "allowManagedReadPathsOnly": true
+   }
+  },
+  "permissions": {
+   "deny": [
+    "Bash",
+    "WebFetch",
+    "Write",
+    "Edit"
+   ]
+  },
+  "skipWebFetchPreflight": true
+ }
+}

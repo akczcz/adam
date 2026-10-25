@@ -149,6 +149,22 @@ Výsledek: **7/7 + 2 INFO** (`measure` run 40195984513, `results/p2-1-20261025-1
   pak dostaly 401 z druhé repliky → headless Service `agentgateway-headless`, sonda proti každé replice (propagace 36–69 s).
 - Pozorováno, neprověřeno: v běhu s 401 u dvou rolí hlásil výstup zakázky `cost_usd` 1,62 USD místo ~0,02 (sčítání ceny při chybě role).
 
+
+## P2-2 – obrazy rolí a pod spec z rolegen (2026-10-25, AKS, `--step p2-2` = p2-1 + P22a–c)
+
+rolegen nově generuje `build/images/<role>/` (Dockerfile = vrstva nad obrazem platformy s `/etc/platform/{role,srt,managed-settings}.json`,
+OCI labely role/verze/sha zdroje, bez cloud CLI; devcontainer.json) a `render_k8s.py` je zapisuje do `infra/images/roles/` (CI hlídá shodu).
+`images.yml` staví `roles/<role>:<verze>` přes `az acr build --build-arg BASE_IMAGE=…/zakazka-app:p1`. `role_pod.py` staví pod ze šablony
+`pod-<role>.yaml` (= `build/k8s/<role>-pod.yaml`, v ConfigMapě `rolegen-build`): RuntimeClass, non-root, SA token off, drop ALL, resources,
+env a labels z definice role; aplikace doplní jen běh (jméno, Secret, env běhu, uzel, timeout, `imagePullPolicy`, registry obrazu
+`registry.platform.internal` → ACR, seccomp `Localhost` → `RuntimeDefault`, protože profil na uzlu není a v Kata guestu se neaplikuje).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P22a | ACR má `roles/<role>:<verze z roles/*.yaml>` pro každou roli | ⏳ |
+| P22b | Pod role ze šablony rolegen; doplňky aplikace jen z povolené množiny; obraz `roles/<role>:<verze>`; `/etc/platform/role.json` v obrazu nese tutéž roli/verzi, managed settings zapečené | ⏳ |
+| P22c | Obsah obrazu (sonda z podu): git, node, python3, srt, bwrap, claude ano; az, gcloud, aws, kubectl, docker, helm, terraform ne | ⏳ |
+
 ## Spuštění
 
 ```bash
@@ -159,7 +175,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
-python harness.py --step p2-1 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: spouští workflow measure (p21=true); pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
+python harness.py --step p2-2 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-2); p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
 ```
 
 Pasti prostředí (cgroup v1, chybějící `CAP_SYS_RESOURCE`, proxy uzlu): [`infra/README.md`](../../infra/README.md).

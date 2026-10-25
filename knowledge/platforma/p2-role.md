@@ -55,13 +55,14 @@ přes gateway) → P2-6 (FinOps součet klíčů). Měřítko zůstává: **kaž
 | Krok | Stav |
 |---|---|
 | P2-1 | ✅ **2026-10-25 AKS 7/7** (`tools/harness_p1_k8s --step p2-1`, `measure` run 40195984513): konfigurace gateway a rolegen build z Gitu přes Flux (`infra/k8s/rolegen` component z `render_k8s.py`, CI `rolegen.yml --check`), ConfigMapy v clusteru == render HEAD; klíče role × zakázka vydává aplikace do `agentgateway-keys` (sidecar `config-merge` → hot reload, propagace na obě repliky 69 s), rozpočty == `roles/*.yaml`; harness dodal jen tajemství. Zbývá: klíče z OpenBao (P2-6), zrušit `render_gateway` v kind harnessu |
-| P2-2 | ⬜ |
+| P2-2 | 🟡 implementováno 2026-10-25: rolegen generuje `build/images/<role>/` (Dockerfile vrstvy nad obrazem platformy, devcontainer.json, `/etc/platform/{role,srt,managed-settings}.json`, OCI labely role/verze/sha) → `infra/images/roles/` (CI `rolegen.yml --check`), `images.yml` staví `roles/<role>:<verze>` v ACR; `role_pod.py` staví pod ze šablony `pod-<role>.yaml` z rolegen (ConfigMap `rolegen-build`) a doplní jen běh; čeká na měření P22 na AKS |
 | P2-3 | ⬜ |
 | P2-4 | ⬜ |
 | P2-5 | ⬜ |
 | P2-6 | ⬜ |
 
 ## Changelog
+- 2026-10-25: P2-2 implementováno (obrazy rolí z rolegen přes `az acr build`, pod spec ze šablony rolegen); rozhodnutí: devcontainer CLI build odložen – Dockerfile je devcontainer-kompatibilní, staví ho ACR Tasks jako ostatní obrazy.
 - 2026-10-25: P2-1 hotovo 7/7 na AKS; pasti: Flux substitute v generované ConfigMapě (`substitute: disabled`), propagace ConfigMap per replika (headless sonda).
 - 2026-10-25: P2-1 implementováno (konfigurace z Gitu přes Flux, klíče per zakázka od aplikace, sidecar merge); rozhodnutí: žádné bot commity – generované manifesty jsou součást PR, CI jen kontroluje shodu s rolemi.
 - 2026-10-25: první verze plánu P2 po uzavření P1 (návrh, čeká na Adamovo potvrzení rozsahu a pořadí).

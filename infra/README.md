@@ -87,6 +87,13 @@ gateway (`aks`: mock-upstream v clusteru; živé API = změna v Gitu). Klíče r
 zakázky (`gateway_keys.py`, RBAC jen na tento objekt + Secrety), Flux ji jen založí (`ssa: IfNotPresent`); sidecar `config-merge`
 (`gateway_merge.py`) slévá obě ConfigMapy do emptyDir, gateway hot-reloaduje. Harness/CI tak do clusteru nenosí žádnou konfiguraci – jen tajemství.
 
+## P2-2: obrazy rolí a pod spec z rolegen (2026-10-25)
+
+`infra/images/roles/<role>/` je **generovaný** (`tools/rolegen/render_k8s.py`, CI `rolegen.yml --check`): Dockerfile vrstvy nad `zakazka-app:p1`
+(`/etc/platform/{role,srt,managed-settings}.json`, `/etc/claude/managed-settings.json`, OCI labely role/verze/sha, odstraněné cloud CLI),
+devcontainer.json. `images.yml` staví `roles/<role>:<verze>` (`az acr build --build-arg BASE_IMAGE`). Pod role staví aplikace ze šablony
+`pod-<role>.yaml` z ConfigMapy `rolegen-build` (overlay aks: `P0_ROLE_IMAGE_REGISTRY=${ACR_LOGIN_SERVER}` přepíše `registry.platform.internal`).
+
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.

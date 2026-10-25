@@ -1,0 +1,25 @@
+{
+ "name": "role-architekt",
+ "build": {
+  "dockerfile": "Dockerfile",
+  "args": {
+   "BASE_IMAGE": "platform/zakazka-app:p1"
+  }
+ },
+ "remoteUser": "app",
+ "containerEnv": {
+  "ANTHROPIC_BASE_URL": "http://agentgateway.platform.svc:4100",
+  "ANTHROPIC_CUSTOM_HEADERS": "x-agent-svid: ${SVID_JWT}",
+  "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+  "CLAUDE_CODE_PROPAGATE_TRACEPARENT": "1"
+ },
+ "customizations": {
+  "platform": {
+   "role": "architekt",
+   "version": "0.1.0",
+   "image": "registry.platform.internal/roles/architekt:0.1.0"
+  }
+ }
+}

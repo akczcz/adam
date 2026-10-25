@@ -124,6 +124,75 @@ data:
     : {\n   \"http\": \"http://agentgateway.platform.svc:3128\",\n   \"https\": \"\
     http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\": true\n }\n\
     }"
+  pod-account.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-account-\n\
+    \  labels:\n    platform.role: account\n    platform.tenant: acme\n    platform.wf:\
+    \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
+    \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
+    \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
+    \  containers:\n  - name: role\n    image: registry.platform.internal/roles/account:0.1.0\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
+    \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
+    \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
+    \  value: '1'\n    - name: CLAUDE_CODE_PROPAGATE_TRACEPARENT\n      value: '1'\n\
+    \    resources:\n      limits: &id001\n        memory: 2Gi\n        cpu: 1\n \
+    \     requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
+    \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
+  pod-architekt.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-architekt-\n\
+    \  labels:\n    platform.role: architekt\n    platform.tenant: acme\n    platform.wf:\
+    \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
+    \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
+    \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
+    \  containers:\n  - name: role\n    image: registry.platform.internal/roles/architekt:0.1.0\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
+    \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
+    \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
+    \  value: '1'\n    - name: CLAUDE_CODE_PROPAGATE_TRACEPARENT\n      value: '1'\n\
+    \    resources:\n      limits: &id001\n        memory: 2Gi\n        cpu: 1\n \
+    \     requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
+    \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
+  pod-reviewer.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-reviewer-\n\
+    \  labels: {}\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
+    \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
+    \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
+    \  containers:\n  - name: role\n    image: registry.platform.internal/roles/reviewer:0.1.0\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
+    \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
+    \      value: '1'\n    - name: CLAUDE_CODE_PROPAGATE_TRACEPARENT\n      value:\
+    \ '1'\n    resources:\n      limits: &id001\n        memory: 2Gi\n        cpu:\
+    \ 1\n      requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
+    \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
+  pod-sre.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-sre-\n\
+    \  labels:\n    platform.role: sre\n    platform.tenant: acme\n    platform.wf:\
+    \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
+    \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
+    \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
+    \  containers:\n  - name: role\n    image: registry.platform.internal/roles/sre:0.1.0\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
+    \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
+    \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
+    \  value: '1'\n    - name: CLAUDE_CODE_PROPAGATE_TRACEPARENT\n      value: '1'\n\
+    \    resources:\n      limits: &id001\n        memory: 2Gi\n        cpu: 1\n \
+    \     requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
+    \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
+  pod-vyvojar.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-vyvojar-\n\
+    \  labels:\n    platform.role: vyvojar\n    platform.tenant: acme\n    platform.wf:\
+    \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
+    \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
+    \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
+    \  containers:\n  - name: role\n    image: registry.platform.internal/roles/vyvojar:0.1.0\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
+    \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
+    \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
+    \  value: '1'\n    - name: CLAUDE_CODE_PROPAGATE_TRACEPARENT\n      value: '1'\n\
+    \    - name: GIT_CONFIG_PARAMETERS\n      value: '''url.https://git.platform.internal/.insteadOf=https://github.com/'''\n\
+    \    resources:\n      limits: &id001\n        memory: 4Gi\n        cpu: 2\n \
+    \     requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
+    \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
   roles.json: "[\n {\n  \"role\": \"account\",\n  \"version\": \"0.1.0\",\n  \"owner\"\
     : \"adam\",\n  \"processes\": [\n   \"P1-prijeti-zadani\"\n  ],\n  \"autonomy_max\"\
     : \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/account/{tenant}/{workflow_instance}\"\

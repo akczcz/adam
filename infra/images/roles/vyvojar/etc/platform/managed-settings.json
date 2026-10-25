@@ -1,0 +1,23 @@
+{
+ "permissions": {
+  "deny": [
+   "Bash(git push --force*)",
+   "Bash(git push * main)",
+   "WebFetch"
+  ]
+ },
+ "sandbox": {
+  "allowUnsandboxedCommands": false,
+  "autoAllowBashIfSandboxed": true,
+  "enabled": true,
+  "failIfUnavailable": true,
+  "filesystem": {
+   "allowManagedReadPathsOnly": true
+  },
+  "network": {
+   "allowManagedDomainsOnly": true,
+   "strictAllowlist": true
+  }
+ },
+ "skipWebFetchPreflight": true
+}
