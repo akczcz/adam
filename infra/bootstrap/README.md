@@ -51,6 +51,11 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 - Tf state obsahuje heslo PG → storage account bez veřejného blob přístupu, přístup jen identita Actions + Adam.
 
 ## Pasti (očekávané, ověří první `apply`)
+- **Kvóty vCPU (změřeno 2026-10-25, Poland Central):** nová subscription má pro rodiny DASv5/DADSv7 kvótu 0 → `ErrCode_InsufficientVCPUQuota`.
+  Navýšení: `az provider register -n Microsoft.Quota`, `az quota create --resource-name standardDASv5Family … --limit-object value=8` (DADSv7 → 4);
+  identita Actions na to nemá práva (Contributor jen na RG) – buď Adam ručně, nebo role „Quota Request Operator“ na subscription.
+- **Jméno Flexible Serveru po neúspěšném vytvoření** zůstává rezervované (`InvalidResourceLocation: already exists in location swedencentral`,
+  přestože `az postgres flexible-server show` vrací NotFound) → jméno obsahuje region.
 - **Kapacita regionu (změřeno 2026-10-24, Sweden Central):** Flexible Server B1ms zóna 1 → `RegionalAllocationFailed`; AKS system pool D4as_v5 visel
   v `Creating` 90 min do timeoutu Terraformu a zůstal v Azure mimo state (smazat `az aks delete`, Terraform ho nezná). West Europe pak odmítl
   vše: `RequestDisallowedByAzure … region is currently not accepting new customers` (aka.ms/locationineligible); GWC a France Central

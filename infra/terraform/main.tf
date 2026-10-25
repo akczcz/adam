@@ -6,7 +6,9 @@ data "azurerm_resource_group" "rg" {
 
 locals {
   acr_name = "acrplatformdev${var.name_suffix}"
-  pg_name  = "pg-platform-dev-${var.name_suffix}"
+  # jméno Flexible Serveru je globální DNS; po neúspěšném vytvoření ve Sweden Central zůstalo "pg-platform-dev-akcz" rezervované
+  # (InvalidResourceLocation, server přitom neexistuje) → do jména jde i region
+  pg_name = "pg-platform-dev-${var.name_suffix}-${var.location}"
 }
 
 # --- registr obrazů (oficiální obrazy přes `az acr import`, aplikace přes `az acr build` – workflow images.yml) ---------------

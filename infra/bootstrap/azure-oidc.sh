@@ -10,7 +10,7 @@ SUB=$(az account show --query id -o tsv); TENANT=$(az account show --query tenan
 echo "== subscription $SUB, tenant $TENANT, RG $RG ($LOC), suffix $SUFFIX"
 
 az group create -n "$RG" -l "$LOC" --tags projekt=adam-platform faze=P1 vlastnik=adam -o none
-for p in Microsoft.ContainerService Microsoft.KubernetesConfiguration Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.Storage Microsoft.ManagedIdentity; do
+for p in Microsoft.ContainerService Microsoft.KubernetesConfiguration Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.Storage Microsoft.ManagedIdentity Microsoft.Compute Microsoft.Quota; do
   az provider register -n "$p" -o none 2>/dev/null || true
 done
 

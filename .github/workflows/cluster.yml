@@ -19,7 +19,7 @@ jobs:
     env:
       RG: ${{ vars.TF_STATE_RG }}
       CLUSTER: aks-platform-dev
-      PG: pg-platform-dev-${{ vars.NAME_SUFFIX }}
+      PG: pg-platform-dev-${{ vars.NAME_SUFFIX }}-${{ vars.AZURE_LOCATION || 'polandcentral' }}
     steps:
       - uses: azure/login@v2
         with:
