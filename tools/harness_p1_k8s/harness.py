@@ -622,6 +622,12 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
         time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
+    # StatefulSet s podem v CrashLoopBackOff rolling update nenahradí (kubernetes/kubernetes#67250) – po Flux applyi smazat pody staré revize
+    for sts in kj("-n", NS, "get", "sts").get("items", []):
+        cur, upd = sts.get("status", {}).get("currentRevision"), sts.get("status", {}).get("updateRevision")
+        if upd and cur != upd:
+            for p_ in kj("-n", NS, "get", "pods", "-l", f"controller-revision-hash={cur}").get("items", []):
+                kubectl(a, "-n", NS, "delete", "pod", p_["metadata"]["name"], "--wait=false")
     kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620)   # P2-3: nový config (seal plugin) → pod se restartuje
     pf_bao = PortForward(a, "openbao", 18200, 8200); BAO = "http://127.0.0.1:18200"
     seal0 = None
