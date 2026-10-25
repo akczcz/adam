@@ -24,14 +24,16 @@ case "${1:-}" in
     kubectl logs s1-kata | tail -n 8
     NODE_KERNEL=$(kubectl get node -l pool=kata -o jsonpath='{.items[0].status.nodeInfo.kernelVersion}')
     GUEST=$(kubectl logs s1-kata | grep '^guest-kernel=' | cut -d= -f2 || true)
-    SRTLINE=$(kubectl logs s1-kata | sed -n '/^guest-kernel=/,/^s1-done/p' | sed -n '2,3p' | tr '\n' ' ')
+    SRT_A=$(kubectl logs s1-kata | grep '^srt-uid1000=' | cut -d= -f2- || true)
+    SRT_B=$(kubectl logs s1-kata | grep '^srt-root=' | cut -d= -f2- || true)
     T=(); for i in $(seq 1 3); do kubectl delete pod s1-kata --ignore-not-found --wait=true >/dev/null; S=$(date +%s%N); kubectl apply -f "$POD" >/dev/null; kubectl wait --for=condition=Ready pod/s1-kata --timeout=600s >/dev/null; T+=($(( ($(date +%s%N)-S)/1000000 ))); done
     kubectl delete pod s1-kata --ignore-not-found --wait=false >/dev/null   # úklid: autoscaler pak Kata uzel vrátí na 0
-    jq -n --arg nk "$NODE_KERNEL" --arg gk "$GUEST" --arg srt "$SRTLINE" --argjson t "[$(IFS=,; echo "${T[*]}")]" \
+    jq -n --arg nk "$NODE_KERNEL" --arg gk "$GUEST" --arg srta "$SRT_A" --arg srtb "$SRT_B" --argjson t "[$(IFS=,; echo "${T[*]}")]" \
       '{meta:{cluster:env.CLUSTER,sku:env.SKU,image:env.S1_IMAGE,date:(now|todate)},checks:[
         {id:"S1h-1",name:"Kata pod má vlastní guest kernel",status:(if $nk!=$gk then "PASS" else "FAIL" end),detail:{node_kernel:$nk,guest_kernel:$gk}},
         {id:"S1h-2",name:"start Kata podu (apply→Ready) ms, 3×",status:"INFO",detail:{ms:$t}},
-        {id:"S1h-3",name:"srt uvnitř Kata podu: lo-only netns, seccomp, bez enableWeakerNestedSandbox",status:(if ($srt|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srt}}]}' | tee "$OUT"
+        {id:"S1h-3a",name:"srt jako uid 1000 (userns+bwrap) uvnitř Kata podu: lo-only netns, seccomp",status:(if ($srta|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srta}},
+        {id:"S1h-3b",name:"srt jako root s CAP_SYS_ADMIN uvnitř Kata podu (VM = hranice): lo-only netns, seccomp",status:(if ($srtb|test("lo") and test("Seccomp:\t2")) then "PASS" else "FAIL" end),detail:{srt:$srtb}}]}' | tee "$OUT"
     echo "zapsáno $OUT – přidej S1h-4 (egress přes NetworkPolicy) po nasazení agentgateway do ns platform" ;;
   destroy) az group delete -n "$RG" --yes --no-wait ;;
   *) echo "použití: $0 create|run|destroy"; exit 2 ;;

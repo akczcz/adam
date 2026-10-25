@@ -23,8 +23,11 @@ spec:
        "filesystem":{"denyRead":[],"allowRead":[],"allowWrite":["/tmp"],"denyWrite":[]},"enableWeakerNestedSandbox":false,"allowNestedUserNamespaces":false}
       J
       chmod 644 /tmp/srt.json; echo "guest-kernel=$(uname -r)"
-      setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp SRT_DEBUG=1 srt -s /tmp/srt.json -c 'tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; echo; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo' 2>/tmp/srt.err || true
-      grep -i "weaker\|EPERM\|mount" /tmp/srt.err | head -5 || true
+      PROBE='tail -n +3 /proc/net/dev | cut -d: -f1 | tr -d " " | tr "\n" " "; grep -E "^(Seccomp|NoNewPrivs):" /proc/self/status | tr "\n" " "; echo'
+      # varianta A: srt jako uid 1000 (userns + bwrap) – v Kata guestu s maskovaným /proc selže na mount proc (změřeno 2026-10-25)
+      echo "srt-uid1000=$(setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
+      # varianta B: srt jako root v guestu s CAP_SYS_ADMIN (hranice izolace = VM); bwrap pak mountuje proc bez userns
+      echo "srt-root=$(HOME=/tmp srt -s /tmp/srt.json -c "$PROBE" 2>&1 | tr "\n" " ")"
       echo "s1-done"
       sleep 3600
     resources:
@@ -32,3 +35,4 @@ spec:
       limits: { cpu: "2", memory: "2Gi" }        # Kata: limit = RAM VM
     securityContext:
       allowPrivilegeEscalation: false
+      capabilities: { add: ["SYS_ADMIN"] }   # jen pro variantu B měření; VM je hranice, ne kontejner
