@@ -1,0 +1,30 @@
+# P2-3: OIDC discovery provider SPIRE (JWKS pro JWT-SVID) – sidecar spire-server (patch v kustomization), služba pro server paměti
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-oidc-config
+  annotations: {kustomize.toolkit.fluxcd.io/substitute: disabled}
+data:
+  oidc.conf: |
+    log_level = "INFO"
+    domains = ["spire-oidc", "spire-oidc.platform-data.svc", "spire-oidc.platform-data.svc.cluster.local", "spire-oidc.platform-data.svc:8082", "localhost:18082", "127.0.0.1:18082"]
+    insecure_addr = ":8082"
+    allow_insecure_scheme = true          # HTTP jen uvnitř clusteru (dev); TLS přes gateway/cert-manager až P3
+    server_api {
+      address = "unix:///tmp/spire-server/private/api.sock"
+    }
+    health_checks {
+      bind_port = "8083"
+      ready_path = "/ready"
+      live_path = "/live"
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-oidc
+  labels: {app: spire-server}
+spec:
+  selector: {app: spire-server}
+  ports:
+  - {name: oidc, port: 8082, targetPort: 8082}

@@ -48,6 +48,22 @@ def main():
     os.environ.setdefault("O1_LEDGER", "/tmp/role-ledger.jsonl")
     for k in ("P0_ROLE_RUNTIME",): os.environ[k] = "local"
 
+    identity = {"kind": "keycloak-token"}
+    if os.environ.get("P0_ROLE_IDENTITY") == "svid":
+        # P2-3: identita role = JWT-SVID (aud memory) z Workload API sidecaru spire-agent; Keycloak token ze Secretu zůstává záloha
+        t_id = time.time(); err = None
+        for _ in range(60):
+            try:
+                from spiffe import WorkloadApiClient
+                with WorkloadApiClient() as c:
+                    x = c.fetch_x509_svid(); j = c.fetch_jwt_svid(audience={os.environ.get("P0_SVID_AUDIENCE", "memory")})
+                    pl = json.loads(base64.urlsafe_b64decode(j.token.split(".")[1] + "==").decode())
+                    identity = {"kind": "svid", "spiffe_id": str(j.spiffe_id), "x509_spiffe_id": str(x.spiffe_id), "iss": pl.get("iss"), "aud": pl.get("aud"), "exp_in_s": int(pl.get("exp", 0) - time.time()), "wait_s": round(time.time() - t_id, 1)}
+                    os.environ["P0_ROLE_TOKEN"] = j.token; err = None; break
+            except Exception as e:
+                err = f"{type(e).__name__}: {str(e)[:120]}"; time.sleep(2)
+        if identity["kind"] != "svid": identity = {"kind": "keycloak-token", "svid_error": err, "wait_s": round(time.time() - t_id, 1)}
+    print("identity=" + json.dumps(identity), flush=True)
     probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}
     try: probe["internet_dns_github.com:443"] = tcp_probe("github.com", 443)
     except Exception as e: probe["internet_dns_github.com:443"] = {"result": f"dns:{type(e).__name__}"}
@@ -103,7 +119,7 @@ def main():
     try: image_role = json.loads(open("/etc/platform/role.json").read()); image_role = {"role": image_role.get("role"), "version": image_role.get("version"), "managed_settings": os.path.exists("/etc/claude/managed-settings.json")}
     except Exception: image_role = None
     out |= {"egress_probe": probe, "pod": os.environ.get("HOSTNAME"), "srt": os.environ.get("P0_SRT"), "uid": os.getuid(), "agent_s": agent_s, "uploaded": len(up), "kernel": os.uname().release,
-            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role}
+            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity}
     try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": led}, headers=H, timeout=120)
     except Exception as e: print(f"result post error: {e}", flush=True)
     print("RESULT::" + json.dumps(out, ensure_ascii=False)[:30000], flush=True)

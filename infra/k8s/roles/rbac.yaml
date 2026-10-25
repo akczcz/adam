@@ -28,3 +28,12 @@ roleRef:
   kind: Role
   name: role-pods
   apiGroup: rbac.authorization.k8s.io
+---
+# P2-3: SA podů rolí – bez tokenu v kontejneru role (automount off); projektovaný token s audience spire-server dostane jen sidecar
+# spire-agent (atestace k8s_psat: pod = uzel; server povoluje platform-roles:role)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role
+  namespace: platform-roles
+automountServiceAccountToken: false

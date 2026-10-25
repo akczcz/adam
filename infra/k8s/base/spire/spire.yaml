@@ -85,6 +85,9 @@ data:
       log_level = "INFO"
       ca_ttl = "24h"
       default_x509_svid_ttl = "1h"
+      default_jwt_svid_ttl = "15m"                                    # P2-3: JWT-SVID pro role (server paměti ověřuje přes spire-oidc /keys)
+      jwt_issuer = "http://spire-oidc.platform-data.svc:8082"
+      socket_path = "/tmp/spire-server/private/api.sock"
     }
     plugins {
       DataStore "sql" {
@@ -97,7 +100,8 @@ data:
         plugin_data {
           clusters = {
             "platform" = {
-              service_account_allow_list = ["platform-data:spire-agent"]
+              service_account_allow_list = ["platform-data:spire-agent", "platform-roles:role"]   # P2-3: agent jako sidecar podu role (Kata – hostPath socket do VM nevede)
+              allowed_pod_label_keys = ["platform.role"]                                          # selektor k8s_psat:agent_pod_label:platform.role:<role> → alias uzlu per role
             }
           }
         }
@@ -153,6 +157,7 @@ spec:
         volumeMounts:
         - {name: config, mountPath: /run/spire/config, readOnly: true}
         - {name: data, mountPath: /run/spire/data}
+        - {name: server-sock, mountPath: /tmp/spire-server/private}   # API socket pro oidc-discovery-provider (sidecar v overlay aks)
         readinessProbe:
           httpGet: {path: /ready, port: 8080}
           periodSeconds: 5
@@ -162,6 +167,8 @@ spec:
       volumes:
       - name: config
         configMap: {name: spire-server-config}
+      - name: server-sock
+        emptyDir: {}
   volumeClaimTemplates:
   - metadata: {name: data}
     spec:

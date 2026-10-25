@@ -25,6 +25,24 @@ data:
     }
 ---
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao   # AKS: workload identity (anotace client-id v overlay) pro seal azurekeyvault; auth metoda kubernetes = TokenReview tímto SA
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: openbao
+  namespace: platform-data
+roleRef:
+  kind: ClusterRole
+  name: system:auth-delegator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: openbao
@@ -48,6 +66,7 @@ spec:
     metadata:
       labels: {app: openbao}
     spec:
+      serviceAccountName: openbao
       securityContext: {fsGroup: 1000}
       containers:
       - name: openbao

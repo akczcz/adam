@@ -45,9 +45,25 @@ def ledger(kind, **kw):
         f.write(json.dumps({"ts": time.time(), "kind": kind, **kw}, ensure_ascii=False) + "\n")
 
 
+_BAO_LOGIN: dict = {}
+
+
+def bao_token():
+    """Token OpenBao: P0_BAO_K8S_ROLE → login auth/kubernetes projektovaným SA tokenem aplikace (P2-3, žádný token v Secretu), cache do expirace;
+    jinak P0_BAO_TOKEN (kind/P0 – vydal harness z root tokenu)."""
+    role = os.environ.get("P0_BAO_K8S_ROLE")
+    if not role: return BAO_TOKEN
+    if _BAO_LOGIN.get("exp", 0) - 60 > time.time(): return _BAO_LOGIN["token"]
+    jwt_sa = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    r = httpx.post(f"{BAO}/v1/auth/kubernetes/login", json={"role": role, "jwt": jwt_sa}, timeout=10); r.raise_for_status()
+    a = r.json()["auth"]; _BAO_LOGIN.update({"token": a["client_token"], "exp": time.time() + float(a.get("lease_duration", 3600))})
+    ledger("BAO_LOGIN", method="kubernetes", role=role, policies=a.get("policies"), ttl_s=a.get("lease_duration"), sa=(a.get("metadata") or {}).get("service_account_name"))
+    return a["client_token"]
+
+
 def _bao(path: str, body: dict) -> dict:
     """OpenBao API s tokenem aplikace (policy jen sign/verify na jednom klíči – export, rotate, delete 403)."""
-    r = httpx.post(f"{BAO}/v1/{path}", json=body, headers={"X-Vault-Token": BAO_TOKEN}, timeout=5)
+    r = httpx.post(f"{BAO}/v1/{path}", json=body, headers={"X-Vault-Token": bao_token()}, timeout=5)
     r.raise_for_status()
     return r.json()["data"]
 

@@ -38,6 +38,7 @@ def render(tenant="acme"):
         for f in sorted((b / "srt").glob("*.json")): data[f"srt-{f.name}"] = f.read_text()
         for f in sorted((b / "k8s").glob("*-pod.yaml")): data[f"pod-{f.name.replace('-pod.yaml', '')}.yaml"] = f.read_text()   # P2-2: šablona podu role pro role_pod.py
         data["roles.json"] = (b / "registry/roles.json").read_text()
+        data["spire-entries.json"] = (b / "spire/entries.json").read_text()   # P2-3: registrace SPIRE per role (aplikuje harness/operátor)
         es = ROOT / "tools/role_evals/results/eval-status.json"   # P2-5: eval gate per role (evals.py) – aplikace roli bez prošlého gate nespustí
         if es.exists(): data["eval-status.json"] = es.read_text()
         images = {}

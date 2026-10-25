@@ -186,6 +186,29 @@ evalů, `org.agents` z ledgeru – SPIFFE ID instance role, model, klíč gatewa
 
 Výsledek: **13/13 + 2 INFO** (`measure` run 40206756683, `results/p2-5-20261025-153648.json`).
 
+
+## P2-3 – identita role a tajemství bez operátora (2026-10-25, AKS, `--step p2-3` = p2-5 + P23a–d)
+
+- **OpenBao auto-unseal**: `seal "azurekeyvault"` (Key Vault `kv-platform-dev-<suffix>`, klíč `openbao-unseal`, Terraform `keyvault.tf`), pod se
+  přihlašuje workload identitou (UAMI `id-openbao-<suffix>` + federated credential na SA `platform-data:openbao`, webhook injektuje token;
+  `VAULT_AZUREKEYVAULT_AUTH_METHOD=workload_identity`). Harness: init s recovery klíči do Secretu `openbao-init`, migrace shamir → auto-unseal
+  (`unseal` s `migrate`), po smazání podu musí naběhnout unsealed sám.
+- **Auth kubernetes**: OpenBao `auth/kubernetes` (TokenReview vlastním SA tokenem, ClusterRoleBinding `system:auth-delegator`), role `zakazka`
+  → policy `approval-signer`; aplikace se přihlašuje projektovaným SA tokenem (`app.bao_token`, ledger `BAO_LOGIN`); `zakazka-secrets` bez `P0_BAO_TOKEN`.
+- **SVID podu role na Katě**: hostPath socket DaemonSet agenta do VM nevede → **SPIRE agent jako sidecar podu** (nativní initContainer), atestace
+  `k8s_psat` projektovaným tokenem SA `role` (jen v sidecaru; kontejner role token nemá), server má alias uzlu per role
+  (`k8s_psat:agent_ns/agent_sa/agent_pod_label:platform.role`) a workload entry `spiffe://platform/role/<role>/acme` přes `unix:uid:1000`
+  (sdílený PID ns) – entries generuje rolegen (`spire-entries.json` v `rolegen-build`), aplikuje harness. Role si v `role_runner.py` vezme
+  X.509-SVID a JWT-SVID (aud `memory`, py-spiffe) a volá paměť s ním; server paměti ověřuje JWT-SVID přes `spire-oidc` (OIDC discovery provider
+  jako sidecar spire-server, JWKS `/keys`), tenant z cesty SPIFFE ID. Keycloak token zůstává záloha (`P0_ROLE_IDENTITY=svid` v overlay aks).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P23a | seal `azurekeyvault`, recovery seal; po `delete pod openbao-0` unsealed bez operátora | ⏳ |
+| P23b | `BAO_LOGIN method=kubernetes role=zakazka policies=[approval-signer]`, podpisy `openbao-transit`, Secret bez `P0_BAO_TOKEN` | ⏳ |
+| P23c | 4 role: `identity.kind=svid`, `spiffe://platform/role/<role>/acme`, iss `spire-oidc`, sidecar přítomen; paměť 200 | ⏳ |
+| P23d | `spire-oidc` `/keys` + discovery; entries z rolegen v serveru | ⏳ |
+
 ## Spuštění
 
 ```bash
@@ -196,7 +219,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
-python harness.py --step p2-5 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-5); p2-2 bez registru, p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
+python harness.py --step p2-3 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-3); p2-5 bez identity, p2-2 bez registru, p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
 ```
 
 Pasti prostředí (cgroup v1, chybějící `CAP_SYS_RESOURCE`, proxy uzlu): [`infra/README.md`](../../infra/README.md).

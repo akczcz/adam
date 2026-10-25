@@ -1,0 +1,25 @@
+# P2-3 (patch base ConfigMapy): config OpenBao pro AKS = base + seal azurekeyvault (parametry z env: VAULT_AZUREKEYVAULT_*, AZURE_TENANT_ID z webhooku workload identity)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  annotations: {kustomize.toolkit.fluxcd.io/substitute: disabled}
+data:
+  config.hcl: |
+    ui = false
+    disable_mlock = true
+    listener "tcp" {
+      address         = "0.0.0.0:8200"
+      cluster_address = "0.0.0.0:8201"
+      tls_disable     = true          # uvnitř clusteru (dev); TLS až P3
+    }
+    storage "raft" {
+      path    = "/openbao/data"
+      node_id = "openbao-0"
+    }
+    seal "azurekeyvault" {}           # vault_name/key_name/tenant/auth z env – klíč openbao-unseal v Key Vaultu, identita podu (UAMI)
+    audit "stdout" {
+      type    = "file"
+      path    = "file/"
+      options = { file_path = "stdout" }
+    }

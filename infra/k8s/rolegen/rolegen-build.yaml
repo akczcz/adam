@@ -270,6 +270,37 @@ data:
     \ \"layer\": \"L3\",\n    \"gate\": {\n     \"metric\": \"pass_k\",\n     \"min\"\
     : 1.0\n    }\n   },\n   {\n    \"layer\": \"L4\",\n    \"gate\": {\n     \"metric\"\
     : \"drift_cost_steps\",\n     \"max\": 0.5\n    }\n   }\n  ]\n }\n]"
+  spire-entries.json: "[\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/account\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
+    \ \"k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/account/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/account\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/architekt\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
+    \ \"k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/architekt/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/reviewer\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
+    \ \"k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/reviewer/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/sre\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
+    \ \"k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/sre/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/vyvojar\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
+    \ \"k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/vyvojar/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/vyvojar\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n }\n]"
   eval-status.json: "{\n \"account\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\":\
     \ {\n    \"metric\": \"pass_rate\",\n    \"passed\": true,\n    \"threshold\"\
     : 1.0,\n    \"value\": 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\"\

@@ -35,3 +35,7 @@ spec:
     - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform-data}}
       podSelector: {matchLabels: {app: zakazka}}
     ports: [{protocol: TCP, port: 8010}]
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: platform-data}}
+      podSelector: {matchLabels: {app: spire-server}}
+    ports: [{protocol: TCP, port: 8081}]   # P2-3: sidecar spire-agent podu role → SPIRE server (atestace, SVID)
