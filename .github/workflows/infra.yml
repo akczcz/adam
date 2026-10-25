@@ -25,7 +25,7 @@ env:
   ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
   TF_VAR_name_suffix: ${{ vars.NAME_SUFFIX }}
-  TF_VAR_location: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+  TF_VAR_location: ${{ vars.AZURE_LOCATION || 'polandcentral' }}
   TF_VAR_deployer_principal_id: ${{ vars.AZURE_PRINCIPAL_ID }}
   TF_IN_AUTOMATION: "true"
 jobs:

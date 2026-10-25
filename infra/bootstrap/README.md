@@ -52,8 +52,9 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 
 ## Pasti (očekávané, ověří první `apply`)
 - **Kapacita regionu (změřeno 2026-10-24, Sweden Central):** Flexible Server B1ms zóna 1 → `RegionalAllocationFailed`; AKS system pool D4as_v5 visel
-  v `Creating` 90 min do timeoutu Terraformu a zůstal v Azure mimo state (smazat `az aks delete`, Terraform ho nezná). Proto West Europe jako
-  výchozí region, PG bez `zone`, `timeouts.create = 40m` u AKS. Při `RegionalAllocationFailed` zkusit `TF_VAR_pg_location` jiný region nebo jiné SKU.
+  v `Creating` 90 min do timeoutu Terraformu a zůstal v Azure mimo state (smazat `az aks delete`, Terraform ho nezná). West Europe pak odmítl
+  vše: `RequestDisallowedByAzure … region is currently not accepting new customers` (aka.ms/locationineligible); GWC a France Central
+  `NotAvailableForSubscription`. Proto **Poland Central** (ověřeno `az vm list-skus` bez restrikcí; záloha Italy North) jako výchozí region, PG bez `zone`, `timeouts.create = 40m` u AKS. Při `RegionalAllocationFailed` zkusit `TF_VAR_pg_location` jiný region nebo jiné SKU.
 - azurerm 5.x vyžaduje v `azurerm_kubernetes_cluster` blok `node_provisioning_profile` (`mode = "Manual"`).
 - Pod Sandboxing jen Azure Linux + gen2 SKU s nested virt; Dadsv7 podle AKS release notes 2026-06-19. Pokud `kata` pool odmítne SKU →
   `TF_VAR_kata_vm_size=Standard_D4s_v5` (dražší, ověřeno v docs). Cluster autoscaler s min 0: první Kata pod čeká ~3–5 min na uzel.

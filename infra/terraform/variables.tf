@@ -1,8 +1,8 @@
-# Rozhodnutí 2026-10-24 (knowledge/platforma/p1-aks.md): West Europe (Sweden Central bez kapacity), system pool D4as_v5, Kata pool D2ads_v7 autoscale 0–1,
+# Rozhodnutí 2026-10-25 (knowledge/platforma/p1-aks.md): Poland Central (záloha Italy North), system pool D4as_v5, Kata pool D2ads_v7 autoscale 0–1,
 # Flexible Server B1ms, Contributor jen na resource group (RG zakládá bootstrap, Terraform ji jen čte).
 variable "location" {
   type    = string
-  default = "westeurope" # 2026-10-24: Sweden Central bez kapacity (AKS D4as_v5 zaseknutý v Creating 90 min, PG B1ms RegionalAllocationFailed)
+  default = "polandcentral" # 2026-10-25: Sweden Central bez kapacity (AKS Creating 90 min, PG RegionalAllocationFailed), West Europe nepřijímá nové subscription (locationineligible), GWC+France NotAvailableForSubscription
 }
 variable "pg_location" {
   type        = string
