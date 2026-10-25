@@ -125,7 +125,13 @@ def role_key(role, zakazka_id):
     """Klíč gateway per role × zakázka (P0_ROLE_KEYS = {zakazka: {role: key}}, "*" = výchozí); bez něj společný P0_API_KEY.
     Hodnotu klíče vydává v cíli OpenBao, gateway zná jen sha256 (rolegen apikeys-<tenant>-<zakazka>.yaml)."""
     keys = json.loads(os.environ.get("P0_ROLE_KEYS", "{}"))
-    return (keys.get(zakazka_id) or keys.get("*") or {}).get(role) or os.environ.get("P0_API_KEY", "sk-ant-harness-mock")
+    k = (keys.get(zakazka_id) or keys.get("*") or {}).get(role)
+    if k: return k
+    if os.environ.get("P0_GATEWAY_KEYS") == "issue":   # P2-1: klíče vydá aplikace (ConfigMap agentgateway-keys + Secret zakazka-keys-<id>)
+        import gateway_keys
+        k = gateway_keys.issue(zakazka_id, ledger).get(role)
+        if k: return k
+    return os.environ.get("P0_API_KEY", "sk-ant-harness-mock")
 
 
 BUDGET_RE = re.compile(r"\b429\b|budget exceeded|rate.?limit", re.I)

@@ -125,6 +125,30 @@ Zjištění a pasti P1-6 (i v `infra/README.md`):
 - SVID z SPIRE v Kata podu zatím není: Workload API je unix socket agenta přes hostPath, do VM nevede (P2: spiffe-csi/agent v guestu).
 - Pod spec staví `role_pod.py` z env, ne přímo `build/k8s/<role>-pod.yaml` z rolegen – stejná pole, jeden zdroj pravdy až v P2.
 
+
+## P2-1 – role → Git → Flux, klíče vydává aplikace (2026-10-25, AKS, `--step p2-1`; `p1-6` je od teď alias) – **7/7**
+
+Co se změnilo proti P1-6: harness **nerenderuje** konfiguraci gateway ani rolegen build. Oboje je v Gitu – `infra/k8s/rolegen/`
+(generuje `tools/rolegen/render_k8s.py` z `knowledge/organization/roles/*.yaml`, CI `rolegen.yml` hlídá `--check`) a aplikuje ho Flux jako
+kustomize component obou overlayů. Klíče gateway role × zakázka vydává aplikace při prvním běhu role zakázky (`gateway_keys.py`): hash a
+rozpočty ze šablony rolegen do ConfigMapy `agentgateway-keys`, hodnoty do Secretu `zakazka-keys-<id>`; sidecar `config-merge`
+(`gateway_merge.py`, nativní initContainer gateway) slévá config z Gitu a klíče do jednoho souboru, který agentgateway hot-reloaduje.
+Harness dodává jen tajemství (`zakazka-secrets` bez `P0_ROLE_KEYS`, token OpenBao) a seed paměti.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P21a | Flux Ready na HEAD; ConfigMapy `agentgateway-config` a `rolegen-build` v clusteru == render overlay `aks` z HEAD (diff prázdný); gateway má apiKey policy a upstream z env `LLM_UPSTREAM_URL` (mock-upstream); harness nic nerenderoval | ✅ |
+| P21b | Zakázka end-to-end s rolemi jako Kata pody (jako P16b), Dokonceno, 0,045 USD | ✅ |
+| P21b2 | Klíče vydala aplikace: ledger `GATEWAY_KEYS_ISSUED`, ConfigMap `agentgateway-keys` nese 5 klíčů zakázky s rozpočty Block 24h == `roles/*.yaml` (10/30/20/20/50 USD), Secret `zakazka-keys-<id>`, sonda 401 → 200 na **obou** replikách za 69 s | ✅ |
+| P21c–f | Izolace, egress, paměť jako P16; časy: první role 227 s (scale-up uzlu 132 s + pull/boot 173 s), další 24 s | ✅ / ℹ️ |
+| P21g | FinOps podle hashů z ConfigMapy klíčů: account 0,015 (vč. sond), ostatní 0,012 USD | ✅ |
+
+Výsledek: **7/7 + 2 INFO** (`measure` run 40195984513, `results/p2-1-20261025-131749.json`). Předchozí běhy odhalily dvě pasti (opraveno):
+- Flux `postBuild.substitute` smazal `${SVID_JWT}` v env rolí v `rolegen-build` → generátor přidává `substitute: disabled` (P21a diff odhalil).
+- Sonda propagace klíče přes ClusterIP trefila jen jednu ze dvou replik gateway (ConfigMap volume se propaguje per pod); Account a Architekt
+  pak dostaly 401 z druhé repliky → headless Service `agentgateway-headless`, sonda proti každé replice (propagace 36–69 s).
+- Pozorováno, neprověřeno: v běhu s 401 u dvou rolí hlásil výstup zakázky `cost_usd` 1,62 USD místo ~0,02 (sčítání ceny při chybě role).
+
 ## Spuštění
 
 ```bash
@@ -135,7 +159,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
-python harness.py --step p1-6 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: spouští workflow measure (p16=true); pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk
+python harness.py --step p2-1 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: spouští workflow measure (p21=true); pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
 ```
 
 Pasti prostředí (cgroup v1, chybějící `CAP_SYS_RESOURCE`, proxy uzlu): [`infra/README.md`](../../infra/README.md).

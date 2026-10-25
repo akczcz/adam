@@ -1,0 +1,399 @@
+# GENEROVÁNO: python tools/rolegen/render_k8s.py z knowledge/organization/roles/*.yaml – neupravovat ručně (CI kontroluje `--check`).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rolegen-build
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  account.json: "{\n \"role\": \"account\",\n \"version\": \"0.1.0\",\n \"tools\"\
+    : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
+    /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-crm\",\n \
+    \ \"platform-tickets\",\n  \"platform-artifacts\"\n ],\n \"permission_mode\":\
+    \ \"bypassPermissions\",\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
+    : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
+    : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\"\n },\n \"managed_settings\"\
+    : {\n  \"sandbox\": {\n   \"enabled\": true,\n   \"failIfUnavailable\": true,\n\
+    \   \"allowUnsandboxedCommands\": false,\n   \"network\": {\n    \"strictAllowlist\"\
+    : true,\n    \"allowManagedDomainsOnly\": true\n   },\n   \"filesystem\": {\n\
+    \    \"allowManagedReadPathsOnly\": true\n   }\n  },\n  \"permissions\": {\n \
+    \  \"deny\": [\n    \"Bash\",\n    \"WebFetch\",\n    \"Write\",\n    \"Edit\"\
+    \n   ]\n  },\n  \"skipWebFetchPreflight\": true\n }\n}"
+  architekt.json: "{\n \"role\": \"architekt\",\n \"version\": \"0.1.0\",\n \"tools\"\
+    : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
+    /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-repo\",\n\
+    \  \"platform-adr\",\n  \"platform-gateway-catalog\",\n  \"platform-interpreter\"\
+    ,\n  \"platform-artifacts\"\n ],\n \"permission_mode\": \"bypassPermissions\"\
+    ,\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
+    : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
+    : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\"\n },\n \"managed_settings\"\
+    : {\n  \"sandbox\": {\n   \"enabled\": true,\n   \"failIfUnavailable\": true,\n\
+    \   \"allowUnsandboxedCommands\": false,\n   \"network\": {\n    \"strictAllowlist\"\
+    : true,\n    \"allowManagedDomainsOnly\": true\n   },\n   \"filesystem\": {\n\
+    \    \"allowManagedReadPathsOnly\": true\n   }\n  },\n  \"permissions\": {\n \
+    \  \"deny\": [\n    \"Bash\",\n    \"WebFetch\",\n    \"Write\",\n    \"Edit\"\
+    \n   ]\n  },\n  \"skipWebFetchPreflight\": true\n }\n}"
+  reviewer.json: "{\n \"role\": \"reviewer\",\n \"version\": \"0.1.0\",\n \"tools\"\
+    : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
+    /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-sandbox\"\
+    ,\n  \"platform-repo\"\n ],\n \"permission_mode\": \"bypassPermissions\",\n \"\
+    env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
+    : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\"\
+    : \"1\"\n },\n \"managed_settings\": {\n  \"sandbox\": {\n   \"enabled\": true,\n\
+    \   \"failIfUnavailable\": true,\n   \"allowUnsandboxedCommands\": false,\n  \
+    \ \"network\": {\n    \"strictAllowlist\": true,\n    \"allowManagedDomainsOnly\"\
+    : true\n   }\n  },\n  \"permissions\": {\n   \"deny\": [\n    \"Bash(git push*)\"\
+    ,\n    \"Bash(git commit*)\",\n    \"Edit\",\n    \"Write\",\n    \"WebFetch\"\
+    \n   ]\n  }\n }\n}"
+  sre.json: "{\n \"role\": \"sre\",\n \"version\": \"0.1.0\",\n \"tools\": [],\n \"\
+    strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"/work\",\n\
+    \ \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-deploy\",\n  \"platform-runbook\"\
+    ,\n  \"platform-clickhouse\",\n  \"platform-tickets\"\n ],\n \"permission_mode\"\
+    : \"bypassPermissions\",\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
+    : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
+    : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\"\n },\n \"managed_settings\"\
+    : {\n  \"sandbox\": {\n   \"enabled\": true,\n   \"failIfUnavailable\": true,\n\
+    \   \"allowUnsandboxedCommands\": false,\n   \"network\": {\n    \"strictAllowlist\"\
+    : true,\n    \"allowManagedDomainsOnly\": true\n   },\n   \"filesystem\": {\n\
+    \    \"allowManagedReadPathsOnly\": true\n   }\n  },\n  \"permissions\": {\n \
+    \  \"deny\": [\n    \"Bash\",\n    \"WebFetch\",\n    \"Write\",\n    \"Edit\"\
+    \n   ]\n  },\n  \"skipWebFetchPreflight\": true\n }\n}"
+  vyvojar.json: "{\n \"role\": \"vyvojar\",\n \"version\": \"0.1.0\",\n \"tools\"\
+    : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
+    /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-sandbox\"\
+    ,\n  \"platform-repo\"\n ],\n \"permission_mode\": \"bypassPermissions\",\n \"\
+    env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
+    : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
+    : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\",\n  \"GIT_CONFIG_PARAMETERS\"\
+    : \"'url.https://git.platform.internal/.insteadOf=https://github.com/'\"\n },\n\
+    \ \"managed_settings\": {\n  \"sandbox\": {\n   \"enabled\": true,\n   \"failIfUnavailable\"\
+    : true,\n   \"allowUnsandboxedCommands\": false,\n   \"autoAllowBashIfSandboxed\"\
+    : true,\n   \"network\": {\n    \"strictAllowlist\": true,\n    \"allowManagedDomainsOnly\"\
+    : true\n   },\n   \"filesystem\": {\n    \"allowManagedReadPathsOnly\": true\n\
+    \   }\n  },\n  \"permissions\": {\n   \"deny\": [\n    \"Bash(git push --force*)\"\
+    ,\n    \"Bash(git push * main)\",\n    \"WebFetch\"\n   ]\n  },\n  \"skipWebFetchPreflight\"\
+    : true\n }\n}"
+  srt-account.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\":\
+    \ {\n  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
+    : {\n  \"allowRead\": [],\n  \"allowWrite\": [\n   \"/work\"\n  ],\n  \"denyRead\"\
+    : [],\n  \"denyWrite\": [\n   \"/work/.git/hooks\",\n   \"/work/.git/config\"\
+    ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
+    : 3,\n \"network\": {\n  \"allowedDomains\": [],\n  \"deniedDomains\": [],\n \
+    \ \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\",\n\
+    \   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    : true\n }\n}"
+  srt-architekt.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\"\
+    : {\n  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
+    : {\n  \"allowRead\": [],\n  \"allowWrite\": [\n   \"/work\"\n  ],\n  \"denyRead\"\
+    : [],\n  \"denyWrite\": [\n   \"/work/.git/hooks\",\n   \"/work/.git/config\"\
+    ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
+    : 3,\n \"network\": {\n  \"allowedDomains\": [\n   \"git.platform.internal\"\n\
+    \  ],\n  \"deniedDomains\": [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\"\
+    ,\n   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    : true\n }\n}"
+  srt-reviewer.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\"\
+    : {\n  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
+    : {\n  \"allowRead\": [\n   \"/work\"\n  ],\n  \"allowWrite\": [\n   \"/tmp\"\
+    ,\n   \"/work/eval-out\"\n  ],\n  \"denyRead\": [],\n  \"denyWrite\": [\n   \"\
+    /work/.git\"\n  ]\n },\n \"mandatoryDenySearchDepth\": 3,\n \"network\": {\n \
+    \ \"allowedDomains\": [\n   \"git.platform.internal\"\n  ],\n  \"deniedDomains\"\
+    : [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\"\
+    ,\n   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    : true\n }\n}"
+  srt-sre.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\": {\n\
+    \  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
+    : {\n  \"allowRead\": [],\n  \"allowWrite\": [\n   \"/work\"\n  ],\n  \"denyRead\"\
+    : [],\n  \"denyWrite\": [\n   \"/work/.git/hooks\",\n   \"/work/.git/config\"\
+    ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
+    : 3,\n \"network\": {\n  \"allowedDomains\": [\n   \"git.platform.internal\"\n\
+    \  ],\n  \"deniedDomains\": [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\"\
+    ,\n   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    : true\n }\n}"
+  srt-vyvojar.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\":\
+    \ {\n  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
+    : {\n  \"allowRead\": [],\n  \"allowWrite\": [\n   \"/work\"\n  ],\n  \"denyRead\"\
+    : [],\n  \"denyWrite\": [\n   \"/work/.git/hooks\",\n   \"/work/.git/config\"\
+    ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
+    : 3,\n \"network\": {\n  \"allowedDomains\": [\n   \"git.platform.internal\",\n\
+    \   \"mirror.platform.internal\"\n  ],\n  \"deniedDomains\": [],\n  \"parentProxy\"\
+    : {\n   \"http\": \"http://agentgateway.platform.svc:3128\",\n   \"https\": \"\
+    http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\": true\n }\n\
+    }"
+  roles.json: "[\n {\n  \"role\": \"account\",\n  \"version\": \"0.1.0\",\n  \"owner\"\
+    : \"adam\",\n  \"processes\": [\n   \"P1-prijeti-zadani\"\n  ],\n  \"autonomy_max\"\
+    : \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/account/{tenant}/{workflow_instance}\"\
+    ,\n  \"image\": \"registry.platform.internal/roles/account:0.1.0\",\n  \"source\"\
+    : \"account.yaml\",\n  \"source_sha256_16\": \"3c3be37b322c9237\",\n  \"disclosure\"\
+    : {\n   \"agui\": \"Mluvíte s AI agentem (role Account) firmy {firma}; jedná jménem\
+    \ {vlastník procesu}. Nabídku, cenu a termín potvrzuje člověk.\",\n   \"issue\"\
+    : \"Zadání sepsal AI agent (Account) jménem {vlastník procesu}; schvaluje člověk\
+    \ zákazníka.\"\n  },\n  \"evals_gate\": [\n   {\n    \"layer\": \"L0\",\n    \"\
+    gate\": {\n     \"metric\": \"pass_rate\",\n     \"min\": 1.0\n    }\n   },\n\
+    \   {\n    \"layer\": \"L1\",\n    \"gate\": {\n     \"metric\": \"policy_compliance\"\
+    ,\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L3\",\n    \"gate\"\
+    : {\n     \"metric\": \"pass_k\",\n     \"min\": 0.7\n    }\n   }\n  ]\n },\n\
+    \ {\n  \"role\": \"architekt\",\n  \"version\": \"0.1.0\",\n  \"owner\": \"adam\"\
+    ,\n  \"processes\": [\n   \"P2-navrh\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"\
+    spiffe_id\": \"spiffe://platform.example/agent/architekt/{tenant}/{workflow_instance}\"\
+    ,\n  \"image\": \"registry.platform.internal/roles/architekt:0.1.0\",\n  \"source\"\
+    : \"architekt.yaml\",\n  \"source_sha256_16\": \"4b6fea289b7b8ed0\",\n  \"disclosure\"\
+    : {\n   \"adr\": \"ADR vygeneroval AI agent (Architekt, verze 0.1.0) jménem {vlastník\
+    \ procesu}; schválil {člověk, datum}.\"\n  },\n  \"evals_gate\": [\n   {\n   \
+    \ \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\",\n     \"\
+    min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L1\",\n    \"gate\": {\n    \
+    \ \"metric\": \"policy_compliance\",\n     \"min\": 1.0\n    }\n   },\n   {\n\
+    \    \"layer\": \"L2\",\n    \"gate\": {\n     \"metric\": \"pass_k\",\n     \"\
+    min\": 0.7\n    }\n   },\n   {\n    \"layer\": \"L3\",\n    \"gate\": {\n    \
+    \ \"metric\": \"pass_k\",\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\"\
+    : \"L4\",\n    \"gate\": {\n     \"metric\": \"estimate_error\",\n     \"max\"\
+    : 0.5\n    }\n   }\n  ]\n },\n {\n  \"role\": \"reviewer\",\n  \"version\": \"\
+    0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P5-review\"\n  ],\n\
+    \  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/reviewer/{tenant}/{workflow_instance}\"\
+    ,\n  \"image\": \"registry.platform.internal/roles/reviewer:0.1.0\",\n  \"source\"\
+    : \"reviewer.yaml\",\n  \"source_sha256_16\": \"71fa1c1ecad3f867\",\n  \"disclosure\"\
+    : {\n   \"review_comment\": \"Toto review napsal AI agent (role Reviewer, verze\
+    \ 0.1.0) platformy {firma} jménem {vlastník procesu}. O sloučení rozhoduje člověk;\
+    \ přiložený Inspect log je důkaz, ne verdikt.\",\n   \"memory_approval\": \"verification.by\
+    \ = spiffe://…/agent/reviewer/…, method = agent\"\n  },\n  \"evals_gate\": [\n\
+    \   {\n    \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\"\
+    ,\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L1\",\n    \"gate\"\
+    : {\n     \"metric\": \"policy_compliance\",\n     \"min\": 1.0\n    }\n   },\n\
+    \   {\n    \"layer\": \"L2\",\n    \"gate\": {\n     \"metric\": \"agreement\"\
+    ,\n     \"min\": 0.85\n    }\n   },\n   {\n    \"layer\": \"L3\",\n    \"gate\"\
+    : {\n     \"metric\": \"pass_k\",\n     \"min\": 1.0\n    }\n   },\n   {\n   \
+    \ \"layer\": \"L5\",\n    \"gate\": {\n     \"metric\": \"agreement\",\n     \"\
+    min\": 0.8\n    }\n   }\n  ]\n },\n {\n  \"role\": \"sre\",\n  \"version\": \"\
+    0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P5-predani-nasazeni\"\
+    ,\n   \"X1-eskalace\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"\
+    spiffe://platform.example/agent/sre/{tenant}/{workflow_instance}\",\n  \"image\"\
+    : \"registry.platform.internal/roles/sre:0.1.0\",\n  \"source\": \"sre.yaml\"\
+    ,\n  \"source_sha256_16\": \"751d8f8713dee621\",\n  \"disclosure\": {\n   \"ticket_comment\"\
+    : \"Komentář napsal AI agent (role SRE, verze 0.1.0) platformy {firma} jménem\
+    \ {vlastník procesu}; nasazení schvaluje člověk.\",\n   \"handover_protocol\"\
+    : \"Předávací protokol připravil AI agent (SRE) jménem {vlastník procesu}. Nasazení\
+    \ provedl deploy-executor po schválení člověkem.\"\n  },\n  \"evals_gate\": [\n\
+    \   {\n    \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\"\
+    ,\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L1\",\n    \"gate\"\
+    : {\n     \"metric\": \"policy_compliance\",\n     \"min\": 1.0\n    }\n   },\n\
+    \   {\n    \"layer\": \"L2\",\n    \"gate\": {\n     \"metric\": \"pass_k\",\n\
+    \     \"min\": 0.7\n    }\n   },\n   {\n    \"layer\": \"L3\",\n    \"gate\":\
+    \ {\n     \"metric\": \"pass_k\",\n     \"min\": 1.0\n    }\n   },\n   {\n   \
+    \ \"layer\": \"L4\",\n    \"gate\": {\n     \"metric\": \"drift_cost_steps\",\n\
+    \     \"max\": 0.5\n    }\n   }\n  ]\n },\n {\n  \"role\": \"vyvojar\",\n  \"\
+    version\": \"0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P4-implementace\"\
+    \n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/vyvojar/{tenant}/{workflow_instance}\"\
+    ,\n  \"image\": \"registry.platform.internal/roles/vyvojar:0.1.0\",\n  \"source\"\
+    : \"vyvojar.yaml\",\n  \"source_sha256_16\": \"408e5dbe7e08abd4\",\n  \"disclosure\"\
+    : {\n   \"pr_description\": \"Tento pull request vytvořil AI agent (role Vývojář,\
+    \ verze 0.1.0) platformy {firma} jménem {vlastník procesu}. Sloučení schvaluje\
+    \ člověk.\",\n   \"issue_comment\": \"Komentář napsal AI agent (Vývojář) jménem\
+    \ {vlastník procesu}.\",\n   \"commit_trailer\": \"AI-Agent: vyvojar@0.1.0 on-behalf-of\
+    \ {vlastník}\"\n  },\n  \"evals_gate\": [\n   {\n    \"layer\": \"L0\",\n    \"\
+    gate\": {\n     \"metric\": \"pass_rate\",\n     \"min\": 1.0\n    }\n   },\n\
+    \   {\n    \"layer\": \"L1\",\n    \"gate\": {\n     \"metric\": \"policy_compliance\"\
+    ,\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L2\",\n    \"gate\"\
+    : {\n     \"metric\": \"pass_k\",\n     \"min\": 0.6\n    }\n   },\n   {\n   \
+    \ \"layer\": \"L3\",\n    \"gate\": {\n     \"metric\": \"pass_k\",\n     \"min\"\
+    : 1.0\n    }\n   },\n   {\n    \"layer\": \"L4\",\n    \"gate\": {\n     \"metric\"\
+    : \"drift_cost_steps\",\n     \"max\": 0.5\n    }\n   }\n  ]\n }\n]"
+  opa-data.json: "{\n \"roles\": {\n  \"account\": {\n   \"autonomy_max\": \"A2\"\
+    ,\n   \"deny_tool_inputs\": [\n    \"Bash.dangerouslyDisableSandbox\"\n   ],\n\
+    \   \"http\": [\n    {\n     \"methods\": [\n      \"GET\"\n     ],\n     \"path_prefix\"\
+    : \"/{tenant}/\",\n     \"receive_pack\": \"none\",\n     \"route\": \"git\"\n\
+    \    }\n   ],\n   \"irreversible\": [],\n   \"mcp\": {\n    \"artifacts\": {\n\
+    \     \"allow\": [\n      \"read\",\n      \"write\"\n     ],\n     \"deny\":\
+    \ [],\n     \"with_approval\": []\n    },\n    \"crm\": {\n     \"allow\": [\n\
+    \      \"read_contact\",\n      \"read_history\"\n     ],\n     \"deny\": [\n\
+    \      \"write\"\n     ],\n     \"with_approval\": []\n    },\n    \"mail\": {\n\
+    \     \"allow\": [],\n     \"deny\": [\n      \"*\"\n     ],\n     \"with_approval\"\
+    : []\n    },\n    \"memory\": {\n     \"allow\": [\n      \"search\",\n      \"\
+    propose\"\n     ],\n     \"deny\": [\n      \"approve\",\n      \"forget\"\n \
+    \    ],\n     \"with_approval\": []\n    },\n    \"tickets\": {\n     \"allow\"\
+    : [\n      \"lookup\",\n      \"create_draft\"\n     ],\n     \"deny\": [\n  \
+    \    \"send\",\n      \"close\",\n      \"assign\"\n     ],\n     \"with_approval\"\
+    : []\n    }\n   },\n   \"memory\": {\n    \"approve\": {\n     \"enabled\": false\n\
+    \    },\n    \"forget\": false,\n    \"read\": [\n     {\n      \"scope\": \"\
+    zakaznik\",\n      \"sensitivity_max\": \"personal\",\n      \"types\": [\n  \
+    \     \"fakt\"\n      ]\n     },\n     {\n      \"scope\": \"firma\",\n      \"\
+    sensitivity_max\": \"internal\",\n      \"types\": [\n       \"postup\",\n   \
+    \    \"pouceni\"\n      ]\n     }\n    ],\n    \"read_proposed\": true,\n    \"\
+    write\": {\n     \"scopes\": [\n      \"zakaznik\"\n     ],\n     \"status\":\
+    \ \"proposed\",\n     \"types\": [\n      \"fakt\",\n      \"pouceni\"\n     ]\n\
+    \    }\n   },\n   \"processes\": [\n    \"P1-prijeti-zadani\"\n   ],\n   \"scopes\"\
+    : [\n    \"crm:read\",\n    \"tickets:draft\",\n    \"memory:search\",\n    \"\
+    memory:propose\"\n   ],\n   \"version\": \"0.1.0\"\n  },\n  \"architekt\": {\n\
+    \   \"autonomy_max\": \"A2\",\n   \"deny_tool_inputs\": [\n    \"Bash.dangerouslyDisableSandbox\"\
+    \n   ],\n   \"http\": [\n    {\n     \"methods\": [\n      \"GET\"\n     ],\n\
+    \     \"path_prefix\": \"/{tenant}/\",\n     \"receive_pack\": \"none\",\n   \
+    \  \"route\": \"git\"\n    }\n   ],\n   \"irreversible\": [],\n   \"mcp\": {\n\
+    \    \"adr\": {\n     \"allow\": [\n      \"read\",\n      \"propose\"\n     ],\n\
+    \     \"deny\": [\n      \"approve\"\n     ],\n     \"with_approval\": []\n  \
+    \  },\n    \"artifacts\": {\n     \"allow\": [\n      \"read\",\n      \"write\"\
+    \n     ],\n     \"deny\": [],\n     \"with_approval\": []\n    },\n    \"gateway\"\
+    : {\n     \"allow\": [\n      \"model_catalog\"\n     ],\n     \"deny\": [],\n\
+    \     \"with_approval\": []\n    },\n    \"interpreter\": {\n     \"allow\": [\n\
+    \      \"run_wasm\"\n     ],\n     \"deny\": [],\n     \"with_approval\": []\n\
+    \    },\n    \"memory\": {\n     \"allow\": [\n      \"search\",\n      \"propose\"\
+    \n     ],\n     \"deny\": [\n      \"approve\",\n      \"forget\"\n     ],\n \
+    \    \"with_approval\": []\n    },\n    \"repo\": {\n     \"allow\": [\n     \
+    \ \"read_file\",\n      \"search\",\n      \"list_tree\"\n     ],\n     \"deny\"\
+    : [\n      \"write_file\"\n     ],\n     \"with_approval\": []\n    }\n   },\n\
+    \   \"memory\": {\n    \"approve\": {\n     \"enabled\": false\n    },\n    \"\
+    forget\": false,\n    \"read\": [\n     {\n      \"scope\": \"firma\",\n     \
+    \ \"sensitivity_max\": \"internal\",\n      \"types\": [\n       \"fakt\",\n \
+    \      \"nazor\",\n       \"postup\",\n       \"pouceni\"\n      ]\n     },\n\
+    \     {\n      \"scope\": \"zakaznik\",\n      \"sensitivity_max\": \"confidential\"\
+    ,\n      \"types\": [\n       \"fakt\",\n       \"postup\"\n      ]\n     }\n\
+    \    ],\n    \"read_proposed\": true,\n    \"write\": {\n     \"scopes\": [\n\
+    \      \"firma\",\n      \"zakaznik\"\n     ],\n     \"status\": \"proposed\"\
+    ,\n     \"types\": [\n      \"nazor\",\n      \"pouceni\"\n     ]\n    }\n   },\n\
+    \   \"processes\": [\n    \"P2-navrh\"\n   ],\n   \"scopes\": [\n    \"repo:read\"\
+    ,\n    \"adr:propose\",\n    \"gateway:catalog\",\n    \"interpreter:run\",\n\
+    \    \"memory:search\",\n    \"memory:propose\"\n   ],\n   \"version\": \"0.1.0\"\
+    \n  },\n  \"reviewer\": {\n   \"autonomy_max\": \"A2\",\n   \"deny_tool_inputs\"\
+    : [\n    \"Bash.dangerouslyDisableSandbox\"\n   ],\n   \"http\": [\n    {\n  \
+    \   \"methods\": [\n      \"GET\",\n      \"POST\"\n     ],\n     \"path_prefix\"\
+    : \"/{tenant}/\",\n     \"receive_pack\": \"none\",\n     \"route\": \"git\"\n\
+    \    }\n   ],\n   \"irreversible\": [],\n   \"mcp\": {\n    \"evals\": {\n   \
+    \  \"allow\": [\n      \"run\",\n      \"read_log\",\n      \"read_gate\"\n  \
+    \   ],\n     \"deny\": [\n      \"write_set\"\n     ],\n     \"with_approval\"\
+    : []\n    },\n    \"issues\": {\n     \"allow\": [\n      \"read\",\n      \"\
+    comment\"\n     ],\n     \"deny\": [],\n     \"with_approval\": []\n    },\n \
+    \   \"memory\": {\n     \"allow\": [\n      \"search\",\n      \"propose\",\n\
+    \      \"approve\"\n     ],\n     \"deny\": [\n      \"forget\"\n     ],\n   \
+    \  \"with_approval\": []\n    },\n    \"pr\": {\n     \"allow\": [\n      \"read_diff\"\
+    ,\n      \"read_checks\",\n      \"comment\",\n      \"review_submit\"\n     ],\n\
+    \     \"deny\": [\n      \"merge\",\n      \"create\",\n      \"update\"\n   \
+    \  ],\n     \"with_approval\": []\n    },\n    \"repo\": {\n     \"allow\": [\n\
+    \      \"read_file\",\n      \"search\",\n      \"list_tree\"\n     ],\n     \"\
+    deny\": [\n      \"write_file\"\n     ],\n     \"with_approval\": []\n    }\n\
+    \   },\n   \"memory\": {\n    \"approve\": {\n     \"daily_limit\": 50,\n    \
+    \ \"enabled\": true,\n     \"scopes\": [\n      \"firma\",\n      \"zakaznik\"\
+    \n     ],\n     \"sensitivity_max\": \"confidential\",\n     \"types\": [\n  \
+    \    \"fakt\",\n      \"pouceni\"\n     ]\n    },\n    \"forget\": false,\n  \
+    \  \"read\": [\n     {\n      \"scope\": \"firma\",\n      \"sensitivity_max\"\
+    : \"internal\",\n      \"types\": [\n       \"fakt\",\n       \"pouceni\",\n \
+    \      \"postup\",\n       \"nazor\"\n      ]\n     },\n     {\n      \"scope\"\
+    : \"zakaznik\",\n      \"sensitivity_max\": \"confidential\",\n      \"types\"\
+    : [\n       \"fakt\",\n       \"pouceni\",\n       \"postup\"\n      ]\n     }\n\
+    \    ],\n    \"read_proposed\": true,\n    \"write\": {\n     \"scopes\": [\n\
+    \      \"firma\",\n      \"zakaznik\"\n     ],\n     \"status\": \"proposed\"\
+    ,\n     \"types\": [\n      \"pouceni\",\n      \"fakt\"\n     ]\n    }\n   },\n\
+    \   \"processes\": [\n    \"P5-review\"\n   ],\n   \"scopes\": [\n    \"repo:read\"\
+    ,\n    \"pr:review\",\n    \"evals:run\",\n    \"memory:search\",\n    \"memory:propose\"\
+    ,\n    \"memory:approve\",\n    \"issues:comment\"\n   ],\n   \"version\": \"\
+    0.1.0\"\n  },\n  \"sre\": {\n   \"autonomy_max\": \"A2\",\n   \"deny_tool_inputs\"\
+    : [\n    \"Bash.dangerouslyDisableSandbox\"\n   ],\n   \"http\": [\n    {\n  \
+    \   \"methods\": [\n      \"GET\"\n     ],\n     \"path_prefix\": \"/{tenant}/\"\
+    ,\n     \"receive_pack\": \"none\",\n     \"route\": \"git\"\n    }\n   ],\n \
+    \  \"irreversible\": [],\n   \"mcp\": {\n    \"clickhouse\": {\n     \"allow\"\
+    : [\n      \"query_tenant\"\n     ],\n     \"deny\": [\n      \"query_all\",\n\
+    \      \"write\"\n     ],\n     \"with_approval\": []\n    },\n    \"cloud_iam\"\
+    : {\n     \"allow\": [],\n     \"deny\": [\n      \"assign_role\",\n      \"create_credential\"\
+    \n     ],\n     \"with_approval\": []\n    },\n    \"deploy\": {\n     \"allow\"\
+    : [\n      \"plan\",\n      \"status\",\n      \"rollback_plan\"\n     ],\n  \
+    \   \"deny\": [\n      \"destroy\",\n      \"scale_to_zero_prod\"\n     ],\n \
+    \    \"with_approval\": [\n      \"apply\",\n      \"rollback\"\n     ]\n    },\n\
+    \    \"k8s_raw\": {\n     \"allow\": [],\n     \"deny\": [\n      \"exec\",\n\
+    \      \"apply\",\n      \"delete\",\n      \"port_forward\"\n     ],\n     \"\
+    with_approval\": []\n    },\n    \"memory\": {\n     \"allow\": [\n      \"search\"\
+    ,\n      \"propose\"\n     ],\n     \"deny\": [\n      \"approve\",\n      \"\
+    forget\"\n     ],\n     \"with_approval\": []\n    },\n    \"runbook\": {\n  \
+    \   \"allow\": [\n      \"read\",\n      \"propose_change\"\n     ],\n     \"\
+    deny\": [\n      \"write\"\n     ],\n     \"with_approval\": []\n    },\n    \"\
+    tickets\": {\n     \"allow\": [\n      \"read\",\n      \"comment\"\n     ],\n\
+    \     \"deny\": [\n      \"close\",\n      \"assign\"\n     ],\n     \"with_approval\"\
+    : []\n    }\n   },\n   \"memory\": {\n    \"approve\": {\n     \"enabled\": false\n\
+    \    },\n    \"forget\": false,\n    \"read\": [\n     {\n      \"scope\": \"\
+    zakaznik\",\n      \"sensitivity_max\": \"confidential\",\n      \"types\": [\n\
+    \       \"fakt\",\n       \"postup\",\n       \"pouceni\"\n      ]\n     },\n\
+    \     {\n      \"scope\": \"firma\",\n      \"sensitivity_max\": \"internal\"\
+    ,\n      \"types\": [\n       \"postup\",\n       \"pouceni\"\n      ]\n     }\n\
+    \    ],\n    \"read_proposed\": true,\n    \"write\": {\n     \"scopes\": [\n\
+    \      \"zakaznik\",\n      \"firma\"\n     ],\n     \"status\": \"proposed\"\
+    ,\n     \"types\": [\n      \"pouceni\",\n      \"fakt\"\n     ]\n    }\n   },\n\
+    \   \"processes\": [\n    \"P5-predani-nasazeni\",\n    \"X1-eskalace\"\n   ],\n\
+    \   \"scopes\": [\n    \"deploy:plan\",\n    \"deploy:status\",\n    \"runbook:read\"\
+    ,\n    \"clickhouse:tenant\",\n    \"tickets:comment\",\n    \"memory:search\"\
+    ,\n    \"memory:propose\"\n   ],\n   \"version\": \"0.1.0\"\n  },\n  \"vyvojar\"\
+    : {\n   \"autonomy_max\": \"A2\",\n   \"deny_tool_inputs\": [\n    \"Bash.dangerouslyDisableSandbox\"\
+    \n   ],\n   \"http\": [\n    {\n     \"methods\": [\n      \"GET\",\n      \"\
+    POST\"\n     ],\n     \"path_prefix\": \"/{tenant}/\",\n     \"receive_pack\"\
+    : \"branches\",\n     \"route\": \"git\"\n    }\n   ],\n   \"irreversible\": [],\n\
+    \   \"mcp\": {\n    \"issues\": {\n     \"allow\": [\n      \"read\",\n      \"\
+    comment\"\n     ],\n     \"deny\": [\n      \"close\",\n      \"assign\"\n   \
+    \  ],\n     \"with_approval\": []\n    },\n    \"memory\": {\n     \"allow\":\
+    \ [\n      \"search\",\n      \"propose\"\n     ],\n     \"deny\": [\n      \"\
+    approve\",\n      \"forget\"\n     ],\n     \"with_approval\": []\n    },\n  \
+    \  \"playwright\": {\n     \"allow\": [\n      \"navigate\",\n      \"snapshot\"\
+    ,\n      \"click\",\n      \"fill\"\n     ],\n     \"deny\": [],\n     \"with_approval\"\
+    : []\n    },\n    \"pr\": {\n     \"allow\": [\n      \"create\",\n      \"update\"\
+    ,\n      \"request_review\"\n     ],\n     \"deny\": [\n      \"merge\",\n   \
+    \   \"approve\"\n     ],\n     \"with_approval\": []\n    },\n    \"repo\": {\n\
+    \     \"allow\": [\n      \"read_file\",\n      \"search\",\n      \"list_tree\"\
+    ,\n      \"get_blame\"\n     ],\n     \"deny\": [\n      \"write_file\",\n   \
+    \   \"delete_branch\",\n      \"set_branch_protection\"\n     ],\n     \"with_approval\"\
+    : []\n    }\n   },\n   \"memory\": {\n    \"approve\": {\n     \"enabled\": false\n\
+    \    },\n    \"forget\": false,\n    \"read\": [\n     {\n      \"scope\": \"\
+    zakaznik\",\n      \"sensitivity_max\": \"confidential\",\n      \"types\": [\n\
+    \       \"fakt\",\n       \"pouceni\",\n       \"postup\"\n      ]\n     },\n\
+    \     {\n      \"scope\": \"firma\",\n      \"sensitivity_max\": \"internal\"\
+    ,\n      \"types\": [\n       \"pouceni\",\n       \"postup\"\n      ]\n     }\n\
+    \    ],\n    \"read_proposed\": true,\n    \"write\": {\n     \"scopes\": [\n\
+    \      \"zakaznik\",\n      \"firma\"\n     ],\n     \"status\": \"proposed\"\
+    ,\n     \"types\": [\n      \"pouceni\"\n     ]\n    }\n   },\n   \"processes\"\
+    : [\n    \"P4-implementace\"\n   ],\n   \"scopes\": [\n    \"repo:read\",\n  \
+    \  \"repo:push:branch\",\n    \"issues:comment\",\n    \"pr:write\",\n    \"memory:search\"\
+    ,\n    \"memory:propose\"\n   ],\n   \"version\": \"0.1.0\"\n  }\n }\n}"
+  apikeys-template.yaml: "policies:\n  apiKey:\n    mode: optional\n    location:\n\
+    \      header:\n        name: x-api-key\n    keys:\n    - keyHash: sha256:{{k-acme-{zakazka}-account}}\n\
+    \      metadata:\n        name: k-acme-{zakazka}-account\n        user_id: acme/{zakazka}/account\n\
+    \        role: account\n        tenant: acme\n        zakazka: '{zakazka}'\n \
+    \     budgets:\n      - name: account-24h-audit\n        limit:\n          unit:\
+    \ USD\n          amount: 5\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
+    \ Audit\n      - name: account-24h-block\n        limit:\n          unit: USD\n\
+    \          amount: 10\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
+    \ Block\n      - name: account-30d-block\n        limit:\n          unit: USD\n\
+    \          amount: 400\n        window:\n          rolling: 30d\n        onBudgetExceeded:\
+    \ Block\n    - keyHash: sha256:{{k-acme-{zakazka}-architekt}}\n      metadata:\n\
+    \        name: k-acme-{zakazka}-architekt\n        user_id: acme/{zakazka}/architekt\n\
+    \        role: architekt\n        tenant: acme\n        zakazka: '{zakazka}'\n\
+    \      budgets:\n      - name: architekt-24h-audit\n        limit:\n         \
+    \ unit: USD\n          amount: 15\n        window:\n          rolling: 24h\n \
+    \       onBudgetExceeded: Audit\n      - name: architekt-24h-block\n        limit:\n\
+    \          unit: USD\n          amount: 30\n        window:\n          rolling:\
+    \ 24h\n        onBudgetExceeded: Block\n      - name: architekt-30d-block\n  \
+    \      limit:\n          unit: USD\n          amount: 400\n        window:\n \
+    \         rolling: 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-acme-{zakazka}-reviewer}}\n\
+    \      metadata:\n        name: k-acme-{zakazka}-reviewer\n        user_id: acme/{zakazka}/reviewer\n\
+    \        role: reviewer\n        tenant: acme\n        zakazka: '{zakazka}'\n\
+    \      budgets:\n      - name: reviewer-24h-audit\n        limit:\n          unit:\
+    \ USD\n          amount: 10\n        window:\n          rolling: 24h\n       \
+    \ onBudgetExceeded: Audit\n      - name: reviewer-24h-block\n        limit:\n\
+    \          unit: USD\n          amount: 20\n        window:\n          rolling:\
+    \ 24h\n        onBudgetExceeded: Block\n      - name: reviewer-30d-block\n   \
+    \     limit:\n          unit: USD\n          amount: 400\n        window:\n  \
+    \        rolling: 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-acme-{zakazka}-sre}}\n\
+    \      metadata:\n        name: k-acme-{zakazka}-sre\n        user_id: acme/{zakazka}/sre\n\
+    \        role: sre\n        tenant: acme\n        zakazka: '{zakazka}'\n     \
+    \ budgets:\n      - name: sre-24h-audit\n        limit:\n          unit: USD\n\
+    \          amount: 10\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
+    \ Audit\n      - name: sre-24h-block\n        limit:\n          unit: USD\n  \
+    \        amount: 20\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
+    \ Block\n      - name: sre-30d-block\n        limit:\n          unit: USD\n  \
+    \        amount: 400\n        window:\n          rolling: 30d\n        onBudgetExceeded:\
+    \ Block\n    - keyHash: sha256:{{k-acme-{zakazka}-vyvojar}}\n      metadata:\n\
+    \        name: k-acme-{zakazka}-vyvojar\n        user_id: acme/{zakazka}/vyvojar\n\
+    \        role: vyvojar\n        tenant: acme\n        zakazka: '{zakazka}'\n \
+    \     budgets:\n      - name: vyvojar-24h-audit\n        limit:\n          unit:\
+    \ USD\n          amount: 25\n        window:\n          rolling: 24h\n       \
+    \ onBudgetExceeded: Audit\n      - name: vyvojar-24h-block\n        limit:\n \
+    \         unit: USD\n          amount: 50\n        window:\n          rolling:\
+    \ 24h\n        onBudgetExceeded: Block\n      - name: vyvojar-30d-block\n    \
+    \    limit:\n          unit: USD\n          amount: 400\n        window:\n   \
+    \       rolling: 30d\n        onBudgetExceeded: Block\n"

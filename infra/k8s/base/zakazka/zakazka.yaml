@@ -61,12 +61,40 @@ data:
   P0_GITHUB_DRYRUN_DIR: /data/github
   GITHUB_TOKEN: mock
   P0_CLI_MAX_RETRIES: "1"
+  P0_GATEWAY_KEYS: issue                 # P2-1: klíče gateway role × zakázka vydá aplikace (gateway_keys.py); harness už P0_ROLE_KEYS nedodává
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: zakazka
+---
+# P2-1: aplikace při založení zakázky vydá klíče gateway role × zakázka (gateway_keys.py): hash do ConfigMapy agentgateway-keys,
+# hodnoty do Secretu zakazka-keys-<id>. Jen tyto dva druhy objektů v tomto ns; pody rolí má RBAC v infra/k8s/roles.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zakazka-gateway-keys
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [agentgateway-keys]
+  verbs: [get, update, patch]
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create, get]        # create nelze omezit resourceNames; dev – v cíli klíče vydává OpenBao (P2-6)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zakazka-gateway-keys
+subjects:
+- kind: ServiceAccount
+  name: zakazka
+roleRef:
+  kind: Role
+  name: zakazka-gateway-keys
+  apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: v1
 kind: Service

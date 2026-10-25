@@ -1,0 +1,14 @@
+# GENEROVÁNO: python tools/rolegen/render_k8s.py z knowledge/organization/roles/*.yaml – neupravovat ručně (CI kontroluje `--check`).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentgateway-config
+data:
+  config.yaml: "config:\n  enableIpv6: false\n  readinessAddr: 0.0.0.0:19001\n  statsAddr:\
+    \ 0.0.0.0:19002\n  database:\n    url: $AGW_DATABASE_URL\n  logging:\n    format:\
+    \ json\n    fields:\n      add:\n        zakazka: '\"x-zakazka\" in request.headers\
+    \ ? request.headers[\"x-zakazka\"] :\n          \"\"'\n        role: 'apiKey !=\
+    \ null ? string(apiKey.role) : \"\"'\nllm:\n  port: 4100\n  models:\n  - name:\
+    \ '*'\n    provider: anthropic\n    params:\n      baseUrl: $LLM_UPSTREAM_URL\n\
+    \      apiKey: $ANTHROPIC_API_KEY\n  policies:\n    apiKey:\n      mode: optional\n\
+    \      location:\n        header:\n          name: x-api-key\n      keys: []\n"

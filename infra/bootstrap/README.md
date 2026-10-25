@@ -84,6 +84,11 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
   `repo:akczcz/adam:environment:dev` → Entra `AADSTS700213 No matching federated identity record`. Bootstrap zakládá federaci pro obě podoby
   (6 credentials); při dalším podobném selhání porovnat subjekt z chyby s `az identity federated-credential list`.
 - `terraform plan` z PR cizího forku OIDC token nedostane (subjekt `pull_request` platí jen pro PR z vlastního repa) – záměr.
+- **Zastavený Flexible Server rozbije `terraform plan`/`apply` (2026-10-25, apply po merge PR #7):** refresh `azurerm_postgresql_flexible_server_database`
+  vrací `ServerStoppedError` (400). Před každým plan/apply (i automatickým po push do `main`) musí běžet PG → `cluster start`, apply, `cluster stop`.
+- ConfigMap volume se propaguje per pod: po změně `agentgateway-keys` sondovat každou repliku přes headless Service (P21b 2026-10-25).
+- Flux `postBuild.substitute` smazal `${SVID_JWT}` v env rolí v ConfigMapě `rolegen-build` (P21a 2026-10-25) → každý generovaný objekt s cizími `${…}` musí mít
+  `kustomize.toolkit.fluxcd.io/substitute: disabled` (render_k8s.py ji přidává).
 - Flux `postBuild.substitute` nahrazuje každé `${var}`/`$var` v manifestech a **nedefinované proměnné mění na prázdný řetězec** (fluxcd/pkg
   `kustomize_varsub.go`, non-strict). ConfigMapy `agentgateway-config` (`$AGW_DATABASE_URL`) a `keycloak-realm` (`${username}`) mají proto
   v overlay anotaci `kustomize.toolkit.fluxcd.io/substitute: disabled`; `$(POD_IP)` substituce nezná a nechává.
