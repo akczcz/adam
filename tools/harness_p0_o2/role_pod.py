@@ -63,7 +63,7 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
             "tolerations": [{"key": "sandbox", "operator": "Equal", "value": "kata", "effect": "NoSchedule"}],
             "automountServiceAccountToken": False, "restartPolicy": "Never", "activeDeadlineSeconds": int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")),
             "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
-            "containers": [{"name": "role", "image": os.environ["P0_ROLE_IMAGE"], "command": ["python", "/app/harness_p0_o2/role_runner.py"],
+            "containers": [{"name": "role", "image": os.environ["P0_ROLE_IMAGE"], "imagePullPolicy": os.environ.get("P0_ROLE_IMAGE_PULL", "Always"), "command": ["python", "/app/harness_p0_o2/role_runner.py"],
                             "env": [{"name": k, "value": v} for k, v in env.items()], "envFrom": [{"secretRef": {"name": name}}],
                             "resources": {"requests": {"cpu": "250m", "memory": "512Mi"}, "limits": {"cpu": "2", "memory": os.environ.get("P0_ROLE_MEMORY", "1536Mi")}},
                             "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},

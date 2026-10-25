@@ -106,3 +106,19 @@ patches:
 - target: {kind: Secret, name: zakazka-secrets}
   patch: |
     - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/ssa: IfNotPresent}}
+# Tag zakazka-app:p1 je pohyblivý (images.yml ho přepisuje) – bez Always by uzel použil starý obraz z cache (AKS 2026-10-25)
+- target: {kind: Deployment, name: zakazka}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: memory}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: mock-github}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: bridge}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: mock-upstream}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
