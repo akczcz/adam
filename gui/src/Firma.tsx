@@ -29,10 +29,10 @@ export function Nav({ page }: { page: string }) {
 export function FirmaPage({ user }: { user: User }) {
   const roles = useTool("roles"); const tenants = useTool("tenants");
   const [form, setForm] = useState({ role: "", tenant: user.tenant === "platform" ? "acme" : user.tenant, level: "A1", reason: "" });
-  const [res, setRes] = useState<any>(null);
+  const [res, setRes] = useState<any>(null); const [seq, setSeq] = useState(0); const [stopSeq, setStopSeq] = useState(0);
   const [stopForm, setStopForm] = useState({ tenant: user.tenant === "platform" ? "beta" : user.tenant, reason: "" }); const [stopRes, setStopRes] = useState<any>(null);
-  const submit = async (ev: React.FormEvent) => { ev.preventDefault(); const r = await govPost("autonomy", form); setRes({ ...r.body, http: r.status }); roles.reload(); };
-  const stop = async (resume: boolean) => { const r = await govPost(`tenant/${stopForm.tenant}/${resume ? "resume" : "stop"}`, { reason: stopForm.reason }); setStopRes({ ...r.body, http: r.status, action: resume ? "resume" : "stop" }); tenants.reload(); };
+  const submit = async (ev: React.FormEvent) => { ev.preventDefault(); const r = await govPost("autonomy", form); setRes({ ...r.body, http: r.status }); setSeq((x) => x + 1); roles.reload(); };
+  const stop = async (resume: boolean) => { const r = await govPost(`tenant/${stopForm.tenant}/${resume ? "resume" : "stop"}`, { reason: stopForm.reason }); setStopRes({ ...r.body, http: r.status, action: resume ? "resume" : "stop" }); setStopSeq((x) => x + 1); tenants.reload(); };
   return (
     <>
       <div className="card">
@@ -60,7 +60,7 @@ export function FirmaPage({ user }: { user: User }) {
           <button className="primary" type="submit" disabled={!form.role || form.reason.trim().length < 10} data-testid="auto-submit">Změnit</button>
         </form>
         {res && (
-          <div className={`ev ${res.ok ? "" : "stop"}`} style={{ marginTop: 8 }} data-testid="auto-result" data-ok={String(!!res.ok)}>
+          <div className={`ev ${res.ok ? "" : "stop"}`} style={{ marginTop: 8 }} data-testid="auto-result" data-ok={String(!!res.ok)} data-seq={seq}>
             {res.ok ? <span className="ok">zapsáno: {res.current} → {res.target}</span> : <span className="err">odmítnuto ({res.http}): {(res.reasons ?? [res.detail]).join("; ")}</span>}
             {res.metrics && <div className="muted">úkolů {res.metrics.tasks} · odmítnutí {res.metrics.reject_rate} · porušení A {res.metrics.violations_A} · eval {JSON.stringify(res.metrics.eval_gates)}</div>}
           </div>)}
@@ -76,7 +76,7 @@ export function FirmaPage({ user }: { user: User }) {
           <button className="danger" disabled={stopForm.reason.trim().length < 10} onClick={() => stop(false)} data-testid="tstop-submit">Stop tenanta</button>
           <button disabled={stopForm.reason.trim().length < 10} onClick={() => stop(true)} data-testid="tresume-submit">Resume</button>
         </div>
-        {stopRes && <div className="ev stop" style={{ marginTop: 8 }} data-testid="tstop-result" data-ok={String(!!stopRes.ok)}>{stopRes.ok ? <span className="ok">{stopRes.action}: zakázky {JSON.stringify(stopRes.paused ?? stopRes.resumed)} · pody {JSON.stringify(stopRes.pods_killed ?? [])} · klíče {String(stopRes.keys_blocked ?? stopRes.keys_unblocked)}</span> : <span className="err">chyba ({stopRes.http}): {stopRes.detail}</span>}</div>}
+        {stopRes && <div className="ev stop" style={{ marginTop: 8 }} data-testid="tstop-result" data-ok={String(!!stopRes.ok)} data-seq={stopSeq}>{stopRes.ok ? <span className="ok">{stopRes.action}: zakázky {JSON.stringify(stopRes.paused ?? stopRes.resumed)} · pody {JSON.stringify(stopRes.pods_killed ?? [])} · klíče {String(stopRes.keys_blocked ?? stopRes.keys_unblocked)}</span> : <span className="err">chyba ({stopRes.http}): {stopRes.detail}</span>}</div>}
       </div>
     </>
   );

@@ -774,10 +774,11 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         res_h = http("GET", f"{APP}/agui/gov/resources", headers={"Authorization": f"Bearer {ta}"}, timeout=15).json()
         rep.add("U2g", "Governance MCP jen pro lidi a jen čtení: agentní token (client_credentials agent-account) → 403, bez tokenu 401, /resources hlásí read_only a DB roli org_reader (server nemá zápisové DSN)", "PASS" if s_ag == 403 and s_none == 401 and res_h.get("read_only") and res_h.get("db_role") == "org_reader" else "FAIL", {"agent_http": s_ag, "no_token_http": s_none, "resources": {k: res_h.get(k) for k in ("read_only", "db_role")}, "tools": [t["name"] for t in res_h.get("tools", [])]})
         # U2d – stop tenanta beta z GUI: druhá zakázka beta (bea) běží do interruptu, pak platform-admin stop → obě SUSPENDED, klíče Block (429), paměť deny, SPIRE entries zůstávají
-        gb = Gui(f"{APP}/gui/", shots=gui_shots / "beta2").open()
+        g.close(); gb = Gui(f"{APP}/gui/", shots=gui_shots / "beta2").open()   # Playwright sync: v jednom vlákně jen jedna instance → zavřít a znovu otevřít
         try:
             gb.login("bea", "bea"); zb2 = f"{tag}-beta2"; gb.create_thread(zb2, f"Druhá zakázka beta {zb2} – test stopu tenanta."); w2 = gb.wait_any_interrupt(1200)
         finally: gb.close()
+        g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); g.login("platform-admin", "platform-admin")
         beta_z = [z_ for z_ in sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})]
         def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json().get("status") if r.status_code == 200 else f"http{r.status_code}"
         before = {z_: status(z_) for z_ in beta_z}
@@ -1070,7 +1071,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             if e.get("jwt_svid_ttl"): args += ["-jwtSVIDTTL", str(e["jwt_svid_ttl"])]
             r = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", *args); spire_applied.append((e["spiffe_id"], r.returncode, (r.stderr or r.stdout)[-120:]))
     subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
-    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror"); time.sleep(5)   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
+    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror", "mock-upstream", "governance"); time.sleep(5)   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
     t0 = time.time()
     rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=600s", timeout=620).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/agentgateway", "deployment/mock-upstream", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
     for n, p in (("zakazka", 8010), ("memory", 9900), ("mock-github", 9801), ("bridge", 9802)):

@@ -164,13 +164,19 @@ class Gui:
     def autonomy(self, role, tenant, level, reason):
         self.page.goto(self.base + "#/firma"); self.t("auto-role").wait_for()
         self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
-        self.t("auto-submit").click(); self.t("auto-result").wait_for(timeout=60_000); self.shot(f"autonomy-{role}-{tenant}-{level}")
+        seq0 = self.t("auto-result").get_attribute("data-seq") if self.t("auto-result").count() else None
+        self.t("auto-submit").click()
+        self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=auto-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=60_000)   # nový výsledek, ne starý z předchozího odeslání
+        self.shot(f"autonomy-{role}-{tenant}-{level}")
         return {"ok": self.t("auto-result").get_attribute("data-ok") == "true", "text": self.t("auto-result").inner_text()[:400]}
 
     def tenant_stop(self, tenant, reason, resume=False):
         self.page.goto(self.base + "#/firma"); self.t("tstop-tenant").wait_for()
         self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(""); d0 = self.t("tstop-submit").is_disabled(); self.t("tstop-reason").fill(reason)
-        self.t("tresume-submit" if resume else "tstop-submit").click(); self.t("tstop-result").wait_for(timeout=120_000); self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")
+        seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None
+        self.t("tresume-submit" if resume else "tstop-submit").click()
+        self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
+        self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")
         return {"disabled_empty": d0, "ok": self.t("tstop-result").get_attribute("data-ok") == "true", "text": self.t("tstop-result").inner_text()[:400]}
 
     def report(self):
