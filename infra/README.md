@@ -123,6 +123,13 @@ harness (dev CA; P3 cert-manager + ESO) – Deployment gateway na ně čeká (`C
 jen `agent/*`, `zakazka/*`); mock mirror (`tools/harness_p0_o2/mock_mirror.py`) = pypi simple + npm registry s balíčkem `platform-hello`.
 NetworkPolicy `agentgateway-egress` (overlay aks) brání gateway v přístupu na IMDS, wireserver a privátní sítě. Měření: `measure` s `e2e=p2-4`.
 
+## P2-6: FinOps – strop a cena zakázky ze součtu klíčů, klíče z OpenBao (2026-10-26)
+
+Secret `zakazka-finops` (overlay aks: `P0_FINOPS_DSN` = DB `agentgateway` gateway, `P0_REGISTRY_DSN` = DB `org`, heslo z Flux substitute) dává
+aplikaci čtení `budget_usage` (součet 30d útraty klíčů zakázky = cena a strop zakázky, `budget_gate` před každou rolí) a zápis `org.zakazky`.
+`P0_BAO_KV=secret` (zakazka-env): hodnoty klíčů role × zakázka drží OpenBao KV v2 (`secret/zakazky/<id>/gateway-keys`), mount a policy zakládá
+harness (`bao_setup`); Secret `zakazka-keys-<id>` se už nezakládá. `/work` podu role = emptyDir `medium: Memory`. Měření: `measure` s `e2e=p2-6`.
+
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.
@@ -153,7 +160,12 @@ NetworkPolicy `agentgateway-egress` (overlay aks) brání gateway v přístupu n
 - Secret/ConfigMap mountovaný **pod** jiný read-only mount (`/etc/agentgateway/tls` uvnitř read-only emptyDir `/etc/agentgateway`) → runc nevytvoří
   mountpoint (`mkdirat … read-only file system`, exit 128). Každý mount na vlastní cestu (`/etc/platform-tls`, `/etc/platform-egress/git`).
 - Soubory sondy (klon, wheel, tgz) nesmí ležet ve `work/` role: aplikace z `work/` staví PR přes git data API jako textové bloby a binárka shodila
-  aktivitu workflow (PR se nikdy nepublikoval, harness čekal 25 min). Sonda běží v `egress-probe/` mimo upload; publish ne-UTF-8 soubory přeskočí.
+  aktivitu workflow (PR se nikdy nepublikoval, harness čekal 25 min). Sonda běží v `/work/.egress-probe/` (dot-adresář mimo upload); publish ne-UTF-8 soubory přeskočí.
+- **emptyDir přes virtiofs v Kata guestu není pro uid 1000 zapisovatelný** (P2-4 `/work`: `os.access` false), `medium: Memory` (tmpfs v guestu) ano –
+  uid 0, gid 1000, mód 3777 (fsGroup). Sockety SPIRE i `/work` role jsou proto Memory emptyDir (P2-6 2026-10-26).
+- **srt vynucuje `filesystem.allowWrite` i ve weaker nested módu:** cache npm (`npm_config_cache`) a pip musí ležet pod `/work`, jinak
+  `npm pack` padá bez hlášky; `HOME` do `/work` ale nedávat – srt povinně zakazuje čtení `~/.gitconfig` (mandatory deny) a git pak padá
+  `Permission denied` → `GIT_CONFIG_GLOBAL=/dev/null`. Hosty mimo allow-list vrací srt jako `CONNECT … 403` (curl 56), ne TLS EOF od gateway.
 
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.

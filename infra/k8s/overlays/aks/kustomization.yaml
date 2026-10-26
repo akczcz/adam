@@ -68,6 +68,10 @@ patches:
 - target: {kind: Secret, name: agentgateway-secrets}
   patch: |
     - {op: replace, path: /stringData/AGW_DATABASE_URL, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/agentgateway?sslmode=require"}
+- target: {kind: Secret, name: zakazka-finops}   # P2-6: tatáž DB jako gateway (budget_usage) + registr org
+  patch: |
+    - {op: replace, path: /stringData/P0_FINOPS_DSN, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/agentgateway?sslmode=require"}
+    - {op: replace, path: /stringData/P0_REGISTRY_DSN, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/org?sslmode=require"}
 - target: {kind: ConfigMap, name: dapr-components}
   patch: |
     - {op: replace, path: /data/statestore.yaml, value: "apiVersion: dapr.io/v1alpha1\nkind: Component\nmetadata:\n  name: statestore\nspec:\n  type: state.postgresql\n  version: v1\n  metadata:\n  - name: connectionString\n    value: \"host=postgres user=platform password=${PG_PASSWORD} port=5432 dbname=dapr_state sslmode=require\"\n  - name: actorStateStore\n    value: \"true\"\n"}
@@ -200,3 +204,7 @@ patches:
     - {op: add, path: /data/P0_ROLE_GIT_URL, value: https://git.platform.internal/acme/platform.git}
     - {op: add, path: /data/P0_ROLE_MIRROR_URL, value: https://mirror.platform.internal}
     - {op: add, path: /data/P0_ROLE_EGRESS_PROXY, value: http://agentgateway.platform-data.svc:3128}
+# P2-6: hodnoty klíčů gateway role × zakázka drží OpenBao (KV v2 secret/zakazky/<id>), ne Kubernetes Secret; aplikace přes auth kubernetes (P2-3)
+- target: {kind: ConfigMap, name: zakazka-env}
+  patch: |
+    - {op: add, path: /data/P0_BAO_KV, value: secret}

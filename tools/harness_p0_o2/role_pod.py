@@ -103,7 +103,7 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
         if os.environ.get(k): env[k.replace("P0_ROLE_", "P0_")] = os.environ[k]
     # /work = pracovní adresář role (definice role: agent_sdk.cwd a srt allowWrite) – emptyDir, role_runner ho použije místo /tmp/p0-o2/<id>/work
     runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "work", "mountPath": "/work"}]
-    runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "work", "emptyDir": {}}]
+    runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "work", "emptyDir": {"medium": "Memory", "sizeLimit": os.environ.get("P0_ROLE_WORK_SIZE", "512Mi")}}]   # tmpfs v Kata guestu: emptyDir přes virtiofs nebyl pro uid 1000 zapisovatelný (P2-4), Memory medium ano (sockety SPIRE)
     tpl = _template(role); overrides = []
     if tpl:
         # P2-2: pole z definice role (RuntimeClass, non-root, SA token, drop ALL, resources, env, labels, image) jsou ze šablony; aplikace doplní jen běh

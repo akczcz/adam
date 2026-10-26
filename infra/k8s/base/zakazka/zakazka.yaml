@@ -32,6 +32,16 @@ stringData:
   P0_API_KEY: sk-ant-harness-mock
   BRIDGE_WEBHOOK_SECRET: bridge-webhook-secret
 ---
+# P2-6: FinOps – aplikace čte budget_usage gateway (součet klíčů zakázky = cena a strop zakázky) a píše org.zakazky (registr). kind: dev heslo.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zakazka-finops
+type: Opaque
+stringData:
+  P0_FINOPS_DSN: postgresql://postgres:platform-dev@postgres:5432/agentgateway
+  P0_REGISTRY_DSN: postgresql://postgres:platform-dev@postgres:5432/org
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -62,6 +72,7 @@ data:
   GITHUB_TOKEN: mock
   P0_CLI_MAX_RETRIES: "1"
   P0_GATEWAY_KEYS: issue                 # P2-1: klíče gateway role × zakázka vydá aplikace (gateway_keys.py); harness už P0_ROLE_KEYS nedodává
+  P0_ZAKAZKA_BUDGET_USD: "20"            # P2-6: výchozí strop zakázky (USD, 30d) – součet útraty klíčů role × zakázka z budget_usage gateway; poptávka může dát vlastní
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
 ---
 apiVersion: v1
@@ -129,6 +140,7 @@ spec:
         envFrom:
         - configMapRef: {name: zakazka-env}
         - secretRef: {name: zakazka-secrets}
+        - secretRef: {name: zakazka-finops, optional: true}   # P2-6: DSN budget_usage gateway a registru org (overlay aks: heslo z Flux substitute)
         env:
         - {name: HOME, value: /data/home}
         ports:

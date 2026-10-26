@@ -250,6 +250,29 @@ Sonda běžela **přímo přes proxy gateway (`via: direct`)**, ne přes srt: po
 **otevřeno pro další krok** (runner od tohoto commitu loguje `work_info`: vlastník, mód a `w_ok` `/work`). Dopad i mimo sondu: `sandboxed_bash`
 role pod srt dnes nemůže zapisovat do pracovního adresáře (mock tok to nepotřeboval; živý Vývojář ano).
 
+## P2-6 – FinOps naostro (2026-10-26, AKS, `--step p2-6` = p2-4 + P26a–c, P24b přes srt)
+
+- **Strop zakázky**: `POST /zakazky` nese `budget_usd` (výchozí `P0_ZAKAZKA_BUDGET_USD`); před každou rolí aktivita `budget_gate` sečte 30d útratu
+  klíčů zakázky z `budget_usage` (gateway, Flexible Server; `finops.spend`, hashe z ConfigMapy `agentgateway-keys`) → `>= strop` = `BUDGET_EXCEEDED`
+  zdroj `zakazka-sum` → eskalace HITL `rozpocet`, timeout → Pozastaveno. Gateway dál hlídá klíč (24h/30d Block); čítače flushuje periodicky
+  (eventually consistent – gate může zareagovat o roli později).
+- **Cena zakázky**: `budget_check` ze stejného zdroje (ledger `BUDGET source=budget_usage`), registr `org.zakazky` (`finops.registry_upsert`,
+  DSN `P0_REGISTRY_DSN`): budget, spent, by_role, status, keys_source, key_hashes.
+- **Klíče z OpenBao**: `gateway_keys.issue` při `P0_BAO_KV`: entropie `sys/tools/random`, hodnoty v KV v2 `secret/zakazky/<id>/gateway-keys`
+  (policy `approval-signer` rozšířena jen o `secret/data|metadata/zakazky/*` a `sys/tools/random/*`), žádný Secret `zakazka-keys-<id>`.
+- **Uzavření P2-4**: `/work` role = emptyDir `medium: Memory` (tmpfs v guestu); P24b nově vyžaduje `via: srt`.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P26a | klíče v OpenBao KV (4 role), hash == ConfigMap, Secret `zakazka-keys-<id>` neexistuje, ledger `keys_source=openbao`, entropie openbao | ✅ KV `secret/data/zakazky/<id>/gateway-keys` 5 rolí (vč. SRE), hashe == ConfigMap, Secret chybí, `entropy=[openbao]` |
+| P26b | `BUDGET source=budget_usage window=30d`, spent == nezávislý součet harnessu z DB, `org.zakazky` řádek (Dokonceno, openbao, budget_usage, 4 hashe) | ✅ spent 0,051264 USD (account 0,015078; architekt/vyvojar/reviewer 0,012062; SRE 0) == součet z DB 0,051265; registr: budget 20, status Dokonceno, keys_source openbao |
+| P26c | zakázka `budget_usd=0.01`: po první roli gate → `BUDGET_EXCEEDED zakazka-sum`, HITL timeout → Pozastaveno/rozpocet, registr `BudgetExceeded` | ✅ gate před Architektem: 0,015078 ≥ 0,01 → BudgetExceeded (zakazka-sum), HITL `rozpocet` timeout 25 s → `Pozastaveno/rozpocet/architekt`; registr `BudgetExceeded`, spent 0,015078 |
+| P24b přes srt | sonda egressu přes srt (`via: srt`), ne přímo | ✅ `/work` tmpfs (uid 0, gid 1000, 3777, zapisovatelný), srt parentProxy → gateway: clone/push větve/push main odmítnut, pip i npm z mirroru – 6,2 s; cizí host srt odmítne `CONNECT 403` |
+
+Výsledek: **24/24 + 2 INFO** (`measure` run 40340791174, `results/p2-6-20261026-145722.json`; 4 běhy – nálezy srt na Katě v `infra/README.md`:
+emptyDir přes virtiofs nezapisovatelný → Memory medium, cache npm/pip pod `/work`, `~/.gitconfig` pod mandatory deny → `GIT_CONFIG_GLOBAL=/dev/null`).
+Útrata zakázky 0,051 USD (mock upstream), strop 0,01 USD zastaví zakázku po první roli; gate reaguje na flush čítačů gateway (řádově sekundy).
+
 ## Spuštění
 
 ```bash

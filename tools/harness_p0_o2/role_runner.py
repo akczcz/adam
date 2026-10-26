@@ -65,7 +65,8 @@ def git_mirror_probe():
     sh = f"{work}/.git-probe.sh"; open(sh, "w").write(GIT_PROBE_SH)
     base_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
     base_env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_PARAMETERS": "", "npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false", "npm_config_fetch_retries": "1", "npm_config_fetch_timeout": "20000",
-                 "PIP_RETRIES": "1", "PIP_TIMEOUT": "20", "HOME": base_env.get("HOME") or "/tmp"}
+                 "PIP_RETRIES": "1", "PIP_TIMEOUT": "20", "npm_config_cache": f"{work}/.npm-cache", "XDG_CACHE_HOME": f"{work}/.cache",   # srt allowWrite jen /work: cache npm/pip uvnitř
+                 "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}   # git nečte ~/.gitconfig – srt ho povinně zakazuje (mandatory deny dotfiles), HOME v /work → "Permission denied"
     def run(via):
         env = dict(base_env)
         if via == "direct": env["HTTPS_PROXY"] = env["HTTP_PROXY"] = env["https_proxy"] = env["http_proxy"] = os.environ.get("P0_EGRESS_PROXY", ""); env["NO_PROXY"] = ".svc,localhost,127.0.0.1"
@@ -87,6 +88,12 @@ def git_mirror_probe():
 
 def main():
     role = os.environ["P0_ROLE"]; z = json.loads(os.environ["P0_ZAKAZKA"]); prompt = os.environ["P0_PROMPT"]
+    root = f"/tmp/p0-o2/{z['id']}"
+    # P2-4/P2-6: pracovní adresář role = /work (emptyDir medium Memory) – srt vynucuje filesystem.allowWrite ["/work"] z definice role; před sondami (sonda egressu běží v /work/.egress-probe)
+    WORK = "/work" if os.path.isdir("/work") and os.access("/work", os.W_OK) else f"{root}/work"; os.environ["P0_WORK_DIR"] = WORK
+    try: st_ = os.stat("/work"); work_info = {"work_dir": WORK, "stat_/work": {"uid": st_.st_uid, "gid": st_.st_gid, "mode": oct(st_.st_mode & 0o7777), "w_ok": os.access("/work", os.W_OK)}, "proc": {"uid": os.getuid(), "gid": os.getgid(), "groups": os.getgroups()}}
+    except Exception as e: work_info = {"work_dir": WORK, "stat_/work": f"{type(e).__name__}: {e}"}
+    print("work_dir=" + json.dumps(work_info), flush=True)
     tools = [t for t in os.environ.get("P0_TOOLS", "").split(",") if t]
     api = os.environ["P0_ARTIFACT_API"].rstrip("/"); rid = os.environ["P0_RUN_ID"]
     H = {"X-Run-Id": rid, "X-Run-Token": os.environ.get("P0_RUN_TOKEN", "")}
@@ -140,12 +147,6 @@ def main():
         git_probe = git_mirror_probe() if git_host in allowed or os.environ.get("P0_GIT_PROBE_ALL") else {"skipped": f"{git_host} není v srt allowedDomains role"}
     if git_probe is not None: print("git_probe=" + json.dumps(git_probe)[:3000], flush=True)
 
-    root = f"/tmp/p0-o2/{z['id']}"
-    # P2-4: pracovní adresář role = /work (emptyDir podu) – srt vynucuje filesystem.allowWrite ["/work"] z definice role (do té doby srt neběžel: chyběl ripgrep)
-    WORK = "/work" if os.path.isdir("/work") and os.access("/work", os.W_OK) else f"{root}/work"; os.environ["P0_WORK_DIR"] = WORK
-    try: st_ = os.stat("/work"); work_info = {"work_dir": WORK, "stat_/work": {"uid": st_.st_uid, "gid": st_.st_gid, "mode": oct(st_.st_mode & 0o7777), "w_ok": os.access("/work", os.W_OK)}, "proc": {"uid": os.getuid(), "gid": os.getgid(), "groups": os.getgroups()}}
-    except Exception as e: work_info = {"work_dir": WORK, "stat_/work": f"{type(e).__name__}: {e}"}
-    print("work_dir=" + json.dumps(work_info), flush=True)
     for d in (WORK, f"{root}/artifacts"): os.makedirs(d, exist_ok=True)
     try:
         r = httpx.get(f"{api}/zakazky/{z['id']}/files", headers=H, timeout=60)
