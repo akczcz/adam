@@ -40,7 +40,7 @@ git clone -q "$R" repo 2>clone.err; out clone $?; out clone_err "$(tail -c 300 c
 if cd repo 2>/dev/null; then
   git config user.email role@platform.internal; git config user.name role
   git checkout -q -b "agent/$WF/ukol-1" && echo "probe $WF" > PROBE.md && git add PROBE.md && git commit -qm "probe $WF"; out commit $?
-  git push -q origin "agent/$WF/ukol-1" 2>push.err; out push_branch $?; out push_branch_err "$(tail -c 300 push.err)"
+  git push -v origin "agent/$WF/ukol-1" >push.out 2>push.err; out push_branch $?; out push_branch_err "$(tail -c 300 push.err)"; out push_branch_out "$(tail -c 200 push.out)"
   git push -q origin HEAD:main 2>pushmain.err; out push_main $?; out push_main_err "$(tail -c 300 pushmain.err)"
   cd ..
 fi
@@ -49,7 +49,7 @@ pip download -q --no-deps --no-cache-dir --index-url "$M/pypi/simple" -d pkgs pl
 out pip_files "$(ls pkgs 2>/dev/null | tr '\n' ' ')"
 npm pack --silent --registry "$M/npm/" platform-hello >npm.out 2>npm.err; out npm $?; out npm_err "$(tail -c 300 npm.err)"; out npm_files "$(ls *.tgz 2>/dev/null | tr '\n' ' ')"
 curl -sS -o /dev/null -m 20 https://evil.example.com/ 2>evil.err; out evil_sni $?; out evil_err "$(tail -c 200 evil.err)"
-curl -sS -o /dev/null -m 20 http://neverssl.com/ 2>http80.err; out http80 $?; out http80_err "$(tail -c 200 http80.err)"
+out http80_code "$(curl -s -o /dev/null -w '%{http_code}' -m 20 http://neverssl.com/ 2>/dev/null)"   # přes proxy: CONNECT bind nemá listener pro :80 → 404/405; srt: blokováno (000)
 curl -sS -o /dev/null -w '%{http_code}' -m 20 "https://git.platform.internal/other/repo.git/info/refs?service=git-upload-pack" 2>/dev/null | { read c; out other_repo_http "$c"; }
 """
 

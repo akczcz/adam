@@ -1,7 +1,7 @@
 # Aplikace zakázky pro AKS (build v ACR: `az acr build`): oficiální python:3.12-slim + Node 22 + Claude Code CLI z npm.
 # Na kind se používá Dockerfile (bez Docker Hubu a apt); obsah a cesty jsou stejné (/app, /opt/venv, uživatel 1000).
 FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-certificates xz-utils bubblewrap socat util-linux && rm -rf /var/lib/apt/lists/*   # bubblewrap/socat: sandbox-runtime v podu role (P1-6, weaker nested sandbox)
+RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-certificates xz-utils bubblewrap socat util-linux ripgrep && rm -rf /var/lib/apt/lists/*   # bubblewrap/socat/ripgrep: sandbox-runtime v podu role (P1-6 weaker nested sandbox; srt bez rg odmítne start – zjištěno P2-4 2026-10-26)
 ARG NODE_VERSION=22.23.4
 RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" | tar -xJ -C /opt && ln -s /opt/node-v${NODE_VERSION}-linux-x64 /opt/node
 ENV PATH=/opt/venv/bin:/opt/node/bin:$PATH
