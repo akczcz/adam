@@ -305,6 +305,36 @@ a chybějící `preferred_username` v tokenu klienta `harness-human`, druhý moc
 sondy). Zakázka řízená jen z GUI: 5,9 min včetně 4 rolí v Kata podech (pool kata už nahoře, pod role start 2 s, běh 17–24 s); stop uprostřed
 role: pod pryč za 2,9 s. Zjednodušení P3-1: login password grantem (klient bez scope `profile` → jméno z loginu), GUI jen přes port-forward.
 
+## P3-2 – tenant model (2026-10-26, AKS, `--step p3-2` = p3-1 + T1a–f)
+
+- **Zdroj pravdy** `knowledge/organization/tenants.yaml` (id, profil, strop 30d, pody rolí, lidé). rolegen z něj generuje: `infra/k8s/roles/tenants-generated.yaml`
+  (Namespace `tenant-<id>` PSS restricted, NetworkPolicy default-deny + egress jen DNS/gateway/paměť/aplikace/SPIRE, SA `role`, RBAC pro SA zakazka,
+  ConfigMap spire-agent-pod ze `spire-agent.conf`), SPIRE entries per role × tenant (alias uzlu se selektorem `k8s_psat:agent_ns:tenant-<id>` – hranicí
+  je atestovaný namespace), allow-list v `spire-server-config` (řádek s markerem v base `spire.yaml`), routy egressu `git-<tenant>` (`/<tenant>/`),
+  OPA data `tenants`, registr `tenants.json`, šablona klíčů s placeholderem `{tenant}` (`k-{tenant}-{zakazka}-<role>`).
+- **Aplikace**: pody rolí v ns tenanta zakázky (`P0_ROLE_NAMESPACE_TEMPLATE`), klíče per tenant, při startu `org.tenants` + RLS na `org.tenants/zakazky/approvals`
+  (role `org_reader`/`org_writer`, `app.tenant_id`, tenant `platform` = průřez), `budget_gate` i strop tenanta (zdroj `tenant-sum`), AG-UI: tenant z tokenu,
+  `platform` vidí vše a zakázky nezakládá.
+- **Keycloak**: lidé tenantů (adam/acme, bea/beta, platform-admin/platform) a klient `platform-gui` (mapper `preferred_username`) v `realm-p0.json`;
+  běžící realm je neimportuje → `kc_ensure` (admin API, idempotentní) je doplní; `render_k8s.py --check` hlídá, že lidé z tenants.yaml jsou v realmu.
+- **Měření**: po U-1 (tenant acme z GUI jako adam) druhý prohlížeč jako bea: zakázka beta do H1 (account v `tenant-beta`), stop; pak platform-admin.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| T1a | org.tenants == tenants.yaml == ConfigMap, ns tenant-acme/beta existují, RLS + politika tenant_isolation, TENANTS_SYNC | ✅ acme 100 / beta 20 / platform 0 USD, ns tenant-acme + tenant-beta, RLS na tenants/zakazky/approvals |
+| T1b | pod account zakázky beta v ns tenant-beta (Succeeded), NetworkPolicies, Postgres a internet z podu nedosažitelné, platforma ano | ✅ pod account beta v tenant-beta (Succeeded), Postgres 20.x:5432 timeout, internet timeout, platforma open |
+| T1f | SVID `spiffe://platform/role/account/beta`, entries obou tenantů, paměť 200 | ✅ `spiffe://platform/role/account/beta` za 6,6 s, 15 entries per tenant, paměť 200 |
+| T1d | klíče `k-beta-…` s metadata.tenant=beta, útrata account v budget_usage, gate zná strop tenanta 20 USD | ✅ 5 klíčů `k-beta-<zid>-<role>` (tenant beta), account 0,015 USD v budget_usage, gate tenant 20 USD |
+| T1c | RLS jako org_reader: beta vidí jen beta, acme jen acme, platform obojí, bez tenanta nic | ✅ beta: jen beta zakázky, 0 approvalů; acme: 18 zakázek, 24 approvalů, beta ne; platform: 24; bez tenanta 0 |
+| T1e | GUI: bea vidí jen beta (acme → 404 v GUI i API), stop; platform-admin vidí obojí, zakázku nezaloží (403) | ✅ bea vidí 6 beta zakázek, acme → 404, stop cancelled; platform-admin 43 threadů obou tenantů, založení 403 |
+
+Výsledek: **31/31 + 3 INFO** (`measure` run 40407092865, `results/p3-2-20261026-221159.json`; 4 běhy). Nálezy: (1) access token Keycloaku
+(15 min) nepřežil scénář s rolemi v Kata podech → GUI obnovuje token refresh tokenem přes server; (2) SPIRE entry se stejným SPIFFE ID a starým
+rodičem (alias bez tenanta) harness nepřepsal → agent tenanta „no identity issued“, role padaly na Keycloak token (P23c) → entry s jiným rodičem
+se maže a zakládá znovu; (3) sonda na Postgres bez schématu URL mířila na localhost (ECONNREFUSED vypadal jako „blokováno“) → sonda s IP cíle,
+teď skutečný timeout na 20.x:5432; (4) migrace běžícího realmu admin API (role, klient, 2 uživatelé) proběhla napoprvé, SPIRE server po změně
+allow-listu restartován podle anotace. Scénář GUI (acme) 8,8 min, tenant beta + platform-admin ~2 min.
+
 ## Spuštění
 
 ```bash

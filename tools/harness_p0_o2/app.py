@@ -142,15 +142,15 @@ def role_token(role):
     return toks.get(role) or os.environ["P0_AGENT_TOKEN"]
 
 
-def role_key(role, zakazka_id):
+def role_key(role, zakazka_id, tenant=None):
     """Klíč gateway per role × zakázka (P0_ROLE_KEYS = {zakazka: {role: key}}, "*" = výchozí); bez něj společný P0_API_KEY.
-    Hodnotu klíče vydává v cíli OpenBao, gateway zná jen sha256 (rolegen apikeys-<tenant>-<zakazka>.yaml)."""
+    Hodnotu klíče vydává v cíli OpenBao, gateway zná jen sha256 (rolegen apikeys-<tenant>-<zakazka>.yaml; P3-2: tenant ze zakázky)."""
     keys = json.loads(os.environ.get("P0_ROLE_KEYS", "{}"))
     k = (keys.get(zakazka_id) or keys.get("*") or {}).get(role)
     if k: return k
     if os.environ.get("P0_GATEWAY_KEYS") == "issue":   # P2-1: klíče vydá aplikace (ConfigMap agentgateway-keys + Secret zakazka-keys-<id>)
         import gateway_keys
-        k = gateway_keys.issue(zakazka_id, ledger).get(role)
+        k = gateway_keys.issue(zakazka_id, ledger, tenant=tenant).get(role)
         if k: return k
     return os.environ.get("P0_API_KEY", "sk-ant-harness-mock")
 
@@ -196,7 +196,7 @@ def agent_run(role, z, prompt, tool_names):
     if os.environ.get("P0_ROLE_RUNTIME") == "pod":
         import role_pod
         root = f"/tmp/p0-o2/{z['id']}"; os.makedirs(f"{root}/work", exist_ok=True); os.makedirs(f"{root}/artifacts", exist_ok=True)
-        return role_pod.pod_run(role, z, prompt, tool_names, token=role_token(role), key=role_key(role, z["id"]), ledger=ledger, root_dir=root)
+        return role_pod.pod_run(role, z, prompt, tool_names, token=role_token(role), key=role_key(role, z["id"], z.get("tenant")), ledger=ledger, root_dir=root)
     return agent_run_local(role, z, prompt, tool_names)
 
 
@@ -268,7 +268,7 @@ def agent_run_local(role, z, prompt, tool_names):
 
     all_tools = {"search_memory": search_memory, "create_memory": create_memory, "sandboxed_bash": sandboxed_bash, "read_artifact": read_artifact, "write_artifact": write_artifact, "run_evals": run_evals}
     server = create_sdk_mcp_server("harness", "1.0.0", [all_tools[n] for n in tool_names])
-    cli_env = {"ANTHROPIC_BASE_URL": os.environ["P0_LLM_URL"], "ANTHROPIC_API_KEY": role_key(role, z["id"]),
+    cli_env = {"ANTHROPIC_BASE_URL": os.environ["P0_LLM_URL"], "ANTHROPIC_API_KEY": role_key(role, z["id"], z.get("tenant")),
                "ANTHROPIC_CUSTOM_HEADERS": f"x-zakazka: {z['id']}\nx-role: {role}",   # zakázka do logu gateway (CEL pole `zakazka`); role nese klíč (apiKey.metadata.role)
                "CLAUDE_CODE_MAX_RETRIES": os.environ.get("P0_CLI_MAX_RETRIES", "2"),  # 429 z rozpočtu gateway není přechodná chyba – neopakovat do konce okna
                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
@@ -509,9 +509,13 @@ def budget_gate(ctx, inp):
     fin, hashes = zakazka_spend(z["id"])
     limit = float(z.get("budget_usd") or BUDGET_USD); spent = (fin or {}).get("total_usd", 0.0)
     exceeded = bool(fin) and spent >= limit
-    ledger("BUDGET_GATE", zakazka=z["id"], role=role, spent_usd=spent, limit_usd=limit, exceeded=exceeded, source="budget_usage" if fin else "none", by_role=(fin or {}).get("by_role"))
+    # P3-2: strop tenanta = součet spent_usd všech zakázek tenanta (org.zakazky) vs. org.tenants.budget_usd (zdroj tenants.yaml)
+    ten = finops.tenant_spend(z.get("tenant") or os.environ.get("P0_TENANT", "acme")) or {}
+    t_exceeded = bool(ten.get("budget_usd")) and float(ten.get("spent_usd") or 0) + spent >= float(ten["budget_usd"])
+    ledger("BUDGET_GATE", zakazka=z["id"], role=role, spent_usd=spent, limit_usd=limit, exceeded=exceeded or t_exceeded, source="budget_usage" if fin else "none", by_role=(fin or {}).get("by_role"), tenant=ten or None)
     if exceeded: ledger("BUDGET_EXCEEDED", zakazka=z["id"], role=role, source="zakazka-sum", spent_usd=spent, limit_usd=limit, by_role=(fin or {}).get("by_role"))
-    return {"exceeded": exceeded, "spent_usd": spent, "limit_usd": limit}
+    elif t_exceeded: ledger("BUDGET_EXCEEDED", zakazka=z["id"], role=role, source="tenant-sum", spent_usd=ten.get("spent_usd"), limit_usd=ten.get("budget_usd"), tenant=ten.get("tenant"))
+    return {"exceeded": exceeded or t_exceeded, "spent_usd": spent, "limit_usd": limit, "tenant": ten or None}
 
 
 @rt.activity(name="registry_zakazka")
@@ -663,13 +667,18 @@ def reject_zakazka(zid, bod, *, by, artifact_hash, reason, channel="agui", tenan
     ledger("APPROVAL_REGISTRY", zakazka=zid, bod=bod, decision="reject", written=ok)
 
 
+def tenant_of(zid):
+    """Tenant zakázky z jejího ZAKAZKA_START (ledger) – pro namespace podů rolí, registr a AG-UI (P3-2)."""
+    return next((e.get("tenant") for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid and e.get("tenant")), None) or os.environ.get("P0_TENANT", "acme")
+
+
 def stop_zakazka(zid, *, by, reason=None, channel="api"):
     """Stop zakázky (autonomie.md T5): pause workflow (durable, čekající HITL zůstává) + ukončení běžících podů rolí zakázky (sandboxy) – cíl ≤ 60 s."""
     client().pause_workflow(zid)
     killed = []
     if os.environ.get("P0_ROLE_RUNTIME") == "pod":
         import role_pod
-        killed = role_pod.kill_zakazka_pods(zid, ledger)
+        killed = role_pod.kill_zakazka_pods(zid, ledger, tenant=tenant_of(zid))
     st = client().get_workflow_state(zid).runtime_status.name
     ledger("STOP", zakazka=zid, by=by, reason=reason, budget="frozen", channel=channel, pods_killed=killed, status=st)
     return {"ok": True, "status": st, "pods_killed": killed}
@@ -803,7 +812,21 @@ if os.path.isdir(_GUI_DIR):
     app.mount("/gui", StaticFiles(directory=_GUI_DIR, html=True), name="gui")
 
 
+def tenants_from_git():
+    """P3-2: tenanti z rolegen (ConfigMap rolegen-build/tenants.json ← knowledge/organization/tenants.yaml); bez souboru jen P0_TENANT."""
+    od = os.environ.get("P0_ROLE_OPTIONS_DIR"); p = os.path.join(od, "tenants.json") if od else None
+    try:
+        if p and os.path.exists(p): return json.loads(open(p).read())
+    except Exception: pass
+    return [{"id": os.environ.get("P0_TENANT", "acme"), "name": os.environ.get("P0_TENANT", "acme"), "profile": "standard", "budget_usd": 0, "role_pods": True, "namespace": None}]
+
+
+TENANTS = tenants_from_git()
+agui.CTX["tenants"] = TENANTS
+
+
 if __name__ == "__main__":
     import uvicorn
+    ledger("TENANTS_SYNC", **finops.tenants_sync(TENANTS), source="rolegen-build/tenants.json")   # P3-2: org.tenants + RLS org.* (idempotentní při startu)
     rt.start()
     uvicorn.run(app, host=os.environ.get("APP_HOST", "127.0.0.1"), port=int(os.environ.get("APP_PORT", "8010")), log_level="warning")

@@ -44,6 +44,66 @@ CREATE TABLE IF NOT EXISTS org.zakazky (
 """
 
 
+DDL_TENANTS = """
+CREATE SCHEMA IF NOT EXISTS org;
+CREATE TABLE IF NOT EXISTS org.tenants (
+  tenant_id text PRIMARY KEY, name text NOT NULL, profile text NOT NULL DEFAULT 'standard', budget_usd numeric NOT NULL DEFAULT 0,
+  spent_usd numeric NOT NULL DEFAULT 0, role_pods boolean NOT NULL DEFAULT false, namespace text, status text NOT NULL DEFAULT 'active',
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+"""
+RLS_TABLES = ("tenants", "zakazky", "approvals")   # org.agents/role_definitions/eval_gates zakládá tools/role_evals/registry.py (agents má tenant_id – přidá se tam)
+RLS_SQL = """
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'org_reader') THEN CREATE ROLE org_reader LOGIN PASSWORD 'org_reader'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'org_writer') THEN CREATE ROLE org_writer LOGIN PASSWORD 'org_writer'; END IF;
+END $$;
+GRANT USAGE ON SCHEMA org TO org_reader, org_writer;
+GRANT SELECT ON ALL TABLES IN SCHEMA org TO org_reader;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA org TO org_writer;
+"""
+RLS_POLICY = """
+ALTER TABLE org.{t} ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON org.{t};
+CREATE POLICY tenant_isolation ON org.{t}
+  USING (tenant_id = current_setting('app.tenant_id', true) OR current_setting('app.tenant_id', true) = 'platform')
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true) OR current_setting('app.tenant_id', true) = 'platform');
+"""
+
+
+def tenants_sync(tenants: list[dict]) -> dict:
+    """P3-2: org.tenants z Gitu (rolegen tenants.json v ConfigMapě) + RLS per tenant_id na org.* (role org_reader/org_writer; tenant `platform` = průřez).
+    Vlastník schématu (DSN aplikace) RLS nepodléhá – aplikace píše za všechny tenanty, čte je Governance MCP jako org_reader (P3-3)."""
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return {"written": False}
+    try:
+        c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY); c.execute(DDL_APPROVALS)
+        for t in tenants:
+            c.execute("""INSERT INTO org.tenants (tenant_id, name, profile, budget_usd, role_pods, namespace) VALUES (%s, %s, %s, %s, %s, %s)
+                         ON CONFLICT (tenant_id) DO UPDATE SET name = EXCLUDED.name, profile = EXCLUDED.profile, budget_usd = EXCLUDED.budget_usd, role_pods = EXCLUDED.role_pods, namespace = EXCLUDED.namespace, updated_at = now()""",
+                      (t["id"], t.get("name") or t["id"], t.get("profile", "standard"), t.get("budget_usd", 0), bool(t.get("role_pods")), t.get("namespace")))
+        c.execute(RLS_SQL)
+        for t in RLS_TABLES: c.execute(RLS_POLICY.format(t=t))
+        return {"written": True, "tenants": [t["id"] for t in tenants], "rls": list(RLS_TABLES)}
+    except Exception as e:
+        return {"written": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    finally: c.close()
+
+
+def tenant_spend(tenant: str) -> dict | None:
+    """Útrata tenanta = součet spent_usd jeho zakázek v org.zakazky (30d okno klíčů) + strop z org.tenants; None bez DSN."""
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return None
+    try:
+        c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY)
+        row = c.execute("SELECT COALESCE(SUM(spent_usd), 0) FROM org.zakazky WHERE tenant_id = %s", (tenant,)).fetchone()
+        lim = c.execute("SELECT budget_usd FROM org.tenants WHERE tenant_id = %s", (tenant,)).fetchone()
+        c.execute("UPDATE org.tenants SET spent_usd = %s, updated_at = now() WHERE tenant_id = %s", (float(row[0]), tenant))
+        return {"tenant": tenant, "spent_usd": float(row[0]), "budget_usd": float(lim[0]) if lim else None}
+    except Exception:
+        return None
+    finally: c.close()
+
+
 DDL_APPROVALS = """
 CREATE SCHEMA IF NOT EXISTS org;
 CREATE TABLE IF NOT EXISTS org.approvals (

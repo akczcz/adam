@@ -138,6 +138,14 @@ Obraz `zakazka-app` má stage `gui` (`node:22-alpine`, `npm ci && vite build` z 
 `kubectl -n platform-data port-forward svc/zakazka 18010:8010` → `http://127.0.0.1:18010/gui/` (ingress přes agentgateway s OIDC = P3-6).
 Měření: `measure` s `e2e=p3-1` (runner si instaluje Playwright + Chromium; screenshoty v artifactu `measure-<run>`).
 
+## P3-2: namespace per tenant (2026-10-26)
+
+`infra/k8s/roles/` už nemá ruční manifesty: `tenants-generated.yaml` generuje rolegen z `knowledge/organization/tenants.yaml` (Namespace `tenant-<id>`,
+NetworkPolicy, SA `role`, RBAC pro SA zakazka, ConfigMap spire-agent-pod ze `spire-agent.conf`); Flux kustomization `roles` ho aplikuje (prune není zapnuté →
+starý ns `platform-roles` maže harness p3-2; nový cluster ho nemá). Base `spire.yaml` má generovaný řádek `service_account_allow_list` (ns tenantů) – StatefulSet pod SPIRE serveru nový config
+nenačte sám, harness ho restartuje podle anotace `platform.config-sha`. `zakazka-env`: `P0_ROLE_NAMESPACE_TEMPLATE=tenant-{tenant}`, `P0_GUI_CLIENT=platform-gui`.
+CA `platform-ca` pro pody rolí vydává harness do každého ns tenanta. Měření: `measure` s `e2e=p3-2`.
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).

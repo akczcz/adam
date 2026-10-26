@@ -21,10 +21,12 @@ import httpx
 
 def tcp_probe(host, port, timeout=3.0):
     t = time.time()
+    try: ip = socket.gethostbyname(host)   # diagnostika (P3-2): na co se cíl přeložil (ExternalName → FQDN → IP)
+    except OSError: ip = None
     try:
-        with socket.create_connection((host, int(port)), timeout=timeout): return {"result": "open", "ms": int((time.time() - t) * 1000)}
-    except socket.timeout: return {"result": "timeout", "ms": int((time.time() - t) * 1000)}
-    except OSError as e: return {"result": f"error:{e.errno or type(e).__name__}", "ms": int((time.time() - t) * 1000)}
+        with socket.create_connection((host, int(port)), timeout=timeout): return {"result": "open", "ms": int((time.time() - t) * 1000), "ip": ip}
+    except socket.timeout: return {"result": "timeout", "ms": int((time.time() - t) * 1000), "ip": ip}
+    except OSError as e: return {"result": f"error:{e.errno or type(e).__name__}", "ms": int((time.time() - t) * 1000), "ip": ip}
 
 
 def _hp(url, default_port):
@@ -133,7 +135,7 @@ def main():
     probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}
     try: probe["internet_dns_github.com:443"] = tcp_probe("github.com", 443)
     except Exception as e: probe["internet_dns_github.com:443"] = {"result": f"dns:{type(e).__name__}"}
-    for name, url, dp in (("memory", os.environ.get("P0_MEMORY_URL", ""), 9900), ("gateway", os.environ.get("P0_LLM_URL", ""), 4100), ("app", api, 8010)):
+    for name, url, dp in (("memory", os.environ.get("P0_MEMORY_URL", ""), 9900), ("gateway", os.environ.get("P0_LLM_URL", ""), 4100), ("app", api, 8010), ("postgres", os.environ.get("P0_PROBE_POSTGRES", "tcp://postgres.platform-data.svc:5432"), 5432)):   # P3-2: DB platformy z podu role nedosažitelná (NetworkPolicy tenanta)
         if url:
             h, p = _hp(url, dp)
             try: probe[name] = tcp_probe(h, p)

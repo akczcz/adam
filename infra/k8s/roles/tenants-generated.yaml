@@ -1,0 +1,324 @@
+# GENEROVÁNO: python tools/rolegen/render_k8s.py z knowledge/organization/roles/*.yaml – neupravovat ručně (CI kontroluje `--check`).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-acme
+  labels:
+    platform.tenant: acme
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: tenant-acme
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: role-egress
+  namespace: tenant-acme
+spec:
+  podSelector:
+    matchLabels:
+      app: role
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: agentgateway
+    ports:
+    - protocol: TCP
+      port: 4100
+    - protocol: TCP
+      port: 3128
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: memory
+    ports:
+    - protocol: TCP
+      port: 9900
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: zakazka
+    ports:
+    - protocol: TCP
+      port: 8010
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: spire-server
+    ports:
+    - protocol: TCP
+      port: 8081
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role
+  namespace: tenant-acme
+  labels:
+    platform.tenant: acme
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: role-pods
+  namespace: tenant-acme
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - delete
+- apiGroups:
+  - ''
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zakazka-role-pods
+  namespace: tenant-acme
+subjects:
+- kind: ServiceAccount
+  name: zakazka
+  namespace: platform-data
+roleRef:
+  kind: Role
+  name: role-pods
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent-pod
+  namespace: tenant-acme
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  agent.conf: "# SPIRE agent jako sidecar podu role (P2-3): rolegen z toho d\u011B\
+    l\xE1 ConfigMap spire-agent-pod v ka\u017Ed\xE9m namespace tenanta (P3-2, tenants-generated.yaml).\n\
+    agent {\n  data_dir = \"/run/spire/data\"\n  log_level = \"INFO\"\n  server_address\
+    \ = \"spire-server.platform-data.svc\"\n  server_port = \"8081\"\n  socket_path\
+    \ = \"/run/spire/sockets/agent.sock\"\n  trust_domain = \"platform\"\n  insecure_bootstrap\
+    \ = true        # dev: bundle serveru nen\xED v ns rol\xED (notifier k8sbundle\
+    \ pln\xED jen platform-data); P3: bundle ConfigMap i sem\n}\nplugins {\n  NodeAttestor\
+    \ \"k8s_psat\" {\n    plugin_data {\n      cluster = \"platform\"\n      token_path\
+    \ = \"/var/run/secrets/tokens/spire-agent\"\n    }\n  }\n  KeyManager \"memory\"\
+    \ {\n    plugin_data {}\n  }\n  WorkloadAttestor \"unix\" {\n    plugin_data {}\n\
+    \  }\n}\n"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-beta
+  labels:
+    platform.tenant: beta
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: tenant-beta
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: role-egress
+  namespace: tenant-beta
+spec:
+  podSelector:
+    matchLabels:
+      app: role
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: agentgateway
+    ports:
+    - protocol: TCP
+      port: 4100
+    - protocol: TCP
+      port: 3128
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: memory
+    ports:
+    - protocol: TCP
+      port: 9900
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: zakazka
+    ports:
+    - protocol: TCP
+      port: 8010
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: spire-server
+    ports:
+    - protocol: TCP
+      port: 8081
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role
+  namespace: tenant-beta
+  labels:
+    platform.tenant: beta
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: role-pods
+  namespace: tenant-beta
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - delete
+- apiGroups:
+  - ''
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zakazka-role-pods
+  namespace: tenant-beta
+subjects:
+- kind: ServiceAccount
+  name: zakazka
+  namespace: platform-data
+roleRef:
+  kind: Role
+  name: role-pods
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent-pod
+  namespace: tenant-beta
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  agent.conf: "# SPIRE agent jako sidecar podu role (P2-3): rolegen z toho d\u011B\
+    l\xE1 ConfigMap spire-agent-pod v ka\u017Ed\xE9m namespace tenanta (P3-2, tenants-generated.yaml).\n\
+    agent {\n  data_dir = \"/run/spire/data\"\n  log_level = \"INFO\"\n  server_address\
+    \ = \"spire-server.platform-data.svc\"\n  server_port = \"8081\"\n  socket_path\
+    \ = \"/run/spire/sockets/agent.sock\"\n  trust_domain = \"platform\"\n  insecure_bootstrap\
+    \ = true        # dev: bundle serveru nen\xED v ns rol\xED (notifier k8sbundle\
+    \ pln\xED jen platform-data); P3: bundle ConfigMap i sem\n}\nplugins {\n  NodeAttestor\
+    \ \"k8s_psat\" {\n    plugin_data {\n      cluster = \"platform\"\n      token_path\
+    \ = \"/var/run/secrets/tokens/spire-agent\"\n    }\n  }\n  KeyManager \"memory\"\
+    \ {\n    plugin_data {}\n  }\n  WorkloadAttestor \"unix\" {\n    plugin_data {}\n\
+    \  }\n}\n"

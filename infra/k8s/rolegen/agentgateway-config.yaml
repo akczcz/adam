@@ -24,7 +24,12 @@ data:
     \ == \"GET\" || request.method == \"POST\"\n    backendAuth:\n      key:\n   \
     \     value:\n          file: /etc/platform-egress/git/token\n        location:\n\
     \          header:\n            name: Authorization\n            prefix: 'Bearer\
-    \ '\n  backends:\n  - host: $GIT_BACKEND_HOST\n- name: mirror-acme\n  gateways:\
-    \ secure/mirror\n  matches:\n  - path:\n      pathPrefix: /\n  policies:\n   \
-    \ authorization:\n      rules:\n      - allow: request.method == \"GET\"\n  backends:\n\
-    \  - host: $MIRROR_BACKEND_HOST\n"
+    \ '\n  backends:\n  - host: $GIT_BACKEND_HOST\n- name: git-beta\n  gateways: secure/git\n\
+    \  matches:\n  - path:\n      pathPrefix: /beta/\n  policies:\n    authorization:\n\
+    \      rules:\n      - allow: request.method == \"GET\" || request.method == \"\
+    POST\"\n    backendAuth:\n      key:\n        value:\n          file: /etc/platform-egress/git/token\n\
+    \        location:\n          header:\n            name: Authorization\n     \
+    \       prefix: 'Bearer '\n  backends:\n  - host: $GIT_BACKEND_HOST\n- name: mirror-shared\n\
+    \  gateways: secure/mirror\n  matches:\n  - path:\n      pathPrefix: /\n  policies:\n\
+    \    authorization:\n      rules:\n      - allow: request.method == \"GET\"\n\
+    \  backends:\n  - host: $MIRROR_BACKEND_HOST\n"

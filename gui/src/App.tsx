@@ -84,10 +84,11 @@ function Threads() {
         {e && <p className="err">{e}</p>}
         {list === null ? <p className="muted">načítám…</p> : list.length === 0 ? <p className="muted" data-testid="threads-empty">zatím žádná zakázka tohoto tenanta</p> : (
           <table data-testid="threads-table">
-            <thead><tr><th>ID</th><th>Stav</th><th>Bod</th><th>Role</th><th>Rozpočet</th><th>Útrata</th><th>Založeno</th></tr></thead>
+            <thead><tr><th>ID</th><th>Tenant</th><th>Stav</th><th>Bod</th><th>Role</th><th>Rozpočet</th><th>Útrata</th><th>Založeno</th></tr></thead>
             <tbody>{list.map((t) => (
-              <tr key={t.id} data-testid={`thread-row-${t.id}`}>
+              <tr key={t.id} data-testid={`thread-row-${t.id}`} data-tenant={t.tenant}>
                 <td><a href={`#/t/${encodeURIComponent(t.id)}`}>{t.id}</a></td>
+                <td><span className="badge" data-testid="thread-tenant">{t.tenant}</span></td>
                 <td><span className={`badge ${t.status === "RUNNING" ? (t.bod ? "waiting" : "running") : t.status === "COMPLETED" ? "done" : t.status === "SUSPENDED" ? "error" : ""}`}>{t.stav ?? t.status ?? "?"}</span></td>
                 <td>{t.bod ?? ""}</td>
                 <td>{Object.entries(t.roles).map(([r, s]) => <span key={r} className={`badge ${s}`} style={{ marginRight: 4 }}>{r}</span>)}</td>

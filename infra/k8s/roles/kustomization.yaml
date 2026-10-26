@@ -1,7 +1,7 @@
+# Namespace podů rolí per tenant (P3-2): vše generuje rolegen z knowledge/organization/tenants.yaml (render_k8s.py → tenants-generated.yaml):
+# Namespace tenant-<id> (PSS restricted), NetworkPolicy default-deny + egress jen na platformu, SA role (sidecar spire-agent), RBAC pro SA zakazka,
+# ConfigMap spire-agent-pod (ze spire-agent.conf). Samostatná Flux kustomization, protože overlay aks má namespace transformer na platform-data.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-- namespace.yaml
-- networkpolicy.yaml
-- rbac.yaml
-- spire-agent-pod.yaml
+- tenants-generated.yaml

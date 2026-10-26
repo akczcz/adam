@@ -127,7 +127,7 @@ flowchart LR
 | Krok | Stav |
 |---|---|
 | P3-1 AG-UI server + minimální GUI nad HITL | ✅ **2026-10-26 AKS 25/25** (`tools/harness_p1_k8s --step p3-1`, `measure` run 40380861198, 3 běhy): AG-UI 1.0 server v aplikaci zakázky (thread = zakázka, role = subagenti, HITL = interrupt/resume s povinným důvodem → `org.approvals`, stop = pause + ukončení podů), vlastní React GUI servírované z `/gui`; U1a–g: login Keycloak, zakázka P1→P5 jen klikáním (5,9 min), disclosure T7 z kanálu `agui` rolí, cizí tenant 404, stop uprostřed role (pod pryč za 2,9 s). Zjednodušení: password grant přes `harness-human` (realm se v běžícím clusteru neimportuje → P3-2), GUI jen přes port-forward (ingress + OIDC → P3-6), bez A2UI (formuláře vlastní). |
-| P3-2 tenant model | ⬜ |
+| P3-2 tenant model | ✅ **2026-10-26 AKS 31/31** (`--step p3-2`, `measure` run 40407092865, 4 běhy): `knowledge/organization/tenants.yaml` → rolegen generuje namespace `tenant-<id>` (PSS, NetworkPolicy, SA, RBAC, spire-agent ConfigMap), SPIRE entries per role × tenant (hranice = atestovaný namespace), allow-list SPIRE serveru, routy egressu per tenant, OPA `tenants`, šablonu klíčů `{tenant}`; aplikace: pody v ns tenanta zakázky, klíče `k-<tenant>-…`, `org.tenants` + RLS `org.*` (org_reader/org_writer, tenant `platform` = průřez), strop tenanta v `budget_gate`; Keycloak: lidé tenantů a klient `platform-gui` v realmu, běžící realm migruje harness admin API. T1a–f: tenant beta z GUI jako bea (pod v tenant-beta, SVID `…/account/beta`, Postgres z podu timeout), RLS, klíče, viditelnost; platform-admin průřez. Zjednodušení: realm jedna, tenant = atribut; `on_behalf_of` = token exchange P3-6. |
 | P3-3 GUI nad celou firmou | ⬜ |
 | P3-4 klasifikační brána, čl. 50, SLA naostro | ⬜ |
 | P3-5 O-3 multi-tenant harness | ⬜ |
@@ -137,6 +137,8 @@ Postup práce jako v P2: krok na větvi → `measure` s `e2e=p3-n` na AKS → PR
 Nový `measure` job pro Playwright (Chromium v runneru, cíl `gui.platform.internal` přes port-forward na agentgateway).
 
 ## Changelog
+- 2026-10-26: P3-2 hotovo na AKS (31/31) – tenants.yaml jako zdroj pravdy, ns per tenant, RLS; nálezy: access token Keycloaku 15 min
+  (GUI obnovuje), SPIRE entry s jiným rodičem nutno nahradit, migrace běžícího realmu admin API.
 - 2026-10-26: P3-1 hotovo na AKS (25/25) – GUI řídí zakázku; nálezy: Keycloak `--import-realm` existující realm nemění (změny realmu = migrace,
   P3-2), klient bez scope `profile` nedá jméno (cache z loginu), stop z GUI ukončí Kata pod role do 3 s.
 - 2026-10-26: první verze – návrh po uzavření P2; GUI nad celou firmou jako P3-1 + P3-3 (AG-UI 1.0 vlastní server,

@@ -65,7 +65,7 @@ data:
   P0_KC_TOKEN_URL: http://keycloak:8080/realms/p0/protocol/openid-connect/token
   P0_KC_JWKS_URL: http://keycloak:8080/realms/p0/protocol/openid-connect/certs   # P3-1: AG-UI server ověřuje token člověka (RS256, iss = KC_HOSTNAME)
   P0_KC_ISSUER: http://keycloak:8080/realms/p0
-  P0_GUI_CLIENT: harness-human            # P3-1: login GUI = password grant přes tento veřejný klient (zjednodušení; PKCE v prohlížeči = P3-6)
+  P0_GUI_CLIENT: platform-gui             # P3-2: veřejný klient GUI (preferred_username mapper, PKCE redirecty); login zatím password grantem (PKCE v prohlížeči = P3-6)
   P0_GUI_DIR: /app/gui
   P0_TENANT: acme                         # tenant zakázek z interního API; z AG-UI je tenant z tokenu člověka (P3-2: org.tenants)
   P0_GITHUB_MODE: "1"
@@ -135,7 +135,7 @@ spec:
     metadata:
       labels: {app: zakazka}
     spec:
-      serviceAccountName: zakazka   # RBAC jen na pody rolí v ns platform-roles (infra/k8s/roles/rbac.yaml); kind: bez role, pody rolí se tam nespouští
+      serviceAccountName: zakazka   # RBAC jen na pody rolí v ns tenantů (infra/k8s/roles/tenants-generated.yaml); kind: bez role, pody rolí se tam nespouští
       securityContext: {fsGroup: 1000}   # PVC /data (Azure Disk) patří rootu, obraz běží jako uid 1000 – bez fsGroup ledger nezapíše (AKS 2026-10-25)
       containers:
       - name: app

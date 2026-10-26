@@ -52,9 +52,13 @@ class Gui:
     def login(self, user, pw):
         self.t("login-user").fill(user); self.t("login-pass").fill(pw); self.t("login-submit").click()
         self.t("user-name").wait_for()
-        self.token = self.page.evaluate("sessionStorage.getItem('agui_token')")
         self.shot("login")
         return {"user": self.t("user-name").inner_text(), "tenant": self.t("user-tenant").inner_text(), "token": bool(self.token)}
+
+    @property
+    def token(self):
+        """Aktuální access token z prohlížeče (GUI ho obnovuje refresh tokenem – 15 min lifespan Keycloaku zakázka v Kata podech přežije)."""
+        return self.page.evaluate("sessionStorage.getItem('agui_token')")
 
     # --- seznam a založení ----------------------------------------------------------------------------------------------
     def threads_list(self):
@@ -121,7 +125,11 @@ class Gui:
         self.t("approve-reason").fill(reason); d2 = btn.is_disabled()
         rid0 = self.t("run-id").inner_text()
         btn.click()
-        self.page.wait_for_function(f"document.querySelector('[data-testid=run-id]') && document.querySelector('[data-testid=run-id]').textContent !== {json.dumps(rid0)}", timeout=60_000)
+        try:
+            self.page.wait_for_function(f"document.querySelector('[data-testid=run-id]') && document.querySelector('[data-testid=run-id]').textContent !== {json.dumps(rid0)}", timeout=60_000)
+        except Exception as e:
+            err = self.t("run-error").inner_text() if self.t("run-error").count() else None; self.shot("decide-failed")
+            raise AssertionError(f"rozhodnutí {decision} nespustilo nový run (run-error: {err!r}, status {self.t('run-status').inner_text() if self.t('run-status').count() else '?'})") from e
         return {"disabled_empty": d0, "disabled_short": d1, "disabled_with_reason": d2, "new_run": self.t("run-id").inner_text() != rid0, "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
 
     def wait_finished(self, timeout_s=600, want=("finished",)):

@@ -2,12 +2,25 @@
   "realm": "p0",
   "enabled": true,
   "accessTokenLifespan": 900,
-  "displayName": "P0 identity: role = OAuth klient se service accountem (client_credentials); tenant_id a agent_id = atributy service-account uzivatele; roles plochy claim; aud=memory. Tajemstvi klientu jsou testovaci (harness), v clusteru je vydava OpenBao.",
+  "displayName": "P0 identity: role = OAuth klient se service accountem (client_credentials); tenant_id a agent_id = atributy service-account uzivatele; roles plochy claim; aud=memory. Tajemstvi klientu jsou testovaci (harness), v clusteru je vydava OpenBao. P3-2: lidé tenantů (adam/acme, bea/beta, platform-admin/platform) = knowledge/organization/tenants.yaml; klient platform-gui.",
   "roles": {
     "realm": [
-      {"name": "agent", "description": "Agentní role platformy (service account)"},
-      {"name": "reviewer", "description": "Člověk-reviewer (vidí unverified fakta)"},
-      {"name": "human", "description": "Člověk"}
+      {
+        "name": "agent",
+        "description": "Agentní role platformy (service account)"
+      },
+      {
+        "name": "reviewer",
+        "description": "Člověk-reviewer (vidí unverified fakta)"
+      },
+      {
+        "name": "human",
+        "description": "Člověk"
+      },
+      {
+        "name": "platform_admin",
+        "description": "Průřez platformy (tenant platform): vidí všechny thready, governance"
+      }
     ]
   },
   "components": {
@@ -28,56 +41,438 @@
       "name": "basic",
       "protocol": "openid-connect",
       "description": "Keycloak 25+: claim sub (při importu realmu s clientScopes se vestavěné scopes nevytvoří – musí být v JSON, ověřeno I2 2026-10-22)",
-      "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
       "protocolMappers": [
-        {"name": "sub", "protocol": "openid-connect", "protocolMapper": "oidc-sub-mapper", "config": {"access.token.claim": "true", "id.token.claim": "true", "introspection.token.claim": "true"}}
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
       "name": "roles-flat",
       "protocol": "openid-connect",
       "description": "realm role jako plochý claim `roles` (server paměti čte token.roles)",
-      "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
       "protocolMappers": [
-        {"name": "roles", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-realm-role-mapper", "config": {"claim.name": "roles", "jsonType.label": "String", "multivalued": "true", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false", "introspection.token.claim": "true"}}
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
       "name": "tenant",
       "protocol": "openid-connect",
       "description": "tenant_id z atributu uživatele (service account i člověk) – nikdy z argumentu nástroje",
-      "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
       "protocolMappers": [
-        {"name": "tenant_id", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": {"user.attribute": "tenant_id", "claim.name": "tenant_id", "jsonType.label": "String", "multivalued": "false", "aggregate.attrs": "false", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false", "introspection.token.claim": "true"}},
-        {"name": "agent_id", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": {"user.attribute": "agent_id", "claim.name": "agent_id", "jsonType.label": "String", "multivalued": "false", "aggregate.attrs": "false", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false", "introspection.token.claim": "true"}}
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "aggregate.attrs": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "agent_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "agent_id",
+            "claim.name": "agent_id",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "aggregate.attrs": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
       "name": "aud-memory",
       "protocol": "openid-connect",
       "description": "aud=memory – server paměti přijme jen token vydaný pro něj",
-      "attributes": {"include.in.token.scope": "false", "display.on.consent.screen": "false"},
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
       "protocolMappers": [
-        {"name": "aud-memory", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper", "config": {"included.custom.audience": "memory", "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true"}}
+        {
+          "name": "aud-memory",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "memory",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     }
   ],
   "clients": [
-    {"clientId": "agent-account", "name": "Role Account (service account)", "enabled": true, "publicClient": false, "secret": "p0-account-secret", "standardFlowEnabled": false, "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true, "defaultClientScopes": ["basic", "roles-flat", "tenant", "aud-memory"], "optionalClientScopes": []},
-    {"clientId": "agent-architekt", "name": "Role Architekt (service account)", "enabled": true, "publicClient": false, "secret": "p0-architekt-secret", "standardFlowEnabled": false, "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true, "defaultClientScopes": ["basic", "roles-flat", "tenant", "aud-memory"], "optionalClientScopes": []},
-    {"clientId": "agent-vyvojar", "name": "Role Vývojář (service account)", "enabled": true, "publicClient": false, "secret": "p0-vyvojar-secret", "standardFlowEnabled": false, "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true, "defaultClientScopes": ["basic", "roles-flat", "tenant", "aud-memory"], "optionalClientScopes": []},
-    {"clientId": "agent-reviewer", "name": "Role Reviewer (service account)", "enabled": true, "publicClient": false, "secret": "p0-reviewer-secret", "standardFlowEnabled": false, "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true, "defaultClientScopes": ["basic", "roles-flat", "tenant", "aud-memory"], "optionalClientScopes": []},
-    {"clientId": "agent-noaud", "name": "Negativní kontrola: platný klient bez aud=memory", "enabled": true, "publicClient": false, "secret": "p0-noaud-secret", "standardFlowEnabled": false, "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true, "defaultClientScopes": ["basic", "roles-flat", "tenant"], "optionalClientScopes": []},
-    {"clientId": "agent-othertenant", "name": "Negativní kontrola: agent jiného tenanta (globex)", "enabled": true, "publicClient": false, "secret": "p0-othertenant-secret", "standardFlowEnabled": false, "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true, "defaultClientScopes": ["basic", "roles-flat", "tenant", "aud-memory"], "optionalClientScopes": []},
-    {"clientId": "harness-human", "name": "Harness: člověk (password grant jen pro test)", "enabled": true, "publicClient": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": true, "serviceAccountsEnabled": false, "defaultClientScopes": ["basic", "roles-flat", "tenant", "aud-memory"], "optionalClientScopes": []}
+    {
+      "clientId": "agent-account",
+      "name": "Role Account (service account)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "p0-account-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant",
+        "aud-memory"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-architekt",
+      "name": "Role Architekt (service account)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "p0-architekt-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant",
+        "aud-memory"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-vyvojar",
+      "name": "Role Vývojář (service account)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "p0-vyvojar-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant",
+        "aud-memory"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-reviewer",
+      "name": "Role Reviewer (service account)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "p0-reviewer-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant",
+        "aud-memory"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-noaud",
+      "name": "Negativní kontrola: platný klient bez aud=memory",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "p0-noaud-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "agent-othertenant",
+      "name": "Negativní kontrola: agent jiného tenanta (globex)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "p0-othertenant-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant",
+        "aud-memory"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "harness-human",
+      "name": "Harness: člověk (password grant jen pro test)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant",
+        "aud-memory"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "platform-gui",
+      "name": "GUI platformy (P3-1/P3-2): veřejný klient, password grant (zjednodušení) + Authorization Code pro PKCE",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:18010/gui/*",
+        "http://localhost:5173/gui/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "defaultClientScopes": [
+        "basic",
+        "roles-flat",
+        "tenant",
+        "aud-memory"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "preferred_username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
   ],
   "users": [
-    {"username": "service-account-agent-account", "enabled": true, "serviceAccountClientId": "agent-account", "realmRoles": ["agent"], "attributes": {"tenant_id": ["acme"], "agent_id": ["spiffe://platform/role/account"]}},
-    {"username": "service-account-agent-architekt", "enabled": true, "serviceAccountClientId": "agent-architekt", "realmRoles": ["agent"], "attributes": {"tenant_id": ["acme"], "agent_id": ["spiffe://platform/role/architekt"]}},
-    {"username": "service-account-agent-vyvojar", "enabled": true, "serviceAccountClientId": "agent-vyvojar", "realmRoles": ["agent"], "attributes": {"tenant_id": ["acme"], "agent_id": ["spiffe://platform/role/vyvojar"]}},
-    {"username": "service-account-agent-reviewer", "enabled": true, "serviceAccountClientId": "agent-reviewer", "realmRoles": ["agent"], "attributes": {"tenant_id": ["acme"], "agent_id": ["spiffe://platform/role/reviewer"]}},
-    {"username": "service-account-agent-noaud", "enabled": true, "serviceAccountClientId": "agent-noaud", "realmRoles": ["agent"], "attributes": {"tenant_id": ["acme"], "agent_id": ["spiffe://platform/role/noaud"]}},
-    {"username": "service-account-agent-othertenant", "enabled": true, "serviceAccountClientId": "agent-othertenant", "realmRoles": ["agent"], "attributes": {"tenant_id": ["globex"], "agent_id": ["spiffe://platform/role/vyvojar"]}},
-    {"username": "adam", "enabled": true, "email": "adam@harness.test", "emailVerified": true, "firstName": "Adam", "lastName": "Harness", "credentials": [{"type": "password", "value": "adam", "temporary": false}], "realmRoles": ["reviewer", "human"], "attributes": {"tenant_id": ["acme"]}}
+    {
+      "username": "service-account-agent-account",
+      "enabled": true,
+      "serviceAccountClientId": "agent-account",
+      "realmRoles": [
+        "agent"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ],
+        "agent_id": [
+          "spiffe://platform/role/account"
+        ]
+      }
+    },
+    {
+      "username": "service-account-agent-architekt",
+      "enabled": true,
+      "serviceAccountClientId": "agent-architekt",
+      "realmRoles": [
+        "agent"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ],
+        "agent_id": [
+          "spiffe://platform/role/architekt"
+        ]
+      }
+    },
+    {
+      "username": "service-account-agent-vyvojar",
+      "enabled": true,
+      "serviceAccountClientId": "agent-vyvojar",
+      "realmRoles": [
+        "agent"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ],
+        "agent_id": [
+          "spiffe://platform/role/vyvojar"
+        ]
+      }
+    },
+    {
+      "username": "service-account-agent-reviewer",
+      "enabled": true,
+      "serviceAccountClientId": "agent-reviewer",
+      "realmRoles": [
+        "agent"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ],
+        "agent_id": [
+          "spiffe://platform/role/reviewer"
+        ]
+      }
+    },
+    {
+      "username": "service-account-agent-noaud",
+      "enabled": true,
+      "serviceAccountClientId": "agent-noaud",
+      "realmRoles": [
+        "agent"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ],
+        "agent_id": [
+          "spiffe://platform/role/noaud"
+        ]
+      }
+    },
+    {
+      "username": "service-account-agent-othertenant",
+      "enabled": true,
+      "serviceAccountClientId": "agent-othertenant",
+      "realmRoles": [
+        "agent"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "globex"
+        ],
+        "agent_id": [
+          "spiffe://platform/role/vyvojar"
+        ]
+      }
+    },
+    {
+      "username": "adam",
+      "enabled": true,
+      "email": "adam@harness.test",
+      "emailVerified": true,
+      "firstName": "Adam",
+      "lastName": "Harness",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "adam",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "reviewer",
+        "human"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ]
+      }
+    },
+    {
+      "username": "bea",
+      "enabled": true,
+      "email": "bea@beta.test",
+      "emailVerified": true,
+      "firstName": "Bea",
+      "lastName": "Harness",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bea",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "human"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "beta"
+        ]
+      }
+    },
+    {
+      "username": "platform-admin",
+      "enabled": true,
+      "email": "admin@platform.test",
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Harness",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "platform-admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "human",
+        "platform_admin"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "platform"
+        ]
+      }
+    }
   ]
 }

@@ -87,14 +87,32 @@ async def login(req: Request):
         if not ok: raise HTTPException(401, "přihlášení odmítnuto")
         j = r.json(); c = jwt.decode(j["access_token"], options={"verify_signature": False})
         if c.get("sub"): _NAMES[c["sub"]] = c.get("preferred_username") or user
-        return {"access_token": j["access_token"], "expires_in": j.get("expires_in"), "user": {"sub": c.get("sub"), "name": c.get("preferred_username", user), "tenant": c.get("tenant_id"), "roles": c.get("roles")}}
+        return {"access_token": j["access_token"], "refresh_token": j.get("refresh_token"), "expires_in": j.get("expires_in"), "user": {"sub": c.get("sub"), "name": c.get("preferred_username", user), "tenant": c.get("tenant_id"), "roles": c.get("roles")}}
     users = json.loads(os.environ.get("P0_AGUI_DEV_USERS", "{}"))   # lokální fixture bez Keycloaku
     u = users.get(user)
     CTX["ledger"]("GUI_LOGIN", user=user, ok=bool(u and u.get("password") == pw), idp="dev")
     if not u or u.get("password") != pw: raise HTTPException(401, "přihlášení odmítnuto")
-    exp = int(time.time()) + 900
-    tok = jwt.encode({"sub": f"dev:{user}", "preferred_username": user, "tenant_id": u.get("tenant_id", "acme"), "roles": u.get("roles", ["human"]), "exp": exp, "iss": "dev"}, DEV_SECRET, algorithm="HS256")
-    return {"access_token": tok, "expires_in": 900, "user": {"sub": f"dev:{user}", "name": user, "tenant": u.get("tenant_id", "acme"), "roles": u.get("roles", ["human"])}}
+    exp = int(time.time()) + 900; base = {"sub": f"dev:{user}", "preferred_username": user, "tenant_id": u.get("tenant_id", "acme"), "roles": u.get("roles", ["human"])}
+    tok = jwt.encode(base | {"exp": exp, "iss": "dev"}, DEV_SECRET, algorithm="HS256")
+    return {"access_token": tok, "refresh_token": jwt.encode(base | {"typ": "refresh", "exp": int(time.time()) + 3600}, DEV_SECRET, algorithm="HS256"), "expires_in": 900, "user": {"sub": f"dev:{user}", "name": user, "tenant": u.get("tenant_id", "acme"), "roles": u.get("roles", ["human"])}}
+
+
+@router.post("/refresh")
+async def refresh(req: Request):
+    """Obnova tokenu (access token Keycloaku 15 min, dlouhá zakázka v GUI ho přežije – P3-2 nález): refresh_token → nový access token přes server."""
+    b = await req.json(); rt = b.get("refresh_token") or ""
+    kc = os.environ.get("P0_KC_TOKEN_URL")
+    if kc:
+        r = await asyncio.to_thread(httpx.post, kc, data={"grant_type": "refresh_token", "client_id": os.environ.get("P0_GUI_CLIENT", "harness-human"), "refresh_token": rt}, timeout=15)
+        if r.status_code != 200: raise HTTPException(401, "refresh odmítnut")
+        j = r.json(); c = jwt.decode(j["access_token"], options={"verify_signature": False})
+        if c.get("sub") and c.get("preferred_username"): _NAMES[c["sub"]] = c["preferred_username"]
+        return {"access_token": j["access_token"], "refresh_token": j.get("refresh_token"), "expires_in": j.get("expires_in")}
+    try: c = jwt.decode(rt, DEV_SECRET, algorithms=["HS256"], options={"require": ["exp", "sub"]})
+    except Exception: raise HTTPException(401, "refresh odmítnut")
+    if c.get("typ") != "refresh": raise HTTPException(401, "refresh odmítnut")
+    exp = int(time.time()) + 900; base = {k: c[k] for k in ("sub", "preferred_username", "tenant_id", "roles") if k in c}
+    return {"access_token": jwt.encode(base | {"exp": exp, "iss": "dev"}, DEV_SECRET, algorithm="HS256"), "refresh_token": jwt.encode(base | {"typ": "refresh", "exp": int(time.time()) + 3600}, DEV_SECRET, algorithm="HS256"), "expires_in": 900}
 
 
 @router.get("/me")
@@ -115,8 +133,11 @@ def thread_of_tenant(zid, user):
     """ZAKAZKA_START threadu musí nést tenant uživatele – jinak 404 (cizí thread neexistuje)."""
     s = thread_start(zid)
     if not s: return None
-    if (s.get("tenant") or os.environ.get("P0_TENANT", "acme")) != user["tenant"]: raise HTTPException(404, "thread neexistuje")
+    if (s.get("tenant") or os.environ.get("P0_TENANT", "acme")) != user["tenant"] and user["tenant"] != PLATFORM_TENANT: raise HTTPException(404, "thread neexistuje")
     return s
+
+
+PLATFORM_TENANT = "platform"   # P3-2: průřezový tenant (governance) – vidí všechny thready, zakázky nezakládá
 
 
 def pending_interrupt(entries):
@@ -147,9 +168,9 @@ def state_of(zid, entries):
 async def threads(req: Request):
     u = user_from_request(req)
     L = CTX["read_ledger"](); out = []
-    for s in [e for e in L if e.get("kind") == "ZAKAZKA_START" and (e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == u["tenant"]]:
+    for s in [e for e in L if e.get("kind") == "ZAKAZKA_START" and ((e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == u["tenant"] or u["tenant"] == PLATFORM_TENANT)]:
         zid = s["zakazka"]; out.append(state_of(zid, [e for e in L if e.get("zakazka") == zid]))
-    return {"tenant": u["tenant"], "threads": sorted(out, key=lambda t: -(t.get("started") or 0))}
+    return {"tenant": u["tenant"], "threads": sorted(out, key=lambda t: -(t.get("started") or 0)), "tenants": [t["id"] for t in CTX.get("tenants") or []]}
 
 
 # --- ledger → AG-UI události --------------------------------------------------------------------------------------------
@@ -243,6 +264,7 @@ async def run(req: Request):
     created = False
     if not start:
         if fp.get("action") or inp.resume: raise HTTPException(404, "thread neexistuje")
+        if u["tenant"] == PLATFORM_TENANT: raise HTTPException(403, "tenant platform zakázky nezakládá (průřez)")
         user_msgs = [m for m in inp.messages if getattr(m, "role", None) == "user"]
         text = user_msgs[-1].content if user_msgs else None
         if not isinstance(text, str) or not text.strip(): raise HTTPException(422, "nový thread = první zpráva uživatele je poptávka")
