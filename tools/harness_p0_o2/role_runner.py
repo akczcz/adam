@@ -65,7 +65,7 @@ def git_mirror_probe():
     sh = f"{work}/.git-probe.sh"; open(sh, "w").write(GIT_PROBE_SH)
     base_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
     base_env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_PARAMETERS": "", "npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false", "npm_config_fetch_retries": "1", "npm_config_fetch_timeout": "20000",
-                 "PIP_RETRIES": "1", "PIP_TIMEOUT": "20", "HOME": base_env.get("HOME") or "/tmp"}
+                 "PIP_RETRIES": "1", "PIP_TIMEOUT": "20", "HOME": work, "npm_config_cache": f"{work}/.npm-cache", "XDG_CACHE_HOME": f"{work}/.cache"}   # srt allowWrite jen /work: cache npm/pip i HOME uvnitř
     def run(via):
         env = dict(base_env)
         if via == "direct": env["HTTPS_PROXY"] = env["HTTP_PROXY"] = env["https_proxy"] = env["http_proxy"] = os.environ.get("P0_EGRESS_PROXY", ""); env["NO_PROXY"] = ".svc,localhost,127.0.0.1"
