@@ -140,6 +140,9 @@ patches:
 - target: {kind: Deployment, name: mock-upstream}
   patch: |
     - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: governance}   # P3-3 (nález: bez Always uzel vzal obraz bez governance_mcp → CrashLoopBackOff)
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
 - target: {kind: Deployment, name: mock-mirror}
   patch: |
     - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
