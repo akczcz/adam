@@ -60,7 +60,7 @@ def git_mirror_probe():
     (HTTPS_PROXY) a zaznamená obě varianty. Token gitu v podu není – vkládá ho gateway (backendAuth)."""
     import subprocess
     repo, mirror, wf = os.environ["P0_GIT_URL"], os.environ.get("P0_MIRROR_URL", ""), os.environ.get("P0_ZAKAZKA_ID") or json.loads(os.environ.get("P0_ZAKAZKA", "{}")).get("id", "wf")
-    work = f"/tmp/p0-o2/{wf}/work"; os.makedirs(work, exist_ok=True)
+    work = f"/tmp/p0-o2/{wf}/egress-probe"; os.makedirs(work, exist_ok=True)   # mimo work/ a artifacts/ – klon, wheel a tgz sondy nesmí skončit v PR zakázky (binární soubory shodily publish)
     sh = f"{work}/.git-probe.sh"; open(sh, "w").write(GIT_PROBE_SH)
     base_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
     base_env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_PARAMETERS": "", "npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false", "npm_config_fetch_retries": "1", "npm_config_fetch_timeout": "20000",
