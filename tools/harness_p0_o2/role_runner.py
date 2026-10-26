@@ -63,7 +63,8 @@ def git_mirror_probe():
     work = f"/tmp/p0-o2/{wf}/work"; os.makedirs(work, exist_ok=True)
     sh = f"{work}/.git-probe.sh"; open(sh, "w").write(GIT_PROBE_SH)
     base_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
-    base_env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_PARAMETERS": "", "npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false", "HOME": base_env.get("HOME") or "/tmp"}
+    base_env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_PARAMETERS": "", "npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false", "npm_config_fetch_retries": "1", "npm_config_fetch_timeout": "20000",
+                 "PIP_RETRIES": "1", "PIP_TIMEOUT": "20", "HOME": base_env.get("HOME") or "/tmp"}
     def run(via):
         env = dict(base_env)
         if via == "direct": env["HTTPS_PROXY"] = env["HTTP_PROXY"] = env["https_proxy"] = env["http_proxy"] = os.environ.get("P0_EGRESS_PROXY", ""); env["NO_PROXY"] = ".svc,localhost,127.0.0.1"
@@ -130,7 +131,12 @@ def main():
             try: probe[name] = tcp_probe(h, p)
             except Exception as e: probe[name] = {"result": f"dns:{type(e).__name__}"}
     print("egress_probe=" + json.dumps(probe), flush=True)
-    git_probe = git_mirror_probe() if os.environ.get("P0_GIT_URL") else None   # P2-4: git/mirror přes gateway CONNECT (srt parentProxy), chráněná větev, cizí SNI
+    git_probe = None   # P2-4: git/mirror přes gateway CONNECT (srt parentProxy), chráněná větev, cizí SNI – jen role, jejíž srt allow-list git host má (jinak by sonda jen čekala na timeouty)
+    if os.environ.get("P0_GIT_URL"):
+        try: allowed = json.load(open(os.environ.get("P0_SRT_SETTINGS", "/nonexistent")))["network"]["allowedDomains"]
+        except Exception: allowed = []
+        git_host = _hp(os.environ["P0_GIT_URL"], 443)[0]
+        git_probe = git_mirror_probe() if git_host in allowed or os.environ.get("P0_GIT_PROBE_ALL") else {"skipped": f"{git_host} není v srt allowedDomains role"}
     if git_probe is not None: print("git_probe=" + json.dumps(git_probe)[:3000], flush=True)
 
     root = f"/tmp/p0-o2/{z['id']}"
