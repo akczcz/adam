@@ -305,6 +305,31 @@ a chybějící `preferred_username` v tokenu klienta `harness-human`, druhý moc
 sondy). Zakázka řízená jen z GUI: 5,9 min včetně 4 rolí v Kata podech (pool kata už nahoře, pod role start 2 s, běh 17–24 s); stop uprostřed
 role: pod pryč za 2,9 s. Zjednodušení P3-1: login password grantem (klient bez scope `profile` → jméno z loginu), GUI jen přes port-forward.
 
+## P3-2 – tenant model (2026-10-26, AKS, `--step p3-2` = p3-1 + T1a–f)
+
+- **Zdroj pravdy** `knowledge/organization/tenants.yaml` (id, profil, strop 30d, pody rolí, lidé). rolegen z něj generuje: `infra/k8s/roles/tenants-generated.yaml`
+  (Namespace `tenant-<id>` PSS restricted, NetworkPolicy default-deny + egress jen DNS/gateway/paměť/aplikace/SPIRE, SA `role`, RBAC pro SA zakazka,
+  ConfigMap spire-agent-pod ze `spire-agent.conf`), SPIRE entries per role × tenant (alias uzlu se selektorem `k8s_psat:agent_ns:tenant-<id>` – hranicí
+  je atestovaný namespace), allow-list v `spire-server-config` (řádek s markerem v base `spire.yaml`), routy egressu `git-<tenant>` (`/<tenant>/`),
+  OPA data `tenants`, registr `tenants.json`, šablona klíčů s placeholderem `{tenant}` (`k-{tenant}-{zakazka}-<role>`).
+- **Aplikace**: pody rolí v ns tenanta zakázky (`P0_ROLE_NAMESPACE_TEMPLATE`), klíče per tenant, při startu `org.tenants` + RLS na `org.tenants/zakazky/approvals`
+  (role `org_reader`/`org_writer`, `app.tenant_id`, tenant `platform` = průřez), `budget_gate` i strop tenanta (zdroj `tenant-sum`), AG-UI: tenant z tokenu,
+  `platform` vidí vše a zakázky nezakládá.
+- **Keycloak**: lidé tenantů (adam/acme, bea/beta, platform-admin/platform) a klient `platform-gui` (mapper `preferred_username`) v `realm-p0.json`;
+  běžící realm je neimportuje → `kc_ensure` (admin API, idempotentní) je doplní; `render_k8s.py --check` hlídá, že lidé z tenants.yaml jsou v realmu.
+- **Měření**: po U-1 (tenant acme z GUI jako adam) druhý prohlížeč jako bea: zakázka beta do H1 (account v `tenant-beta`), stop; pak platform-admin.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| T1a | org.tenants == tenants.yaml == ConfigMap, ns tenant-acme/beta existují, RLS + politika tenant_isolation, TENANTS_SYNC | ⏳ |
+| T1b | pod account zakázky beta v ns tenant-beta (Succeeded), NetworkPolicies, Postgres a internet z podu nedosažitelné, platforma ano | ⏳ |
+| T1f | SVID `spiffe://platform/role/account/beta`, entries obou tenantů, paměť 200 | ⏳ |
+| T1d | klíče `k-beta-…` s metadata.tenant=beta, útrata account v budget_usage, gate zná strop tenanta 20 USD | ⏳ |
+| T1c | RLS jako org_reader: beta vidí jen beta, acme jen acme, platform obojí, bez tenanta nic | ⏳ |
+| T1e | GUI: bea vidí jen beta (acme → 404 v GUI i API), stop; platform-admin vidí obojí, zakázku nezaloží (403) | ⏳ |
+
+Výsledek: ⏳ (měření běží).
+
 ## Spuštění
 
 ```bash

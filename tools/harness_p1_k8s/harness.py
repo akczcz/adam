@@ -652,6 +652,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
     import psycopg, yaml as _yt, hashlib as _ht
     sys.path.insert(0, str(HERE)); from gui_checks import Gui
     def tenant_namespaces(): return [n["metadata"]["name"] for n in kj("get", "ns", "-l", "platform.tenant").get("items", [])]
+    kubectl(a, "delete", "ns", "platform-roles", "--ignore-not-found", "--wait=false")   # P2 ns bez tenantů – Flux roles kustomization nemá prune
     tenants_git = _yt.safe_load((ROOT / "knowledge/organization/tenants.yaml").read_text())["tenants"]
     tj = json.loads((kj("-n", NS, "get", "configmap", "rolegen-build").get("data") or {}).get("tenants.json") or "[]")
     sync = next((e for e in reversed(led()) if e["kind"] == "TENANTS_SYNC"), {})
