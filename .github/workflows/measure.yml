@@ -12,7 +12,7 @@ on:
         description: krok harnessu P1/P2 (zakázka end-to-end v AKS, role jako Kata pody; ~15–30 min, škáluje pool kata z 0) – none = jen stav
         type: choice
         default: none
-        options: [none, p2-3, p2-5, p2-2, p2-1]
+        options: [none, p2-4, p2-3, p2-5, p2-2, p2-1]
 permissions:
   id-token: write
   contents: read
@@ -90,7 +90,8 @@ jobs:
             echo '### události platform-data (posledních 40)'; echo '```'; kubectl -n platform-data get events --sort-by=.lastTimestamp 2>/dev/null | tail -40; echo '```'
             echo '### s1-kata'; echo '```'; kubectl get pod s1-kata -o wide 2>&1 || true; kubectl describe pod s1-kata 2>&1 | sed -n '/^Events:/,$p' | tail -25; echo '```'   # || true: bash -e by jinak ukončil celý blok (chybějící s1-kata)
             echo '### platform-roles (pody rolí, které zbyly; události)'; echo '```'; kubectl -n platform-roles get pods -o wide 2>&1; kubectl -n platform-roles get events --sort-by=.lastTimestamp 2>/dev/null | tail -30; echo '```'
-            echo '### ledger aplikace (posledních 40 záznamů ROLE_POD*/AGENT_RUN/WF*)'; echo '```'; kubectl -n platform-data exec deploy/zakazka -c app -- sh -c 'grep -E "ROLE_POD|AGENT_RUN|ERROR" /data/ledger.jsonl | tail -40 | cut -c1-600' 2>&1; echo '```'
+            echo '### ledger aplikace (posledních 40 záznamů ROLE_POD*/AGENT_RUN/PUBLISH*/ERROR)'; echo '```'; kubectl -n platform-data exec deploy/zakazka -c app -- sh -c 'grep -E "ROLE_POD|AGENT_RUN|ERROR|PUBLISH" /data/ledger.jsonl | tail -40 | cut -c1-600' 2>&1; echo '```'
+            echo '### log aplikace zakázky (posledních 60 řádků)'; echo '```'; kubectl -n platform-data logs deploy/zakazka -c app --tail=60 2>&1 | cut -c1-400; echo '```'
             echo '### autoscaler'; echo '```'; kubectl -n kube-system get configmap cluster-autoscaler-status -o jsonpath='{.data.status}' 2>/dev/null | head -60; echo; kubectl get events -A --field-selector reason=TriggeredScaleUp,reason=NotTriggerScaleUp,reason=FailedScaleUp 2>/dev/null | tail -10; echo '```'
             echo '### node pool kata'; echo '```'; az aks nodepool show -g "$RG" --cluster-name "$CLUSTER" -n kata --query '{state:provisioningState, count:count, min:minCount, max:maxCount, vm:vmSize}' -o table 2>&1; echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"

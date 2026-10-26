@@ -112,6 +112,17 @@ overlay aks), `infra/k8s/roles`: SA `role` (bez automountu), ConfigMap `spire-ag
 `spire-server:8081`. Server paměti přijímá JWT-SVID (`MEMORY_SPIRE_*`). Měření: workflow `measure` s `e2e=p2-3` – **17/17 2026-10-25**
 (run 40234528827); seal `azurekeyvault` = externí KMS plugin `openbao-plugin-kms-azure` stažený init kontejnerem (viz pasti níže).
 
+## P2-4: egress git a mirror přes gateway CONNECT (2026-10-26)
+
+Pody rolí (Kata, `platform-roles`) ven jen přes agentgateway `:3128` (CONNECT; srt `parentProxy`). rolegen generuje do `agentgateway-config`
+bind 3128, HTTPS listenery `git.platform.internal` a `mirror.platform.internal` (terminace certem ze Secretu `agentgateway-tls`), routu `git-acme`
+(metody z `authz.http` rolí, `backendAuth` Bearer ze Secretu `agentgateway-git-token`) a `mirror-acme` (GET); backendy z env Deploymentu
+(`GIT_BACKEND_HOST=mock-github:9801`, `MIRROR_BACKEND_HOST=mock-mirror:9803`). Secrety a ConfigMapu `platform-ca` (CA pro pody rolí) vydává
+harness (dev CA; P3 cert-manager + ESO) – Deployment gateway na ně čeká (`ContainerCreating`), Flux kustomizace `platform` je do té doby
+`HealthCheckFailed`. Mock GitHub nově mluví git smart HTTP (`git http-backend`, bare repo `acme/platform.git`, pre-receive hook = branch protection:
+jen `agent/*`, `zakazka/*`); mock mirror (`tools/harness_p0_o2/mock_mirror.py`) = pypi simple + npm registry s balíčkem `platform-hello`.
+NetworkPolicy `agentgateway-egress` (overlay aks) brání gateway v přístupu na IMDS, wireserver a privátní sítě. Měření: `measure` s `e2e=p2-4`.
+
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.
@@ -136,6 +147,13 @@ overlay aks), `infra/k8s/roles`: SA `role` (bez automountu), ConfigMap `spire-ag
 - `oidc-discovery-provider`: `domains` **bez portu** (`host:port` → `not a valid domain name: idna`, port z `Host` provider odřezává). Padající sidecar
   udělá pod spire-server NotReady → Service bez endpointů → agenti DaemonSetu padají na `connection refused` (P2-3 2026-10-25).
 - Oficiální obrazy `ghcr.io/spiffe/spire-*` nemají binárky v PATH: `kubectl exec … /opt/spire/bin/spire-server entry create …`.
+- **srt 0.0.81 bez `ripgrep` odmítne start** (`Sandbox dependencies not available: ripgrep (rg) not found`) – v obrazu aplikace chyběl, takže
+  `sandboxed_bash` v podech rolí od P1-6 tiše padal (exit 1) a nic nesandboxoval; P21c měřilo jen přítomnost binárky. Od P2-4 je `ripgrep`
+  v `Dockerfile.aks` a sonda egressu hlásí, zda šla přes srt nebo přímo (`via`). Poučení: měřit funkci (příkaz přes srt projde), ne přítomnost.
+- Secret/ConfigMap mountovaný **pod** jiný read-only mount (`/etc/agentgateway/tls` uvnitř read-only emptyDir `/etc/agentgateway`) → runc nevytvoří
+  mountpoint (`mkdirat … read-only file system`, exit 128). Každý mount na vlastní cestu (`/etc/platform-tls`, `/etc/platform-egress/git`).
+- Soubory sondy (klon, wheel, tgz) nesmí ležet ve `work/` role: aplikace z `work/` staví PR přes git data API jako textové bloby a binárka shodila
+  aktivitu workflow (PR se nikdy nepublikoval, harness čekal 25 min). Sonda běží v `egress-probe/` mimo upload; publish ne-UTF-8 soubory přeskočí.
 
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.

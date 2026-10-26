@@ -86,7 +86,7 @@ sandbox:
       allowedDomains: []
       deniedDomains: []
       strictAllowlist: true
-      parentProxy: {http: "http://agentgateway.platform.svc:3128", https: "http://agentgateway.platform.svc:3128"}
+      parentProxy: {http: "http://agentgateway.platform-data.svc:3128", https: "http://agentgateway.platform-data.svc:3128"}
     filesystem:
       denyRead: []
       allowRead: []
@@ -108,7 +108,7 @@ sandbox:
     permissions: {deny: ["Bash", "WebFetch", "Write", "Edit"]}
     skipWebFetchPreflight: true
   env:
-    ANTHROPIC_BASE_URL: http://agentgateway.platform.svc:4100
+    ANTHROPIC_BASE_URL: http://agentgateway.platform-data.svc:4100
     ANTHROPIC_CUSTOM_HEADERS: "x-agent-svid: ${SVID_JWT}"
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"

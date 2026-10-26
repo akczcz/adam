@@ -10,7 +10,7 @@ data:
     : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
     /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-crm\",\n \
     \ \"platform-tickets\",\n  \"platform-artifacts\"\n ],\n \"permission_mode\":\
-    \ \"bypassPermissions\",\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    \ \"bypassPermissions\",\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform-data.svc:4100\"\
     ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
     : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
     : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\"\n },\n \"managed_settings\"\
@@ -25,7 +25,7 @@ data:
     /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-repo\",\n\
     \  \"platform-adr\",\n  \"platform-gateway-catalog\",\n  \"platform-interpreter\"\
     ,\n  \"platform-artifacts\"\n ],\n \"permission_mode\": \"bypassPermissions\"\
-    ,\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    ,\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform-data.svc:4100\"\
     ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
     : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
     : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\"\n },\n \"managed_settings\"\
@@ -39,7 +39,7 @@ data:
     : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
     /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-sandbox\"\
     ,\n  \"platform-repo\"\n ],\n \"permission_mode\": \"bypassPermissions\",\n \"\
-    env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform-data.svc:4100\"\
     ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
     : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\"\
     : \"1\"\n },\n \"managed_settings\": {\n  \"sandbox\": {\n   \"enabled\": true,\n\
@@ -52,7 +52,7 @@ data:
     strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"/work\",\n\
     \ \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-deploy\",\n  \"platform-runbook\"\
     ,\n  \"platform-clickhouse\",\n  \"platform-tickets\"\n ],\n \"permission_mode\"\
-    : \"bypassPermissions\",\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    : \"bypassPermissions\",\n \"env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform-data.svc:4100\"\
     ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
     : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
     : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\"\n },\n \"managed_settings\"\
@@ -66,7 +66,7 @@ data:
     : [],\n \"strict_mcp_config\": true,\n \"setting_sources\": [],\n \"cwd\": \"\
     /work\",\n \"mcp_servers\": [\n  \"platform-memory\",\n  \"platform-sandbox\"\
     ,\n  \"platform-repo\"\n ],\n \"permission_mode\": \"bypassPermissions\",\n \"\
-    env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform.svc:4100\"\
+    env\": {\n  \"ANTHROPIC_BASE_URL\": \"http://agentgateway.platform-data.svc:4100\"\
     ,\n  \"ANTHROPIC_CUSTOM_HEADERS\": \"x-agent-svid: ${SVID_JWT}\",\n  \"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\"\
     : \"1\",\n  \"CLAUDE_CODE_DISABLE_AUTO_MEMORY\": \"1\",\n  \"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\"\
     : \"1\",\n  \"CLAUDE_CODE_PROPAGATE_TRACEPARENT\": \"1\",\n  \"GIT_CONFIG_PARAMETERS\"\
@@ -84,8 +84,8 @@ data:
     : [],\n  \"denyWrite\": [\n   \"/work/.git/hooks\",\n   \"/work/.git/config\"\
     ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
     : 3,\n \"network\": {\n  \"allowedDomains\": [],\n  \"deniedDomains\": [],\n \
-    \ \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\",\n\
-    \   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    \ \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform-data.svc:3128\"\
+    ,\n   \"https\": \"http://agentgateway.platform-data.svc:3128\"\n  },\n  \"strictAllowlist\"\
     : true\n }\n}"
   srt-architekt.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\"\
     : {\n  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
@@ -93,8 +93,8 @@ data:
     : [],\n  \"denyWrite\": [\n   \"/work/.git/hooks\",\n   \"/work/.git/config\"\
     ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
     : 3,\n \"network\": {\n  \"allowedDomains\": [\n   \"git.platform.internal\"\n\
-    \  ],\n  \"deniedDomains\": [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\"\
-    ,\n   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    \  ],\n  \"deniedDomains\": [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform-data.svc:3128\"\
+    ,\n   \"https\": \"http://agentgateway.platform-data.svc:3128\"\n  },\n  \"strictAllowlist\"\
     : true\n }\n}"
   srt-reviewer.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\"\
     : {\n  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
@@ -102,8 +102,8 @@ data:
     ,\n   \"/work/eval-out\"\n  ],\n  \"denyRead\": [],\n  \"denyWrite\": [\n   \"\
     /work/.git\"\n  ]\n },\n \"mandatoryDenySearchDepth\": 3,\n \"network\": {\n \
     \ \"allowedDomains\": [\n   \"git.platform.internal\"\n  ],\n  \"deniedDomains\"\
-    : [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\"\
-    ,\n   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    : [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform-data.svc:3128\"\
+    ,\n   \"https\": \"http://agentgateway.platform-data.svc:3128\"\n  },\n  \"strictAllowlist\"\
     : true\n }\n}"
   srt-sre.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\": {\n\
     \  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
@@ -111,8 +111,8 @@ data:
     : [],\n  \"denyWrite\": [\n   \"/work/.git/hooks\",\n   \"/work/.git/config\"\
     ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
     : 3,\n \"network\": {\n  \"allowedDomains\": [\n   \"git.platform.internal\"\n\
-    \  ],\n  \"deniedDomains\": [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform.svc:3128\"\
-    ,\n   \"https\": \"http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    \  ],\n  \"deniedDomains\": [],\n  \"parentProxy\": {\n   \"http\": \"http://agentgateway.platform-data.svc:3128\"\
+    ,\n   \"https\": \"http://agentgateway.platform-data.svc:3128\"\n  },\n  \"strictAllowlist\"\
     : true\n }\n}"
   srt-vyvojar.json: "{\n \"allowNestedUserNamespaces\": false,\n \"credentials\":\
     \ {\n  \"envVars\": []\n },\n \"enableWeakerNestedSandbox\": true,\n \"filesystem\"\
@@ -121,16 +121,16 @@ data:
     ,\n   \"/work/.claude\",\n   \"/work/.mcp.json\"\n  ]\n },\n \"mandatoryDenySearchDepth\"\
     : 3,\n \"network\": {\n  \"allowedDomains\": [\n   \"git.platform.internal\",\n\
     \   \"mirror.platform.internal\"\n  ],\n  \"deniedDomains\": [],\n  \"parentProxy\"\
-    : {\n   \"http\": \"http://agentgateway.platform.svc:3128\",\n   \"https\": \"\
-    http://agentgateway.platform.svc:3128\"\n  },\n  \"strictAllowlist\": true\n }\n\
-    }"
+    : {\n   \"http\": \"http://agentgateway.platform-data.svc:3128\",\n   \"https\"\
+    : \"http://agentgateway.platform-data.svc:3128\"\n  },\n  \"strictAllowlist\"\
+    : true\n }\n}"
   pod-account.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-account-\n\
     \  labels:\n    platform.role: account\n    platform.tenant: acme\n    platform.wf:\
     \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
     \  containers:\n  - name: role\n    image: registry.platform.internal/roles/account:0.1.0\n\
-    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform-data.svc:4100\n\
     \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
     \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
     \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
@@ -144,7 +144,7 @@ data:
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
     \  containers:\n  - name: role\n    image: registry.platform.internal/roles/architekt:0.1.0\n\
-    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform-data.svc:4100\n\
     \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
     \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
     \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
@@ -157,7 +157,7 @@ data:
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
     \  containers:\n  - name: role\n    image: registry.platform.internal/roles/reviewer:0.1.0\n\
-    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform-data.svc:4100\n\
     \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
     \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
     \      value: '1'\n    - name: CLAUDE_CODE_PROPAGATE_TRACEPARENT\n      value:\
@@ -170,7 +170,7 @@ data:
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
     \  containers:\n  - name: role\n    image: registry.platform.internal/roles/sre:0.1.0\n\
-    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform-data.svc:4100\n\
     \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
     \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
     \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
@@ -184,7 +184,7 @@ data:
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
     \  containers:\n  - name: role\n    image: registry.platform.internal/roles/vyvojar:0.1.0\n\
-    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform.svc:4100\n\
+    \    env:\n    - name: ANTHROPIC_BASE_URL\n      value: http://agentgateway.platform-data.svc:4100\n\
     \    - name: ANTHROPIC_CUSTOM_HEADERS\n      value: 'x-agent-svid: ${SVID_JWT}'\n\
     \    - name: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB\n      value: '1'\n    - name: CLAUDE_CODE_DISABLE_AUTO_MEMORY\n\
     \      value: '1'\n    - name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\n    \
@@ -197,7 +197,7 @@ data:
     : \"adam\",\n  \"processes\": [\n   \"P1-prijeti-zadani\"\n  ],\n  \"autonomy_max\"\
     : \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/account/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/account:0.1.0\",\n  \"source\"\
-    : \"account.yaml\",\n  \"source_sha256_16\": \"3c3be37b322c9237\",\n  \"disclosure\"\
+    : \"account.yaml\",\n  \"source_sha256_16\": \"ac79d946a1e719f6\",\n  \"disclosure\"\
     : {\n   \"agui\": \"Mluvíte s AI agentem (role Account) firmy {firma}; jedná jménem\
     \ {vlastník procesu}. Nabídku, cenu a termín potvrzuje člověk.\",\n   \"issue\"\
     : \"Zadání sepsal AI agent (Account) jménem {vlastník procesu}; schvaluje člověk\
@@ -210,7 +210,7 @@ data:
     ,\n  \"processes\": [\n   \"P2-navrh\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"\
     spiffe_id\": \"spiffe://platform.example/agent/architekt/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/architekt:0.1.0\",\n  \"source\"\
-    : \"architekt.yaml\",\n  \"source_sha256_16\": \"82ed7db3de1e79c3\",\n  \"disclosure\"\
+    : \"architekt.yaml\",\n  \"source_sha256_16\": \"93b951c5339e48ea\",\n  \"disclosure\"\
     : {\n   \"adr\": \"ADR vygeneroval AI agent (Architekt, verze 0.1.0) jménem {vlastník\
     \ procesu}; schválil {člověk, datum}.\"\n  },\n  \"evals_gate\": [\n   {\n   \
     \ \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\",\n     \"\
@@ -224,7 +224,7 @@ data:
     0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P5-review\"\n  ],\n\
     \  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/reviewer/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/reviewer:0.1.0\",\n  \"source\"\
-    : \"reviewer.yaml\",\n  \"source_sha256_16\": \"71fa1c1ecad3f867\",\n  \"disclosure\"\
+    : \"reviewer.yaml\",\n  \"source_sha256_16\": \"d2477ea7f7cc02ce\",\n  \"disclosure\"\
     : {\n   \"review_comment\": \"Toto review napsal AI agent (role Reviewer, verze\
     \ 0.1.0) platformy {firma} jménem {vlastník procesu}. O sloučení rozhoduje člověk;\
     \ přiložený Inspect log je důkaz, ne verdikt.\",\n   \"memory_approval\": \"verification.by\
@@ -241,7 +241,7 @@ data:
     ,\n   \"X1-eskalace\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"\
     spiffe://platform.example/agent/sre/{tenant}/{workflow_instance}\",\n  \"image\"\
     : \"registry.platform.internal/roles/sre:0.1.0\",\n  \"source\": \"sre.yaml\"\
-    ,\n  \"source_sha256_16\": \"2e445d31721500f3\",\n  \"disclosure\": {\n   \"ticket_comment\"\
+    ,\n  \"source_sha256_16\": \"8f98cc95ccba2b5e\",\n  \"disclosure\": {\n   \"ticket_comment\"\
     : \"Komentář napsal AI agent (role SRE, verze 0.1.0) platformy {firma} jménem\
     \ {vlastník procesu}; nasazení schvaluje člověk.\",\n   \"handover_protocol\"\
     : \"Předávací protokol připravil AI agent (SRE) jménem {vlastník procesu}. Nasazení\
@@ -257,7 +257,7 @@ data:
     version\": \"0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P4-implementace\"\
     \n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/vyvojar/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/vyvojar:0.1.0\",\n  \"source\"\
-    : \"vyvojar.yaml\",\n  \"source_sha256_16\": \"0142841a6b8c85bc\",\n  \"disclosure\"\
+    : \"vyvojar.yaml\",\n  \"source_sha256_16\": \"8fa1887f6cdc84b7\",\n  \"disclosure\"\
     : {\n   \"pr_description\": \"Tento pull request vytvořil AI agent (role Vývojář,\
     \ verze 0.1.0) platformy {firma} jménem {vlastník procesu}. Sloučení schvaluje\
     \ člověk.\",\n   \"issue_comment\": \"Komentář napsal AI agent (Vývojář) jménem\
@@ -307,7 +307,7 @@ data:
     ,\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n\
     \   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
     : 0.7,\n    \"value\": 1.0\n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\"\
-    : {},\n  \"reason\": null,\n  \"source_sha256_16\": \"3c3be37b322c9237\",\n  \"\
+    : {},\n  \"reason\": null,\n  \"source_sha256_16\": \"ac79d946a1e719f6\",\n  \"\
     status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"architekt\": {\n  \"\
     k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n    \"\
     passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L1\"\
@@ -317,7 +317,7 @@ data:
     \  \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
     : 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n    \"reason\": \"online/kalibrace\
     \ – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n  \"model\": \"mock\"\
-    ,\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\": \"82ed7db3de1e79c3\"\
+    ,\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\": \"93b951c5339e48ea\"\
     ,\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"reviewer\": {\n\
     \  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n\
     \    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n \
@@ -328,11 +328,11 @@ data:
     \    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L5\": {\n    \"reason\"\
     : \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n\
     \  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\"\
-    : \"71fa1c1ecad3f867\",\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n\
+    : \"d2477ea7f7cc02ce\",\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n\
     \ },\n \"sre\": {\n  \"k\": null,\n  \"layers\": {},\n  \"model\": \"mock\",\n\
     \  \"on_fail\": {},\n  \"reason\": \"role bez runtime v aplikaci (mock model bez\
     \ chování SRE) – evaly až s deploy MCP serverem (P2)\",\n  \"source_sha256_16\"\
-    : \"2e445d31721500f3\",\n  \"status\": \"unevaluated\",\n  \"version\": \"0.1.0\"\
+    : \"8f98cc95ccba2b5e\",\n  \"status\": \"unevaluated\",\n  \"version\": \"0.1.0\"\
     \n },\n \"vyvojar\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\"\
     : \"pass_rate\",\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\"\
     : 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\",\n    \"passed\"\
@@ -342,7 +342,7 @@ data:
     : true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n  \
     \  \"reason\": \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\
     \n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n\
-    \  \"source_sha256_16\": \"0142841a6b8c85bc\",\n  \"status\": \"passed\",\n  \"\
+    \  \"source_sha256_16\": \"8fa1887f6cdc84b7\",\n  \"status\": \"passed\",\n  \"\
     version\": \"0.1.0\"\n }\n}\n"
   opa-data.json: "{\n \"roles\": {\n  \"account\": {\n   \"autonomy_max\": \"A2\"\
     ,\n   \"deny_tool_inputs\": [\n    \"Bash.dangerouslyDisableSandbox\"\n   ],\n\

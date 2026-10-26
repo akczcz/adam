@@ -93,6 +93,17 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
         runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "spire-sockets", "emptyDir": {"medium": "Memory", "sizeLimit": "4Mi"}}, {"name": "spire-data", "emptyDir": {"medium": "Memory", "sizeLimit": "16Mi"}},
                                                              {"name": "spire-agent-config", "configMap": {"name": os.environ.get("P0_ROLE_SPIRE_AGENT_CONFIG", "spire-agent-pod")}},
                                                              {"name": "spire-token", "projected": {"sources": [{"serviceAccountToken": {"path": "spire-agent", "expirationSeconds": 7200, "audience": "spire-server"}}]}}]
+    # P2-4: egress přes gateway CONNECT – CA gateway z ConfigMapy (terminace git/mirror), cíle sondy role_runner; token git má jen gateway
+    if os.environ.get("P0_ROLE_CA_CONFIGMAP"):
+        env |= {"P0_CA": "/etc/platform/ca/ca.crt", "SSL_CERT_FILE": "/etc/platform/ca/ca.crt", "CURL_CA_BUNDLE": "/etc/platform/ca/ca.crt", "GIT_SSL_CAINFO": "/etc/platform/ca/ca.crt",
+                "REQUESTS_CA_BUNDLE": "/etc/platform/ca/ca.crt", "PIP_CERT": "/etc/platform/ca/ca.crt", "NODE_EXTRA_CA_CERTS": "/etc/platform/ca/ca.crt", "npm_config_cafile": "/etc/platform/ca/ca.crt"}
+        runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "platform-ca", "mountPath": "/etc/platform/ca", "readOnly": True}]
+        runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "platform-ca", "configMap": {"name": os.environ["P0_ROLE_CA_CONFIGMAP"]}}]
+    for k in ("P0_ROLE_GIT_URL", "P0_ROLE_MIRROR_URL", "P0_ROLE_EGRESS_PROXY"):
+        if os.environ.get(k): env[k.replace("P0_ROLE_", "P0_")] = os.environ[k]
+    # /work = pracovní adresář role (definice role: agent_sdk.cwd a srt allowWrite) – emptyDir, role_runner ho použije místo /tmp/p0-o2/<id>/work
+    runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "work", "mountPath": "/work"}]
+    runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "work", "emptyDir": {}}]
     tpl = _template(role); overrides = []
     if tpl:
         # P2-2: pole z definice role (RuntimeClass, non-root, SA token, drop ALL, resources, env, labels, image) jsou ze šablony; aplikace doplní jen běh
@@ -196,7 +207,7 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
            t_run_s=round(finished - started, 1) if finished and started else None, t_total_s=round(time.time() - t0, 1),
            egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:],
            image=info["image"], template=info["template"], overrides=info["overrides"], image_tools=(res or {}).get("image_tools"), image_role=(res or {}).get("image_role"),
-           resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar)
+           resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar, git_probe=(res or {}).get("git_probe"), work_info=(res or {}).get("work_info"))   # P2-4: sonda egressu (git/mirror/cizí SNI), pracovní adresář (srt allowWrite)
     if not os.environ.get("P0_ROLE_KEEP_PODS"):
         for kind in ("pods", "secrets"):
             try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")

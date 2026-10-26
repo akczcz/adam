@@ -24,8 +24,8 @@
   ],
   "deniedDomains": [],
   "parentProxy": {
-   "http": "http://agentgateway.platform.svc:3128",
-   "https": "http://agentgateway.platform.svc:3128"
+   "http": "http://agentgateway.platform-data.svc:3128",
+   "https": "http://agentgateway.platform-data.svc:3128"
   },
   "strictAllowlist": true
  }

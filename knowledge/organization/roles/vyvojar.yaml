@@ -91,7 +91,7 @@ sandbox:
       allowedDomains: [git.platform.internal, mirror.platform.internal]
       deniedDomains: []
       strictAllowlist: true
-      parentProxy: {http: "http://agentgateway.platform.svc:3128", https: "http://agentgateway.platform.svc:3128"}
+      parentProxy: {http: "http://agentgateway.platform-data.svc:3128", https: "http://agentgateway.platform-data.svc:3128"}
     filesystem:
       denyRead: []
       allowRead: []
@@ -113,7 +113,7 @@ sandbox:
     permissions: {deny: ["Bash(git push --force*)", "Bash(git push * main)", "WebFetch"]}
     skipWebFetchPreflight: true
   env:
-    ANTHROPIC_BASE_URL: http://agentgateway.platform.svc:4100
+    ANTHROPIC_BASE_URL: http://agentgateway.platform-data.svc:4100
     ANTHROPIC_CUSTOM_HEADERS: "x-agent-svid: ${SVID_JWT}"        # SVID z SPIRE Workload API sidecaru do souboru → env při startu
     CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
@@ -150,7 +150,8 @@ disclosure:                                    # čl. 50(1) – T7; vkládá MCP
     commit_trailer: "AI-Agent: vyvojar@0.1.0 on-behalf-of {vlastník}"   # značení kódu (T8) – otevřeno
 
 # Co ověřit dál
-# - [ ] receive_pack: branches – ověřit, že gateway odliší chráněné větve (pkt-line v těle) nebo že stačí branch protection + 403 na pathPrefix
+# - [x] receive_pack: branches – gateway chráněné větve neodliší (ref je v těle pkt-line, CEL vidí jen path/metodu): rozhoduje git server (branch protection,
+#       mock: pre-receive hook) + PEP role; 403 na gateway jen pro cizí prefix/metodu (P2-4 2026-10-26). Per-role receive_pack na gateway až s identitou na CONNECT (P3)
 # - [ ] SVID do ANTHROPIC_CUSTOM_HEADERS: gateway LLM route musí hlavičku přečíst (extAuthz) a neposlat k modelu
 # - [ ] srt v Kata guestu non-root bez enableWeakerNestedSandbox (aks/ skript) → pak přepnout na false
 # - [ ] Harness O-1: úkol end-to-end, BudgetExceeded → HITL, pozastavená role odmítnuta

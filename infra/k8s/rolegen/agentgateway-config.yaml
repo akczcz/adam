@@ -8,7 +8,23 @@ data:
     \ 0.0.0.0:19002\n  database:\n    url: $AGW_DATABASE_URL\n  logging:\n    format:\
     \ json\n    fields:\n      add:\n        zakazka: '\"x-zakazka\" in request.headers\
     \ ? request.headers[\"x-zakazka\"] :\n          \"\"'\n        role: 'apiKey !=\
-    \ null ? string(apiKey.role) : \"\"'\nllm:\n  port: 4100\n  models:\n  - name:\
-    \ '*'\n    provider: anthropic\n    params:\n      baseUrl: $LLM_UPSTREAM_URL\n\
-    \      apiKey: $ANTHROPIC_API_KEY\n  policies:\n    apiKey:\n      mode: optional\n\
-    \      location:\n        header:\n          name: x-api-key\n      keys: []\n"
+    \ null ? string(apiKey.role) : \"\"'\n        sni: destination.hostname\nllm:\n\
+    \  port: 4100\n  models:\n  - name: '*'\n    provider: anthropic\n    params:\n\
+    \      baseUrl: $LLM_UPSTREAM_URL\n      apiKey: $ANTHROPIC_API_KEY\n  policies:\n\
+    \    apiKey:\n      mode: optional\n      location:\n        header:\n       \
+    \   name: x-api-key\n      keys: []\nbinds:\n- port: 3128\n  tunnelProtocol: connect\n\
+    \  listeners: []\ngateways:\n  secure:\n    port: 443\n    listeners:\n    - name:\
+    \ git\n      hostname: git.platform.internal\n      protocol: HTTPS\n      tls:\n\
+    \        cert: /etc/platform-tls/tls.crt\n        key: /etc/platform-tls/tls.key\n\
+    \    - name: mirror\n      hostname: mirror.platform.internal\n      protocol:\
+    \ HTTPS\n      tls:\n        cert: /etc/platform-tls/tls.crt\n        key: /etc/platform-tls/tls.key\n\
+    \    - name: public-egress\n      hostname: '*'\n      protocol: TLS\nroutes:\n\
+    - name: git-acme\n  gateways: secure/git\n  matches:\n  - path:\n      pathPrefix:\
+    \ /acme/\n  policies:\n    authorization:\n      rules:\n      - allow: request.method\
+    \ == \"GET\" || request.method == \"POST\"\n    backendAuth:\n      key:\n   \
+    \     value:\n          file: /etc/platform-egress/git/token\n        location:\n\
+    \          header:\n            name: Authorization\n            prefix: 'Bearer\
+    \ '\n  backends:\n  - host: $GIT_BACKEND_HOST\n- name: mirror-acme\n  gateways:\
+    \ secure/mirror\n  matches:\n  - path:\n      pathPrefix: /\n  policies:\n   \
+    \ authorization:\n      rules:\n      - allow: request.method == \"GET\"\n  backends:\n\
+    \  - host: $MIRROR_BACKEND_HOST\n"

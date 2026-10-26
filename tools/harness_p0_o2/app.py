@@ -199,7 +199,7 @@ def agent_run_local(role, z, prompt, tool_names):
     """Spustí roli jako Claude Agent SDK query s ClaudeAgentOptions vygenerovanými rolegenem (build/agent_sdk/<role>.json)."""
     import asyncio, subprocess
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, AssistantMessage, ToolUseBlock, create_sdk_mcp_server, query, tool
-    root = f"/tmp/p0-o2/{z['id']}"; work = f"{root}/work"; arts = f"{root}/artifacts"
+    root = f"/tmp/p0-o2/{z['id']}"; work = os.environ.get("P0_WORK_DIR") or f"{root}/work"; arts = f"{root}/artifacts"   # pod role: /work (emptyDir) = srt allowWrite z definice role
     os.makedirs(work, exist_ok=True); os.makedirs(arts, exist_ok=True)
     MEM = os.environ["P0_MEMORY_URL"]; MH = {"Authorization": f"Bearer {role_token(role)}"}
     SRT, SRTCFG = os.environ.get("P0_SRT", "none"), os.environ.get("P0_SRT_SETTINGS", "")   # "none" = bez srt (P1-5: hranicí je pod; srt + Kata s pody rolí v P1-6)
@@ -439,7 +439,9 @@ def publish_pr(ctx, inp):
     files = []
     for f in pr.get("files", []):
         fp = os.path.join(pr["work"], f["path"])
-        if os.path.exists(fp): files.append({"path": f"zakazky/{z['id']}/{f['path']}", "content": open(fp).read(), "sha256": f["sha256"]})
+        if os.path.exists(fp):
+            try: files.append({"path": f"zakazky/{z['id']}/{f['path']}", "content": open(fp, "rb").read().decode("utf-8"), "sha256": f["sha256"]})
+            except UnicodeDecodeError: ledger("PUBLISH_SKIP_BINARY", zakazka=z["id"], path=f["path"])   # PR přes git data API nese jen textové blob-y (binárka by shodila aktivitu workflow)
     payload = {"base": "main", "head": pr["branch"], "title": f"[{z['id']}] {pr['text'][:60] or 'PR zakázky'}", "files": files,
                "commit_message": f"{z['id']}: implementace úkolu 1\n\nAI-Agent: vyvojar@0.1.0 on-behalf-of Adam Kolařík\nArtifact-Hash: {pr['hash']}",
                "body": f"> {_disclosure('vyvojar', 'pr_description')}\n\n`zakazka_id`: {z['id']} · artefakt `{pr['ref']}` · hash `{pr['hash']}`\n\nSoubory: " + ", ".join(f["path"] for f in files) + "\n\nSloučení = HITL H4 (člověk) → merge-executor."}

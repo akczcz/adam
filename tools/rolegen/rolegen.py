@@ -5,7 +5,7 @@ rolegen – generátor konfigurací platformy z definic rolí (knowledge/organiz
 Z jednoho zdroje pravdy (YAML role v gitu) vzniká:
   build/opa/data.json                  data.roles.<role> pro jednu Rego politiku (policies/roles.rego) – gateway extAuthz, hook Agent SDK, PEP paměti
   build/agentgateway/apikeys-<tenant>-<zakazka>.yaml   policies.apiKey.keys[] s rozpočty (schema agentgateway 1.6: budgets[].limit/window/onBudgetExceeded)
-  build/agentgateway/egress-allowlist.yaml             tcpRoutes.hostnames = sjednocení sandbox.egress_allow
+  build/agentgateway/egress.yaml                       CONNECT bind 3128, HTTPS listenery *.platform.internal (terminace, backendAuth, routy z authz.http), passthrough allow-list (P2-4)
   build/srt/<role>.json                ~/.srt-settings.json (schéma srt 0.0.81)
   build/claude/<role>-managed-settings.json            Claude Code managed settings (sandbox.*, permissions.deny)
   build/images/<role>/{Dockerfile,devcontainer.json,etc/platform/*}   obraz role (P2-2): vrstva nad obrazem platformy, options/srt/managed settings zapečené, bez cloud CLI
@@ -84,9 +84,32 @@ def gateway_keys(roles, tenant, zakazka):
     return {"policies": {"apiKey": {"mode": "strict", "location": {"header": {"name": "x-api-key"}}, "keys": keys}}}
 
 
-def egress(roles):
+def egress(roles, tenant="acme"):
+    """Egress podů rolí přes agentgateway (P2-4): CONNECT bind 3128 → virtuální gateway `secure` (443). Interní hosty (*.platform.internal)
+    terminuje HTTPS listener s certem gateway (Secret agentgateway-tls) – jen tam jde backendAuth (token vkládá gateway, pod ho nemá) a
+    autorizace path/metoda z authz.http (CEL). Ostatní SNI z egress_allow jen passthrough allow-list (tcpRoute, dynamic backend).
+    Backendy přes env gateway: $GIT_BACKEND_HOST, $MIRROR_BACKEND_HOST (Deployment: mock servery v clusteru; ostrý provoz: GitHub, Nexus)."""
     hosts = sorted({h for r in roles for h in r["sandbox"].get("egress_allow", [])})
-    return {"tcpRoutes": [{"name": "roles-egress-allowlist", "gateways": "secure/public-egress", "hostnames": hosts, "backends": [{"dynamic": {}}]}]}
+    internal = [h for h in hosts if h.endswith(".platform.internal")]; public = [h for h in hosts if h not in internal]
+    listeners = [{"name": h.split(".")[0], "hostname": h, "protocol": "HTTPS", "tls": {"cert": "/etc/platform-tls/tls.crt", "key": "/etc/platform-tls/tls.key"}} for h in internal]
+    listeners.append({"name": "public-egress", "hostname": "*", "protocol": "TLS"})
+    routes, by_route = [], {}
+    for r in roles:   # routa gateway = sjednocení metod všech rolí (gateway dnes roli na CONNECT nerozezná – mTLS/SPIFFE na CONNECT bindu až P3);
+        for h in r["authz"].get("http", []):   # per-role receive_pack (none/branches) vynucuje PEP role (OPA/approval) a git server (branch protection)
+            if h["route"] in {l["name"] for l in listeners}: by_route.setdefault((h["route"], h["path_prefix"]), set()).update(h.get("methods", ["GET"]))
+    for (route, prefix), methods in sorted(by_route.items()):
+            allow = " || ".join(f'request.method == "{m}"' for m in sorted(methods))
+            routes.append({"name": f"{route}-{tenant}", "gateways": f"secure/{route}", "matches": [{"path": {"pathPrefix": sub(prefix, {"tenant": tenant})}}],
+                           "policies": {"authorization": {"rules": [{"allow": allow}]},   # push na chráněné větve (main/release) odmítá git server (branch protection) – ref je až v těle pkt-line, gateway ho nevidí
+                                        "backendAuth": {"key": {"value": {"file": f"/etc/platform-egress/{route}/token"}, "location": {"header": {"name": "Authorization", "prefix": "Bearer "}}}}},
+                           "backends": [{"host": f"${route.upper()}_BACKEND_HOST"}]})
+    for l in listeners:   # terminovaný host bez authz.http (mirror): jen GET, bez tokenu
+        if l["name"] != "public-egress" and not any(rt["gateways"] == f"secure/{l['name']}" for rt in routes):
+            routes.append({"name": f"{l['name']}-{tenant}", "gateways": f"secure/{l['name']}", "matches": [{"path": {"pathPrefix": "/"}}],
+                           "policies": {"authorization": {"rules": [{"allow": 'request.method == "GET"'}]}}, "backends": [{"host": f"${l['name'].upper()}_BACKEND_HOST"}]})
+    out = {"binds": [{"port": 3128, "tunnelProtocol": "connect", "listeners": []}], "gateways": {"secure": {"port": 443, "listeners": listeners}}, "routes": routes}
+    if public: out["tcpRoutes"] = [{"name": "roles-egress-allowlist", "gateways": "secure/public-egress", "hostnames": public, "backends": [{"dynamic": {}}]}]
+    return out
 
 
 def pod(r, tenant):
@@ -155,7 +178,7 @@ def main():
     for d in ("opa", "agentgateway", "srt", "claude", "k8s", "inspect", "registry", "agent_sdk", "images"): (out / d).mkdir(parents=True, exist_ok=True)
     (out / "opa/data.json").write_text(json.dumps(opa_data(roles), ensure_ascii=False, indent=1, sort_keys=True))
     (out / f"agentgateway/apikeys-{a.tenant}-{a.zakazka}.yaml").write_text(yaml.safe_dump(gateway_keys(roles, a.tenant, a.zakazka), sort_keys=False, allow_unicode=True))
-    (out / "agentgateway/egress-allowlist.yaml").write_text(yaml.safe_dump(egress(roles), sort_keys=False))
+    (out / "agentgateway/egress.yaml").write_text(yaml.safe_dump(egress(roles, a.tenant), sort_keys=False))
     (out / "spire").mkdir(exist_ok=True); (out / "spire/entries.json").write_text(json.dumps(spire_entries(roles, a.tenant), ensure_ascii=False, indent=1))
     registry = []
     for r in roles:
