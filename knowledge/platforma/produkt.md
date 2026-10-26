@@ -73,9 +73,9 @@ Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-1
 | P2-1 rolegen v CI naostro (`roles/*.yaml` → Git → Flux; harness nenosí konfiguraci) | ✅ AKS 2026-10-25 7/7 ([p2-role.md](p2-role.md)): `infra/k8s/rolegen` generovaný z rolí (CI hlídá shodu), Flux aplikuje, ConfigMapy v clusteru == Git; klíče gateway role × zakázka vydává aplikace při založení zakázky (ConfigMap + Secret, sidecar merge, hot reload); zakázka end-to-end beze změny |
 | P2-2 obrazy rolí (build v CI) a pod spec přímo z rolegen | ✅ AKS 2026-10-25 10/10 ([p2-role.md](p2-role.md)): `roles/<role>:<verze>` v ACR z rolegen (Dockerfile + devcontainer.json, bez cloud CLI, options zapečené), pod role ze šablony rolegen; devcontainer CLI build odložen (ACR Tasks stačí) |
 | P2-3 SVID v Kata podu + OpenBao auto-unseal/auth kubernetes | ✅ 2026-10-25 (AKS 17/17, `measure` run 40234528827) |
-| P2-4 egress naostro: git a mirror přes agentgateway CONNECT | ✅ 2026-10-26 (AKS 21/21, `measure` run 40307712561; otevřeno: zápis do `/work` pod srt v Kata podu) |
+| P2-4 egress naostro: git a mirror přes agentgateway CONNECT | ✅ 2026-10-26 (AKS 21/21, `measure` run 40307712561; `/work` pod srt uzavřeno v P2-6 – sonda přes srt) |
 | P2-5 evaly L0–L3 per role s gate (adversariální L3); registr agentů plněný z workflow | ✅ AKS 2026-10-25 13/13 ([p2-role.md](p2-role.md), [`tools/role_evals`](../../tools/role_evals/README.md)): evaly v CI nad adversariálním mockem, gate z definice role; `eval-status.json` v Gitu = co smí Flux nasadit a aplikace spustit (SRE unevaluated → nespustí se); registr `org.role_definitions/eval_gates/agents` naplněn. Registr z workflow (ne harnessu) a živý model v L2 = P3 |
-| P2-6 FinOps: 30d strop jako součet klíčů zakázky, klíče z OpenBao | ⬜ |
+| P2-6 FinOps: 30d strop jako součet klíčů zakázky, klíče z OpenBao | ✅ 2026-10-26 (AKS 24/24, `measure` run 40340791174) – **fáze P2 uzavřena**; per-request ledger do ClickHouse → P3 |
 
 ## P3 – první externí zákazník
 
