@@ -123,6 +123,13 @@ harness (dev CA; P3 cert-manager + ESO) – Deployment gateway na ně čeká (`C
 jen `agent/*`, `zakazka/*`); mock mirror (`tools/harness_p0_o2/mock_mirror.py`) = pypi simple + npm registry s balíčkem `platform-hello`.
 NetworkPolicy `agentgateway-egress` (overlay aks) brání gateway v přístupu na IMDS, wireserver a privátní sítě. Měření: `measure` s `e2e=p2-4`.
 
+## P2-6: FinOps – strop a cena zakázky ze součtu klíčů, klíče z OpenBao (2026-10-26)
+
+Secret `zakazka-finops` (overlay aks: `P0_FINOPS_DSN` = DB `agentgateway` gateway, `P0_REGISTRY_DSN` = DB `org`, heslo z Flux substitute) dává
+aplikaci čtení `budget_usage` (součet 30d útraty klíčů zakázky = cena a strop zakázky, `budget_gate` před každou rolí) a zápis `org.zakazky`.
+`P0_BAO_KV=secret` (zakazka-env): hodnoty klíčů role × zakázka drží OpenBao KV v2 (`secret/zakazky/<id>/gateway-keys`), mount a policy zakládá
+harness (`bao_setup`); Secret `zakazka-keys-<id>` se už nezakládá. `/work` podu role = emptyDir `medium: Memory`. Měření: `measure` s `e2e=p2-6`.
+
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.

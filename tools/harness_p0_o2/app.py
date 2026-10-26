@@ -26,6 +26,8 @@ import time
 from datetime import timedelta
 
 import httpx
+
+import finops   # P2-6: cena a strop zakázky z budget_usage gateway, registr org.zakazky
 import dapr.ext.workflow as wf
 from fastapi import FastAPI, HTTPException, Request
 
@@ -35,6 +37,7 @@ BAO, BAO_TOKEN, BAO_KEY = os.environ.get("P0_BAO_ADDR"), os.environ.get("P0_BAO_
 LEDGER = os.environ.get("O1_LEDGER", "logs/ledger.jsonl")
 HITL_TIMEOUT_S = float(os.environ.get("O1_HITL_TIMEOUT_S", "3600"))
 BUDGET_USD = float(os.environ.get("O1_BUDGET_USD", "400"))
+ZAKAZKA_BUDGET_USD = float(os.environ.get("P0_ZAKAZKA_BUDGET_USD", "20"))   # P2-6: výchozí strop zakázky (USD, okno 30d), poptávka může dát vlastní
 BUDGET_TIMEOUT_S = float(os.environ.get("P0_BUDGET_TIMEOUT_S", str(4 * 3600)))   # roles/*.yaml on_exceeded.timeout: 4h, on_timeout: pause
 COST = {"account": 0.4, "architekt": 1.2, "vyvojar": 3.5, "reviewer": 0.9, "sre": 0.6}
 
@@ -472,13 +475,53 @@ def executor(ctx, inp):
     return d
 
 
+def zakazka_spend(zid):
+    """P2-6: útrata zakázky = součet 30d útraty jejích klíčů (budget_usage gateway na Flexible Serveru); None bez P0_FINOPS_DSN / klíčů."""
+    try:
+        import gateway_keys
+        hashes = gateway_keys.key_hashes(zid)
+    except Exception as e:
+        ledger("FINOPS_ERROR", zakazka=zid, where="key_hashes", error=f"{type(e).__name__}: {str(e)[:160]}"); hashes = {}
+    try: return finops.spend(zid, hashes), hashes
+    except Exception as e:
+        ledger("FINOPS_ERROR", zakazka=zid, where="budget_usage", error=f"{type(e).__name__}: {str(e)[:160]}"); return None, hashes
+
+
 @rt.activity(name="budget_check")
 def budget_check(ctx, z):
-    gw = gateway_cost(z["id"])
+    fin, hashes = zakazka_spend(z["id"])
+    gw = fin or gateway_cost(z["id"])
     sdk = sum(e.get("cost_usd", 0) for e in _ledger() if e.get("kind") == "HANDOFF" and e.get("zakazka") == z["id"])
     spent = gw["total_usd"] if gw else sdk
-    ledger("BUDGET", zakazka=z["id"], spent_usd=round(spent, 6), limit_usd=BUDGET_USD, frozen=z.get("stopped", False), source="agentgateway" if gw else "sdk_usage", by_role=(gw or {}).get("by_role"), gateway_requests=(gw or {}).get("requests"), sdk_usd=round(sdk, 6))
+    limit = float(z.get("budget_usd") or BUDGET_USD)
+    ledger("BUDGET", zakazka=z["id"], spent_usd=round(spent, 6), limit_usd=limit, frozen=z.get("stopped", False), source="budget_usage" if fin else ("agentgateway" if gw else "sdk_usage"), by_role=(gw or {}).get("by_role"), gateway_requests=(gw or {}).get("requests"), sdk_usd=round(sdk, 6), window=(fin or {}).get("window"))
     return spent
+
+
+@rt.activity(name="budget_gate")
+def budget_gate(ctx, inp):
+    """P2-6: strop zakázky před spuštěním role – součet útraty klíčů zakázky (budget_usage) >= budget_usd → BudgetExceeded (zdroj zakazka-sum).
+    Gateway hlídá jen klíč; strop zakázky sdílený napříč rolemi musí vynutit orchestrátor. Čítače gateway flushují periodicky → kontrola je
+    eventually consistent (přijato: řádově sekundy a jeden request)."""
+    z, role = inp["z"], inp["role"]
+    fin, hashes = zakazka_spend(z["id"])
+    limit = float(z.get("budget_usd") or BUDGET_USD); spent = (fin or {}).get("total_usd", 0.0)
+    exceeded = bool(fin) and spent >= limit
+    ledger("BUDGET_GATE", zakazka=z["id"], role=role, spent_usd=spent, limit_usd=limit, exceeded=exceeded, source="budget_usage" if fin else "none", by_role=(fin or {}).get("by_role"))
+    if exceeded: ledger("BUDGET_EXCEEDED", zakazka=z["id"], role=role, source="zakazka-sum", spent_usd=spent, limit_usd=limit, by_role=(fin or {}).get("by_role"))
+    return {"exceeded": exceeded, "spent_usd": spent, "limit_usd": limit}
+
+
+@rt.activity(name="registry_zakazka")
+def registry_zakazka(ctx, inp):
+    z, status = inp["z"], inp["status"]
+    fin, hashes = zakazka_spend(z["id"])
+    try:
+        import gateway_keys; src = gateway_keys.keys_source(z["id"])
+    except Exception: src = None
+    ok = finops.registry_upsert(z["id"], tenant=os.environ.get("P0_TENANT", "acme"), budget_usd=float(z.get("budget_usd") or BUDGET_USD), spent=fin, status=status, keys_source=src, key_hashes=hashes)
+    ledger("REGISTRY_ZAKAZKA", zakazka=z["id"], status=status, written=ok, spent_usd=(fin or {}).get("total_usd"), keys_source=src)
+    return ok
 
 
 @rt.activity(name="notify")
@@ -522,9 +565,10 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
     """Role jako aktivita + `on_exceeded` z roles/<role>.yaml: rozpočet klíče role × zakázka vyčerpán (429 z gateway) →
     BUDGET_EXCEEDED, eskalace vlastníkovi procesu jako HITL bod `rozpocet` (token vázaný na roli), timeout → pauza (fail-closed).
     Po schválení (vlastník navýšil limit / vydal nový klíč) jeden opakovaný pokus; druhé vyčerpání → pauza."""
-    art = yield ctx.call_activity(activity, input=inp)
+    gate = yield ctx.call_activity(budget_gate, input={"z": z, "role": role})   # P2-6: strop zakázky (součet klíčů) před rolí
+    art = {"budget_exceeded": True, "gate": gate} if gate.get("exceeded") else (yield ctx.call_activity(activity, input=inp))
     if not art.get("budget_exceeded"): return art
-    yield ctx.call_activity(notify, input={"event": "BUDGET_EXCEEDED", "role": role, "zakazka": z["id"], "escalate_to": "process_owner", "timeout_s": z.get("budget_timeout_s", BUDGET_TIMEOUT_S)})
+    yield ctx.call_activity(notify, input={"event": "BUDGET_EXCEEDED", "role": role, "zakazka": z["id"], "escalate_to": "process_owner", "timeout_s": z.get("budget_timeout_s", BUDGET_TIMEOUT_S), "source": "zakazka-sum" if gate.get("exceeded") else "agentgateway"})
     tok = yield from hitl(ctx, z, "rozpocet", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
     if not tok: return None
     art = yield ctx.call_activity(activity, input=inp)
@@ -535,7 +579,7 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
 def zakazka(ctx: wf.DaprWorkflowContext, z):
     state = {"id": z["id"], "stav": "P1"}
     zad = yield from run_role(ctx, z, "account", role_account, z)               # P1 Přijetí zadání
-    if not zad: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
+    if not zad: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
     gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
     if os.environ.get("P0_GITHUB_MODE") == "1" and gh_hitl:
         yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # issue = nosič H1 (dogfooding, vlastní repo; cizí zákazník → AG-UI)
@@ -544,16 +588,16 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     if os.environ.get("P0_GITHUB_MODE") == "1" and not gh_hitl:
         yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # bez GitHub HITL: issue až po schválení (N3)
     adr = yield from run_role(ctx, z, "architekt", role_architekt, z)          # P2 Návrh
-    if not adr: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "architekt"}
+    if not adr: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "architekt"}
     t2 = yield from hitl(ctx, z, "H2", adr["hash"])
     if not t2: return {**state, "stav": "Pozastaveno", "bod": "H2"}
     pr = yield from run_role(ctx, z, "vyvojar", role_vyvojar, z)               # P3 Implementace (sandbox)
-    if not pr: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "vyvojar"}
+    if not pr: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "vyvojar"}
     pr_pub = {}
     if os.environ.get("P0_GITHUB_MODE") == "1":
         pr_pub = yield ctx.call_activity(publish_pr, input={"z": z, "pr": pr})  # větev + PR = artefakt pro review (reverzibilní)
     rev = yield from run_role(ctx, z, "reviewer", role_reviewer, {"z": z, "pr": pr})   # P4 Review
-    if not rev: return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "reviewer"}
+    if not rev: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "reviewer"}
     yield ctx.call_activity(budget_check, input=z)
     t4 = yield from hitl(ctx, z, "H4", pr["hash"])                            # merge = N1 – člověk vlastník
     if not t4: return {**state, "stav": "Pozastaveno", "bod": "H4"}
@@ -563,6 +607,7 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     if not t5: return {**state, "stav": "Pozastaveno", "bod": "H5"}
     d = yield ctx.call_activity(executor, input={"z": z, "action": "deploy", "artifact_hash": pr["hash"], "token": t5})
     spent = yield ctx.call_activity(budget_check, input=z)
+    yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Dokonceno" if d["allow"] else "Zamitnuto"})   # P2-6: cena zakázky v registru org.zakazky
     return {**state, "stav": "Dokonceno" if d["allow"] else "Zamitnuto", "artefakty": [zad["ref"], adr["ref"], pr["ref"], rev["ref"]], "cost_usd": spent}
 
 
@@ -580,9 +625,11 @@ def client():
 @app.post("/zakazky")
 async def create(req: Request):
     b = await req.json()
-    z = {"id": b["id"], "poptavka": b["poptavka"], "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S)}
+    z = {"id": b["id"], "poptavka": b["poptavka"], "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S),
+         "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD))}   # P2-6: strop zakázky (30d) = součet útraty jejích klíčů role × zakázka v budget_usage gateway
     client().schedule_new_workflow(zakazka, input=z, instance_id=z["id"])
-    ledger("ZAKAZKA_START", zakazka=z["id"])
+    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"])
+    finops.registry_upsert(z["id"], tenant=os.environ.get("P0_TENANT", "acme"), budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
     return {"id": z["id"]}
 
 

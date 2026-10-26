@@ -70,6 +70,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -601,7 +602,7 @@ class PortForward:
         if self.p: self.p.terminate()
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů."""
     import psycopg, jwt, hashlib as _h, base64 as _b
@@ -928,8 +929,9 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             gw_rp = [l_[-260:] for l_ in kubectl(a, "-n", NS, "logs", "-l", "app=agentgateway", "-c", "agentgateway", "--since=30m", "--tail=4000", "--prefix").stdout.splitlines() if "git-receive-pack" in l_]
             branch_ref = f"refs/heads/agent/{zid}/vyvojar"   # větev sondy per role
             ok_git = gp.get("clone") == 0 and gp.get("commit") == 0 and gp.get("push_branch") == 0 and gp.get("push_main") not in (None, 0) and ("chráněný" in str(gp.get("push_main_err", "")) or "pre-receive" in str(gp.get("push_main_err", ""))) \
-                     and gp.get("token_env") == 0 and branch_ref in refs and bool(rp) and all(q.get("auth_scheme") == "Bearer" and q.get("auth_sha256_12") == egress_secrets.get("token_sha12") for q in greq)
-            rep.add("P24b", "Vývojář z Kata podu: clone, commit a push větve agent/<wf>/vyvojar přes gateway CONNECT (srt parentProxy → terminace TLS git.platform.internal, gateway vloží Bearer token – pod žádný token nemá), push do main odmítne git server (branch protection v pre-receive hooku; gateway ref v těle pkt-line nevidí); backend viděl každý git request s tokenem gateway", "PASS" if ok_git else "FAIL", {"probe": {k: v for k, v in gp.items() if not k.startswith(("pip", "npm", "evil", "http80", "other"))}, "refs": refs, "receive_pack_requests": [(round(q["ts"] - t1, 1), q.get("path", "")[-40:], q.get("forwarded")) for q in rp], "gateway_receive_pack_log": gw_rp[-6:], "git_requests_auth": sorted({(q.get("auth_scheme"), q.get("auth_sha256_12") == egress_secrets.get("token_sha12")) for q in greq}, key=str)})
+                     and gp.get("token_env") == 0 and branch_ref in refs and bool(rp) and all(q.get("auth_scheme") == "Bearer" and q.get("auth_sha256_12") == egress_secrets.get("token_sha12") for q in greq) \
+                     and (gp.get("via") == "srt" or not finops)   # P2-6: sonda musí jít přes srt (parentProxy), ne přímo – P2-4 to nechalo otevřené (zápis do /work)
+            rep.add("P24b", "Vývojář z Kata podu: clone, commit a push větve agent/<wf>/vyvojar přes gateway CONNECT (srt parentProxy → terminace TLS git.platform.internal, gateway vloží Bearer token – pod žádný token nemá), push do main odmítne git server (branch protection v pre-receive hooku; gateway ref v těle pkt-line nevidí); backend viděl každý git request s tokenem gateway", "PASS" if ok_git else "FAIL", {"probe": {k: v for k, v in gp.items() if not k.startswith(("pip", "npm", "evil", "http80", "other"))}, "refs": refs, "receive_pack_requests": [(round(q["ts"] - t1, 1), q.get("path", "")[-40:], q.get("forwarded")) for q in rp], "gateway_receive_pack_log": gw_rp[-6:], "work_info": (pods_led.get("vyvojar") or {}).get("work_info"), "git_requests_auth": sorted({(q.get("auth_scheme"), q.get("auth_sha256_12") == egress_secrets.get("token_sha12")) for q in greq}, key=str)})
             mreq = mdbg.get("requests") or []
             ok_mirror = gp.get("pip") == 0 and ".whl" in str(gp.get("pip_files", "")) and gp.get("npm") == 0 and ".tgz" in str(gp.get("npm_files", "")) and any("/pypi/" in q.get("path", "") for q in mreq) and any("/npm/" in q.get("path", "") for q in mreq)
             rep.add("P24c", "Mirror balíčků z Kata podu: pip download (index mirror.platform.internal/pypi/simple) a npm pack (registry /npm/) přes gateway CONNECT – terminace TLS, routa jen GET; mirror viděl požadavky obou klientů", "PASS" if ok_mirror else "FAIL", {"pip": gp.get("pip"), "pip_files": gp.get("pip_files"), "pip_err": gp.get("pip_err"), "npm": gp.get("npm"), "npm_files": gp.get("npm_files"), "npm_err": gp.get("npm_err"), "mirror_paths": sorted({q.get("path") for q in mreq})[:10], "via": gp.get("via")})
@@ -938,6 +940,52 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             eg_v = ((pods_led.get("vyvojar") or {}).get("egress_probe") or {})
             ok_edge = gp.get("evil_sni") not in (None, 0) and str(gp.get("http80_code")) in ("404", "405", "000") and str(gp.get("other_repo_http")) in ("404", "403") and eg_v.get("internet_1.1.1.1:443", {}).get("result") == "timeout" and sni_lines["git.platform.internal"] > 0
             rep.add("P24d", "Hranice egressu podu role: cizí SNI (evil.example.com) přes proxy neprojde (srt allow-list / gateway route not found → TLS EOF, ne 403), HTTP :80 ven neexistuje (CONNECT jen :443), cizí repo mimo /acme/ → 404 z gateway, přímý internet timeout (NetworkPolicy); gateway loguje SNI egressu", "PASS" if ok_edge else "FAIL", {"evil_sni": gp.get("evil_sni"), "evil_err": gp.get("evil_err"), "http80_code": gp.get("http80_code"), "other_repo_http": gp.get("other_repo_http"), "internet": eg_v.get("internet_1.1.1.1:443"), "gateway_log_sni": sni_lines, "violations": gp.get("violations"), "srt_attempt": gp.get("srt_attempt")})
+
+        if finops:
+            # P2-6 – FinOps naostro: klíče role × zakázka z OpenBao (KV), cena zakázky = součet klíčů z budget_usage, strop zakázky vynucuje orchestrátor, registr org.zakazky
+            safe_zid = re.sub(r"[^a-z0-9-]", "-", zid.lower()).strip("-")[:40]
+            pf_bao3 = PortForward(a, "openbao", 18203, 8200); Hb3 = {"X-Vault-Token": init["root_token"]}
+            try: kv = http("GET", f"http://127.0.0.1:18203/v1/secret/data/zakazky/{safe_zid}/gateway-keys", headers=Hb3, timeout=10)
+            finally: pf_bao3.stop()
+            kv_keys = ((kv.json().get("data") or {}).get("data") or {}) if kv.status_code == 200 else {}
+            kv_hashes = {r_: _h.sha256(v.encode()).hexdigest() for r_, v in kv_keys.items()}
+            cm_hashes = {(k.get("metadata") or {}).get("role"): k["keyHash"].split(":", 1)[1] for k in mine}
+            sec_gone = kubectl(a, "-n", NS, "get", "secret", f"zakazka-keys-{safe_zid}").returncode != 0
+            iss = next((e for e in L if e["kind"] == "GATEWAY_KEYS_ISSUED" and e["zakazka"] == zid), {})
+            ok_kv = set(ROLE_CLIENTS) <= set(kv_keys) and all(kv_hashes.get(r_) == cm_hashes.get(r_) for r_ in ROLE_CLIENTS) and sec_gone and iss.get("keys_source") == "openbao" and iss.get("entropy") == ["openbao"]
+            rep.add("P26a", "Klíče gateway role × zakázka vydává a drží OpenBao: entropie sys/tools/random, hodnoty v KV v2 secret/zakazky/<id>/gateway-keys (aplikace přes auth kubernetes, policy jen zakazky/*), v clusteru žádný Secret zakazka-keys-<id>; gateway a Git znají jen sha256 (ConfigMap agentgateway-keys == KV)", "PASS" if ok_kv else "FAIL", {"kv_http": kv.status_code, "kv_roles": sorted(kv_keys), "hash_match": {r_: kv_hashes.get(r_) == cm_hashes.get(r_) for r_ in ROLE_CLIENTS}, "secret_absent": sec_gone, "issued": {k: iss.get(k) for k in ("keys_source", "entropy", "kv_path", "secret")}})
+            # P26b – cena zakázky: BUDGET z budget_usage (součet 30d útraty 4 klíčů) == nezávislý součet harnessu z DB; registr org.zakazky
+            bud = next((e for e in reversed(L) if e["kind"] == "BUDGET" and e["zakazka"] == zid), {})
+            with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c:
+                rows30 = c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()
+            db_sum = {r_: next((u / 1e9 for bid, u in rows30 if cm_hashes.get(r_, "∅") in bid), 0.0) for r_ in ROLE_CLIENTS}
+            with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
+                zrow = c.execute("SELECT budget_usd, spent_usd, status, keys_source, spend_source, key_hashes FROM org.zakazky WHERE zakazka_id = %s", (zid,)).fetchone()
+            ok_cost = bud.get("source") == "budget_usage" and bud.get("window") == "30d" and abs(float(bud.get("spent_usd", 0)) - sum(db_sum.values())) < 0.002 and set(bud.get("by_role") or {}) == set(ROLE_CLIENTS) and bud.get("spent_usd", 0) > 0 \
+                      and zrow is not None and abs(float(zrow[1]) - float(bud.get("spent_usd", 0))) < 0.002 and zrow[2] == "Dokonceno" and zrow[3] == "openbao" and zrow[4] == "budget_usage" and len(zrow[5] or {}) >= 4
+            rep.add("P26b", "Cena zakázky = součet 30d útraty jejích 4 klíčů v budget_usage gateway (Flexible Server), ne usage SDK; aplikace ji zapsala do ledgeru (BUDGET source=budget_usage) a do registru org.zakazky (spent_usd, by_role, status Dokonceno, keys_source openbao); nezávislý součet harnessu z DB souhlasí", "PASS" if ok_cost else "FAIL", {"budget_ledger": {k: bud.get(k) for k in ("spent_usd", "limit_usd", "source", "window", "by_role")}, "db_sum_by_role": {k: round(v, 6) for k, v in db_sum.items()}, "db_total": round(sum(db_sum.values()), 6), "registry_row": [str(x) for x in zrow] if zrow else None})
+            # P26c – strop zakázky: zakázka s budget_usd 0.01 → po první roli (~0,015 USD) gate před další rolí → BudgetExceeded (zakazka-sum) → HITL rozpocet → timeout → Pozastaveno
+            zid2 = f"P26-{run_tag}-2"; t26 = time.time()
+            http("POST", f"{APP}/zakazky", json={"id": zid2, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid2}/NOTES.md (test stropu zakázky).", "hitl_timeout_s": 600, "budget_timeout_s": 25, "budget_usd": 0.01}, timeout=15)
+            approved = set(); exc = None; issue2 = None
+            while time.time() - t26 < 480:
+                L2 = led(); exc = next((e for e in L2 if e["kind"] == "BUDGET_EXCEEDED" and e["zakazka"] == zid2 and e.get("source") == "zakazka-sum"), None)
+                if exc: break
+                if "H1" not in approved:
+                    issue2 = next((e for e in L2 if e["kind"] == "PUBLISHED" and e["zakazka"] == zid2 and e.get("publish_kind") == "issue"), None)
+                    if issue2: gh_post(f"/issues/{issue2['number']}/comments", {"body": "/schvaluji – test stropu"}, "adam"); approved.add("H1")
+                if "H2" not in approved:
+                    adr2 = next((e for e in L2 if e["kind"] == "HANDOFF" and e["zakazka"] == zid2 and str(e.get("artifact", "")).startswith("adr://")), None)
+                    if adr2: approve(zid2, "H2", adr2.get("hash")); approved.add("H2")
+                time.sleep(4)
+            st2 = wait_status(zid2, {"COMPLETED", "FAILED"}, 240) if exc else status(zid2)
+            out2 = (st2 or {}).get("output") or {}
+            gates = [e for e in led() if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zid2]
+            with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
+                zrow2 = c.execute("SELECT budget_usd, spent_usd, status FROM org.zakazky WHERE zakazka_id = %s", (zid2,)).fetchone()
+            ok_cap = exc is not None and float(exc.get("spent_usd", 0)) >= 0.01 and exc.get("role") in ("architekt", "vyvojar", "reviewer") and out2.get("stav") == "Pozastaveno" and out2.get("bod") == "rozpocet" \
+                     and zrow2 is not None and zrow2[2] == "BudgetExceeded" and float(zrow2[1]) >= 0.01
+            rep.add("P26c", "Strop zakázky (sdílený napříč rolemi) vynucuje orchestrátor ze součtu klíčů: zakázka s budget_usd 0,01 projde první rolí, gate před další rolí hlásí BudgetExceeded (zdroj zakazka-sum), eskalace HITL rozpocet bez schválení → timeout → Pozastaveno; registr org.zakazky status BudgetExceeded se spent_usd >= strop", "PASS" if ok_cap else "FAIL", {"exceeded": {k: exc.get(k) for k in ("role", "spent_usd", "limit_usd", "by_role")} if exc else None, "gates": [(g.get("role"), g.get("spent_usd"), g.get("exceeded")) for g in gates], "output": out2, "approved": sorted(approved), "registry_row": [str(x) for x in zrow2] if zrow2 else None, "s": round(time.time() - t26, 1)})
 
         if registry:
             # P2-5 – eval gate (Git → ConfigMap → aplikace) a registr org.* na Flexible Serveru
@@ -1011,7 +1059,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -1022,7 +1070,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -1031,7 +1079,7 @@ def main():
     if a.create_kind:
         assert a.kind, "chybí KIND"
         create_kind(a, env)
-    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True), "p2-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True), "p2-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True)}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True), "p2-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True), "p2-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True), "p2-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True, finops=True)}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

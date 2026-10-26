@@ -230,7 +230,10 @@ def bao_setup(root, audit):
     if "transit/" not in mounts: api("POST", "sys/mounts/transit", {"type": "transit"})
     api("POST", "transit/keys/approval", {"type": "ed25519", "exportable": False})   # existující klíč: no-op
     assert "file/" in api("GET", "sys/audit").json(), "audit device z configu nenaběhl"
-    api("PUT", "sys/policies/acl/approval-signer", {"policy": 'path "transit/sign/approval" { capabilities = ["update"] }\npath "transit/verify/approval" { capabilities = ["update"] }'})
+    if "secret/" not in mounts: api("POST", "sys/mounts/secret", {"type": "kv", "options": {"version": "2"}})   # P2-6: klíče gateway role × zakázka (KV v2), hodnoty mimo Kubernetes Secret
+    api("PUT", "sys/policies/acl/approval-signer", {"policy": 'path "transit/sign/approval" { capabilities = ["update"] }\npath "transit/verify/approval" { capabilities = ["update"] }\n'
+                                                              'path "secret/data/zakazky/*" { capabilities = ["create", "read", "update"] }\npath "secret/metadata/zakazky/*" { capabilities = ["read", "list"] }\n'   # P2-6
+                                                              'path "sys/tools/random/*" { capabilities = ["update"] }'})
     return api("POST", "auth/token/create", {"policies": ["approval-signer"], "no_default_policy": True, "ttl": "2h", "display_name": "zakazka-app"}).json()["auth"]["client_token"]
 
 

@@ -250,6 +250,24 @@ Sonda běžela **přímo přes proxy gateway (`via: direct`)**, ne přes srt: po
 **otevřeno pro další krok** (runner od tohoto commitu loguje `work_info`: vlastník, mód a `w_ok` `/work`). Dopad i mimo sondu: `sandboxed_bash`
 role pod srt dnes nemůže zapisovat do pracovního adresáře (mock tok to nepotřeboval; živý Vývojář ano).
 
+## P2-6 – FinOps naostro (2026-10-26, AKS, `--step p2-6` = p2-4 + P26a–c, P24b přes srt)
+
+- **Strop zakázky**: `POST /zakazky` nese `budget_usd` (výchozí `P0_ZAKAZKA_BUDGET_USD`); před každou rolí aktivita `budget_gate` sečte 30d útratu
+  klíčů zakázky z `budget_usage` (gateway, Flexible Server; `finops.spend`, hashe z ConfigMapy `agentgateway-keys`) → `>= strop` = `BUDGET_EXCEEDED`
+  zdroj `zakazka-sum` → eskalace HITL `rozpocet`, timeout → Pozastaveno. Gateway dál hlídá klíč (24h/30d Block); čítače flushuje periodicky
+  (eventually consistent – gate může zareagovat o roli později).
+- **Cena zakázky**: `budget_check` ze stejného zdroje (ledger `BUDGET source=budget_usage`), registr `org.zakazky` (`finops.registry_upsert`,
+  DSN `P0_REGISTRY_DSN`): budget, spent, by_role, status, keys_source, key_hashes.
+- **Klíče z OpenBao**: `gateway_keys.issue` při `P0_BAO_KV`: entropie `sys/tools/random`, hodnoty v KV v2 `secret/zakazky/<id>/gateway-keys`
+  (policy `approval-signer` rozšířena jen o `secret/data|metadata/zakazky/*` a `sys/tools/random/*`), žádný Secret `zakazka-keys-<id>`.
+- **Uzavření P2-4**: `/work` role = emptyDir `medium: Memory` (tmpfs v guestu); P24b nově vyžaduje `via: srt`.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P26a | klíče v OpenBao KV (4 role), hash == ConfigMap, Secret `zakazka-keys-<id>` neexistuje, ledger `keys_source=openbao`, entropie openbao | ⏳ |
+| P26b | `BUDGET source=budget_usage window=30d`, spent == nezávislý součet harnessu z DB, `org.zakazky` řádek (Dokonceno, openbao, budget_usage, 4 hashe) | ⏳ |
+| P26c | zakázka `budget_usd=0.01`: po první roli gate → `BUDGET_EXCEEDED zakazka-sum`, HITL timeout → Pozastaveno/rozpocet, registr `BudgetExceeded` | ⏳ |
+
 ## Spuštění
 
 ```bash
