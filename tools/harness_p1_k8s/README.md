@@ -291,16 +291,19 @@ emptyDir přes virtiofs nezapisovatelný → Memory medium, cache npm/pip pod `/
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| U1a | login člověka (Keycloak), špatné heslo odmítnuto, `/agui/me` tenant acme + role human, bez tokenu 401, seznam zakázek | ⏳ |
-| U1b | 4 role v pořadí jako subagenti (done), stav Dokonceno; `HITL_WAIT` H1/H2/H4/H5, 4 approval eventy `channel=agui`, žádný `/schvaluji` | ⏳ |
-| U1c | důvod povinný: tlačítka zakázaná bez/krátkého důvodu, API resume bez důvodu 422, `org.approvals` 4× approve (reason ≥ 10, approver = Keycloak sub) | ⏳ |
-| U1d | zakázka tenanta beta: v seznamu acme není, run → 404 (API i GUI) | ⏳ |
-| U1e | disclosure čl. 50 (kanál `agui` role) v první zprávě každé role | ⏳ |
-| U1f | stop z GUI s důvodem: SUSPENDED, pod role pryč ≤ 60 s, `RUN_FINISHED cancelled`, `STOP` s důvodem a pody | ⏳ |
-| U1g | spec 1.0: `protocolVersion`, RUN_STARTED…RUN_FINISHED, interrupt id per bod, resume → nový run | ⏳ |
-| U1h | konzole prohlížeče, čas scénáře, screenshoty (`logs/gui-shots`) | ℹ️ |
+| U1a | login člověka (Keycloak), špatné heslo odmítnuto, `/agui/me` tenant acme + role human, bez tokenu 401, seznam zakázek | ✅ adam/acme, role human+reviewer, 401 bez tokenu, 31 zakázek v seznamu |
+| U1b | 4 role v pořadí jako subagenti (done), stav Dokonceno; `HITL_WAIT` H1/H2/H4/H5, 4 approval eventy `channel=agui`, žádný `/schvaluji` | ✅ account → architekt → vyvojar → reviewer done, Dokonceno (útrata 0,0513 USD), 4 approvaly channel=agui |
+| U1c | důvod povinný: tlačítka zakázaná bez/krátkého důvodu, API resume bez důvodu 422, `org.approvals` 4× approve (reason ≥ 10, approver = Keycloak sub) | ✅ 422 bez důvodu; 4 řádky org.approvals (zadani.accept, navrh.accept, pr.merge, deploy.apply; approver = sub; channel agui) |
+| U1d | zakázka tenanta beta: v seznamu acme není, run → 404 (API i GUI) | ✅ beta zakázka mimo seznam, run 404 v API i v GUI |
+| U1e | disclosure čl. 50 (kanál `agui` role) v první zprávě každé role | ✅ věty kanálu `agui` všech 4 rolí (Account bez verze, ostatní s verzí 0.1.0) |
+| U1f | stop z GUI s důvodem: SUSPENDED, pod role pryč ≤ 60 s, `RUN_FINISHED cancelled`, `STOP` s důvodem a pody | ✅ architekt běžel 2 s po startu, pod pryč za 2,9 s, cancelled za 1,7 s, SUSPENDED, STOP s důvodem + pody |
+| U1g | spec 1.0: `protocolVersion`, RUN_STARTED…RUN_FINISHED, interrupt id per bod, resume → nový run | ✅ protocolVersion 1.0, 79 událostí 9 typů, interrupt id `hitl:H1…H5:<hash>` |
+| U1h | konzole prohlížeče, čas scénáře, screenshoty (`logs/gui-shots`) | ℹ️ konzole jen očekávané 401/404 z negativních testů; scénář 352 s; 8 screenshotů |
 
-Výsledek: ⏳ (měření běží).
+Výsledek: **25/25 + 3 INFO** (`measure` run 40380861198, `results/p3-1-20261026-190241.json`; 3 běhy – první odhalil názvy akcí v `org.approvals`
+a chybějící `preferred_username` v tokenu klienta `harness-human`, druhý mock-mirror ze starého obrazu, jehož poslední záznamy vytlačily readiness
+sondy). Zakázka řízená jen z GUI: 5,9 min včetně 4 rolí v Kata podech (pool kata už nahoře, pod role start 2 s, běh 17–24 s); stop uprostřed
+role: pod pryč za 2,9 s. Zjednodušení P3-1: login password grantem (klient bez scope `profile` → jméno z loginu), GUI jen přes port-forward.
 
 ## Spuštění
 
