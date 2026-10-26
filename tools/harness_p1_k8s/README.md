@@ -273,6 +273,35 @@ Výsledek: **24/24 + 2 INFO** (`measure` run 40340791174, `results/p2-6-20261026
 emptyDir přes virtiofs nezapisovatelný → Memory medium, cache npm/pip pod `/work`, `~/.gitconfig` pod mandatory deny → `GIT_CONFIG_GLOBAL=/dev/null`).
 Útrata zakázky 0,051 USD (mock upstream), strop 0,01 USD zastaví zakázku po první roli; gate reaguje na flush čítačů gateway (řádově sekundy).
 
+## P3-1 – GUI nad firmou přes AG-UI (2026-10-26, AKS, `--step p3-1` = p2-4 + U1a–h; `gui_checks.py`, Playwright)
+
+- **AG-UI server** (`tools/harness_p0_o2/agui.py`, spec 1.0, `ag-ui-protocol` 1.0.0) v aplikaci zakázky: thread = zakázka, `POST /agui/run` =
+  SSE run „do dalšího rozhodovacího bodu“: `RUN_STARTED` (`protocolVersion`), replay ledgeru jako události (role = `SUBAGENT_STARTED/FINISHED`,
+  předání = `TEXT_MESSAGE_*` s disclosure T7 z kanálu `agui` definice role, aktivity = `ACTIVITY_SNAPSHOT`, stav = `STATE_SNAPSHOT`), HITL =
+  `RUN_FINISHED outcome=interrupt` (`hitl:<bod>:<hash>`), rozhodnutí = `RunAgentInput.resume` s povinným důvodem → approval token (transit) +
+  `raise_event` jako dřív, řádek `org.approvals`; stop = `forwardedProps.action=stop` → pause workflow + `kill_zakazka_pods`. Nový `notify`
+  `HITL_WAIT` ve workflow = otevřený bod; zamítnutí = event `{rejected}` → `HITL_REJECTED` → Pozastaveno.
+- **Autorizace na transportu**: Bearer token Keycloaku (JWKS, iss, realm role `human`, `tenant_id`), thread jiného tenanta 404;
+  `POST /agui/login` = password grant klientem `harness-human` (zjednodušení P3-1 – realm v běžícím clusteru se znovu neimportuje; PKCE = P3-6).
+- **GUI** (`gui/`, Vite + React + `@ag-ui/core` 1.0.3, vlastní SSE klient; staví se ve stage `gui` v `Dockerfile.aks`, servíruje aplikace z `/gui`):
+  login, seznam zakázek, založení (první zpráva = poptávka), detail = subagenti, zprávy s disclosure, aktivity, stav, approval formulář
+  (tlačítka bez důvodu zakázaná), stop s důvodem, log událostí; při výpadku streamu se znovu připojí (zdroj pravdy = ledger).
+- **Měření**: `gui_checks.py` (Playwright, `data-testid`) řídí prohlížeč nad port-forwardem aplikace; `gui_fixture.py` = tentýž scénář lokálně
+  bez clusteru (falešný workflow klient, dev tokeny) – 7/7 před prvním během na AKS.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| U1a | login člověka (Keycloak), špatné heslo odmítnuto, `/agui/me` tenant acme + role human, bez tokenu 401, seznam zakázek | ⏳ |
+| U1b | 4 role v pořadí jako subagenti (done), stav Dokonceno; `HITL_WAIT` H1/H2/H4/H5, 4 approval eventy `channel=agui`, žádný `/schvaluji` | ⏳ |
+| U1c | důvod povinný: tlačítka zakázaná bez/krátkého důvodu, API resume bez důvodu 422, `org.approvals` 4× approve (reason ≥ 10, approver = Keycloak sub) | ⏳ |
+| U1d | zakázka tenanta beta: v seznamu acme není, run → 404 (API i GUI) | ⏳ |
+| U1e | disclosure čl. 50 (kanál `agui` role) v první zprávě každé role | ⏳ |
+| U1f | stop z GUI s důvodem: SUSPENDED, pod role pryč ≤ 60 s, `RUN_FINISHED cancelled`, `STOP` s důvodem a pody | ⏳ |
+| U1g | spec 1.0: `protocolVersion`, RUN_STARTED…RUN_FINISHED, interrupt id per bod, resume → nový run | ⏳ |
+| U1h | konzole prohlížeče, čas scénáře, screenshoty (`logs/gui-shots`) | ℹ️ |
+
+Výsledek: ⏳ (měření běží).
+
 ## Spuštění
 
 ```bash
@@ -283,6 +312,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
+python gui_fixture.py --port 8010 & PW_CHROMIUM=/opt/pw-browsers/chromium python gui_checks.py   # P3-1 lokálně: GUI (gui/dist) nad falešným workflow, U-1 bez clusteru
 python harness.py --step p2-3 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-3); p2-5 bez identity, p2-2 bez registru, p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
 ```
 
