@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,7 +39,17 @@ def render(tenant="acme"):
         for f in sorted((b / "srt").glob("*.json")): data[f"srt-{f.name}"] = f.read_text()
         for f in sorted((b / "k8s").glob("*-pod.yaml")): data[f"pod-{f.name.replace('-pod.yaml', '')}.yaml"] = f.read_text()   # P2-2: šablona podu role pro role_pod.py
         data["roles.json"] = (b / "registry/roles.json").read_text()
-        data["spire-entries.json"] = (b / "spire/entries.json").read_text()   # P2-3: registrace SPIRE per role (aplikuje harness/operátor)
+        data["tenants.json"] = (b / "registry/tenants.json").read_text()   # P3-2: tenanti (namespace, strop, profil) pro aplikaci (role_pod ns, org.tenants, AG-UI)
+        data["spire-entries.json"] = (b / "spire/entries.json").read_text()   # P2-3: registrace SPIRE per role × tenant (aplikuje harness/operátor)
+        tenants_yaml = (b / "k8s/tenants.yaml").read_text()   # P3-2: Namespace/NetworkPolicy/SA/RBAC/ConfigMap per tenant → infra/k8s/roles (vlastní Flux kustomization)
+        tenants = json.loads(data["tenants.json"])
+        # P3-2: lidé tenantů musí být v realmu (tools/harness_p0_o2/configs/realm-p0.json – zdroj; kopie v infra/k8s/base/keycloak) se stejným tenant_id
+        realm = json.loads((ROOT / "tools/harness_p0_o2/configs/realm-p0.json").read_text()); users = {u["username"]: u for u in realm["users"]}
+        for t in tenants:
+            for h in t.get("humans", []):
+                u = users.get(h)
+                if not u or (u.get("attributes") or {}).get("tenant_id") != [t["id"]]: raise SystemExit(f"tenants.yaml: uživatel {h} tenanta {t['id']} chybí v realm-p0.json nebo má jiné tenant_id")
+        if (ROOT / "infra/k8s/base/keycloak/realm-p0.json").read_text() != (ROOT / "tools/harness_p0_o2/configs/realm-p0.json").read_text(): raise SystemExit("infra/k8s/base/keycloak/realm-p0.json není kopie tools/harness_p0_o2/configs/realm-p0.json")
         es = ROOT / "tools/role_evals/results/eval-status.json"   # P2-5: eval gate per role (evals.py) – aplikace roli bez prošlého gate nespustí
         if es.exists(): data["eval-status.json"] = es.read_text()
         images = {}
@@ -58,17 +69,22 @@ def render(tenant="acme"):
     cfg["llm"]["policies"] = {"apiKey": {"mode": "optional", "location": tpl["policies"]["apiKey"]["location"], "keys": []}}   # klíče doplní aplikace per zakázka
     cfg |= eg
     gw_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "agentgateway-config"}, "data": {"config.yaml": yaml.safe_dump(cfg, sort_keys=False)}}
-    return images, {"rolegen-build.yaml": HEADER + yaml.safe_dump(build_cm, sort_keys=False, allow_unicode=True),
+    # P3-2: SPIRE server smí atestovat sidecar agenta jen z SA `role` v namespacech tenantů (k8s_psat service_account_allow_list v base spire.yaml – řádek s markerem)
+    spire_path = ROOT / "infra/k8s/base/spire/spire.yaml"; spire_src = spire_path.read_text()
+    allow = ["platform-data:spire-agent"] + [f"{t['namespace']}:role" for t in tenants if t.get("namespace")]
+    spire_new = re.sub(r'service_account_allow_list = \[[^\n]*', 'service_account_allow_list = [' + ", ".join(f'"{x}"' for x in allow) + ']   # GENEROVÁNO rolegen (tenants.yaml): sidecar spire-agent podu role jen z SA role v ns tenantů (P2-3 Kata: hostPath socket do VM nevede)', spire_src, count=1)
+    files_abs = {spire_path: spire_new, ROOT / "infra/k8s/roles/tenants-generated.yaml": HEADER + tenants_yaml}
+    return images, files_abs, {"rolegen-build.yaml": HEADER + yaml.safe_dump(build_cm, sort_keys=False, allow_unicode=True),
             "agentgateway-config.yaml": HEADER + yaml.safe_dump(gw_cm, sort_keys=False),
             # Component (ne Kustomization): patch base ConfigMapy gateway smí ležet jen pod adresářem kustomizace, component ho může nést sám
             "kustomization.yaml": HEADER + yaml.safe_dump({"apiVersion": "kustomize.config.k8s.io/v1alpha1", "kind": "Component", "resources": ["rolegen-build.yaml"], "patches": [{"path": "agentgateway-config.yaml"}]}, sort_keys=False)}
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--check", action="store_true"); ap.add_argument("--tenant", default="acme"); a = ap.parse_args()
-    images, files = render(a.tenant)
+    ap = argparse.ArgumentParser(); ap.add_argument("--check", action="store_true"); ap.add_argument("--tenant", default="{tenant}", help="placeholder: klíče k-{tenant}-{zakazka}-<role> a labely podu doplní aplikace per zakázka (P3-2)"); a = ap.parse_args()
+    images, files_abs, files = render(a.tenant)
     OUT.mkdir(parents=True, exist_ok=True); IMG.mkdir(parents=True, exist_ok=True)
-    targets = {OUT / n: c for n, c in files.items()} | {IMG / n: c for n, c in images.items()}
+    targets = {OUT / n: c for n, c in files.items()} | {IMG / n: c for n, c in images.items()} | files_abs
     extra = [str(f.relative_to(ROOT)) for f in IMG.rglob("*") if f.is_file() and f not in targets]   # soubory obrazů, které už rolegen negeneruje
     stale = [str(f.relative_to(ROOT)) for f, c in targets.items() if not f.exists() or f.read_text() != c] + extra
     if a.check:

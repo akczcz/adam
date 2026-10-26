@@ -102,13 +102,13 @@ patches:
 - target: {kind: DaemonSet, name: spire-agent}
   patch: |
     - {op: add, path: /spec/template/spec/containers/0/securityContext, value: {runAsUser: 0}}
-# P1-6: role jako Kata pody v ns platform-roles (infra/k8s/roles – vlastní Flux kustomization); služby přes FQDN, aby na ně dosáhl pod z jiného ns
+# P1-6: role jako Kata pody v ns tenanta (P3-2: tenant-<id> z infra/k8s/roles/tenants-generated.yaml – vlastní Flux kustomization); služby přes FQDN, aby na ně dosáhl pod z jiného ns
 - target: {kind: ConfigMap, name: zakazka-env}
   patch: |
     - {op: add, path: /data/P0_ROLE_RUNTIME, value: pod}
     - {op: add, path: /data/P0_ROLE_IMAGE, value: "${ACR_LOGIN_SERVER}/zakazka-app:p1"}
     - {op: add, path: /data/P0_ROLE_IMAGE_REGISTRY, value: "${ACR_LOGIN_SERVER}"}   # P2-2: šablona podu z rolegen má registry.platform.internal/roles/<role>:<verze> → ACR
-    - {op: add, path: /data/P0_ROLE_NAMESPACE, value: platform-roles}
+    - {op: add, path: /data/P0_ROLE_NAMESPACE_TEMPLATE, value: "tenant-{tenant}"}   # P3-2: pody rolí v namespace tenanta zakázky (infra/k8s/roles/tenants-generated.yaml)
     - {op: add, path: /data/P0_ARTIFACT_API, value: http://zakazka.platform-data.svc:8010}
     - {op: replace, path: /data/P0_LLM_URL, value: http://agentgateway.platform-data.svc:4100}
     - {op: replace, path: /data/P0_MEMORY_URL, value: http://memory.platform-data.svc:9900}
@@ -196,7 +196,7 @@ patches:
     - {op: add, path: /data/P0_BAO_K8S_ROLE, value: zakazka}
     - {op: add, path: /data/P0_ROLE_IDENTITY, value: svid}
     - {op: add, path: /data/P0_ROLE_SPIRE_AGENT_IMAGE, value: "${ACR_LOGIN_SERVER}/spire-agent:1.14.2"}
-# P2-4: egress podu role přes gateway CONNECT – CA gateway z ConfigMapy platform-ca (ns platform-roles, vydává harness), git a mirror přes
+# P2-4: egress podu role přes gateway CONNECT – CA gateway z ConfigMapy platform-ca (ns tenant-<id>, vydává harness), git a mirror přes
 # terminované listenery; sonda role_runner (clone/push větve/push main/pip/npm/cizí SNI) měří P24b–d
 - target: {kind: ConfigMap, name: zakazka-env}
   patch: |

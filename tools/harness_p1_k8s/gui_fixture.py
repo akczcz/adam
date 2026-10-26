@@ -29,7 +29,7 @@ def main():
     a = ap.parse_args()
     led = a.ledger or os.path.join(tempfile.mkdtemp(prefix="agui-fx-"), "ledger.jsonl")
     os.environ.update({"O1_LEDGER": led, "P0_GUI_DIR": a.gui, "P0_TENANT": "acme", "P0_AGUI_RUN_MAX_S": "600",
-                       "P0_AGUI_DEV_USERS": json.dumps({"adam": {"password": "adam", "tenant_id": "acme", "roles": ["human", "reviewer"]}, "bea": {"password": "bea", "tenant_id": "beta", "roles": ["human"]}, "bot": {"password": "bot", "tenant_id": "acme", "roles": ["agent"]}})})
+                       "P0_AGUI_DEV_USERS": json.dumps({"adam": {"password": "adam", "tenant_id": "acme", "roles": ["human", "reviewer"]}, "bea": {"password": "bea", "tenant_id": "beta", "roles": ["human"]}, "bot": {"password": "bot", "tenant_id": "acme", "roles": ["agent"]}, "platform-admin": {"password": "platform-admin", "tenant_id": "platform", "roles": ["human", "platform_admin"]}})})
     os.environ.pop("P0_KC_TOKEN_URL", None); os.environ.pop("P0_KC_JWKS_URL", None); os.environ.pop("P0_BAO_ADDR", None)
     import app as A
 

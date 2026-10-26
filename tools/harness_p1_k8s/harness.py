@@ -602,12 +602,122 @@ class PortForward:
         if self.p: self.p.terminate()
 
 
+def kc_ensure(a, http, KC, realm="p0"):
+    """P3-2: Keycloak `--import-realm` existující realm nemění → chybějící realm role, klienty a uživatele z realm-p0.json (zdroj pravdy; lidé tenantů
+    = tenants.yaml) doplní harness admin API (idempotentní). Nový cluster je importuje z ConfigMapy; tady jde o migraci běžícího realmu."""
+    import base64 as _b
+    O2 = T / "harness_p0_o2"; rj = json.loads((O2 / "configs/realm-p0.json").read_text())
+    pw = _b.b64decode(kubectl(a, "-n", NS, "get", "secret", "keycloak-admin", "-o", "jsonpath={.data.KC_BOOTSTRAP_ADMIN_PASSWORD}").stdout.strip()).decode()
+    user = _b.b64decode(kubectl(a, "-n", NS, "get", "secret", "keycloak-admin", "-o", "jsonpath={.data.KC_BOOTSTRAP_ADMIN_USERNAME}").stdout.strip()).decode() or "admin"
+    tok = http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": user, "password": pw}, timeout=20)
+    assert tok.status_code == 200, f"Keycloak admin login: {tok.status_code} {tok.text[:200]}"
+    H = {"Authorization": f"Bearer {tok.json()['access_token']}"}; A = f"{KC}/admin/realms/{realm}"; created = {"roles": [], "clients": [], "users": [], "errors": []}
+    have_roles = {r["name"] for r in http("GET", f"{A}/roles", headers=H, timeout=20).json()}
+    for r in rj["roles"]["realm"]:
+        if r["name"] not in have_roles:
+            x = http("POST", f"{A}/roles", headers=H, json={"name": r["name"], "description": r.get("description", "")}, timeout=20); created["roles"].append((r["name"], x.status_code))
+    for c in rj["clients"]:
+        if not http("GET", f"{A}/clients", headers=H, params={"clientId": c["clientId"]}, timeout=20).json():
+            x = http("POST", f"{A}/clients", headers=H, json=c, timeout=20); created["clients"].append((c["clientId"], x.status_code))
+            if x.status_code >= 300: created["errors"].append(f"client {c['clientId']}: {x.text[:200]}")
+    for u in rj["users"]:
+        if u.get("serviceAccountClientId"): continue
+        if http("GET", f"{A}/users", headers=H, params={"username": u["username"], "exact": "true"}, timeout=20).json(): continue
+        body = {k: v for k, v in u.items() if k not in ("realmRoles",)}
+        x = http("POST", f"{A}/users", headers=H, json=body, timeout=20); created["users"].append((u["username"], x.status_code))
+        if x.status_code >= 300: created["errors"].append(f"user {u['username']}: {x.text[:200]}"); continue
+        uid = http("GET", f"{A}/users", headers=H, params={"username": u["username"], "exact": "true"}, timeout=20).json()[0]["id"]
+        reps = [http("GET", f"{A}/roles/{rn}", headers=H, timeout=20).json() for rn in u.get("realmRoles", [])]
+        y = http("POST", f"{A}/users/{uid}/role-mappings/realm", headers=H, json=[{"id": r["id"], "name": r["name"]} for r in reps if "id" in r], timeout=20)
+        if y.status_code >= 300: created["errors"].append(f"roles {u['username']}: {y.text[:200]}")
+    return created
+
+
+def spire_server_reload(a, kj):
+    """P3-2: ConfigMap spire-server-config (allow-list ns tenantů) z Gitu – StatefulSet pod bez restartu nový config nenačte. Anotace podu se sha
+    configu: liší se → pod smazat (raft/sqlite na PVC zůstává), počkat na rollout, anotovat."""
+    import hashlib as _h
+    cm = kj("-n", NS, "get", "configmap", "spire-server-config").get("data") or {}; sha = _h.sha256(json.dumps(cm, sort_keys=True).encode()).hexdigest()[:16]
+    pod = kj("-n", NS, "get", "pod", "spire-server-0"); ann = (pod.get("metadata", {}).get("annotations") or {}).get("platform.config-sha")
+    if ann == sha: return {"restarted": False, "sha": sha}
+    kubectl(a, "-n", NS, "delete", "pod", "spire-server-0", "--wait=true", timeout=180)
+    ok = kubectl(a, "-n", NS, "rollout", "status", "statefulset/spire-server", "--timeout=300s", timeout=320).returncode == 0
+    kubectl(a, "-n", NS, "annotate", "pod", "spire-server-0", f"platform.config-sha={sha}", "--overwrite")
+    return {"restarted": True, "sha": sha, "ready": ok, "previous": ann}
+
+
+def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
+    """T-1 (P3-2): druhý tenant beta – zakázka z GUI jako bea, pody rolí v ns tenant-beta (CNP, SPIFFE ID s tenantem), klíče per tenant, RLS org.*,
+    viditelnost threadů per tenant a průřez tenanta platform."""
+    import psycopg, yaml as _yt, hashlib as _ht
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui
+    def tenant_namespaces(): return [n["metadata"]["name"] for n in kj("get", "ns", "-l", "platform.tenant").get("items", [])]
+    tenants_git = _yt.safe_load((ROOT / "knowledge/organization/tenants.yaml").read_text())["tenants"]
+    tj = json.loads((kj("-n", NS, "get", "configmap", "rolegen-build").get("data") or {}).get("tenants.json") or "[]")
+    sync = next((e for e in reversed(led()) if e["kind"] == "TENANTS_SYNC"), {})
+    with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
+        trows = {r[0]: {"budget": float(r[1]), "profile": r[2], "ns": r[3], "role_pods": r[4]} for r in c.execute("SELECT tenant_id, budget_usd, profile, namespace, role_pods FROM org.tenants").fetchall()}
+        pols = sorted({(r[0], r[1]) for r in c.execute("SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'org'").fetchall()})
+        rls_on = {r[0]: r[1] for r in c.execute("SELECT relname, relrowsecurity FROM pg_class WHERE relnamespace = 'org'::regnamespace AND relkind = 'r'").fetchall()}
+    want_ns = {f"tenant-{t['id']}" for t in tenants_git if t.get("role_pods")}
+    rep.add("T1a", "Tenanti z Gitu (knowledge/organization/tenants.yaml → rolegen tenants.json v ConfigMapě → aplikace při startu): řádky org.tenants (acme, beta, platform s rozpočtem a profilem), namespace tenant-<id> pro tenanty s pody rolí existují (Flux z tenants-generated.yaml), RLS zapnutá s politikou tenant_isolation na org.tenants/zakazky/approvals (TENANTS_SYNC v ledgeru)", "PASS" if {t["id"] for t in tenants_git} == set(trows) == {t["id"] for t in tj} and all(abs(trows[t["id"]]["budget"] - float(t["budget_usd"])) < 1e-6 for t in tenants_git) and want_ns <= set(tenant_namespaces()) and all(rls_on.get(t) for t in ("tenants", "zakazky", "approvals")) and {("tenants", "tenant_isolation"), ("zakazky", "tenant_isolation"), ("approvals", "tenant_isolation")} <= set(pols) and sync.get("written") else "FAIL", {"org_tenants": trows, "namespaces": tenant_namespaces(), "rls": rls_on, "policies": pols, "sync": {k: sync.get(k) for k in ("written", "tenants", "rls", "error")}})
+    zb = f"{tag}-beta"; g = Gui(f"{APP}/gui/", shots=gui_shots / "beta").open(); t_b = time.time()
+    def wait_i(g_, bod, timeout):
+        t0 = time.time()
+        while True:
+            r = g_.wait_interrupt(bod, min(60, max(1, timeout - (time.time() - t0))))
+            if r["interrupt"] or r["run_status"] in ("finished", "cancelled") or time.time() - t0 >= timeout: return r
+            try: http("GET", f"{APP}/health", timeout=10)
+            except Exception: pass
+    try:
+        li = g.login("bea", "bea"); lst0 = g.threads_list()
+        g.create_thread(zb, f"Zakázka tenanta beta {zb}: založ v repu soubor zakazky/{zb}/NOTES.md (test druhého tenanta).")
+        h1 = wait_i(g, "H1", 1500); assert h1["interrupt"], f"H1 (beta) nepřišel: {h1['run_status']} {h1.get('error')} ledger={[(e['kind'], e.get('role'), e.get('error') or e.get('event')) for e in led() if e.get('zakazka') == zb][-8:]}"
+        L = led(); pod_b = next((e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "account"), {}); cr_b = next((e for e in L if e["kind"] == "ROLE_POD_CREATE" and e["zakazka"] == zb), {})
+        nps = [n["metadata"]["name"] for n in kj("-n", "tenant-beta", "get", "networkpolicy").get("items", [])]
+        eg = pod_b.get("egress_probe") or {}
+        rep.add("T1b", "Pody rolí tenanta beta běží v ns tenant-beta (NetworkPolicy default-deny + role-egress jen na platformu): pod account zakázky beta v tenant-beta, Succeeded; z podu Postgres platformy nedosažitelný (timeout), internet blokován, gateway/paměť/aplikace průchozí", "PASS" if pod_b.get("namespace") == "tenant-beta" and cr_b.get("namespace") == "tenant-beta" and pod_b.get("phase") == "Succeeded" and {"default-deny", "role-egress"} <= set(nps) and (eg.get("postgres") or {}).get("result") == "timeout" and (eg.get("internet_1.1.1.1:443") or {}).get("result") != "open" and all((eg.get(n) or {}).get("result") == "open" for n in ("memory", "gateway", "app")) else "FAIL", {"pod": {k: pod_b.get(k) for k in ("pod", "namespace", "phase", "node", "image")}, "networkpolicies": nps, "egress_probe": eg})
+        ids_b = pod_b.get("identity") or {}
+        ents = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+        rep.add("T1f", "Identita role nese tenant: SVID podu account v tenant-beta = spiffe://platform/role/account/beta (alias uzlu per role × tenant se selektorem k8s_psat:agent_ns:tenant-beta – hranicí je atestovaný namespace, ne label), server paměti ověřil JWT-SVID (tenant z cesty); entries pro oba tenanty v SPIRE serveru", "PASS" if ids_b.get("kind") == "svid" and ids_b.get("spiffe_id") == "spiffe://platform/role/account/beta" and "spiffe://platform/role/account/beta" in ents and "spiffe://platform/role/account/acme" in ents and "k8s_psat:agent_ns:tenant-beta" in ents and any(e["kind"] == "TOOL" and e["zakazka"] == zb and e.get("http") == 200 for e in L) else "FAIL", {"identity": ids_b, "entries_beta": ents.count("/beta"), "entries_acme": ents.count("/acme"), "memory_calls_200": sum(1 for e in L if e["kind"] == "TOOL" and e["zakazka"] == zb and e.get("http") == 200)})
+        import yaml as _yk
+        keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
+        mine = [k for k in keys_cm if (k.get("metadata") or {}).get("zakazka") == zb]; hashes = {(k.get("metadata") or {}).get("role"): k["keyHash"].split(":", 1)[1] for k in mine}
+        with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c:
+            rows = c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()
+        spend_b = {r_: next((u / 1e9 for bid, u in rows if h in bid), 0.0) for r_, h in hashes.items()}
+        gate_b = next((e for e in L if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zb), {})
+        rep.add("T1d", "Klíče gateway per tenant: klíče zakázky beta jsou k-beta-<zakazka>-<role> s metadata.tenant=beta a user_id beta/…, vydané z šablony s placeholderem {tenant}; útrata account v budget_usage > 0; budget_gate zná strop tenanta (org.tenants.budget_usd 20) a útratu tenanta", "PASS" if len(mine) >= 4 and all((k.get("metadata") or {}).get("tenant") == "beta" and (k.get("metadata") or {}).get("name", "").startswith("k-beta-") and (k.get("metadata") or {}).get("user_id", "").startswith("beta/") for k in mine) and spend_b.get("account", 0) > 0 and (gate_b.get("tenant") or {}).get("budget_usd") == 20 else "FAIL", {"keys": [(k.get("metadata") or {}).get("name") for k in mine], "spend_usd": {k: round(v, 6) for k, v in spend_b.items()}, "gate": {k: gate_b.get(k) for k in ("role", "tenant", "exceeded")}})
+        def rls(tenant):
+            pw = dsn("org").split(":", 2)[2].split("@")[0]; host = dsn("org").split("@")[1].split("/")[0]
+            with psycopg.connect(f"postgresql://org_reader:org_reader@{host}/org?sslmode=require", autocommit=True, connect_timeout=10) as c:
+                c.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant,))
+                z_ = sorted(r[0] for r in c.execute("SELECT zakazka_id FROM org.zakazky").fetchall()); ap_ = c.execute("SELECT count(*) FROM org.approvals").fetchone()[0]
+                tn_ = sorted(r[0] for r in c.execute("SELECT tenant_id FROM org.tenants").fetchall())
+                return {"zakazky": z_, "approvals": ap_, "tenants": tn_}
+        r_acme, r_beta, r_plat, r_none = rls("acme"), rls("beta"), rls("platform"), rls("")
+        rep.add("T1c", "RLS per tenant_id na org.* (role org_reader = čtení pro Governance MCP): s app.tenant_id=beta jsou vidět jen zakázky/approvaly/tenant beta, s acme jen acme (zakázka beta chybí), s platform průřez obou, bez tenanta nic", "PASS" if zb in r_beta["zakazky"] and zid_acme not in r_beta["zakazky"] and zid_acme in r_acme["zakazky"] and zb not in r_acme["zakazky"] and {zid_acme, zb} <= set(r_plat["zakazky"]) and r_none["zakazky"] == [] and r_beta["tenants"] == ["beta"] and r_acme["approvals"] >= 4 and r_beta["approvals"] == 0 else "FAIL", {"beta": r_beta, "acme": {"zakazky_n": len(r_acme["zakazky"]), "has_acme": zid_acme in r_acme["zakazky"], "has_beta": zb in r_acme["zakazky"], "approvals": r_acme["approvals"]}, "platform": {"n": len(r_plat["zakazky"]), "tenants": r_plat["tenants"]}, "none": r_none})
+        lst_b = g.threads_list(); ot = g.open_thread(zid_acme)
+        r403 = http("POST", f"{APP}/agui/run", headers={"Authorization": f"Bearer {g.token}"}, json={"threadId": zid_acme, "runId": "t1e", "messages": []}, timeout=15).status_code
+        g.page.goto(f"{APP}/gui/#/t/{zb}"); g.page.wait_for_timeout(1500)
+        g.open_thread(zb); stp = g.stop("Test tenantů hotov – zakázku beta zastavuji (není třeba dokončit).")
+        g.close(); g2 = Gui(f"{APP}/gui/", shots=gui_shots / "platform").open()
+        lp = g2.login("platform-admin", "platform-admin"); lst_p = g2.threads_list(); ot_p = g2.open_thread(zb)
+        r403p = http("POST", f"{APP}/agui/run", headers={"Authorization": f"Bearer {g2.token}"}, json={"threadId": f"{tag}-plat", "runId": "t1e2", "messages": [{"id": "m", "role": "user", "content": "platform nesmí zakládat"}]}, timeout=15).status_code
+        g2.close()
+        ids_b_list = [t["id"] for t in lst_b]; ids_p = [t["id"] for t in lst_p]
+        rep.add("T1e", "GUI per tenant: bea (tenant beta) vidí jen zakázky beta (acme zakázka v seznamu není, otevřít ji → 404 v GUI i API), stop zakázky beta s důvodem funguje; platform-admin (tenant platform) vidí průřez obou tenantů (acme i beta), otevře thread beta, ale zakázku založit nesmí (403)", "PASS" if li["tenant"] == "beta" and zb in ids_b_list and zid_acme not in ids_b_list and all(t["cells"][1] == "beta" for t in lst_b) and ot["status"] == "error" and "404" in (ot["error"] or "") and r403 == 404 and stp["run_status"] == "cancelled" and lp["tenant"] == "platform" and {zid_acme, zb} <= set(ids_p) and ot_p["status"] != "error" and r403p == 403 else "FAIL", {"bea": {"tenant": li["tenant"], "listed": ids_b_list[:8], "open_acme": ot, "api_acme": r403, "stop": stp["run_status"]}, "platform_admin": {"tenant": lp["tenant"], "listed_n": len(ids_p), "has_both": {zid_acme, zb} <= set(ids_p), "open_beta": ot_p["status"], "create_http": r403p}, "wall_s": round(time.time() - t_b, 1)})
+    finally:
+        try: g.close()
+        except Exception: pass
+
+
 def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
     """U-1 (P3-1): zakázka řízená z GUI v prohlížeči (Playwright nad port-forwardem aplikace). Vrací to, co P21b potřebuje dál
     (zid, issue, pr, merged, st, adr_early) a zapíše checky U1a–U1g."""
     import psycopg
     sys.path.insert(0, str(HERE)); from gui_checks import Gui, ROLES
-    RNS = "platform-roles"; shots = LOGS / "gui-shots"
+    RNS = "tenant-acme"; shots = LOGS / "gui-shots"   # P3-2: pody rolí v ns tenanta zakázky
     def kj(*args):
         r = kubectl(a, *args, "-o", "json"); return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
     def pods_of(z): return [p["metadata"]["name"] for p in kj("-n", RNS, "get", "pods", "-l", f"platform.zakazka={re.sub(r'[^A-Za-z0-9_.-]', '-', z)[:63]}").get("items", []) if not p["metadata"].get("deletionTimestamp")]
@@ -680,7 +790,7 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
     return zid, issue, pr, merged, st, False
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -689,7 +799,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     O2 = T / "harness_p0_o2"; M1 = T / "harness_memory_m1"
     o2 = __import__("importlib.util").util.spec_from_file_location("o2h", O2 / "harness.py"); o2m = __import__("importlib.util").util.module_from_spec(o2); o2.loader.exec_module(o2m)
     m1 = __import__("importlib.util").util.spec_from_file_location("m1h", M1 / "harness.py"); m1m = __import__("importlib.util").util.module_from_spec(m1); m1.loader.exec_module(m1m)
-    RNS = "platform-roles"; t_all = time.time()
+    RNS = "tenant-acme"; t_all = time.time()   # P3-2: ns per tenant (infra/k8s/roles/tenants-generated.yaml); RNS = tenant dogfoodingu
+    def tenant_namespaces(): return [n["metadata"]["name"] for n in kj("get", "ns", "-l", "platform.tenant").get("items", [])]
     def kj(*args):
         r = kubectl(a, *args, "-o", "json"); return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
     def secret(name, key, ns=NS):
@@ -727,9 +838,10 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if not get(NS, "secret", "agentgateway-git-token"):
             kubectl(a, "-n", NS, "create", "secret", "generic", "agentgateway-git-token", f"--from-literal=token=git-{_sec.token_urlsafe(24)}"); created.append("token")
         ca_pem = ((get(NS, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt", "")
-        if ca_pem and kubectl(a, "get", "ns", RNS).returncode == 0 and ((get(RNS, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt") != ca_pem:
-            with tempfile.TemporaryDirectory() as td:
-                (Path(td) / "ca.crt").write_text(ca_pem); kubectl(a, "-n", RNS, "delete", "configmap", "platform-ca", "--ignore-not-found"); kubectl(a, "-n", RNS, "create", "configmap", "platform-ca", f"--from-file=ca.crt={td}/ca.crt"); created.append(f"ca-{RNS}")
+        for tns in (tenant_namespaces() if ca_pem else []):   # P3-2: CA pro pody rolí do každého ns tenanta
+            if ((get(tns, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt") != ca_pem:
+                with tempfile.TemporaryDirectory() as td:
+                    (Path(td) / "ca.crt").write_text(ca_pem); kubectl(a, "-n", tns, "delete", "configmap", "platform-ca", "--ignore-not-found"); kubectl(a, "-n", tns, "create", "configmap", "platform-ca", f"--from-file=ca.crt={td}/ca.crt"); created.append(f"ca-{tns}")
         tok = _b.b64decode(((get(NS, "secret", "agentgateway-git-token") or {}).get("data") or {}).get("token", "")).decode()
         return {"created": created, "token_sha12": _h.sha256(tok.encode()).hexdigest()[:12] if tok else None, "ca_present": bool(ca_pem)}
     egress_secrets = ensure_egress_secrets()
@@ -866,6 +978,9 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
                 for pf in pfs.values(): pf.start()
     try:
         health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
+        kc_migr = kc_ensure(a, http, KC) if (gui or tenant) else None   # P3-2: realm v běžícím clusteru doplnit admin API (klient platform-gui, lidé tenantů)
+        spire_reload = spire_server_reload(a, kj) if tenant else None   # P3-2: allow-list ns tenantů v configu SPIRE serveru
+        if kc_migr or spire_reload: print(f"  kc_ensure={kc_migr} spire_reload={spire_reload}")
         with psycopg.connect(dsn("dapr_state"), autocommit=True, connect_timeout=10) as c:
             dapr_tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
         gw_ok = all(config_from_git.values()) and gw_cfg.get("llm", {}).get("models", [{}])[0].get("params", {}).get("baseUrl") == "$LLM_UPSTREAM_URL" and "apiKey" in (gw_cfg.get("llm", {}).get("policies") or {}) and "apikeys-template.yaml" in (cfg_cluster["rolegen-build"] or {}) and any(k.startswith("srt-") for k in (cfg_cluster["rolegen-build"] or {}))
@@ -935,6 +1050,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             r = _y.safe_load(f.read_text()); want_block[r["role"]] = next((b["amount"] for b in r.get("budget", {}).get("budgets", []) if b.get("window") == "24h" and b.get("action") == "Block"), None)
         got_block = {(k.get("metadata") or {}).get("role"): next((b["limit"]["amount"] for b in k.get("budgets", []) if b["name"].endswith("24h-block")), None) for k in mine}
         sec_keys = kubectl(a, "-n", NS, "get", "secret", f"zakazka-keys-{zid.lower()}", "-o", "jsonpath={.metadata.name}").stdout.strip()
+        if tenant: tenant_flow(a, rep, http, led, APP, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-2: T1a–T1f
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
         if images:
@@ -1098,18 +1214,18 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         nodes = {n["metadata"]["name"]: n["metadata"]["labels"].get("pool") for n in kj("get", "nodes").get("items", [])}
         tc = time.time()
         while time.time() - tc < 120:   # smazání podu je asynchronní (Terminating, Kata VM se vypíná) – počkat na zmizení
-            left = [p["metadata"]["name"] for p in kj("-n", RNS, "get", "pods").get("items", [])]; left_sec = [s["metadata"]["name"] for s in kj("-n", RNS, "get", "secrets").get("items", []) if s["metadata"]["name"].startswith("role-")]
+            left = [f"{tns}/{p['metadata']['name']}" for tns in tenant_namespaces() for p in kj("-n", tns, "get", "pods").get("items", [])]; left_sec = [f"{tns}/{s['metadata']['name']}" for tns in tenant_namespaces() for s in kj("-n", tns, "get", "secrets").get("items", []) if s["metadata"]["name"].startswith("role-")]
             if not left and not left_sec: break
             time.sleep(5)
         cleanup_s = round(time.time() - tc, 1)
         iso = {k: {"node": p.get("node"), "pool": nodes.get(p.get("node")), "runtime_class": p.get("runtime_class"), "uid": p.get("pod_uid"), "run_as_user": p.get("run_as_user"), "automount_sa": p.get("automount_sa"), "srt": p.get("pod_srt")} for k, p in pods_led.items()}
-        rep.add("P21c", "Izolace podů rolí: každý pod role na uzlu poolu kata (autoscaler z 0), RuntimeClass kata-vm-isolation, běží jako uid 1000 bez SA tokenu, srt (weaker nested sandbox) v podu k dispozici; po běhu pod i Secret smazány", "PASS" if pods_led and all(v["pool"] == "kata" and v["runtime_class"] == "kata-vm-isolation" and v["uid"] == 1000 and v["run_as_user"] == 1000 and v["automount_sa"] is False and v["srt"] not in (None, "none") for v in iso.values()) and not left and not left_sec else "FAIL", {"pods": iso, "left_pods": left, "left_secrets": left_sec, "cleanup_wait_s": cleanup_s, "kata_nodes": [n for n, p in nodes.items() if p == "kata"]})
+        rep.add("P21c", "Izolace podů rolí: každý pod role na uzlu poolu kata (autoscaler z 0), RuntimeClass kata-vm-isolation, běží jako uid 1000 bez SA tokenu, srt (weaker nested sandbox) v podu k dispozici; po běhu pod i Secret smazány (ve všech ns tenantů)", "PASS" if pods_led and all(v["pool"] == "kata" and v["runtime_class"] == "kata-vm-isolation" and v["uid"] == 1000 and v["run_as_user"] == 1000 and v["automount_sa"] is False and v["srt"] not in (None, "none") for v in iso.values()) and not left and not left_sec else "FAIL", {"pods": iso, "left_pods": left, "left_secrets": left_sec, "cleanup_wait_s": cleanup_s, "kata_nodes": [n for n, p in nodes.items() if p == "kata"]})
 
         # P21d – egress
         eg = {k: p.get("egress_probe") for k, p in pods_led.items()}
         def blocked(r): return bool(r) and r.get("result") != "open"
         ok_eg = bool(eg) and all(e and blocked(e.get("internet_1.1.1.1:443")) and blocked(e.get("internet_dns_github.com:443")) and all((e.get(n) or {}).get("result") == "open" for n in ("memory", "gateway", "app")) for e in eg.values())
-        rep.add("P21d", "Egress podu role (NetworkPolicy ns platform-roles): internet (1.1.1.1:443, github.com:443) blokován, agentgateway, paměť a aplikace zakázky průchozí – model jen přes gateway", "PASS" if ok_eg else "FAIL", {"probe": eg})
+        rep.add("P21d", "Egress podu role (NetworkPolicy ns tenanta): internet (1.1.1.1:443, github.com:443) blokován, agentgateway, paměť a aplikace zakázky průchozí – model jen přes gateway", "PASS" if ok_eg else "FAIL", {"probe": eg})
 
         # P21e – časy
         tm = {k: {"schedule_s": p.get("t_schedule_s"), "start_s": p.get("t_start_s"), "run_s": p.get("t_run_s"), "total_s": p.get("t_total_s")} for k, p in pods_led.items()}
@@ -1142,7 +1258,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -1153,7 +1269,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -1163,7 +1279,8 @@ def main():
         assert a.kind, "chybí KIND"
         create_kind(a, env)
     {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True), "p2-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True), "p2-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True), "p2-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True, finops=True),
-     "p3-1": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-1": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True),
+     "p3-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

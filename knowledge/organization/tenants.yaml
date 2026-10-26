@@ -1,0 +1,26 @@
+# Tenanti platformy (P3-2) – jediný zdroj pravdy pro: namespace a NetworkPolicy podů rolí (tenant-<id>), SPIRE entries
+# (spiffe://platform/role/<role>/<id>), OPA data `tenants`, registr `org.tenants` (strop 30d), routy egressu gateway (/<id>/),
+# lidi tenanta v Keycloaku (atribut tenant_id; realm-p0.json musí mít tytéž uživatele – render_k8s.py --check to hlídá).
+# Tenant `platform` = průřez (governance, admin): žádné pody rolí, vidí všechny thready v GUI, RLS `app.tenant_id = platform`.
+tenants:
+  - id: acme
+    name: ACME – dogfooding (platforma staví sama sebe)
+    profile: standard          # klasifikační brána (autonomie.md P1a): standard | high-risk-III/4 | high-risk-III/2
+    budget_usd: 100            # strop 30d = součet útraty zakázek tenanta (org.zakazky.spent_usd); nad něj budget_gate → BudgetExceeded tenant-sum
+    role_pods: true            # namespace tenant-acme pro pody rolí
+    humans:
+      - {username: adam, roles: [human, reviewer]}
+  - id: beta
+    name: Beta s.r.o. – první externí zákazník (testovací)
+    profile: standard
+    budget_usd: 20
+    role_pods: true
+    humans:
+      - {username: bea, roles: [human]}
+  - id: platform
+    name: Platforma – governance a průřez
+    profile: standard
+    budget_usd: 0
+    role_pods: false
+    humans:
+      - {username: platform-admin, roles: [human, platform_admin]}

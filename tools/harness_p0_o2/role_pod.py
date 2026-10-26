@@ -36,6 +36,13 @@ def k8s(method, path, body=None, raw=False, timeout=30):
     return r.text if raw else (r.json() if r.text else {})
 
 
+def role_namespace(tenant):
+    """P3-2: pody rolí v namespace tenanta (P0_ROLE_NAMESPACE_TEMPLATE, výchozí tenant-{tenant}); P0_ROLE_NAMESPACE = pevný ns (kind/P1)."""
+    fixed = os.environ.get("P0_ROLE_NAMESPACE")
+    if fixed: return fixed
+    return os.environ.get("P0_ROLE_NAMESPACE_TEMPLATE", "tenant-{tenant}").replace("{tenant}", tenant)
+
+
 def _ts(s):
     try: return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
     except Exception: return None
@@ -58,7 +65,7 @@ def _template(role):
 
 def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json, srt_json):
     """Secret + Pod běhu role. Vrací (ns, name, secret, pod, info); info = {template, overrides, image} pro ledger a check P22b."""
-    ns = os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"); name = f"role-{role}-{run_id}"; tenant = os.environ.get("P0_TENANT", "acme")
+    tenant = z.get("tenant") or os.environ.get("P0_TENANT", "acme"); ns = role_namespace(tenant); name = f"role-{role}-{run_id}"
     rc = os.environ.get("P0_ROLE_RUNTIME_CLASS", "kata-vm-isolation")
     env = {k: os.environ[k] for k in ("P0_LLM_URL", "P0_MEMORY_URL", "P0_MODEL", "P0_MAX_TURNS", "P0_CLI_MAX_RETRIES", "P0_GITHUB_REPO",
                                       "ANTHROPIC_WORKSPACE_ID", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST") if os.environ.get(k)}
@@ -161,10 +168,10 @@ def gc_orphans(ns, ledger):
         ledger("ROLE_POD_GC_ERROR", error=f"{type(e).__name__}: {str(e)[:200]}")
 
 
-def kill_zakazka_pods(zid, ledger, grace_s=20):
+def kill_zakazka_pods(zid, ledger, grace_s=20, tenant=None):
     """Stop zakázky (P3-1, autonomie.md T5): ukončit běžící pody rolí zakázky (label platform.zakazka) – sandbox končí, checkpoint je
     poslední sync-up artefaktů; Secret běhu smaže pod_run po návratu. Vrací jména smazaných podů."""
-    ns = os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"); safe = re.sub(r"[^A-Za-z0-9_.-]", "-", zid)[:63]; killed = []
+    ns = role_namespace(tenant or os.environ.get("P0_TENANT", "acme")); safe = re.sub(r"[^A-Za-z0-9_.-]", "-", zid)[:63]; killed = []
     try:
         for p in k8s("GET", f"/api/v1/namespaces/{ns}/pods?labelSelector=app%3Drole,platform.zakazka%3D{safe}").get("items", []):
             name = p["metadata"]["name"]
@@ -179,7 +186,7 @@ def kill_zakazka_pods(zid, ledger, grace_s=20):
 
 def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
     """Spustí roli jako pod a vrátí výsledek ve tvaru agent_run (text, cost, files, work, arts, error, budget_exceeded)."""
-    gc_orphans(os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"), ledger)
+    gc_orphans(role_namespace(z.get("tenant") or os.environ.get("P0_TENANT", "acme")), ledger)
     rid = new_run(role, z["id"])
     od = os.environ.get("P0_ROLE_OPTIONS_DIR")
     ro = open(f"{od}/{role}.json").read() if od and os.path.exists(f"{od}/{role}.json") else ""

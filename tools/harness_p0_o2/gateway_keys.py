@@ -40,10 +40,11 @@ def _template():
     return yaml.safe_load(open(p).read())["policies"]["apiKey"]
 
 
-def _sub(v, zid):
-    if isinstance(v, str): return v.replace("{zakazka}", zid)
-    if isinstance(v, dict): return {k: _sub(x, zid) for k, x in v.items()}
-    if isinstance(v, list): return [_sub(x, zid) for x in v]
+def _sub(v, zid, tenant=None):
+    tenant = tenant or os.environ.get("P0_TENANT", "acme")   # P3-2: šablona z Gitu má placeholder {tenant} (render_k8s --tenant "{tenant}")
+    if isinstance(v, str): return v.replace("{zakazka}", zid).replace("{tenant}", tenant)
+    if isinstance(v, dict): return {k: _sub(x, zid, tenant) for k, x in v.items()}
+    if isinstance(v, list): return [_sub(x, zid, tenant) for x in v]
     return v
 
 
@@ -91,7 +92,7 @@ def key_hashes(zid):
 def keys_source(zid): return _SOURCE.get(zid) or ("openbao" if os.environ.get("P0_BAO_KV") else "secret")
 
 
-def issue(zid, ledger=None):
+def issue(zid, ledger=None, tenant=None):
     """Vrátí {role: klíč} pro zakázku; vydá je, pokud ještě nejsou (idempotentní přes OpenBao KV, resp. Secret)."""
     with _LOCK:
         if zid in _CACHE: return _CACHE[zid]
@@ -112,7 +113,7 @@ def issue(zid, ledger=None):
         for k in tpl["keys"]:
             role = k["metadata"]["role"]; rnd, src = _bao_random_hex(10) if use_bao else (_secrets.token_hex(10), "local"); entropy.add(src)
             val = f"sk-gw-{_safe(zid)}-{role}-{rnd}"
-            e = _sub({kk: v for kk, v in k.items() if kk != "keyHash"}, zid); e["keyHash"] = "sha256:" + hashlib.sha256(val.encode()).hexdigest()
+            e = _sub({kk: v for kk, v in k.items() if kk != "keyHash"}, zid, tenant); e["keyHash"] = "sha256:" + hashlib.sha256(val.encode()).hexdigest()
             keys[role] = val; entries.append(e)
         # ConfigMap agentgateway-keys: get → union (bez starých klíčů této zakázky) → update s resourceVersion (409 → opakovat)
         for attempt in range(6):

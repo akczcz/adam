@@ -125,7 +125,7 @@ data:
     : \"http://agentgateway.platform-data.svc:3128\"\n  },\n  \"strictAllowlist\"\
     : true\n }\n}"
   pod-account.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-account-\n\
-    \  labels:\n    platform.role: account\n    platform.tenant: acme\n    platform.wf:\
+    \  labels:\n    platform.role: account\n    platform.tenant: '{tenant}'\n    platform.wf:\
     \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
@@ -139,8 +139,8 @@ data:
     \     requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
     \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
   pod-architekt.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-architekt-\n\
-    \  labels:\n    platform.role: architekt\n    platform.tenant: acme\n    platform.wf:\
-    \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
+    \  labels:\n    platform.role: architekt\n    platform.tenant: '{tenant}'\n  \
+    \  platform.wf: '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
     \  containers:\n  - name: role\n    image: registry.platform.internal/roles/architekt:0.1.0\n\
@@ -165,7 +165,7 @@ data:
     \ 1\n      requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
     \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
   pod-sre.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-sre-\n\
-    \  labels:\n    platform.role: sre\n    platform.tenant: acme\n    platform.wf:\
+    \  labels:\n    platform.role: sre\n    platform.tenant: '{tenant}'\n    platform.wf:\
     \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
@@ -179,7 +179,7 @@ data:
     \     requests: *id001\n    securityContext:\n      allowPrivilegeEscalation:\
     \ false\n      capabilities:\n        drop:\n        - ALL\n  restartPolicy: Never\n"
   pod-vyvojar.yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: role-vyvojar-\n\
-    \  labels:\n    platform.role: vyvojar\n    platform.tenant: acme\n    platform.wf:\
+    \  labels:\n    platform.role: vyvojar\n    platform.tenant: '{tenant}'\n    platform.wf:\
     \ '{{wf}}'\nspec:\n  runtimeClassName: kata-vm-isolation\n  automountServiceAccountToken:\
     \ false\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n   \
     \ seccompProfile:\n      type: Localhost\n      localhostProfile: profiles/srt.json\n\
@@ -279,35 +279,75 @@ data:
     : \"pass_k\",\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L4\",\n\
     \    \"gate\": {\n     \"metric\": \"drift_cost_steps\",\n     \"max\": 0.5\n\
     \    }\n   }\n  ]\n }\n]"
-  spire-entries.json: "[\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/account\"\
+  tenants.json: "[\n {\n  \"id\": \"acme\",\n  \"name\": \"ACME – dogfooding (platforma\
+    \ staví sama sebe)\",\n  \"profile\": \"standard\",\n  \"budget_usd\": 100,\n\
+    \  \"role_pods\": true,\n  \"namespace\": \"tenant-acme\",\n  \"humans\": [\n\
+    \   \"adam\"\n  ]\n },\n {\n  \"id\": \"beta\",\n  \"name\": \"Beta s.r.o. – první\
+    \ externí zákazník (testovací)\",\n  \"profile\": \"standard\",\n  \"budget_usd\"\
+    : 20,\n  \"role_pods\": true,\n  \"namespace\": \"tenant-beta\",\n  \"humans\"\
+    : [\n   \"bea\"\n  ]\n },\n {\n  \"id\": \"platform\",\n  \"name\": \"Platforma\
+    \ – governance a průřez\",\n  \"profile\": \"standard\",\n  \"budget_usd\": 0,\n\
+    \  \"role_pods\": false,\n  \"namespace\": null,\n  \"humans\": [\n   \"platform-admin\"\
+    \n  ]\n }\n]"
+  spire-entries.json: "[\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/account/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
-    \ \"k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/account/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/account\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/account/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/account/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
-    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/architekt\"\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/architekt/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
-    \ \"k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/architekt/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/architekt/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
-    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/reviewer\"\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/reviewer/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
-    \ \"k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/reviewer/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/reviewer/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
-    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/sre\"\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/sre/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
-    \ \"k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/sre/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\": \"\
+    spiffe://platform/role/sre/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
-    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/vyvojar\"\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/vyvojar/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \
-    \ \"k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/vyvojar/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/vyvojar\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/vyvojar/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/vyvojar/acme\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/account/beta\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/account/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/account/beta\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/architekt/beta\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/architekt/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt/beta\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/reviewer/beta\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/reviewer/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer/beta\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/sre/beta\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\": \"\
+    spiffe://platform/role/sre/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre/beta\"\
+    ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
+    \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/vyvojar/beta\"\
+    ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
+    k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/vyvojar/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/vyvojar/beta\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n }\n]"
   eval-status.json: "{\n \"account\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\":\
@@ -326,7 +366,7 @@ data:
     \  \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
     : 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n    \"reason\": \"online/kalibrace\
     \ – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n  \"model\": \"mock\"\
-    ,\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\": \"93b951c5339e48ea\"\
+    ,\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\": \"872cabe64c32a665\"\
     ,\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"reviewer\": {\n\
     \  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n\
     \    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n \
@@ -337,11 +377,11 @@ data:
     \    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L5\": {\n    \"reason\"\
     : \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n\
     \  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\"\
-    : \"d2477ea7f7cc02ce\",\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n\
+    : \"f5ac1704d6eaa31a\",\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n\
     \ },\n \"sre\": {\n  \"k\": null,\n  \"layers\": {},\n  \"model\": \"mock\",\n\
     \  \"on_fail\": {},\n  \"reason\": \"role bez runtime v aplikaci (mock model bez\
     \ chování SRE) – evaly až s deploy MCP serverem (P2)\",\n  \"source_sha256_16\"\
-    : \"8f98cc95ccba2b5e\",\n  \"status\": \"unevaluated\",\n  \"version\": \"0.1.0\"\
+    : \"2adceafd1ef78305\",\n  \"status\": \"unevaluated\",\n  \"version\": \"0.1.0\"\
     \n },\n \"vyvojar\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\"\
     : \"pass_rate\",\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\"\
     : 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\",\n    \"passed\"\
@@ -351,7 +391,7 @@ data:
     : true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n  \
     \  \"reason\": \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\
     \n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n\
-    \  \"source_sha256_16\": \"8fa1887f6cdc84b7\",\n  \"status\": \"passed\",\n  \"\
+    \  \"source_sha256_16\": \"59f961e19cad0d0b\",\n  \"status\": \"passed\",\n  \"\
     version\": \"0.1.0\"\n }\n}\n"
   opa-data.json: "{\n \"roles\": {\n  \"account\": {\n   \"autonomy_max\": \"A2\"\
     ,\n   \"deny_tool_inputs\": [\n    \"Bash.dangerouslyDisableSandbox\"\n   ],\n\
@@ -501,51 +541,55 @@ data:
     ,\n     \"types\": [\n      \"pouceni\"\n     ]\n    }\n   },\n   \"processes\"\
     : [\n    \"P4-implementace\"\n   ],\n   \"scopes\": [\n    \"repo:read\",\n  \
     \  \"repo:push:branch\",\n    \"issues:comment\",\n    \"pr:write\",\n    \"memory:search\"\
-    ,\n    \"memory:propose\"\n   ],\n   \"version\": \"0.1.0\"\n  }\n }\n}"
+    ,\n    \"memory:propose\"\n   ],\n   \"version\": \"0.1.0\"\n  }\n },\n \"tenants\"\
+    : {\n  \"acme\": {\n   \"budget_usd\": 100,\n   \"profile\": \"standard\",\n \
+    \  \"role_pods\": true\n  },\n  \"beta\": {\n   \"budget_usd\": 20,\n   \"profile\"\
+    : \"standard\",\n   \"role_pods\": true\n  },\n  \"platform\": {\n   \"budget_usd\"\
+    : 0,\n   \"profile\": \"standard\",\n   \"role_pods\": false\n  }\n }\n}"
   apikeys-template.yaml: "policies:\n  apiKey:\n    mode: optional\n    location:\n\
-    \      header:\n        name: x-api-key\n    keys:\n    - keyHash: sha256:{{k-acme-{zakazka}-account}}\n\
-    \      metadata:\n        name: k-acme-{zakazka}-account\n        user_id: acme/{zakazka}/account\n\
-    \        role: account\n        tenant: acme\n        zakazka: '{zakazka}'\n \
-    \     budgets:\n      - name: account-24h-audit\n        limit:\n          unit:\
-    \ USD\n          amount: 5\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
-    \ Audit\n      - name: account-24h-block\n        limit:\n          unit: USD\n\
-    \          amount: 10\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
-    \ Block\n      - name: account-30d-block\n        limit:\n          unit: USD\n\
-    \          amount: 400\n        window:\n          rolling: 30d\n        onBudgetExceeded:\
-    \ Block\n    - keyHash: sha256:{{k-acme-{zakazka}-architekt}}\n      metadata:\n\
-    \        name: k-acme-{zakazka}-architekt\n        user_id: acme/{zakazka}/architekt\n\
-    \        role: architekt\n        tenant: acme\n        zakazka: '{zakazka}'\n\
-    \      budgets:\n      - name: architekt-24h-audit\n        limit:\n         \
-    \ unit: USD\n          amount: 15\n        window:\n          rolling: 24h\n \
-    \       onBudgetExceeded: Audit\n      - name: architekt-24h-block\n        limit:\n\
-    \          unit: USD\n          amount: 30\n        window:\n          rolling:\
-    \ 24h\n        onBudgetExceeded: Block\n      - name: architekt-30d-block\n  \
-    \      limit:\n          unit: USD\n          amount: 400\n        window:\n \
-    \         rolling: 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-acme-{zakazka}-reviewer}}\n\
-    \      metadata:\n        name: k-acme-{zakazka}-reviewer\n        user_id: acme/{zakazka}/reviewer\n\
-    \        role: reviewer\n        tenant: acme\n        zakazka: '{zakazka}'\n\
-    \      budgets:\n      - name: reviewer-24h-audit\n        limit:\n          unit:\
+    \      header:\n        name: x-api-key\n    keys:\n    - keyHash: sha256:{{k-{tenant}-{zakazka}-account}}\n\
+    \      metadata:\n        name: k-{tenant}-{zakazka}-account\n        user_id:\
+    \ '{tenant}/{zakazka}/account'\n        role: account\n        tenant: '{tenant}'\n\
+    \        zakazka: '{zakazka}'\n      budgets:\n      - name: account-24h-audit\n\
+    \        limit:\n          unit: USD\n          amount: 5\n        window:\n \
+    \         rolling: 24h\n        onBudgetExceeded: Audit\n      - name: account-24h-block\n\
+    \        limit:\n          unit: USD\n          amount: 10\n        window:\n\
+    \          rolling: 24h\n        onBudgetExceeded: Block\n      - name: account-30d-block\n\
+    \        limit:\n          unit: USD\n          amount: 400\n        window:\n\
+    \          rolling: 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-{tenant}-{zakazka}-architekt}}\n\
+    \      metadata:\n        name: k-{tenant}-{zakazka}-architekt\n        user_id:\
+    \ '{tenant}/{zakazka}/architekt'\n        role: architekt\n        tenant: '{tenant}'\n\
+    \        zakazka: '{zakazka}'\n      budgets:\n      - name: architekt-24h-audit\n\
+    \        limit:\n          unit: USD\n          amount: 15\n        window:\n\
+    \          rolling: 24h\n        onBudgetExceeded: Audit\n      - name: architekt-24h-block\n\
+    \        limit:\n          unit: USD\n          amount: 30\n        window:\n\
+    \          rolling: 24h\n        onBudgetExceeded: Block\n      - name: architekt-30d-block\n\
+    \        limit:\n          unit: USD\n          amount: 400\n        window:\n\
+    \          rolling: 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-{tenant}-{zakazka}-reviewer}}\n\
+    \      metadata:\n        name: k-{tenant}-{zakazka}-reviewer\n        user_id:\
+    \ '{tenant}/{zakazka}/reviewer'\n        role: reviewer\n        tenant: '{tenant}'\n\
+    \        zakazka: '{zakazka}'\n      budgets:\n      - name: reviewer-24h-audit\n\
+    \        limit:\n          unit: USD\n          amount: 10\n        window:\n\
+    \          rolling: 24h\n        onBudgetExceeded: Audit\n      - name: reviewer-24h-block\n\
+    \        limit:\n          unit: USD\n          amount: 20\n        window:\n\
+    \          rolling: 24h\n        onBudgetExceeded: Block\n      - name: reviewer-30d-block\n\
+    \        limit:\n          unit: USD\n          amount: 400\n        window:\n\
+    \          rolling: 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-{tenant}-{zakazka}-sre}}\n\
+    \      metadata:\n        name: k-{tenant}-{zakazka}-sre\n        user_id: '{tenant}/{zakazka}/sre'\n\
+    \        role: sre\n        tenant: '{tenant}'\n        zakazka: '{zakazka}'\n\
+    \      budgets:\n      - name: sre-24h-audit\n        limit:\n          unit:\
     \ USD\n          amount: 10\n        window:\n          rolling: 24h\n       \
-    \ onBudgetExceeded: Audit\n      - name: reviewer-24h-block\n        limit:\n\
-    \          unit: USD\n          amount: 20\n        window:\n          rolling:\
-    \ 24h\n        onBudgetExceeded: Block\n      - name: reviewer-30d-block\n   \
-    \     limit:\n          unit: USD\n          amount: 400\n        window:\n  \
-    \        rolling: 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-acme-{zakazka}-sre}}\n\
-    \      metadata:\n        name: k-acme-{zakazka}-sre\n        user_id: acme/{zakazka}/sre\n\
-    \        role: sre\n        tenant: acme\n        zakazka: '{zakazka}'\n     \
-    \ budgets:\n      - name: sre-24h-audit\n        limit:\n          unit: USD\n\
-    \          amount: 10\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
-    \ Audit\n      - name: sre-24h-block\n        limit:\n          unit: USD\n  \
-    \        amount: 20\n        window:\n          rolling: 24h\n        onBudgetExceeded:\
-    \ Block\n      - name: sre-30d-block\n        limit:\n          unit: USD\n  \
-    \        amount: 400\n        window:\n          rolling: 30d\n        onBudgetExceeded:\
-    \ Block\n    - keyHash: sha256:{{k-acme-{zakazka}-vyvojar}}\n      metadata:\n\
-    \        name: k-acme-{zakazka}-vyvojar\n        user_id: acme/{zakazka}/vyvojar\n\
-    \        role: vyvojar\n        tenant: acme\n        zakazka: '{zakazka}'\n \
-    \     budgets:\n      - name: vyvojar-24h-audit\n        limit:\n          unit:\
-    \ USD\n          amount: 25\n        window:\n          rolling: 24h\n       \
-    \ onBudgetExceeded: Audit\n      - name: vyvojar-24h-block\n        limit:\n \
-    \         unit: USD\n          amount: 50\n        window:\n          rolling:\
-    \ 24h\n        onBudgetExceeded: Block\n      - name: vyvojar-30d-block\n    \
-    \    limit:\n          unit: USD\n          amount: 400\n        window:\n   \
-    \       rolling: 30d\n        onBudgetExceeded: Block\n"
+    \ onBudgetExceeded: Audit\n      - name: sre-24h-block\n        limit:\n     \
+    \     unit: USD\n          amount: 20\n        window:\n          rolling: 24h\n\
+    \        onBudgetExceeded: Block\n      - name: sre-30d-block\n        limit:\n\
+    \          unit: USD\n          amount: 400\n        window:\n          rolling:\
+    \ 30d\n        onBudgetExceeded: Block\n    - keyHash: sha256:{{k-{tenant}-{zakazka}-vyvojar}}\n\
+    \      metadata:\n        name: k-{tenant}-{zakazka}-vyvojar\n        user_id:\
+    \ '{tenant}/{zakazka}/vyvojar'\n        role: vyvojar\n        tenant: '{tenant}'\n\
+    \        zakazka: '{zakazka}'\n      budgets:\n      - name: vyvojar-24h-audit\n\
+    \        limit:\n          unit: USD\n          amount: 25\n        window:\n\
+    \          rolling: 24h\n        onBudgetExceeded: Audit\n      - name: vyvojar-24h-block\n\
+    \        limit:\n          unit: USD\n          amount: 50\n        window:\n\
+    \          rolling: 24h\n        onBudgetExceeded: Block\n      - name: vyvojar-30d-block\n\
+    \        limit:\n          unit: USD\n          amount: 400\n        window:\n\
+    \          rolling: 30d\n        onBudgetExceeded: Block\n"

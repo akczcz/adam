@@ -44,6 +44,52 @@ def load_roles(d: Path) -> list[dict]:
     return roles
 
 
+TENANT_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+
+
+def load_tenants(p: Path | None) -> list[dict]:
+    """knowledge/organization/tenants.yaml (P3-2): id, name, profile, budget_usd, role_pods, humans. Bez souboru = jen acme (zpětná kompatibilita)."""
+    if not p or not p.exists(): return [{"id": "acme", "name": "acme", "profile": "standard", "budget_usd": 100, "role_pods": True, "humans": []}]
+    ts = (yaml.safe_load(p.read_text()) or {}).get("tenants") or []
+    ids = set()
+    for t in ts:
+        if not TENANT_RE.match(str(t.get("id", ""))): raise SystemExit(f"{p.name}: tenant id musí být [a-z][a-z0-9-]{{1,30}}: {t.get('id')!r}")
+        if t["id"] in ids: raise SystemExit(f"{p.name}: duplicitní tenant {t['id']}")
+        ids.add(t["id"]); t.setdefault("profile", "standard"); t.setdefault("budget_usd", 0); t.setdefault("role_pods", False); t.setdefault("humans", [])
+    return ts
+
+
+def tenant_ns(tid): return f"tenant-{tid}"
+
+
+def tenant_k8s(tenants, agent_conf: str):
+    """Per tenant s pody rolí (P3-2): Namespace tenant-<id> (PSS restricted), NetworkPolicy default-deny + egress jen DNS/gateway/paměť/aplikace/SPIRE
+    (žádný jiný tenant, žádný Postgres, žádný internet), SA `role` (sidecar spire-agent; k8s_psat agent_ns = hranice tenanta), RBAC pro SA zakazka
+    (pody a Secrety běhů jen v tomto ns), ConfigMap spire-agent-pod (agent.conf z infra/k8s/roles/spire-agent.conf)."""
+    docs = []
+    for t in tenants:
+        if not t.get("role_pods"): continue
+        ns = tenant_ns(t["id"]); lab = {"platform.tenant": t["id"]}
+        def to(app, ports): return {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "platform-data"}}, "podSelector": {"matchLabels": {"app": app}}}], "ports": [{"protocol": "TCP", "port": p} for p in ports]}
+        docs += [
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": ns, "labels": lab | {"pod-security.kubernetes.io/enforce": "restricted", "pod-security.kubernetes.io/warn": "restricted"}}},
+            {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "default-deny", "namespace": ns}, "spec": {"podSelector": {}, "policyTypes": ["Ingress", "Egress"]}},
+            {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "role-egress", "namespace": ns},
+             "spec": {"podSelector": {"matchLabels": {"app": "role"}}, "policyTypes": ["Egress"], "egress": [
+                 {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}], "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                 to("agentgateway", [4100, 3128]), to("memory", [9900]), to("zakazka", [8010]), to("spire-server", [8081])]}},
+            {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "role", "namespace": ns, "labels": lab}, "automountServiceAccountToken": False},
+            {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": {"name": "role-pods", "namespace": ns}, "rules": [
+                {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get", "list", "watch", "delete"]},
+                {"apiGroups": [""], "resources": ["pods/log"], "verbs": ["get"]},
+                {"apiGroups": [""], "resources": ["secrets"], "verbs": ["create", "get", "list", "delete"]}]},
+            {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": {"name": "zakazka-role-pods", "namespace": ns},
+             "subjects": [{"kind": "ServiceAccount", "name": "zakazka", "namespace": "platform-data"}], "roleRef": {"kind": "Role", "name": "role-pods", "apiGroup": "rbac.authorization.k8s.io"}},
+            {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "spire-agent-pod", "namespace": ns, "annotations": {"kustomize.toolkit.fluxcd.io/substitute": "disabled"}}, "data": {"agent.conf": agent_conf}},
+        ]
+    return docs
+
+
 def sub(v, ctx):
     if isinstance(v, str):
         for k, val in ctx.items(): v = v.replace("{%s}" % k, val)
@@ -53,7 +99,7 @@ def sub(v, ctx):
     return v
 
 
-def opa_data(roles):
+def opa_data(roles, tenants=None):
     out = {}
     for r in roles:
         a, m = r["authz"], r["memory"]
@@ -66,7 +112,7 @@ def opa_data(roles):
             "irreversible": [],  # žádná agentní role nemá merge/deploy – vykonává executor (autonomie.md)
             "deny_tool_inputs": r["sandbox"].get("approval", {}).get("deny_tool_inputs", []),
         }
-    return {"roles": out}
+    return {"roles": out, "tenants": {t["id"]: {"profile": t["profile"], "budget_usd": t["budget_usd"], "role_pods": bool(t["role_pods"])} for t in (tenants or [])}}
 
 
 def gateway_keys(roles, tenant, zakazka):
@@ -84,7 +130,7 @@ def gateway_keys(roles, tenant, zakazka):
     return {"policies": {"apiKey": {"mode": "strict", "location": {"header": {"name": "x-api-key"}}, "keys": keys}}}
 
 
-def egress(roles, tenant="acme"):
+def egress(roles, tenants=("acme",)):
     """Egress podů rolí přes agentgateway (P2-4): CONNECT bind 3128 → virtuální gateway `secure` (443). Interní hosty (*.platform.internal)
     terminuje HTTPS listener s certem gateway (Secret agentgateway-tls) – jen tam jde backendAuth (token vkládá gateway, pod ho nemá) a
     autorizace path/metoda z authz.http (CEL). Ostatní SNI z egress_allow jen passthrough allow-list (tcpRoute, dynamic backend).
@@ -98,14 +144,15 @@ def egress(roles, tenant="acme"):
         for h in r["authz"].get("http", []):   # per-role receive_pack (none/branches) vynucuje PEP role (OPA/approval) a git server (branch protection)
             if h["route"] in {l["name"] for l in listeners}: by_route.setdefault((h["route"], h["path_prefix"]), set()).update(h.get("methods", ["GET"]))
     for (route, prefix), methods in sorted(by_route.items()):
+        for tenant in tenants:   # P3-2: routa per tenant – prefix /{tenant}/ ohraničuje repozitáře tenanta (gateway roli ani tenant na CONNECT nerozezná – cesta je hranice)
             allow = " || ".join(f'request.method == "{m}"' for m in sorted(methods))
             routes.append({"name": f"{route}-{tenant}", "gateways": f"secure/{route}", "matches": [{"path": {"pathPrefix": sub(prefix, {"tenant": tenant})}}],
                            "policies": {"authorization": {"rules": [{"allow": allow}]},   # push na chráněné větve (main/release) odmítá git server (branch protection) – ref je až v těle pkt-line, gateway ho nevidí
                                         "backendAuth": {"key": {"value": {"file": f"/etc/platform-egress/{route}/token"}, "location": {"header": {"name": "Authorization", "prefix": "Bearer "}}}}},
                            "backends": [{"host": f"${route.upper()}_BACKEND_HOST"}]})
-    for l in listeners:   # terminovaný host bez authz.http (mirror): jen GET, bez tokenu
+    for l in listeners:   # terminovaný host bez authz.http (mirror): jen GET, bez tokenu, společný všem tenantům
         if l["name"] != "public-egress" and not any(rt["gateways"] == f"secure/{l['name']}" for rt in routes):
-            routes.append({"name": f"{l['name']}-{tenant}", "gateways": f"secure/{l['name']}", "matches": [{"path": {"pathPrefix": "/"}}],
+            routes.append({"name": f"{l['name']}-shared", "gateways": f"secure/{l['name']}", "matches": [{"path": {"pathPrefix": "/"}}],
                            "policies": {"authorization": {"rules": [{"allow": 'request.method == "GET"'}]}}, "backends": [{"host": f"${l['name'].upper()}_BACKEND_HOST"}]})
     out = {"binds": [{"port": 3128, "tunnelProtocol": "connect", "listeners": []}], "gateways": {"secure": {"port": 443, "listeners": listeners}}, "routes": routes}
     if public: out["tcpRoutes"] = [{"name": "roles-egress-allowlist", "gateways": "secure/public-egress", "hostnames": public, "backends": [{"dynamic": {}}]}]
@@ -126,15 +173,17 @@ def pod(r, tenant):
                      "restartPolicy": "Never"}}
 
 
-def spire_entries(roles, tenant):
-    """Registrace SPIRE (P2-3): per role alias uzlu = sidecar agent podu role (k8s_psat selektory ns/SA/pod-label platform.role) a workload entry
-    spiffe://platform/role/<role>/<tenant> přes unix uid 1000 (sdílený PID ns podu). Aplikuje harness/operátor přes `spire-server entry create`."""
+def spire_entries(roles, tenants=("acme",)):
+    """Registrace SPIRE (P2-3, P3-2 per tenant): alias uzlu per role × tenant = sidecar agent podu role (k8s_psat selektory agent_ns tenant-<id>/SA/pod-label
+    platform.role – namespace tenanta je atestovaná hranice, ne label od aplikace) a workload entry spiffe://platform/role/<role>/<tenant> přes
+    unix uid 1000 (sdílený PID ns podu). Aplikuje harness/operátor přes `spire-server entry create`."""
     out = []
-    for r in roles:
-        if not r["sandbox"].get("pod"): continue
-        alias = f"spiffe://platform/agent-pod/role/{r['role']}"
-        out.append({"spiffe_id": alias, "node": True, "selectors": ["k8s_psat:cluster:platform", "k8s_psat:agent_ns:platform-roles", "k8s_psat:agent_sa:role", f"k8s_psat:agent_pod_label:platform.role:{r['role']}"]})
-        out.append({"spiffe_id": f"spiffe://platform/role/{r['role']}/{tenant}", "parent_id": alias, "selectors": [f"unix:uid:{r['sandbox']['pod'].get('run_as_user', 1000)}"], "x509_svid_ttl": 3600, "jwt_svid_ttl": 1800})
+    for tenant in tenants:
+        for r in roles:
+            if not r["sandbox"].get("pod"): continue
+            alias = f"spiffe://platform/agent-pod/role/{r['role']}/{tenant}"
+            out.append({"spiffe_id": alias, "node": True, "selectors": ["k8s_psat:cluster:platform", f"k8s_psat:agent_ns:{tenant_ns(tenant)}", "k8s_psat:agent_sa:role", f"k8s_psat:agent_pod_label:platform.role:{r['role']}"]})
+            out.append({"spiffe_id": f"spiffe://platform/role/{r['role']}/{tenant}", "parent_id": alias, "selectors": [f"unix:uid:{r['sandbox']['pod'].get('run_as_user', 1000)}"], "x509_svid_ttl": 3600, "jwt_svid_ttl": 1800})
     return out
 
 
@@ -172,14 +221,19 @@ def inspect_files(r):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--roles", default=str(Path(__file__).resolve().parents[2] / "knowledge/organization/roles"))
-    ap.add_argument("--out", default="build"); ap.add_argument("--tenant", default="acme"); ap.add_argument("--zakazka", default="Z1")
+    ap.add_argument("--out", default="build"); ap.add_argument("--tenant", default="acme", help="tenant pro šablonu klíčů a podu (CI: placeholder {tenant})"); ap.add_argument("--zakazka", default="Z1")
+    ap.add_argument("--tenants", default=str(Path(__file__).resolve().parents[2] / "knowledge/organization/tenants.yaml"), help="P3-2: tenanti (namespace, SPIRE, routy, OPA, registr)")
+    ap.add_argument("--spire-agent-conf", default=str(Path(__file__).resolve().parents[2] / "infra/k8s/roles/spire-agent.conf"))
     a = ap.parse_args()
-    roles = load_roles(Path(a.roles)); out = Path(a.out)
+    roles = load_roles(Path(a.roles)); out = Path(a.out); tenants = load_tenants(Path(a.tenants)); pod_tenants = [t["id"] for t in tenants if t.get("role_pods")]
     for d in ("opa", "agentgateway", "srt", "claude", "k8s", "inspect", "registry", "agent_sdk", "images"): (out / d).mkdir(parents=True, exist_ok=True)
-    (out / "opa/data.json").write_text(json.dumps(opa_data(roles), ensure_ascii=False, indent=1, sort_keys=True))
+    (out / "opa/data.json").write_text(json.dumps(opa_data(roles, tenants), ensure_ascii=False, indent=1, sort_keys=True))
     (out / f"agentgateway/apikeys-{a.tenant}-{a.zakazka}.yaml").write_text(yaml.safe_dump(gateway_keys(roles, a.tenant, a.zakazka), sort_keys=False, allow_unicode=True))
-    (out / "agentgateway/egress.yaml").write_text(yaml.safe_dump(egress(roles, a.tenant), sort_keys=False))
-    (out / "spire").mkdir(exist_ok=True); (out / "spire/entries.json").write_text(json.dumps(spire_entries(roles, a.tenant), ensure_ascii=False, indent=1))
+    (out / "agentgateway/egress.yaml").write_text(yaml.safe_dump(egress(roles, pod_tenants), sort_keys=False))
+    (out / "spire").mkdir(exist_ok=True); (out / "spire/entries.json").write_text(json.dumps(spire_entries(roles, pod_tenants), ensure_ascii=False, indent=1))
+    agent_conf = Path(a.spire_agent_conf).read_text() if Path(a.spire_agent_conf).exists() else ""
+    (out / "k8s/tenants.yaml").write_text(yaml.safe_dump_all(tenant_k8s(tenants, agent_conf), sort_keys=False))
+    (out / "registry/tenants.json").write_text(json.dumps([{k: t[k] for k in ("id", "name", "profile", "budget_usd", "role_pods")} | {"namespace": tenant_ns(t["id"]) if t.get("role_pods") else None, "humans": [h["username"] for h in t.get("humans", [])]} for t in tenants], ensure_ascii=False, indent=1))
     registry = []
     for r in roles:
         srt = r["sandbox"].get("srt_settings")

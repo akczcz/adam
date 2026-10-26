@@ -100,7 +100,7 @@ data:
         plugin_data {
           clusters = {
             "platform" = {
-              service_account_allow_list = ["platform-data:spire-agent", "platform-roles:role"]   # P2-3: agent jako sidecar podu role (Kata – hostPath socket do VM nevede)
+              service_account_allow_list = ["platform-data:spire-agent", "tenant-acme:role", "tenant-beta:role"]   # GENEROVÁNO rolegen (tenants.yaml): sidecar spire-agent podu role jen z SA role v ns tenantů (P2-3 Kata: hostPath socket do VM nevede)
               allowed_pod_label_keys = ["platform.role"]                                          # selektor k8s_psat:agent_pod_label:platform.role:<role> → alias uzlu per role
             }
           }

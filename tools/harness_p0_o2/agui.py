@@ -115,8 +115,11 @@ def thread_of_tenant(zid, user):
     """ZAKAZKA_START threadu musí nést tenant uživatele – jinak 404 (cizí thread neexistuje)."""
     s = thread_start(zid)
     if not s: return None
-    if (s.get("tenant") or os.environ.get("P0_TENANT", "acme")) != user["tenant"]: raise HTTPException(404, "thread neexistuje")
+    if (s.get("tenant") or os.environ.get("P0_TENANT", "acme")) != user["tenant"] and user["tenant"] != PLATFORM_TENANT: raise HTTPException(404, "thread neexistuje")
     return s
+
+
+PLATFORM_TENANT = "platform"   # P3-2: průřezový tenant (governance) – vidí všechny thready, zakázky nezakládá
 
 
 def pending_interrupt(entries):
@@ -147,9 +150,9 @@ def state_of(zid, entries):
 async def threads(req: Request):
     u = user_from_request(req)
     L = CTX["read_ledger"](); out = []
-    for s in [e for e in L if e.get("kind") == "ZAKAZKA_START" and (e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == u["tenant"]]:
+    for s in [e for e in L if e.get("kind") == "ZAKAZKA_START" and ((e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == u["tenant"] or u["tenant"] == PLATFORM_TENANT)]:
         zid = s["zakazka"]; out.append(state_of(zid, [e for e in L if e.get("zakazka") == zid]))
-    return {"tenant": u["tenant"], "threads": sorted(out, key=lambda t: -(t.get("started") or 0))}
+    return {"tenant": u["tenant"], "threads": sorted(out, key=lambda t: -(t.get("started") or 0)), "tenants": [t["id"] for t in CTX.get("tenants") or []]}
 
 
 # --- ledger → AG-UI události --------------------------------------------------------------------------------------------
@@ -243,6 +246,7 @@ async def run(req: Request):
     created = False
     if not start:
         if fp.get("action") or inp.resume: raise HTTPException(404, "thread neexistuje")
+        if u["tenant"] == PLATFORM_TENANT: raise HTTPException(403, "tenant platform zakázky nezakládá (průřez)")
         user_msgs = [m for m in inp.messages if getattr(m, "role", None) == "user"]
         text = user_msgs[-1].content if user_msgs else None
         if not isinstance(text, str) or not text.strip(): raise HTTPException(422, "nový thread = první zpráva uživatele je poptávka")
