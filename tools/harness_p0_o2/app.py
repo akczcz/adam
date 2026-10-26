@@ -199,7 +199,7 @@ def agent_run_local(role, z, prompt, tool_names):
     """Spustí roli jako Claude Agent SDK query s ClaudeAgentOptions vygenerovanými rolegenem (build/agent_sdk/<role>.json)."""
     import asyncio, subprocess
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, AssistantMessage, ToolUseBlock, create_sdk_mcp_server, query, tool
-    root = f"/tmp/p0-o2/{z['id']}"; work = f"{root}/work"; arts = f"{root}/artifacts"
+    root = f"/tmp/p0-o2/{z['id']}"; work = os.environ.get("P0_WORK_DIR") or f"{root}/work"; arts = f"{root}/artifacts"   # pod role: /work (emptyDir) = srt allowWrite z definice role
     os.makedirs(work, exist_ok=True); os.makedirs(arts, exist_ok=True)
     MEM = os.environ["P0_MEMORY_URL"]; MH = {"Authorization": f"Bearer {role_token(role)}"}
     SRT, SRTCFG = os.environ.get("P0_SRT", "none"), os.environ.get("P0_SRT_SETTINGS", "")   # "none" = bez srt (P1-5: hranicí je pod; srt + Kata s pody rolí v P1-6)

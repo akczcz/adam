@@ -33,14 +33,14 @@ def _hp(url, default_port):
 
 GIT_PROBE_SH = r"""
 set +e
-R="$1"; M="$2"; WF="$3"
+R="$1"; M="$2"; BR="$3"
 out(){ printf 'PROBE:%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\n\r' '  ' | cut -c1-300)"; }
 d=$(mktemp -d "$PWD/probe-XXXX") || { out mkdir fail; exit 0; }; cd "$d" || exit 0
 git clone -q "$R" repo 2>clone.err; out clone $?; out clone_err "$(tail -c 300 clone.err)"
 if cd repo 2>/dev/null; then
   git config user.email role@platform.internal; git config user.name role
-  git checkout -q -b "agent/$WF/ukol-1" && echo "probe $WF" > PROBE.md && git add PROBE.md && git commit -qm "probe $WF"; out commit $?
-  git push -v origin "agent/$WF/ukol-1" >push.out 2>push.err; out push_branch $?; out push_branch_err "$(tail -c 300 push.err)"; out push_branch_out "$(tail -c 200 push.out)"
+  git checkout -q -b "$BR" && echo "probe $BR" > PROBE.md && git add PROBE.md && git commit -qm "probe $BR"; out commit $?
+  git push -v origin "$BR" >push.out 2>push.err; out push_branch $?; out push_branch_err "$(tail -c 300 push.err)"; out push_branch_out "$(tail -c 200 push.out)"
   git push -q origin HEAD:main 2>pushmain.err; out push_main $?; out push_main_err "$(tail -c 300 pushmain.err)"
   cd ..
 fi
@@ -60,7 +60,8 @@ def git_mirror_probe():
     (HTTPS_PROXY) a zaznamená obě varianty. Token gitu v podu není – vkládá ho gateway (backendAuth)."""
     import subprocess
     repo, mirror, wf = os.environ["P0_GIT_URL"], os.environ.get("P0_MIRROR_URL", ""), os.environ.get("P0_ZAKAZKA_ID") or json.loads(os.environ.get("P0_ZAKAZKA", "{}")).get("id", "wf")
-    work = f"/tmp/p0-o2/{wf}/egress-probe"; os.makedirs(work, exist_ok=True)   # mimo work/ a artifacts/ – klon, wheel a tgz sondy nesmí skončit v PR zakázky (binární soubory shodily publish)
+    branch = f"agent/{wf}/{os.environ.get('P0_ROLE', 'role')}"   # větev per role: sondu pouští každá role s git hostem v allow-listu (Architekt, Vývojář, Reviewer)
+    work = os.path.join(os.environ.get("P0_WORK_DIR") or f"/tmp/p0-o2/{wf}/work", ".egress-probe"); os.makedirs(work, exist_ok=True)   # dot-adresář: upload i PR ho přeskočí (klon, wheel, tgz nesmí do PR), srt allowWrite /work
     sh = f"{work}/.git-probe.sh"; open(sh, "w").write(GIT_PROBE_SH)
     base_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
     base_env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_PARAMETERS": "", "npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false", "npm_config_fetch_retries": "1", "npm_config_fetch_timeout": "20000",
@@ -68,7 +69,7 @@ def git_mirror_probe():
     def run(via):
         env = dict(base_env)
         if via == "direct": env["HTTPS_PROXY"] = env["HTTP_PROXY"] = env["https_proxy"] = env["http_proxy"] = os.environ.get("P0_EGRESS_PROXY", ""); env["NO_PROXY"] = ".svc,localhost,127.0.0.1"
-        cmd = [os.environ["P0_SRT"], "-s", os.environ["P0_SRT_SETTINGS"], "-c", f"bash {sh} {repo} {mirror} {wf}"] if via == "srt" else ["bash", sh, repo, mirror, wf]
+        cmd = [os.environ["P0_SRT"], "-s", os.environ["P0_SRT_SETTINGS"], "-c", f"bash {sh} {repo} {mirror} {branch}"] if via == "srt" else ["bash", sh, repo, mirror, branch]
         t0 = time.time()
         try: r = subprocess.run(cmd, capture_output=True, text=True, timeout=240, env=env, cwd=work)
         except subprocess.TimeoutExpired as e: return {"via": via, "error": "timeout", "stdout": (e.stdout or "")[-800:] if isinstance(e.stdout, str) else "", "s": round(time.time() - t0, 1)}
@@ -140,15 +141,18 @@ def main():
     if git_probe is not None: print("git_probe=" + json.dumps(git_probe)[:3000], flush=True)
 
     root = f"/tmp/p0-o2/{z['id']}"
-    for d in ("work", "artifacts"): os.makedirs(f"{root}/{d}", exist_ok=True)
+    # P2-4: pracovní adresář role = /work (emptyDir podu) – srt vynucuje filesystem.allowWrite ["/work"] z definice role (do té doby srt neběžel: chyběl ripgrep)
+    WORK = "/work" if os.path.isdir("/work") and os.access("/work", os.W_OK) else f"{root}/work"; os.environ["P0_WORK_DIR"] = WORK
+    for d in (WORK, f"{root}/artifacts"): os.makedirs(d, exist_ok=True)
     try:
         r = httpx.get(f"{api}/zakazky/{z['id']}/files", headers=H, timeout=60)
         files = r.json().get("files", []) if r.status_code == 200 else []
     except Exception as e:
         files = []; print(f"sync-down error: {e}", flush=True)
     for f in files:
-        p = os.path.normpath(os.path.join(root, f["root"], f["path"]))
-        if not p.startswith(root + os.sep): continue
+        base = WORK if f["root"] == "work" else os.path.join(root, f["root"])
+        p = os.path.normpath(os.path.join(base, f["path"]))
+        if not p.startswith(base + os.sep): continue
         os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "wb").write(base64.b64decode(f["content_b64"]))
     print(f"sync-down files={len(files)}", flush=True)
 
@@ -160,7 +164,7 @@ def main():
 
     up = []
     for rootname in ("artifacts", "work"):
-        base = os.path.join(root, rootname)
+        base = WORK if rootname == "work" else os.path.join(root, rootname)
         for d, dirs, names in os.walk(base):
             dirs[:] = [x for x in dirs if not x.startswith(".")]
             for n in names:
