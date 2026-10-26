@@ -160,7 +160,11 @@ harness (`bao_setup`); Secret `zakazka-keys-<id>` se už nezakládá. `/work` po
 - Secret/ConfigMap mountovaný **pod** jiný read-only mount (`/etc/agentgateway/tls` uvnitř read-only emptyDir `/etc/agentgateway`) → runc nevytvoří
   mountpoint (`mkdirat … read-only file system`, exit 128). Každý mount na vlastní cestu (`/etc/platform-tls`, `/etc/platform-egress/git`).
 - Soubory sondy (klon, wheel, tgz) nesmí ležet ve `work/` role: aplikace z `work/` staví PR přes git data API jako textové bloby a binárka shodila
-  aktivitu workflow (PR se nikdy nepublikoval, harness čekal 25 min). Sonda běží v `egress-probe/` mimo upload; publish ne-UTF-8 soubory přeskočí.
+  aktivitu workflow (PR se nikdy nepublikoval, harness čekal 25 min). Sonda běží v `/work/.egress-probe/` (dot-adresář mimo upload); publish ne-UTF-8 soubory přeskočí.
+- **emptyDir přes virtiofs v Kata guestu není pro uid 1000 zapisovatelný** (P2-4 `/work`: `os.access` false), `medium: Memory` (tmpfs v guestu) ano –
+  uid 0, gid 1000, mód 3777 (fsGroup). Sockety SPIRE i `/work` role jsou proto Memory emptyDir (P2-6 2026-10-26).
+- **srt vynucuje `filesystem.allowWrite` i ve weaker nested módu:** cache npm (`npm_config_cache`), pip a `HOME` musí ležet pod `/work`, jinak
+  `npm pack` padá bez hlášky; hosty mimo allow-list vrací srt jako `CONNECT … 403` (curl 56), ne TLS EOF od gateway.
 
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.
