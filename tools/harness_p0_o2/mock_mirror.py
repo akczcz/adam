@@ -53,6 +53,7 @@ TGZ = build_tgz(); TGZ_NAME = f"{NAME}-{VER}.tgz"
 
 @app.middleware("http")
 async def record(req: Request, call_next):
+    if req.url.path in ("/health", "/_debug/requests"): return await call_next(req)   # readiness probe by jinak vytlačila důkazy (P3-1: 50 posledních = jen /health)
     REQ.append({"ts": time.time(), "method": req.method, "path": req.url.path, "ua": req.headers.get("user-agent", "")[:80], "via_gateway": "x-forwarded-for" in req.headers or "x-envoy-original-path" in req.headers})
     del REQ[:-200]
     return await call_next(req)

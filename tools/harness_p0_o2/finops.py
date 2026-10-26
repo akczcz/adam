@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS org.approvals (
   channel            text);
 """
 BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2"}
+BOD_ACTION = {"H1": "zadani.accept", "H1a": "pravnik.stanovisko", "H2": "navrh.accept", "H4": "pr.merge", "H5": "deploy.apply", "rozpocet": "budget.raise"}   # metriky.md org.approvals.action
 
 
 def approval_insert(zid: str, *, tenant: str, bod: str, action: str, artifact_sha: str, approver: str, decision: str, reason: str, expires_at: float, signature: str, channel: str, limits_shown: dict | None = None, artifact_ref: str | None = None) -> bool:
@@ -76,7 +77,7 @@ def approval_insert(zid: str, *, tenant: str, bod: str, action: str, artifact_sh
         c.execute(DDL_APPROVALS)
         c.execute("""INSERT INTO org.approvals (approval_id, tenant_id, workflow_instance, process_id, action, artifact_ref, artifact_sha, approver, decision, reason, limits_shown, expires_at, signature, channel)
                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)""",
-                  (uuid.uuid4().hex, tenant, zid, BOD_PROCESS.get(bod, bod), action, artifact_ref or f"{bod}://{zid}", artifact_sha or "-", approver, decision, reason, json.dumps(limits_shown or {}), dt.datetime.fromtimestamp(expires_at, dt.timezone.utc), signature, channel))
+                  (uuid.uuid4().hex, tenant, zid, BOD_PROCESS.get(bod, bod), BOD_ACTION.get(bod, action), artifact_ref or f"{bod}://{zid}", artifact_sha or "-", approver, decision, reason, json.dumps(limits_shown or {}), dt.datetime.fromtimestamp(expires_at, dt.timezone.utc), signature, channel))
         return True
     except Exception:
         return False

@@ -69,7 +69,11 @@ def user_from_request(req: Request) -> dict:
     roles = c.get("roles") or (c.get("realm_access") or {}).get("roles") or []
     if "human" not in roles: raise HTTPException(403, "GUI je pro lidi (realm role human)")
     if not c.get("tenant_id"): raise HTTPException(403, "token bez tenant_id")
-    return {"sub": c["sub"], "name": c.get("preferred_username") or c.get("name") or c["sub"], "tenant": c["tenant_id"], "roles": roles, "exp": c.get("exp")}
+    # klient harness-human nemá scope `profile` (preferred_username) a realm v clusteru se znovu neimportuje → jméno z loginu (cache sub → username); P3-2: scope v realmu
+    return {"sub": c["sub"], "name": c.get("preferred_username") or c.get("name") or _NAMES.get(c["sub"]) or c["sub"], "tenant": c["tenant_id"], "roles": roles, "exp": c.get("exp")}
+
+
+_NAMES: dict = {}
 
 
 @router.post("/login")
@@ -82,6 +86,7 @@ async def login(req: Request):
         CTX["ledger"]("GUI_LOGIN", user=user, ok=ok, idp="keycloak", http=r.status_code)
         if not ok: raise HTTPException(401, "přihlášení odmítnuto")
         j = r.json(); c = jwt.decode(j["access_token"], options={"verify_signature": False})
+        if c.get("sub"): _NAMES[c["sub"]] = c.get("preferred_username") or user
         return {"access_token": j["access_token"], "expires_in": j.get("expires_in"), "user": {"sub": c.get("sub"), "name": c.get("preferred_username", user), "tenant": c.get("tenant_id"), "roles": c.get("roles")}}
     users = json.loads(os.environ.get("P0_AGUI_DEV_USERS", "{}"))   # lokální fixture bez Keycloaku
     u = users.get(user)
