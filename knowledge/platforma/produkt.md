@@ -79,13 +79,20 @@ Plán, pořadí, měření a rizika: **[p2-role.md](p2-role.md)** (návrh 2026-1
 
 ## P3 – první externí zákazník
 
+Plán, pořadí, měření a rizika: **[p3-zakaznik.md](p3-zakaznik.md)** (návrh 2026-10-26, čeká na Adamovo potvrzení).
+Nově oproti původnímu checklistu: **GUI nad celou firmou** (AG-UI 1.0 vlastní server + A2UI za adaptérem) jako P3-1 a P3-3.
+
 | Krok | Stav |
 |---|---|
-| Tenant model (Keycloak realm/atributy, RLS, gateway klíče, CNP per tenant) | ⬜ |
-| Klasifikační brána naostro, čl. 50 disclosure v reálných kanálech, SLA | ⬜ |
-| O-3 multi-tenant harness (M-E3 přes dva tenanty, stop per tenant) | ⬜ |
+| P3-1 AG-UI server + minimální GUI nad HITL body (zakázka projde P1→P5 klikáním, důvod povinný, stop, disclosure T7) | ⬜ |
+| P3-2 Tenant model (Keycloak atributy/skupiny v jednom realmu, RLS v `org.*`, namespace + CNP per tenant, gateway klíče, `on_behalf_of`) | ⬜ |
+| P3-3 GUI nad celou firmou (Governance MCP: role × autonomie, registr agentů, FinOps, risk register, governance report, audit; stop tenanta) | ⬜ |
+| P3-4 Klasifikační brána K1–K6 naostro, čl. 50 disclosure v reálných kanálech (e-mail/ticket adaptér), SLA jako timery | ⬜ |
+| P3-5 O-3 multi-tenant harness (M-E3 přes dva tenanty v clusteru, stop a resume per tenant) | ⬜ |
+| P3-6 Produkční hrany (token exchange SVID→Keycloak, cap v gateway, ledger do ClickHouse, cert-manager + ESO, SPIRE bundle, VNet) | ⬜ (průběžně) |
 
 ## Changelog
+- 2026-10-26: plán P3 v p3-zakaznik.md (návrh) – šest kroků, GUI nad celou firmou doplněno jako P3-1 a P3-3.
 - 2026-10-25: P2-5 hotovo na AKS (13/13) – eval gate rolí v CI i v aplikaci, registr agentů poprvé naplněn.
 - 2026-10-25: P2-2 hotovo na AKS (10/10) – obrazy rolí a pod spec z rolegen; role běží z vlastního obrazu.
 - 2026-10-25: P2-1 hotovo na AKS (7/7) – role → Git → Flux, klíče per zakázka od aplikace; žádné bot commity (generované manifesty jsou součást PR).
