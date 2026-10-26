@@ -132,6 +132,55 @@ class Gui:
             raise AssertionError(f"rozhodnutí {decision} nespustilo nový run (run-error: {err!r}, status {self.t('run-status').inner_text() if self.t('run-status').count() else '?'})") from e
         return {"disabled_empty": d0, "disabled_short": d1, "disabled_with_reason": d2, "new_run": self.t("run-id").inner_text() != rid0, "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
 
+    def wait_any_interrupt(self, timeout_s=900):
+        """Čeká na libovolný interrupt (dialog Account nebo HITL) – P3-3: před H1 může přijít kolo otázek."""
+        t0 = time.time()
+        while time.time() - t0 < timeout_s:
+            if self.t("interrupt").count(): return {"waited_s": round(time.time() - t0, 1), "kind": self.t("interrupt").get_attribute("data-kind"), "bod": self.t("interrupt-bod").inner_text().strip() if self.t("interrupt-bod").count() else "dialog", **self.snapshot()}
+            rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
+            if rs in ("finished", "cancelled"): break
+            self.page.wait_for_timeout(1500)
+        return {"waited_s": round(time.time() - t0, 1), "kind": None, "bod": None, **self.snapshot()}
+
+    def answer_dialog(self, text):
+        """Odpověď na otázky Account (P3-3): tlačítko bez textu zakázané, pak nový run."""
+        self.t("dialog-answer").fill(""); d0 = self.t("dialog-submit").is_disabled(); q = self.t("dialog-questions").inner_text()
+        self.t("dialog-answer").fill(text); rid0 = self.t("run-id").inner_text(); self.t("dialog-submit").click()
+        self.page.wait_for_function(f"document.querySelector('[data-testid=run-id]') && document.querySelector('[data-testid=run-id]').textContent !== {json.dumps(rid0)}", timeout=60_000)
+        self.shot("dialog-answered")
+        return {"disabled_empty": d0, "questions": q[:300], "new_run": True}
+
+    def page_rows(self, page, table_ids, timeout_s=60):
+        """Stránka firmy (P3-3): počty řádků tabulek (data-rows) nebo prázdné stavy."""
+        self.page.goto(self.base + f"#/{page}"); self.page.wait_for_timeout(500); out = {}
+        for tid in table_ids:
+            try:
+                self.page.wait_for_function(f"document.querySelector('[data-testid={tid}]') || document.querySelector('[data-testid={tid}-empty]')", timeout=timeout_s * 1000)
+                out[tid] = int(self.t(tid).get_attribute("data-rows")) if self.t(tid).count() else 0
+            except Exception as e: out[tid] = f"err:{type(e).__name__}"
+        self.shot(f"page-{page}")
+        return out
+
+    def autonomy(self, role, tenant, level, reason):
+        self.page.goto(self.base + "#/firma"); self.t("auto-role").wait_for()
+        self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
+        self.t("auto-submit").click(); self.t("auto-result").wait_for(timeout=60_000); self.shot(f"autonomy-{role}-{tenant}-{level}")
+        return {"ok": self.t("auto-result").get_attribute("data-ok") == "true", "text": self.t("auto-result").inner_text()[:400]}
+
+    def tenant_stop(self, tenant, reason, resume=False):
+        self.page.goto(self.base + "#/firma"); self.t("tstop-tenant").wait_for()
+        self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(""); d0 = self.t("tstop-submit").is_disabled(); self.t("tstop-reason").fill(reason)
+        self.t("tresume-submit" if resume else "tstop-submit").click(); self.t("tstop-result").wait_for(timeout=120_000); self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")
+        return {"disabled_empty": d0, "ok": self.t("tstop-result").get_attribute("data-ok") == "true", "text": self.t("tstop-result").inner_text()[:400]}
+
+    def report(self):
+        self.page.goto(self.base + "#/governance"); self.t("report-summary").wait_for(timeout=60_000)
+        rows = self.page.locator("[data-testid^=report-][data-missing]")
+        out = [{"id": r.get_attribute("data-testid")[len("report-"):], "missing": (r.get_attribute("data-missing") or "").split(",") if r.get_attribute("data-missing") else []} for r in rows.all()]
+        self.t("export-button").click(); self.t("export-lines").wait_for(timeout=60_000)
+        self.shot("governance")
+        return {"gaps": int(self.t("report-gaps").inner_text()), "rows": out, "export_lines": int(self.t("export-lines").get_attribute("data-lines")), "export_preview": self.t("export-preview").inner_text()[:2000]}
+
     def wait_finished(self, timeout_s=600, want=("finished",)):
         t0 = time.time()
         while time.time() - t0 < timeout_s:
@@ -160,6 +209,7 @@ def run_local(base, shots):
         lf = g.login_fail("adam", "wrong"); li = g.login("adam", "adam"); t0 = g.threads_list()
         add("U1a", li["user"] == "adam" and li["tenant"] == "acme" and li["token"] and lf["still_login"] and isinstance(t0, list), {"login": li, "fail": lf, "threads": len(t0)})
         cr = g.create_thread(z1, "Přidej do repa soubor NOTES.md s poznámkou o GUI.", 5)
+        w0 = g.wait_any_interrupt(120); dlg = g.answer_dialog("Soubor do zakazky/<id>/NOTES.md; rozpočet výchozí.") if w0.get("kind") == "dialog" else None   # P3-3: dialog Account
         h1 = g.wait_interrupt("H1", 120)
         api = httpx.post(f"{base}/agui/run", headers={"Authorization": f"Bearer {g.token}"}, json={"threadId": z1, "runId": "x", "messages": [], "resume": [{"interruptId": h1["interrupt"], "status": "resolved", "payload": {"decision": "approve", "reason": "ok"}}]}, timeout=10)
         d1 = g.decide("Zadání odpovídá poptávce, kritéria jsou měřitelná.")
@@ -167,7 +217,7 @@ def run_local(base, shots):
         h4 = g.wait_interrupt("H4", 120); d4 = g.decide("Review bez vad, soubory odpovídají zadání – merge.")
         h5 = g.wait_interrupt("H5", 120); d5 = g.decide("Nasazení schváleno, rollback je v runbooku.")
         fin = g.wait_finished(120)
-        add("U1b", [s["name"] for s in fin["subagents"]] == ROLES and all(s["status"] == "done" for s in fin["subagents"]) and fin["state"]["stav"] == "Dokonceno", {"subagents": fin["subagents"], "state": fin["state"]})
+        add("U1b", list(dict.fromkeys(s["name"] for s in fin["subagents"])) == ROLES and all(s["status"] == "done" for s in fin["subagents"]) and fin["state"]["stav"] == "Dokonceno", {"subagents": fin["subagents"], "state": fin["state"]})
         add("U1c", api.status_code == 422 and d1["disabled_empty"] and d1["disabled_short"] and not d1["disabled_with_reason"] and all(d["new_run"] for d in (d1, d2, d4, d5)), {"api_422": api.status_code, "d1": d1})
         add("U1e", all(any(m["name"] == r and m["disclosure"] and "AI agent" in m["disclosure"] for m in fin["messages"]) for r in ROLES), {"messages": fin["messages"]})
         add("U1g", cr["protocol"] == "1.0" and fin["events"][0] == "RUN_STARTED" and fin["events"][-1] == "RUN_FINISHED" and all(h["interrupt"] and h["interrupt"].startswith(f"hitl:{b}:") for h, b in ((h1, "H1"), (h2, "H2"), (h4, "H4"), (h5, "H5"))), {"protocol": cr["protocol"], "events_head": fin["events"][:3], "interrupts": [h["interrupt"] for h in (h1, h2, h4, h5)]})
@@ -177,10 +227,22 @@ def run_local(base, shots):
         ot = g.open_thread(zb)
         add("U1d", zb not in [t["id"] for t in lst] and z1 in [t["id"] for t in lst] and r404.status_code == 404 and ot["status"] == "error" and "404" in (ot["error"] or ""), {"listed": [t["id"] for t in lst], "run_http": r404.status_code, "gui": ot})
         # U1f – stop uprostřed role s důvodem
-        g.create_thread(z2, "Druhá zakázka – test stopu.", 5); h1b = g.wait_interrupt("H1", 120); g.decide("Zadání v pořádku, pokračovat k návrhu.")
+        g.create_thread(z2, "Druhá zakázka – test stopu.", 5)
+        if g.wait_any_interrupt(120).get("kind") == "dialog": g.answer_dialog("Soubor do zakazky/<id>/NOTES.md; rozpočet výchozí.")
+        h1b = g.wait_interrupt("H1", 120); g.decide("Zadání v pořádku, pokračovat k návrhu.")
         ws = g.wait_subagent("architekt", 60); st = g.stop("Zákazník pozastavil zakázku do vyjasnění rozpočtu.")
         z2st = httpx.get(f"{base}/zakazky/{z2}", timeout=10).json()
         add("U1f", ws["status"] == "running" and st["disabled_short"] and not st["disabled_with_reason"] and st["run_status"] == "cancelled" and z2st.get("status") == "SUSPENDED" and st["stop_to_cancelled_s"] < 60, {"subagent": ws, "stop": {k: st[k] for k in ("stop_to_cancelled_s", "run_status", "state")}, "wf": z2st})
+        add("U2b-local", dlg is not None and dlg["disabled_empty"] and "otázky" in dlg["questions"].lower() and h1["interrupt"] is not None, {"dialog": dlg})
+        # U-2 lokálně (falešný Governance MCP ve fixture): stránky firmy, autonomie, stop tenanta, report + export
+        g.close(); g = Gui(base + "/gui/", shots=shots).open(); g.login("platform-admin", "platform-admin")
+        pages = {"firma": g.page_rows("firma", ["roles-table", "tenants-table"]), "registr": g.page_rows("registr", ["agents-table", "events-table"]), "finops": g.page_rows("finops", ["finops-tenants", "finops-zakazky"]), "audit": g.page_rows("audit", ["approvals-table"])}
+        add("U2a-local", pages["firma"]["roles-table"] == 5 and pages["firma"]["tenants-table"] == 3 and isinstance(pages["registr"]["agents-table"], int) and pages["audit"]["approvals-table"] >= 4, pages)
+        r1 = g.autonomy("vyvojar", "beta", "A1", "Zkouška posunu bez podmínek – odmítnout."); r2 = g.autonomy("account", "acme", "A1", "Account má přes 10 běhů – posun na A1.")
+        add("U2c-local", not r1["ok"] and r2["ok"], {"beta": r1, "acme": r2})
+        st2 = g.tenant_stop("beta", "Zákazník beta pozastavil spolupráci – stop tenanta."); rs2 = g.tenant_stop("beta", "Beta zpět do provozu.", resume=True)
+        add("U2d-local", st2["ok"] and st2["disabled_empty"] and rs2["ok"], {"stop": st2, "resume": rs2})
+        rp = g.report(); add("U2e-local", rp["gaps"] >= 1 and rp["export_lines"] >= 1 and all("T15:klasifikace" in r["missing"] for r in rp["rows"]), {k: rp[k] for k in ("gaps", "export_lines")})
     finally:
         g.close()
     n = sum(1 for c in checks if c["status"] == "FAIL"); print(f"== U-1 lokálně: {len(checks) - n}/{len(checks)} PASS; console: {g.log[:5]}")

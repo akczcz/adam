@@ -52,6 +52,28 @@ export async function listThreads(): Promise<{ tenant: string; threads: ThreadSt
   return r.json();
 }
 
+// --- governance (P3-3): čtení přes Governance MCP (proxy AG-UI serveru, token člověka), akce přes aplikaci ---------------------------
+export async function govTool<T = any>(name: string, args: Record<string, unknown> = {}): Promise<{ tenant: string; result: T }> {
+  await ensureFresh();
+  const r = await fetch(`${BASE}/agui/gov/tools/${name}`, { method: "POST", headers: { "Content-Type": "application/json", ...auth() }, body: JSON.stringify(args) });
+  if (!r.ok) { let d = `${r.status}`; try { d = `${r.status}: ${(await r.json()).detail}`; } catch { /* */ } throw new Error(d); }
+  return r.json();
+}
+
+export async function govPost(path: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: any }> {
+  await ensureFresh();
+  const r = await fetch(`${BASE}/agui/gov/${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...auth() }, body: JSON.stringify(body) });
+  let j: any = null; try { j = await r.json(); } catch { /* */ }
+  return { ok: r.ok, status: r.status, body: j };
+}
+
+export async function govExport(): Promise<string> {
+  await ensureFresh();
+  const r = await fetch(`${BASE}/agui/gov/export.jsonl`, { headers: auth() });
+  if (!r.ok) throw new Error(`export ${r.status}`);
+  return r.text();
+}
+
 export type RunOptions = {
   threadId: string;
   runId?: string;

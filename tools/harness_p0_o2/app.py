@@ -286,7 +286,8 @@ def agent_run_local(role, z, prompt, tool_names):
 
     async def go():
         tool_uses, result = [], None
-        async for m in query(prompt=f"Zadání: {z['poptavka']}", options=opts):
+        user_prompt = f"Zadání: {z['poptavka']}" + ("\n\nOdpovědi zadavatele na upřesňující otázky:\n" + "\n".join(f"- {a}" for a in z["dialog"]) if z.get("dialog") else "")   # P3-3: dialog Account ↔ zadavatel
+        async for m in query(prompt=user_prompt, options=opts):
             if isinstance(m, AssistantMessage): tool_uses += [b.name for b in m.content if isinstance(b, ToolUseBlock)]
             if isinstance(m, ResultMessage): result = m
         return tool_uses, result
@@ -319,10 +320,14 @@ def _art_hash(path):
 @rt.activity(name="role_account")
 def role_account(ctx, z):
     r = agent_run("account", z, ROLE_PROMPTS["account"], ["search_memory", "read_artifact", "write_artifact"])
-    p = os.path.join(r["arts"], "zadani.md")
+    p = os.path.join(r["arts"], "zadani.md"); q = os.path.join(r["arts"], "otazky.md")
+    if not os.path.exists(p) and os.path.exists(q) and not r.get("budget_exceeded"):   # P3-3: Account se nejdřív ptá (procesy.md Upresneni, ≤ 3 kola) – otázky jdou zadavateli přes AG-UI
+        art = {"type": "otazky", "ref": f"otazky://{z['id']}/{len(z.get('dialog') or []) + 1}", "path": "artifacts/otazky.md", "hash": _art_hash(q), "budget_exceeded": False}
+        ledger("HANDOFF", frm="account", to="human:zadavatel", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=True, cost_usd=(r["cost"] or COST["account"]), dialog_round=len(z.get("dialog") or []) + 1)
+        return art
     art = {"type": "zadani", "ref": f"issue://{z['id']}", "path": "artifacts/zadani.md", "hash": _art_hash(p) or h(z["poptavka"])}
     art["budget_exceeded"] = r.get("budget_exceeded", False)
-    ledger("HANDOFF", frm="account", to="human:zakaznik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["account"]))
+    ledger("HANDOFF", frm="account", to="human:zakaznik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["account"]), dialog_rounds=len(z.get("dialog") or []))
     return art
 
 
@@ -530,6 +535,24 @@ def registry_zakazka(ctx, inp):
     return ok
 
 
+@rt.activity(name="registry_agent")
+def registry_agent(ctx, inp):
+    """P3-3: org.agents + agent_events created po běhu role – z ledgeru (ROLE_POD, AGENT_RUN), verze role z rolegen roles.json, revize OPA = sha opa-data.json."""
+    z, role = inp["z"], inp["role"]; L = _ledger()
+    pod = next((e for e in reversed(L) if e.get("kind") == "ROLE_POD" and e.get("zakazka") == z["id"] and e.get("role") == role), {})
+    run = next((e for e in reversed(L) if e.get("kind") == "AGENT_RUN" and e.get("zakazka") == z["id"] and e.get("role") == role), {})
+    try: reg = {r["role"]: r for r in json.loads(open(os.environ["P0_REGISTRY"]).read())}
+    except Exception: reg = {}
+    od = os.environ.get("P0_ROLE_OPTIONS_DIR"); opa_rev = "-"
+    try: opa_rev = hashlib.sha256(open(os.path.join(od, "opa-data.json"), "rb").read()).hexdigest()[:16] if od else "-"
+    except Exception: pass
+    tenant = z.get("tenant") or os.environ.get("P0_TENANT", "acme"); rr = reg.get(role, {})
+    ok = finops.agent_insert(z["id"], tenant=tenant, role=role, version=str(rr.get("version", "0")), process=(rr.get("processes") or ["?"])[0], model=os.environ.get("P0_MODEL", "?"), pod=pod, run=run,
+                             opa_rev=opa_rev, key_id=f"k-{tenant}-{z['id']}-{role}", sandbox_profile=pod.get("runtime_class") or os.environ.get("P0_SRT", "local"))
+    ledger("REGISTRY_AGENT", zakazka=z["id"], role=role, written=ok, pod=pod.get("pod"))
+    return ok
+
+
 @rt.activity(name="notify")
 def notify(ctx, inp):
     ledger("NOTIFY", **inp)
@@ -579,6 +602,7 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
     Po schválení (vlastník navýšil limit / vydal nový klíč) jeden opakovaný pokus; druhé vyčerpání → pauza."""
     gate = yield ctx.call_activity(budget_gate, input={"z": z, "role": role})   # P2-6: strop zakázky (součet klíčů) před rolí
     art = {"budget_exceeded": True, "gate": gate} if gate.get("exceeded") else (yield ctx.call_activity(activity, input=inp))
+    if not gate.get("exceeded"): yield ctx.call_activity(registry_agent, input={"z": z, "role": role})   # P3-3: řádek org.agents píše workflow (T12), ne harness
     if not art.get("budget_exceeded"): return art
     yield ctx.call_activity(notify, input={"event": "BUDGET_EXCEEDED", "role": role, "zakazka": z["id"], "escalate_to": "process_owner", "timeout_s": z.get("budget_timeout_s", BUDGET_TIMEOUT_S), "source": "zakazka-sum" if gate.get("exceeded") else "agentgateway"})
     tok = yield from hitl(ctx, z, "rozpocet", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
@@ -590,8 +614,18 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
 @rt.workflow(name="zakazka")
 def zakazka(ctx: wf.DaprWorkflowContext, z):
     state = {"id": z["id"], "stav": "P1"}
-    zad = yield from run_role(ctx, z, "account", role_account, z)               # P1 Přijetí zadání
-    if not zad: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
+    for rnd in range(int(z.get("dialog_max", 3)) + 1):                            # P1 Přijetí zadání – P3-3: ≤ 3 kola upřesňujících otázek Account ↔ zadavatel (AG-UI)
+        zad = yield from run_role(ctx, z, "account", role_account, z)
+        if not zad: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
+        if zad.get("type") != "otazky": break
+        if rnd >= int(z.get("dialog_max", 3)): yield ctx.call_activity(notify, input={"event": "DIALOG_LIMIT", "zakazka": z["id"], "rounds": rnd}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
+        yield ctx.call_activity(notify, input={"event": "DIALOG_WAIT", "bod": "dialog", "zakazka": z["id"], "artifact_hash": zad["hash"], "round": rnd + 1, "timeout_s": float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))})
+        ev = ctx.wait_for_external_event("dialog:account"); tm = ctx.create_timer(timedelta(seconds=float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))))
+        if (yield wf.when_any([ev, tm])) == tm:
+            yield ctx.call_activity(notify, input={"event": "DIALOG_TIMEOUT", "bod": "dialog", "zakazka": z["id"], "result": "pozastaveno"}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
+        data = ev.get_result() or {}
+        yield ctx.call_activity(notify, input={"event": "DIALOG_ANSWER", "bod": "dialog", "zakazka": z["id"], "by": data.get("by"), "round": rnd + 1, "answer": str(data.get("answer", ""))[:500]})
+        z = {**z, "dialog": (z.get("dialog") or []) + [str(data.get("answer", ""))[:2000]]}
     gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
     if os.environ.get("P0_GITHUB_MODE") == "1" and gh_hitl:
         yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # issue = nosič H1 (dogfooding, vlastní repo; cizí zákazník → AG-UI)
@@ -682,6 +716,56 @@ def stop_zakazka(zid, *, by, reason=None, channel="api"):
     st = client().get_workflow_state(zid).runtime_status.name
     ledger("STOP", zakazka=zid, by=by, reason=reason, budget="frozen", channel=channel, pods_killed=killed, status=st)
     return {"ok": True, "status": st, "pods_killed": killed}
+
+
+def answer_dialog(zid, *, by, answer, channel="agui"):
+    """Odpověď zadavatele na otázky Account (P3-3) → event dialog:account; workflow Account spustí znovu s odpověďmi."""
+    client().raise_workflow_event(zid, "dialog:account", data={"answer": answer, "by": by})
+    ledger("DIALOG_RAISED", zakazka=zid, by=by, channel=channel, answer=str(answer)[:300])
+
+
+def tenant_zakazky(tenant):
+    return sorted({e["zakazka"] for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and (e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == tenant})
+
+
+def stop_tenant(tenant, *, by, reason, channel="agui"):
+    """Stop per tenant (autonomie.md T5): pause všech běžících instancí tenanta + ukončení podů rolí, gateway klíče tenanta Block (ConfigMap budgets 0),
+    paměť deny (server paměti čte org.tenants.status přes /tenants/<id>), org.tenants.status=stopped + agent_events suspended; SPIRE entries zůstávají (audit)."""
+    paused, killed = [], []
+    for zid in tenant_zakazky(tenant):
+        st = _wf_state(zid) or {}
+        if st.get("status") == "RUNNING":
+            try: client().pause_workflow(zid); paused.append(zid)
+            except Exception as e: ledger("STOP_TENANT_ERROR", tenant=tenant, zakazka=zid, error=f"{type(e).__name__}: {str(e)[:120]}")
+        if os.environ.get("P0_ROLE_RUNTIME") == "pod":
+            import role_pod; killed += role_pod.kill_zakazka_pods(zid, ledger, tenant=tenant)
+    blocked = None
+    if os.environ.get("P0_GATEWAY_KEYS") == "issue":
+        import gateway_keys; blocked = gateway_keys.block_tenant(tenant, ledger, block=True)
+    reg = finops.tenant_status(tenant, "stopped", by=by, reason=reason)
+    ledger("STOP_TENANT", tenant=tenant, by=by, reason=reason, channel=channel, paused=paused, pods_killed=killed, keys_blocked=blocked, registry=reg)
+    return {"ok": True, "tenant": tenant, "paused": paused, "pods_killed": killed, "keys_blocked": blocked, "registry": reg}
+
+
+def resume_tenant(tenant, *, by, reason, channel="agui"):
+    resumed = []
+    for zid in tenant_zakazky(tenant):
+        if (_wf_state(zid) or {}).get("status") == "SUSPENDED":
+            try: client().resume_workflow(zid); resumed.append(zid)
+            except Exception as e: ledger("RESUME_TENANT_ERROR", tenant=tenant, zakazka=zid, error=f"{type(e).__name__}: {str(e)[:120]}")
+    unblocked = None
+    if os.environ.get("P0_GATEWAY_KEYS") == "issue":
+        import gateway_keys; unblocked = gateway_keys.block_tenant(tenant, ledger, block=False)
+    reg = finops.tenant_status(tenant, "active", by=by, reason=reason)
+    ledger("RESUME_TENANT", tenant=tenant, by=by, reason=reason, channel=channel, resumed=resumed, keys_unblocked=unblocked, registry=reg)
+    return {"ok": True, "tenant": tenant, "resumed": resumed, "keys_unblocked": unblocked, "registry": reg}
+
+
+@app.get("/tenants/{tenant}")
+async def tenant_get(tenant: str):
+    """Stav tenanta pro PEP (server paměti: stopped → deny); zdroj org.tenants, bez DSN active."""
+    st = finops.tenant_is_stopped(tenant)
+    return {"tenant": tenant, "status": "stopped" if st else ("active" if st is not None else "unknown")}
 
 
 @app.post("/zakazky")
@@ -804,6 +888,10 @@ agui.CTX.update({
     "approve": lambda zid, bod, hh, u, reason: approve_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
     "reject": lambda zid, bod, hh, u, reason: reject_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
     "stop": lambda zid, u, reason: stop_zakazka(zid, by=u["name"], reason=reason, channel="agui"),
+    "answer": lambda zid, u, answer: answer_dialog(zid, by=u["name"], answer=answer),
+    "stop_tenant": lambda tenant, u, reason: stop_tenant(tenant, by=u["name"], reason=reason),
+    "resume_tenant": lambda tenant, u, reason: resume_tenant(tenant, by=u["name"], reason=reason),
+    "autonomy": lambda role, tenant, level, u, reason: finops.autonomy_set(role, tenant, level, by=u["sub"], reason=reason),
 })
 app.include_router(agui.router)
 _GUI_DIR = os.environ.get("P0_GUI_DIR", "/app/gui")

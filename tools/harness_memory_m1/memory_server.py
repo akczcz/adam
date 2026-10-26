@@ -103,7 +103,24 @@ def principal(authorization: str | None) -> dict:
     return {"sub": c["sub"], "tenant_id": c["tenant_id"], "roles": roles, "agent_id": c.get("agent_id"), "on_behalf_of": c.get("on_behalf_of"), "iss": c.get("iss"), "alg": jwt.get_unverified_header(raw).get("alg")}
 
 
+TENANT_STATUS_URL = os.environ.get("MEMORY_TENANT_STATUS_URL")   # P3-3: stop tenanta (autonomie.md T5) – aplikace zakázky /tenants/<id> → stopped = deny (cache 5 s)
+_TENANT_CACHE: dict = {}
+
+
+def tenant_stopped(tenant: str) -> bool:
+    if not TENANT_STATUS_URL: return False
+    c = _TENANT_CACHE.get(tenant)
+    if c and c["t"] + 5 > time.time(): return c["stopped"]
+    try: st = httpx.get(f"{TENANT_STATUS_URL.rstrip('/')}/{tenant}", timeout=3).json().get("status") == "stopped"
+    except Exception: st = c["stopped"] if c else False   # nedostupná aplikace: poslední známý stav, jinak nepřerušovat provoz
+    _TENANT_CACHE[tenant] = {"t": time.time(), "stopped": st}
+    return st
+
+
 def opa(action: str, tok: dict, record: dict | None = None, requested_status: str = "") -> dict:
+    if tenant_stopped(tok.get("tenant_id", "")):   # PEP: tenant zastaven → žádné čtení ani zápis paměti (fail-closed, před OPA)
+        d = {"allow": False, "reason": "tenant_stopped", "effective_status": "rejected"}
+        LEDGER.append({"ts": time.time(), "kind": "OPA", "action": action, "sub": tok["sub"], "tenant": tok["tenant_id"], "decision": d}); return d
     r = httpx.post(OPA_URL, json={"input": {"action": action, "token": tok, "record": record or {}, "requested_status": requested_status}}, timeout=5)
     r.raise_for_status()
     d = r.json().get("result") or {"allow": False, "reason": "undefined", "effective_status": "rejected"}

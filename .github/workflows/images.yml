@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["infra/images/app/**", "infra/images/roles/**", "infra/images/sandbox-s1/**", "gui/**", "tools/harness_p0_o2/app.py", "tools/harness_p0_o2/agui.py", "tools/harness_p0_o2/role_pod.py", "tools/harness_p0_o2/role_runner.py", "tools/harness_p0_o2/gateway_keys.py", "tools/harness_p0_o2/gateway_merge.py", "tools/harness_p0_o2/github_bridge.py", "tools/harness_p0_o2/mock_github.py", "tools/harness_p0_o2/mock_mirror.py", "tools/harness_p0_o2/finops.py", "tools/harness_memory_m1/memory_server.py", ".github/workflows/images.yml"]
+    paths: ["infra/images/app/**", "infra/images/roles/**", "infra/images/sandbox-s1/**", "gui/**", "tools/harness_p0_o2/app.py", "tools/harness_p0_o2/agui.py", "tools/harness_p0_o2/role_pod.py", "tools/harness_p0_o2/role_runner.py", "tools/harness_p0_o2/gateway_keys.py", "tools/harness_p0_o2/gateway_merge.py", "tools/harness_p0_o2/github_bridge.py", "tools/harness_p0_o2/mock_github.py", "tools/harness_p0_o2/mock_mirror.py", "tools/harness_p0_o2/finops.py", "tools/harness_memory_m1/memory_server.py", "tools/governance_mcp/governance_mcp.py", "tools/harness_gateway_g1/mock_upstream.py", ".github/workflows/images.yml"]
 permissions:
   id-token: write
   contents: read
@@ -43,6 +43,7 @@ jobs:
           B=$(mktemp -d); mkdir -p "$B/src/harness_p0_o2" "$B/src/harness_memory_m1" "$B/src/harness_gateway_g1"
           cp tools/harness_p0_o2/{app.py,agui.py,github_bridge.py,mock_github.py,mock_mirror.py,role_pod.py,role_runner.py,gateway_keys.py,gateway_merge.py,finops.py} "$B/src/harness_p0_o2/"; cp -r tools/harness_p0_o2/policies "$B/src/harness_p0_o2/"
           cp tools/harness_memory_m1/memory_server.py "$B/src/harness_memory_m1/"; cp tools/harness_gateway_g1/mock_upstream.py "$B/src/harness_gateway_g1/"
+          mkdir -p "$B/src/governance_mcp"; cp tools/governance_mcp/governance_mcp.py "$B/src/governance_mcp/"   # P3-3: Governance MCP
           cp infra/images/app/requirements.txt infra/images/app/Dockerfile.aks "$B/"
           mkdir -p "$B/gui"; cp -r gui/package.json gui/package-lock.json gui/index.html gui/tsconfig.json gui/vite.config.ts gui/src "$B/gui/"   # P3-1: GUI (stage gui v Dockerfile.aks)
           az acr build -r "$ACR" -t zakazka-app:p1 -t "zakazka-app:${GITHUB_SHA::7}" -f "$B/Dockerfile.aks" "$B"

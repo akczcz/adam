@@ -72,6 +72,9 @@ patches:
   patch: |
     - {op: replace, path: /stringData/P0_FINOPS_DSN, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/agentgateway?sslmode=require"}
     - {op: replace, path: /stringData/P0_REGISTRY_DSN, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/org?sslmode=require"}
+- target: {kind: Deployment, name: governance}   # P3-3: Flexible Server vyžaduje TLS
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: "postgresql://org_reader:org_reader@postgres:5432/org?sslmode=require"}
 - target: {kind: ConfigMap, name: dapr-components}
   patch: |
     - {op: replace, path: /data/statestore.yaml, value: "apiVersion: dapr.io/v1alpha1\nkind: Component\nmetadata:\n  name: statestore\nspec:\n  type: state.postgresql\n  version: v1\n  metadata:\n  - name: connectionString\n    value: \"host=postgres user=platform password=${PG_PASSWORD} port=5432 dbname=dapr_state sslmode=require\"\n  - name: actorStateStore\n    value: \"true\"\n"}

@@ -92,6 +92,31 @@ def key_hashes(zid):
 def keys_source(zid): return _SOURCE.get(zid) or ("openbao" if os.environ.get("P0_BAO_KV") else "secret")
 
 
+def block_tenant(tenant, ledger=None, block=True):
+    """Stop tenanta (P3-3, autonomie.md T5): všem klíčům tenanta v ConfigMapě agentgateway-keys nastavit limit 0 (onBudgetExceeded Block → 429 na každý
+    request; gateway klíč jinak neumí vypnout); resume = limity zpět ze šablony rolegen. Hodnoty klíčů v OpenBao se nemění (audit)."""
+    ns = _ns(); tpl = {k["metadata"]["role"]: k for k in _template()["keys"]}; n = 0
+    for attempt in range(6):
+        cm = role_pod.k8s("GET", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys")
+        cur = yaml.safe_load((cm.get("data") or {}).get("keys.yaml") or "[]") or []; n = 0
+        for k in cur:
+            md = k.get("metadata") or {}
+            if md.get("tenant") != tenant: continue
+            if block:
+                for b in k.get("budgets", []): b["limit"]["amount"] = 0
+                md["blocked"] = "tenant-stop"
+            else:
+                k["budgets"] = [dict(b) for b in (tpl.get(md.get("role")) or {}).get("budgets", k.get("budgets", []))]; md.pop("blocked", None)
+            n += 1
+        cm["data"] = {"keys.yaml": yaml.safe_dump(cur, sort_keys=False, allow_unicode=True)}
+        try: role_pod.k8s("PUT", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys", cm); break
+        except RuntimeError as e:
+            if "409" not in str(e) or attempt == 5: raise
+            time.sleep(0.5)
+    if ledger: ledger("GATEWAY_KEYS_BLOCK" if block else "GATEWAY_KEYS_UNBLOCK", tenant=tenant, keys=n)
+    return n
+
+
 def issue(zid, ledger=None, tenant=None):
     """Vrátí {role: klíč} pro zakázku; vydá je, pokud ještě nejsou (idempotentní přes OpenBao KV, resp. Secret)."""
     with _LOCK:
