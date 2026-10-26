@@ -10,29 +10,43 @@ export type ThreadState = {
 
 const BASE = (import.meta.env.VITE_AGUI_BASE as string | undefined) ?? "";
 let token: string | null = sessionStorage.getItem("agui_token");
+let refreshToken: string | null = sessionStorage.getItem("agui_refresh");
+let expiresAt = Number(sessionStorage.getItem("agui_exp") ?? 0);
 
-export function setToken(t: string | null) {
+export function setToken(t: string | null, refresh?: string | null, expiresIn?: number) {
   token = t;
   if (t) sessionStorage.setItem("agui_token", t); else sessionStorage.removeItem("agui_token");
+  if (refresh !== undefined) { refreshToken = refresh; if (refresh) sessionStorage.setItem("agui_refresh", refresh); else sessionStorage.removeItem("agui_refresh"); }
+  expiresAt = t && expiresIn ? Date.now() + expiresIn * 1000 : 0; sessionStorage.setItem("agui_exp", String(expiresAt));
 }
 export function hasToken() { return !!token; }
 function auth(): Record<string, string> { return token ? { Authorization: `Bearer ${token}` } : {}; }
+
+/** Access token Keycloaku žije 15 min; dlouhá zakázka (role v Kata podech) ho přežije → před každým voláním obnovit, když zbývá < 90 s (P3-2 nález). */
+async function ensureFresh(): Promise<void> {
+  if (!token || !refreshToken || !expiresAt || Date.now() < expiresAt - 90_000) return;
+  const r = await fetch(`${BASE}/agui/refresh`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: refreshToken }) });
+  if (!r.ok) { setToken(null, null); throw new Error(`přihlášení vypršelo (${r.status})`); }
+  const j = await r.json(); setToken(j.access_token, j.refresh_token ?? refreshToken, j.expires_in ?? 900);
+}
 
 export async function login(username: string, password: string): Promise<User> {
   const r = await fetch(`${BASE}/agui/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
   if (!r.ok) throw new Error(`přihlášení odmítnuto (${r.status})`);
   const j = await r.json();
-  setToken(j.access_token);
+  setToken(j.access_token, j.refresh_token ?? null, j.expires_in ?? 900);
   return j.user as User;
 }
 
 export async function me(): Promise<User> {
+  await ensureFresh();
   const r = await fetch(`${BASE}/agui/me`, { headers: auth() });
   if (!r.ok) throw new Error(`me ${r.status}`);
   return (await r.json()) as User;
 }
 
 export async function listThreads(): Promise<{ tenant: string; threads: ThreadState[] }> {
+  await ensureFresh();
   const r = await fetch(`${BASE}/agui/threads`, { headers: auth() });
   if (!r.ok) throw new Error(`threads ${r.status}`);
   return r.json();
@@ -50,6 +64,7 @@ export type RunOptions = {
 
 /** POST /agui/run → SSE; každé `data:` je jedna AG-UI událost (JSON, camelCase). Vrací až po konci streamu. Při HTTP chybě vyhodí Error s textem serveru. */
 export async function runAgent(o: RunOptions): Promise<void> {
+  await ensureFresh();
   const body = {
     threadId: o.threadId, runId: o.runId ?? crypto.randomUUID(), protocolVersion: PROTOCOL_VERSION,
     messages: o.messages ?? [], tools: [], context: [], state: {}, forwardedProps: o.forwardedProps ?? {}, resume: o.resume,
