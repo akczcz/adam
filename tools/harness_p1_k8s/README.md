@@ -238,10 +238,17 @@ Co měření P23c ukázalo (běhy 8–10, 2026-10-25):
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| P24a | config gateway z Gitu: bind 3128 CONNECT, listenery git/mirror HTTPS + public-egress TLS, routa git s backendAuth a GET+POST, mirror GET; Service 3128; NetworkPolicy; repliky Ready | ⏳ |
-| P24b | Vývojář z podu: clone 0, push větve 0, push main odmítnut hookem, žádný token v env; backend viděl Bearer token gateway na všech requestech | ⏳ |
-| P24c | pip download a npm pack z mirroru přes gateway; mirror viděl oba klienty | ⏳ |
-| P24d | cizí SNI neprojde, HTTP :80 ven neexistuje, cizí repo 404, přímý internet timeout, SNI v logu gateway | ⏳ |
+| P24a | config gateway z Gitu: bind 3128 CONNECT, listenery git/mirror HTTPS + public-egress TLS, routa git s backendAuth a GET+POST, mirror GET; Service 3128; NetworkPolicy; repliky Ready | ✅ listenery `git`/`mirror` HTTPS + `public-egress` TLS, routy `git-acme` (GET∥POST, backendAuth), `mirror-acme`; Service 3128/4100; 2/2 Ready |
+| P24b | Vývojář z podu: clone 0, push větve 0, push main odmítnut hookem, žádný token v env; backend viděl Bearer token gateway na všech requestech | ✅ clone/commit/push `agent/<wf>/vyvojar` 0; push `main` → `! [remote rejected] … (pre-receive hook declined)`; `token_env=0`; všechny git requesty na backendu s `Bearer` = token gateway (otisk sha256) |
+| P24c | pip download a npm pack z mirroru přes gateway; mirror viděl oba klienty | ✅ `platform_hello-0.1.0-py3-none-any.whl`, `platform-hello-0.1.0.tgz`; mirror viděl `/pypi/simple/…`, `/pypi/files/…`, `/npm/…` |
+| P24d | cizí SNI neprojde, HTTP :80 ven neexistuje, cizí repo 404, přímý internet timeout, SNI v logu gateway | ✅ `evil.example.com` → curl 35 (TLS EOF, route not found), `http://` přes proxy → 405, `/other/repo.git` → 404, 1.1.1.1:443 timeout; log gateway `sni` git 46×, mirror 24×, evil 4× |
+
+Výsledek: **21/21 + 2 INFO** (`measure` run 40307712561, `results/p2-4-20261026-105130.json`; 7 běhů – pasti v `infra/README.md`).
+Sonda běžela **přímo přes proxy gateway (`via: direct`)**, ne přes srt: po doplnění `ripgrep` srt poprvé opravdu startuje a vynucuje
+`filesystem.allowWrite ["/work"]`; emptyDir `/work` v Kata guestu ale nebyl pro uid 1000 zapisovatelný (`os.access` false → runner padl zpět na
+`/tmp/p0-o2/<id>/work`, kde srt zápis odmítl). Hranice egressu tak drží gateway + NetworkPolicy (změřeno), vrstva srt nad tím zatím ne –
+**otevřeno pro další krok** (runner od tohoto commitu loguje `work_info`: vlastník, mód a `w_ok` `/work`). Dopad i mimo sondu: `sandboxed_bash`
+role pod srt dnes nemůže zapisovat do pracovního adresáře (mock tok to nepotřeboval; živý Vývojář ano).
 
 ## Spuštění
 

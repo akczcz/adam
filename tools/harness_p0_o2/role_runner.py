@@ -143,6 +143,9 @@ def main():
     root = f"/tmp/p0-o2/{z['id']}"
     # P2-4: pracovní adresář role = /work (emptyDir podu) – srt vynucuje filesystem.allowWrite ["/work"] z definice role (do té doby srt neběžel: chyběl ripgrep)
     WORK = "/work" if os.path.isdir("/work") and os.access("/work", os.W_OK) else f"{root}/work"; os.environ["P0_WORK_DIR"] = WORK
+    try: st_ = os.stat("/work"); work_info = {"work_dir": WORK, "stat_/work": {"uid": st_.st_uid, "gid": st_.st_gid, "mode": oct(st_.st_mode & 0o7777), "w_ok": os.access("/work", os.W_OK)}, "proc": {"uid": os.getuid(), "gid": os.getgid(), "groups": os.getgroups()}}
+    except Exception as e: work_info = {"work_dir": WORK, "stat_/work": f"{type(e).__name__}: {e}"}
+    print("work_dir=" + json.dumps(work_info), flush=True)
     for d in (WORK, f"{root}/artifacts"): os.makedirs(d, exist_ok=True)
     try:
         r = httpx.get(f"{api}/zakazky/{z['id']}/files", headers=H, timeout=60)
@@ -188,7 +191,7 @@ def main():
     try: image_role = json.loads(open("/etc/platform/role.json").read()); image_role = {"role": image_role.get("role"), "version": image_role.get("version"), "managed_settings": os.path.exists("/etc/claude/managed-settings.json")}
     except Exception: image_role = None
     out |= {"egress_probe": probe, "pod": os.environ.get("HOSTNAME"), "srt": os.environ.get("P0_SRT"), "uid": os.getuid(), "agent_s": agent_s, "uploaded": len(up), "kernel": os.uname().release,
-            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity, "git_probe": git_probe}
+            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity, "git_probe": git_probe, "work_info": work_info}
     try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": led}, headers=H, timeout=120)
     except Exception as e: print(f"result post error: {e}", flush=True)
     print("RESULT::" + json.dumps(out, ensure_ascii=False)[:30000], flush=True)

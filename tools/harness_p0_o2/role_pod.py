@@ -207,7 +207,7 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
            t_run_s=round(finished - started, 1) if finished and started else None, t_total_s=round(time.time() - t0, 1),
            egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:],
            image=info["image"], template=info["template"], overrides=info["overrides"], image_tools=(res or {}).get("image_tools"), image_role=(res or {}).get("image_role"),
-           resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar, git_probe=(res or {}).get("git_probe"))   # P2-4: sonda egressu (git/mirror/cizí SNI)
+           resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar, git_probe=(res or {}).get("git_probe"), work_info=(res or {}).get("work_info"))   # P2-4: sonda egressu (git/mirror/cizí SNI), pracovní adresář (srt allowWrite)
     if not os.environ.get("P0_ROLE_KEEP_PODS"):
         for kind in ("pods", "secrets"):
             try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")
