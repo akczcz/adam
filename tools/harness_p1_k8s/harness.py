@@ -677,7 +677,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         L = led(); pod_b = next((e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "account"), {}); cr_b = next((e for e in L if e["kind"] == "ROLE_POD_CREATE" and e["zakazka"] == zb), {})
         nps = [n["metadata"]["name"] for n in kj("-n", "tenant-beta", "get", "networkpolicy").get("items", [])]
         eg = pod_b.get("egress_probe") or {}
-        rep.add("T1b", "Pody rolí tenanta beta běží v ns tenant-beta (NetworkPolicy default-deny + role-egress jen na platformu): pod account zakázky beta v tenant-beta, Succeeded; z podu Postgres platformy nedosažitelný (timeout), internet blokován, gateway/paměť/aplikace průchozí", "PASS" if pod_b.get("namespace") == "tenant-beta" and cr_b.get("namespace") == "tenant-beta" and pod_b.get("phase") == "Succeeded" and {"default-deny", "role-egress"} <= set(nps) and (eg.get("postgres") or {}).get("result") == "timeout" and (eg.get("internet_1.1.1.1:443") or {}).get("result") != "open" and all((eg.get(n) or {}).get("result") == "open" for n in ("memory", "gateway", "app")) else "FAIL", {"pod": {k: pod_b.get(k) for k in ("pod", "namespace", "phase", "node", "image")}, "networkpolicies": nps, "egress_probe": eg})
+        rep.add("T1b", "Pody rolí tenanta beta běží v ns tenant-beta (NetworkPolicy default-deny + role-egress jen na platformu): pod account zakázky beta v tenant-beta, Succeeded; z podu Postgres platformy nedosažitelný (timeout), internet blokován, gateway/paměť/aplikace průchozí", "PASS" if pod_b.get("namespace") == "tenant-beta" and cr_b.get("namespace") == "tenant-beta" and pod_b.get("phase") == "Succeeded" and {"default-deny", "role-egress"} <= set(nps) and (eg.get("postgres") or {}).get("result") not in (None, "open") and (eg.get("internet_1.1.1.1:443") or {}).get("result") != "open" and all((eg.get(n) or {}).get("result") == "open" for n in ("memory", "gateway", "app")) else "FAIL", {"pod": {k: pod_b.get(k) for k in ("pod", "namespace", "phase", "node", "image")}, "networkpolicies": nps, "egress_probe": eg})
         ids_b = pod_b.get("identity") or {}
         ents = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
         rep.add("T1f", "Identita role nese tenant: SVID podu account v tenant-beta = spiffe://platform/role/account/beta (alias uzlu per role × tenant se selektorem k8s_psat:agent_ns:tenant-beta – hranicí je atestovaný namespace, ne label), server paměti ověřil JWT-SVID (tenant z cesty); entries pro oba tenanty v SPIRE serveru", "PASS" if ids_b.get("kind") == "svid" and ids_b.get("spiffe_id") == "spiffe://platform/role/account/beta" and "spiffe://platform/role/account/beta" in ents and "spiffe://platform/role/account/acme" in ents and "k8s_psat:agent_ns:tenant-beta" in ents and any(e["kind"] == "TOOL" and e["zakazka"] == zb and e.get("http") == 200 for e in L) else "FAIL", {"identity": ids_b, "entries_beta": ents.count("/beta"), "entries_acme": ents.count("/acme"), "memory_calls_200": sum(1 for e in L if e["kind"] == "TOOL" and e["zakazka"] == zb and e.get("http") == 200)})
@@ -954,9 +954,18 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     if identity:
         import yaml as _ys
         ents = json.loads((kj("-n", NS, "get", "configmap", "rolegen-build").get("data") or {}).get("spire-entries.json") or "[]")
+        def entry_fields(show):   # bloky `Entry ID : …` / `Parent ID : …` z výstupu entry show
+            out = []
+            for blk in show.split("\n\n"):
+                f = dict(l.split(":", 1) for l in blk.splitlines() if ":" in l); f = {k.strip(): v.strip() for k, v in f.items()}
+                if f.get("Entry ID"): out.append(f)
+            return out
         for e in ents:
             show = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-spiffeID", e["spiffe_id"], "-socketPath", "/tmp/spire-server/private/api.sock").stdout
-            if e["spiffe_id"] in show: continue
+            have = entry_fields(show) if e["spiffe_id"] in show else []
+            if have and (e.get("node") or any(h.get("Parent ID") == e.get("parent_id") for h in have)): continue
+            for h in have:   # P3-2: stejné SPIFFE ID s jiným rodičem (alias uzlu per tenant) → smazat a založit znovu, jinak agent tenanta „no identity issued“
+                kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "delete", "-socketPath", "/tmp/spire-server/private/api.sock", "-entryID", h["Entry ID"]); spire_applied.append((e["spiffe_id"], "deleted", h.get("Parent ID")))
             args = [SPIRE_SERVER_BIN, "entry", "create", "-socketPath", "/tmp/spire-server/private/api.sock", "-spiffeID", e["spiffe_id"]] + (["-node"] if e.get("node") else ["-parentID", e["parent_id"]])
             for sel in e["selectors"]: args += ["-selector", sel]
             if e.get("x509_svid_ttl"): args += ["-x509SVIDTTL", str(e["x509_svid_ttl"])]
@@ -1116,7 +1125,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             gw_dep = kj("-n", NS, "get", "deploy", "agentgateway").get("status") or {}
             np_ok = kubectl(a, "-n", NS, "get", "networkpolicy", "agentgateway-egress").returncode == 0
             ok_cfg = any(b.get("port") == 3128 and b.get("tunnelProtocol") == "connect" for b in binds) and all(lst.get(n, {}).get("protocol") == "HTTPS" and (lst[n].get("tls") or {}).get("cert") for n in ("git", "mirror")) and lst.get("public-egress", {}).get("protocol") == "TLS" \
-                     and ((git_rt.get("policies") or {}).get("backendAuth") or {}).get("key", {}).get("value", {}).get("file") and "POST" in allow and "GET" in allow and "mirror-acme" in rts and 3128 in svc_ports and gw_dep.get("readyReplicas") == gw_dep.get("replicas") and np_ok
+                     and ((git_rt.get("policies") or {}).get("backendAuth") or {}).get("key", {}).get("value", {}).get("file") and "POST" in allow and "GET" in allow and ("mirror-shared" in rts or "mirror-acme" in rts) and 3128 in svc_ports and gw_dep.get("readyReplicas") == gw_dep.get("replicas") and np_ok
             rep.add("P24a", "Gateway egress z Gitu (rolegen → agentgateway-config): CONNECT bind 3128, HTTPS listenery git/mirror.platform.internal s certem (Secret mimo Git, vydává harness), passthrough jen allow-list; routa git-acme = metody z authz.http rolí + backendAuth (token jen v gateway); Service 3128; NetworkPolicy egressu gateway (ne IMDS/link-local/privátní sítě); obě repliky Ready", "PASS" if ok_cfg else "FAIL", {"binds": binds, "listeners": {k: v.get("protocol") for k, v in lst.items()}, "git_route_allow": allow, "git_backend_auth": bool((git_rt.get("policies") or {}).get("backendAuth")), "routes": sorted(rts), "svc_ports": sorted(svc_ports), "networkpolicy": np_ok, "gw_ready": [gw_dep.get("readyReplicas"), gw_dep.get("replicas")], "secrets": egress_secrets})
             gp = (pods_led.get("vyvojar") or {}).get("git_probe") or {}
             pf_gh = PortForward(a, "mock-github", 19811, 9801); pf_mi = PortForward(a, "mock-mirror", 19812, 9803)

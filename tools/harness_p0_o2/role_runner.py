@@ -21,10 +21,12 @@ import httpx
 
 def tcp_probe(host, port, timeout=3.0):
     t = time.time()
+    try: ip = socket.gethostbyname(host)   # diagnostika (P3-2): na co se cíl přeložil (ExternalName → FQDN → IP)
+    except OSError: ip = None
     try:
-        with socket.create_connection((host, int(port)), timeout=timeout): return {"result": "open", "ms": int((time.time() - t) * 1000)}
-    except socket.timeout: return {"result": "timeout", "ms": int((time.time() - t) * 1000)}
-    except OSError as e: return {"result": f"error:{e.errno or type(e).__name__}", "ms": int((time.time() - t) * 1000)}
+        with socket.create_connection((host, int(port)), timeout=timeout): return {"result": "open", "ms": int((time.time() - t) * 1000), "ip": ip}
+    except socket.timeout: return {"result": "timeout", "ms": int((time.time() - t) * 1000), "ip": ip}
+    except OSError as e: return {"result": f"error:{e.errno or type(e).__name__}", "ms": int((time.time() - t) * 1000), "ip": ip}
 
 
 def _hp(url, default_port):
