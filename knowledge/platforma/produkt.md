@@ -85,13 +85,14 @@ Nově oproti původnímu checklistu: **GUI nad celou firmou** (AG-UI 1.0 vlastn�
 | Krok | Stav |
 |---|---|
 | P3-1 AG-UI server + minimální GUI nad HITL body (zakázka projde P1→P5 klikáním, důvod povinný, stop, disclosure T7) | ✅ AKS 2026-10-26 25/25 ([p3-zakaznik.md](p3-zakaznik.md), [`gui/`](../../gui/README.md)): zakázka řízená jen z GUI za 5,9 min, 4 approvaly s důvodem v `org.approvals`, stop ukončí pod role do 3 s; login password grantem a port-forward = zjednodušení |
-| P3-2 Tenant model (Keycloak atributy/skupiny v jednom realmu, RLS v `org.*`, namespace + CNP per tenant, gateway klíče, `on_behalf_of`) | ⬜ |
+| P3-2 Tenant model (Keycloak atributy/skupiny v jednom realmu, RLS v `org.*`, namespace + CNP per tenant, gateway klíče, `on_behalf_of`) | ✅ AKS 2026-10-26 31/31 ([p3-zakaznik.md](p3-zakaznik.md)): `tenants.yaml` → ns `tenant-<id>` + SPIRE + klíče + OPA + `org.tenants`/RLS; druhý tenant z GUI, RLS a viditelnost změřeny; `on_behalf_of` (token exchange) → P3-6 |
 | P3-3 GUI nad celou firmou (Governance MCP: role × autonomie, registr agentů, FinOps, risk register, governance report, audit; stop tenanta) | ⬜ |
 | P3-4 Klasifikační brána K1–K6 naostro, čl. 50 disclosure v reálných kanálech (e-mail/ticket adaptér), SLA jako timery | ⬜ |
 | P3-5 O-3 multi-tenant harness (M-E3 přes dva tenanty v clusteru, stop a resume per tenant) | ⬜ |
 | P3-6 Produkční hrany (token exchange SVID→Keycloak, cap v gateway, ledger do ClickHouse, cert-manager + ESO, SPIRE bundle, VNet) | ⬜ (průběžně) |
 
 ## Changelog
+- 2026-10-26: P3-2 hotovo na AKS (31/31) – tenant model: ns per tenant, SPIRE per tenant, RLS org.*, lidé tenantů v Keycloaku.
 - 2026-10-26: P3-1 hotovo na AKS (25/25) – AG-UI server + GUI, HITL a stop z prohlížeče, harness U-1 Playwrightem.
 - 2026-10-26: plán P3 v p3-zakaznik.md (návrh) – šest kroků, GUI nad celou firmou doplněno jako P3-1 a P3-3.
 - 2026-10-25: P2-5 hotovo na AKS (13/13) – eval gate rolí v CI i v aplikaci, registr agentů poprvé naplněn.

@@ -321,14 +321,19 @@ role: pod pryč za 2,9 s. Zjednodušení P3-1: login password grantem (klient be
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| T1a | org.tenants == tenants.yaml == ConfigMap, ns tenant-acme/beta existují, RLS + politika tenant_isolation, TENANTS_SYNC | ⏳ |
-| T1b | pod account zakázky beta v ns tenant-beta (Succeeded), NetworkPolicies, Postgres a internet z podu nedosažitelné, platforma ano | ⏳ |
-| T1f | SVID `spiffe://platform/role/account/beta`, entries obou tenantů, paměť 200 | ⏳ |
-| T1d | klíče `k-beta-…` s metadata.tenant=beta, útrata account v budget_usage, gate zná strop tenanta 20 USD | ⏳ |
-| T1c | RLS jako org_reader: beta vidí jen beta, acme jen acme, platform obojí, bez tenanta nic | ⏳ |
-| T1e | GUI: bea vidí jen beta (acme → 404 v GUI i API), stop; platform-admin vidí obojí, zakázku nezaloží (403) | ⏳ |
+| T1a | org.tenants == tenants.yaml == ConfigMap, ns tenant-acme/beta existují, RLS + politika tenant_isolation, TENANTS_SYNC | ✅ acme 100 / beta 20 / platform 0 USD, ns tenant-acme + tenant-beta, RLS na tenants/zakazky/approvals |
+| T1b | pod account zakázky beta v ns tenant-beta (Succeeded), NetworkPolicies, Postgres a internet z podu nedosažitelné, platforma ano | ✅ pod account beta v tenant-beta (Succeeded), Postgres 20.x:5432 timeout, internet timeout, platforma open |
+| T1f | SVID `spiffe://platform/role/account/beta`, entries obou tenantů, paměť 200 | ✅ `spiffe://platform/role/account/beta` za 6,6 s, 15 entries per tenant, paměť 200 |
+| T1d | klíče `k-beta-…` s metadata.tenant=beta, útrata account v budget_usage, gate zná strop tenanta 20 USD | ✅ 5 klíčů `k-beta-<zid>-<role>` (tenant beta), account 0,015 USD v budget_usage, gate tenant 20 USD |
+| T1c | RLS jako org_reader: beta vidí jen beta, acme jen acme, platform obojí, bez tenanta nic | ✅ beta: jen beta zakázky, 0 approvalů; acme: 18 zakázek, 24 approvalů, beta ne; platform: 24; bez tenanta 0 |
+| T1e | GUI: bea vidí jen beta (acme → 404 v GUI i API), stop; platform-admin vidí obojí, zakázku nezaloží (403) | ✅ bea vidí 6 beta zakázek, acme → 404, stop cancelled; platform-admin 43 threadů obou tenantů, založení 403 |
 
-Výsledek: ⏳ (měření běží).
+Výsledek: **31/31 + 3 INFO** (`measure` run 40407092865, `results/p3-2-20261026-221159.json`; 4 běhy). Nálezy: (1) access token Keycloaku
+(15 min) nepřežil scénář s rolemi v Kata podech → GUI obnovuje token refresh tokenem přes server; (2) SPIRE entry se stejným SPIFFE ID a starým
+rodičem (alias bez tenanta) harness nepřepsal → agent tenanta „no identity issued“, role padaly na Keycloak token (P23c) → entry s jiným rodičem
+se maže a zakládá znovu; (3) sonda na Postgres bez schématu URL mířila na localhost (ECONNREFUSED vypadal jako „blokováno“) → sonda s IP cíle,
+teď skutečný timeout na 20.x:5432; (4) migrace běžícího realmu admin API (role, klient, 2 uživatelé) proběhla napoprvé, SPIRE server po změně
+allow-listu restartován podle anotace. Scénář GUI (acme) 8,8 min, tenant beta + platform-admin ~2 min.
 
 ## Spuštění
 
