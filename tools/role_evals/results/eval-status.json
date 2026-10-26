@@ -63,7 +63,7 @@
   "model": "mock",
   "on_fail": {},
   "reason": null,
-  "source_sha256_16": "93b951c5339e48ea",
+  "source_sha256_16": "872cabe64c32a665",
   "status": "passed",
   "version": "0.1.0"
  },
@@ -102,7 +102,7 @@
   "model": "mock",
   "on_fail": {},
   "reason": null,
-  "source_sha256_16": "d2477ea7f7cc02ce",
+  "source_sha256_16": "f5ac1704d6eaa31a",
   "status": "passed",
   "version": "0.1.0"
  },
@@ -112,7 +112,7 @@
   "model": "mock",
   "on_fail": {},
   "reason": "role bez runtime v aplikaci (mock model bez chování SRE) – evaly až s deploy MCP serverem (P2)",
-  "source_sha256_16": "8f98cc95ccba2b5e",
+  "source_sha256_16": "2adceafd1ef78305",
   "status": "unevaluated",
   "version": "0.1.0"
  },
@@ -151,7 +151,7 @@
   "model": "mock",
   "on_fail": {},
   "reason": null,
-  "source_sha256_16": "8fa1887f6cdc84b7",
+  "source_sha256_16": "59f961e19cad0d0b",
   "status": "passed",
   "version": "0.1.0"
  }

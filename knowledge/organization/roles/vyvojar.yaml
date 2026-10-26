@@ -145,6 +145,7 @@ escalation:
 
 disclosure:                                    # čl. 50(1) – T7; vkládá MCP server pr/issues, ne model
   channels:
+    agui: "Mluvíte s AI agentem (role Vývojář, verze 0.1.0) platformy {firma}; jedná jménem {vlastník procesu}. Merge a nasazení schvaluje člověk (H4, H5)."
     pr_description: "Tento pull request vytvořil AI agent (role Vývojář, verze 0.1.0) platformy {firma} jménem {vlastník procesu}. Sloučení schvaluje člověk."
     issue_comment: "Komentář napsal AI agent (Vývojář) jménem {vlastník procesu}."
     commit_trailer: "AI-Agent: vyvojar@0.1.0 on-behalf-of {vlastník}"   # značení kódu (T8) – otevřeno

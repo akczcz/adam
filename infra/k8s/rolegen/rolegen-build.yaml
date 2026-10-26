@@ -210,8 +210,10 @@ data:
     ,\n  \"processes\": [\n   \"P2-navrh\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"\
     spiffe_id\": \"spiffe://platform.example/agent/architekt/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/architekt:0.1.0\",\n  \"source\"\
-    : \"architekt.yaml\",\n  \"source_sha256_16\": \"93b951c5339e48ea\",\n  \"disclosure\"\
-    : {\n   \"adr\": \"ADR vygeneroval AI agent (Architekt, verze 0.1.0) jménem {vlastník\
+    : \"architekt.yaml\",\n  \"source_sha256_16\": \"872cabe64c32a665\",\n  \"disclosure\"\
+    : {\n   \"agui\": \"Mluvíte s AI agentem (role Architekt, verze 0.1.0) platformy\
+    \ {firma}; jedná jménem {vlastník procesu}. Návrh (ADR) schvaluje člověk (H2).\"\
+    ,\n   \"adr\": \"ADR vygeneroval AI agent (Architekt, verze 0.1.0) jménem {vlastník\
     \ procesu}; schválil {člověk, datum}.\"\n  },\n  \"evals_gate\": [\n   {\n   \
     \ \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\",\n     \"\
     min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L1\",\n    \"gate\": {\n    \
@@ -224,26 +226,30 @@ data:
     0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P5-review\"\n  ],\n\
     \  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/reviewer/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/reviewer:0.1.0\",\n  \"source\"\
-    : \"reviewer.yaml\",\n  \"source_sha256_16\": \"d2477ea7f7cc02ce\",\n  \"disclosure\"\
-    : {\n   \"review_comment\": \"Toto review napsal AI agent (role Reviewer, verze\
-    \ 0.1.0) platformy {firma} jménem {vlastník procesu}. O sloučení rozhoduje člověk;\
-    \ přiložený Inspect log je důkaz, ne verdikt.\",\n   \"memory_approval\": \"verification.by\
-    \ = spiffe://…/agent/reviewer/…, method = agent\"\n  },\n  \"evals_gate\": [\n\
-    \   {\n    \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\"\
-    ,\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L1\",\n    \"gate\"\
-    : {\n     \"metric\": \"policy_compliance\",\n     \"min\": 1.0\n    }\n   },\n\
-    \   {\n    \"layer\": \"L2\",\n    \"gate\": {\n     \"metric\": \"agreement\"\
-    ,\n     \"min\": 0.85\n    }\n   },\n   {\n    \"layer\": \"L3\",\n    \"gate\"\
-    : {\n     \"metric\": \"pass_k\",\n     \"min\": 1.0\n    }\n   },\n   {\n   \
-    \ \"layer\": \"L5\",\n    \"gate\": {\n     \"metric\": \"agreement\",\n     \"\
-    min\": 0.8\n    }\n   }\n  ]\n },\n {\n  \"role\": \"sre\",\n  \"version\": \"\
-    0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P5-predani-nasazeni\"\
+    : \"reviewer.yaml\",\n  \"source_sha256_16\": \"f5ac1704d6eaa31a\",\n  \"disclosure\"\
+    : {\n   \"agui\": \"Mluvíte s AI agentem (role Reviewer, verze 0.1.0) platformy\
+    \ {firma}; jedná jménem {vlastník procesu}. Review je podklad pro rozhodnutí člověka,\
+    \ ne rozhodnutí.\",\n   \"review_comment\": \"Toto review napsal AI agent (role\
+    \ Reviewer, verze 0.1.0) platformy {firma} jménem {vlastník procesu}. O sloučení\
+    \ rozhoduje člověk; přiložený Inspect log je důkaz, ne verdikt.\",\n   \"memory_approval\"\
+    : \"verification.by = spiffe://…/agent/reviewer/…, method = agent\"\n  },\n  \"\
+    evals_gate\": [\n   {\n    \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\"\
+    : \"pass_rate\",\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L1\"\
+    ,\n    \"gate\": {\n     \"metric\": \"policy_compliance\",\n     \"min\": 1.0\n\
+    \    }\n   },\n   {\n    \"layer\": \"L2\",\n    \"gate\": {\n     \"metric\"\
+    : \"agreement\",\n     \"min\": 0.85\n    }\n   },\n   {\n    \"layer\": \"L3\"\
+    ,\n    \"gate\": {\n     \"metric\": \"pass_k\",\n     \"min\": 1.0\n    }\n \
+    \  },\n   {\n    \"layer\": \"L5\",\n    \"gate\": {\n     \"metric\": \"agreement\"\
+    ,\n     \"min\": 0.8\n    }\n   }\n  ]\n },\n {\n  \"role\": \"sre\",\n  \"version\"\
+    : \"0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P5-predani-nasazeni\"\
     ,\n   \"X1-eskalace\"\n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"\
     spiffe://platform.example/agent/sre/{tenant}/{workflow_instance}\",\n  \"image\"\
     : \"registry.platform.internal/roles/sre:0.1.0\",\n  \"source\": \"sre.yaml\"\
-    ,\n  \"source_sha256_16\": \"8f98cc95ccba2b5e\",\n  \"disclosure\": {\n   \"ticket_comment\"\
-    : \"Komentář napsal AI agent (role SRE, verze 0.1.0) platformy {firma} jménem\
-    \ {vlastník procesu}; nasazení schvaluje člověk.\",\n   \"handover_protocol\"\
+    ,\n  \"source_sha256_16\": \"2adceafd1ef78305\",\n  \"disclosure\": {\n   \"agui\"\
+    : \"Mluvíte s AI agentem (role SRE, verze 0.1.0) platformy {firma}; jedná jménem\
+    \ {vlastník procesu}. Produkční zásah provádí jen po lidském schválení (H5).\"\
+    ,\n   \"ticket_comment\": \"Komentář napsal AI agent (role SRE, verze 0.1.0) platformy\
+    \ {firma} jménem {vlastník procesu}; nasazení schvaluje člověk.\",\n   \"handover_protocol\"\
     : \"Předávací protokol připravil AI agent (SRE) jménem {vlastník procesu}. Nasazení\
     \ provedl deploy-executor po schválení člověkem.\"\n  },\n  \"evals_gate\": [\n\
     \   {\n    \"layer\": \"L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\"\
@@ -257,19 +263,22 @@ data:
     version\": \"0.1.0\",\n  \"owner\": \"adam\",\n  \"processes\": [\n   \"P4-implementace\"\
     \n  ],\n  \"autonomy_max\": \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/vyvojar/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/vyvojar:0.1.0\",\n  \"source\"\
-    : \"vyvojar.yaml\",\n  \"source_sha256_16\": \"8fa1887f6cdc84b7\",\n  \"disclosure\"\
-    : {\n   \"pr_description\": \"Tento pull request vytvořil AI agent (role Vývojář,\
-    \ verze 0.1.0) platformy {firma} jménem {vlastník procesu}. Sloučení schvaluje\
-    \ člověk.\",\n   \"issue_comment\": \"Komentář napsal AI agent (Vývojář) jménem\
-    \ {vlastník procesu}.\",\n   \"commit_trailer\": \"AI-Agent: vyvojar@0.1.0 on-behalf-of\
-    \ {vlastník}\"\n  },\n  \"evals_gate\": [\n   {\n    \"layer\": \"L0\",\n    \"\
-    gate\": {\n     \"metric\": \"pass_rate\",\n     \"min\": 1.0\n    }\n   },\n\
-    \   {\n    \"layer\": \"L1\",\n    \"gate\": {\n     \"metric\": \"policy_compliance\"\
-    ,\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L2\",\n    \"gate\"\
-    : {\n     \"metric\": \"pass_k\",\n     \"min\": 0.6\n    }\n   },\n   {\n   \
-    \ \"layer\": \"L3\",\n    \"gate\": {\n     \"metric\": \"pass_k\",\n     \"min\"\
-    : 1.0\n    }\n   },\n   {\n    \"layer\": \"L4\",\n    \"gate\": {\n     \"metric\"\
-    : \"drift_cost_steps\",\n     \"max\": 0.5\n    }\n   }\n  ]\n }\n]"
+    : \"vyvojar.yaml\",\n  \"source_sha256_16\": \"59f961e19cad0d0b\",\n  \"disclosure\"\
+    : {\n   \"agui\": \"Mluvíte s AI agentem (role Vývojář, verze 0.1.0) platformy\
+    \ {firma}; jedná jménem {vlastník procesu}. Merge a nasazení schvaluje člověk\
+    \ (H4, H5).\",\n   \"pr_description\": \"Tento pull request vytvořil AI agent\
+    \ (role Vývojář, verze 0.1.0) platformy {firma} jménem {vlastník procesu}. Sloučení\
+    \ schvaluje člověk.\",\n   \"issue_comment\": \"Komentář napsal AI agent (Vývojář)\
+    \ jménem {vlastník procesu}.\",\n   \"commit_trailer\": \"AI-Agent: vyvojar@0.1.0\
+    \ on-behalf-of {vlastník}\"\n  },\n  \"evals_gate\": [\n   {\n    \"layer\": \"\
+    L0\",\n    \"gate\": {\n     \"metric\": \"pass_rate\",\n     \"min\": 1.0\n \
+    \   }\n   },\n   {\n    \"layer\": \"L1\",\n    \"gate\": {\n     \"metric\":\
+    \ \"policy_compliance\",\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\"\
+    : \"L2\",\n    \"gate\": {\n     \"metric\": \"pass_k\",\n     \"min\": 0.6\n\
+    \    }\n   },\n   {\n    \"layer\": \"L3\",\n    \"gate\": {\n     \"metric\"\
+    : \"pass_k\",\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L4\",\n\
+    \    \"gate\": {\n     \"metric\": \"drift_cost_steps\",\n     \"max\": 0.5\n\
+    \    }\n   }\n  ]\n }\n]"
   spire-entries.json: "[\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/account\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
     \   \"k8s_psat:agent_ns:platform-roles\",\n   \"k8s_psat:agent_sa:role\",\n  \

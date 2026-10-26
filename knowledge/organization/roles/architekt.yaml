@@ -142,6 +142,7 @@ escalation:
 
 disclosure:
   channels:
+    agui: "Mluvíte s AI agentem (role Architekt, verze 0.1.0) platformy {firma}; jedná jménem {vlastník procesu}. Návrh (ADR) schvaluje člověk (H2)."
     adr: "ADR vygeneroval AI agent (Architekt, verze 0.1.0) jménem {vlastník procesu}; schválil {člověk, datum}." 
 
 # Co ověřit dál

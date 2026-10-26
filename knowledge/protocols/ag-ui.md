@@ -81,6 +81,18 @@ Ověřeno 2026-09-29.
 - Pokud MAF zůstane finalistou: frontend (CopilotKit 1.0) a backend (MAF 0.x producent) poběží v mixu →
   otestovat lossy downgrade explicitně, logovat `protocolVersion` obou stran.
 
+## Použití v platformě (P3-1, 2026-10-26)
+- Vlastní AG-UI server (`tools/harness_p0_o2/agui.py`, FastAPI + `ag-ui-protocol` 1.0.0): thread = zakázka (Dapr workflow), run = pohled
+  „do dalšího rozhodovacího bodu“; role = `SUBAGENT_*`, předání = `TEXT_MESSAGE_*` (disclosure T7 vkládá server), HITL =
+  `RUN_FINISHED outcome=interrupt` + `RunAgentInput.resume [{interruptId, status, payload}]` (model `Interrupt`/`ResumeEntry` v SDK 1.0.0,
+  `response_schema` nese povinný důvod), stop mimo spec (`forwardedProps.action`). SDK poskytuje pydantic modely s camelCase aliasy a
+  `EventEncoder` (SSE `data:` řádky, `exclude_none` implicitně) – nic víc; žádný server framework.
+- Klient: `@ag-ui/core` 1.0.3 jen pro `EventType`/`PROTOCOL_VERSION`, SSE parser vlastní (fetch + ReadableStream, ~30 řádků). CopilotKit
+  nepoužit (ekosystém v migraci na 1.0).
+- Auth a tenant mimo spec: Bearer token Keycloaku na každém requestu, server mapuje `tenant_id` ↔ thread (404 pro cizí). Potvrzeno:
+  spec ani SDK nemají místo pro identitu volajícího kromě hlaviček transportu.
+- Měření U-1 (Playwright): `tools/harness_p1_k8s/README.md`.
+
 ## Otevřené otázky
 - [x] Verze a stabilita specifikace eventů. → 1.0 od 2026-09-17, minor jen aditivní (2026-10-20).
 - [ ] Autentizace a multi-tenancy. → ve spec 1.0 nic (2026-10-20); sledovat draft 1.1.
@@ -93,3 +105,4 @@ Ověřeno 2026-09-29.
   podpoře u finalistů – Microsoft Agent Framework AG-UI má.
 - 2026-10-20: spec 1.0 (2026-09-17), nové eventy, versioning policy, rozšířený seznam integrací; opraveno
   tvrzení o 0.x; MAF 1.6.0 stále pinuje `ag-ui-protocol<0.2`; auth/tenancy ve spec nenalezeno.
+- 2026-10-26: P3-1 – vlastní AG-UI server a GUI platformy (interrupt/resume pro HITL, subagenti = role); sekce Použití v platformě.

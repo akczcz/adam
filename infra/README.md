@@ -130,7 +130,17 @@ aplikaci čtení `budget_usage` (součet 30d útraty klíčů zakázky = cena a 
 `P0_BAO_KV=secret` (zakazka-env): hodnoty klíčů role × zakázka drží OpenBao KV v2 (`secret/zakazky/<id>/gateway-keys`), mount a policy zakládá
 harness (`bao_setup`); Secret `zakazka-keys-<id>` se už nezakládá. `/work` podu role = emptyDir `medium: Memory`. Měření: `measure` s `e2e=p2-6`.
 
+## P3-1: AG-UI server a GUI v aplikaci zakázky (2026-10-26)
+
+Obraz `zakazka-app` má stage `gui` (`node:22-alpine`, `npm ci && vite build` z `gui/`), výsledek v `/app/gui`; aplikace ho servíruje na `/gui`
+(`P0_GUI_DIR`) a AG-UI endpointy na `/agui/*` (`tools/harness_p0_o2/agui.py`). `zakazka-env`: `P0_KC_JWKS_URL`, `P0_KC_ISSUER` (ověření tokenu
+člověka), `P0_GUI_CLIENT=harness-human` (login GUI password grantem – zjednodušení), `P0_TENANT=acme`. Přístup k GUI v dev clusteru jen přes
+`kubectl -n platform-data port-forward svc/zakazka 18010:8010` → `http://127.0.0.1:18010/gui/` (ingress přes agentgateway s OIDC = P3-6).
+Měření: `measure` s `e2e=p3-1` (runner si instaluje Playwright + Chromium; screenshoty v artifactu `measure-<run>`).
+
 ## Pasti (AKS + Flux)
+- Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
+  nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.
 - Každý generovaný objekt s cizími `${…}` (env rolí) potřebuje `kustomize.toolkit.fluxcd.io/substitute: disabled`, jinak Flux proměnné smaže.

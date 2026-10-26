@@ -147,6 +147,7 @@ escalation:
 
 disclosure:
   channels:
+    agui: "Mluvíte s AI agentem (role SRE, verze 0.1.0) platformy {firma}; jedná jménem {vlastník procesu}. Produkční zásah provádí jen po lidském schválení (H5)."
     ticket_comment: "Komentář napsal AI agent (role SRE, verze 0.1.0) platformy {firma} jménem {vlastník procesu}; nasazení schvaluje člověk."
     handover_protocol: "Předávací protokol připravil AI agent (SRE) jménem {vlastník procesu}. Nasazení provedl deploy-executor po schválení člověkem."
 
