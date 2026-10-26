@@ -6,7 +6,7 @@ render_k8s.py – z výstupu rolegen vyrobí Kubernetes manifesty do infra/k8s/r
                             vydává aplikace při založení zakázky, viz tools/harness_p0_o2/gateway_keys.py)
   infra/images/roles/<role>/  Dockerfile, devcontainer.json, etc/platform/{role.json,srt.json,managed-settings.json} – obraz role (P2-2)
   agentgateway-config.yaml  ConfigMap `agentgateway-config` = base config (infra/k8s/base/agentgateway) + upstream z env $LLM_UPSTREAM_URL
-                            + prázdná apiKey policy (mode optional) – component ho aplikuje jako patch base ConfigMapy (overlaye: components: [../../rolegen])
+                            + prázdná apiKey policy (mode optional) + egress rolí (P2-4: CONNECT bind, listenery, routy z build/agentgateway/egress.yaml) – component ho aplikuje jako patch base ConfigMapy (overlaye: components: [../../rolegen])
 
 Spuštění: python tools/rolegen/render_k8s.py [--check]   (--check: nic nezapisuje, exit 1 když se vygenerované soubory liší od Gitu – CI gate)
 """
@@ -48,6 +48,7 @@ def render(tenant="acme"):
         data["opa-data.json"] = (b / "opa/data.json").read_text()
         tpl = yaml.safe_load((b / f"agentgateway/apikeys-{tenant}-{{zakazka}}.yaml").read_text())
         tpl["policies"]["apiKey"]["mode"] = "optional"   # bez klíče projde request bez role (harnessy G1); klíče rolí jsou strict per budget
+        eg = yaml.safe_load((b / "agentgateway/egress.yaml").read_text())   # P2-4: CONNECT bind 3128, HTTPS listenery a routy egressu z rolí (certy a token = Secrety mimo Git)
         data["apikeys-template.yaml"] = yaml.safe_dump(tpl, sort_keys=False, allow_unicode=True)
     # Flux postBuild.substitute by nedefinované ${VAR} v datech (env rolí, např. ${SVID_JWT}) nahradil prázdným řetězcem (P21a 2026-10-25) → vypnout
     build_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "rolegen-build", "annotations": {"kustomize.toolkit.fluxcd.io/substitute": "disabled"}}, "data": data}
@@ -55,6 +56,7 @@ def render(tenant="acme"):
     cfg = yaml.safe_load(base_cm["data"]["config.yaml"])
     cfg["llm"]["models"][0]["params"]["baseUrl"] = "$LLM_UPSTREAM_URL"   # env gateway (Deployment): aks mock-upstream v clusteru / živé API
     cfg["llm"]["policies"] = {"apiKey": {"mode": "optional", "location": tpl["policies"]["apiKey"]["location"], "keys": []}}   # klíče doplní aplikace per zakázka
+    cfg |= eg
     gw_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "agentgateway-config"}, "data": {"config.yaml": yaml.safe_dump(cfg, sort_keys=False)}}
     return images, {"rolegen-build.yaml": HEADER + yaml.safe_dump(build_cm, sort_keys=False, allow_unicode=True),
             "agentgateway-config.yaml": HEADER + yaml.safe_dump(gw_cm, sort_keys=False),

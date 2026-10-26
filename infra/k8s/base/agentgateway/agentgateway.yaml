@@ -29,6 +29,7 @@ data:
           add:
             zakazka: '"x-zakazka" in request.headers ? request.headers["x-zakazka"] : ""'
             role: 'apiKey != null ? string(apiKey.role) : ""'
+            sni: 'destination.hostname'    # P2-4: egress CONNECT – cílový host (SNI) v logu
     llm:
       port: 4100
       models:
@@ -56,6 +57,7 @@ spec:
   selector: {app: agentgateway}
   ports:
   - {name: llm, port: 4100, targetPort: 4100}
+  - {name: connect, port: 3128, targetPort: 3128}   # P2-4: egress proxy podů rolí (CONNECT; srt parentProxy)
   - {name: stats, port: 19002, targetPort: 19002}
 ---
 # Headless služba: DNS vrací IP všech replik – aplikace po vydání klíčů (gateway_keys.py) sonduje každou repliku zvlášť, protože ConfigMap
@@ -107,12 +109,17 @@ spec:
         - secretRef: {name: agentgateway-secrets}
         env:
         - {name: LLM_UPSTREAM_URL, value: https://api.anthropic.com/v1}   # config.yaml z rolegen (infra/k8s/rolegen) má baseUrl $LLM_UPSTREAM_URL; overlay: mock
+        - {name: GIT_BACKEND_HOST, value: mock-github:9801}        # P2-4: backend terminované routy git.platform.internal (ostrý provoz: GitHub)
+        - {name: MIRROR_BACKEND_HOST, value: mock-mirror:9803}     # P2-4: backend mirror.platform.internal (pypi/npm; ostrý provoz: Nexus/Artifactory)
         ports:
         - {containerPort: 4100, name: llm}
+        - {containerPort: 3128, name: connect}
         - {containerPort: 19001, name: ready}
         - {containerPort: 19002, name: stats}
         volumeMounts:
         - {name: config, mountPath: /etc/agentgateway, readOnly: true}
+        - {name: tls, mountPath: /etc/agentgateway/tls, readOnly: true}        # P2-4: cert *.platform.internal pro terminaci egressu
+        - {name: git-token, mountPath: /etc/agentgateway/git, readOnly: true}  # P2-4: token git backendu (backendAuth key file, watched)
         readinessProbe:
           httpGet: {path: /healthz/ready, port: 19001}
           periodSeconds: 3
@@ -126,3 +133,9 @@ spec:
         configMap: {name: agentgateway-config}         # z Gitu (infra/k8s/rolegen přes component)
       - name: keys-src
         configMap: {name: agentgateway-keys, optional: true}   # klíče per zakázka od aplikace
+      # P2-4: tajemství egressu mimo Git – vydává harness (dev: vlastní CA; P3: cert-manager + ESO/OpenBao). Bez nich pod čeká (ContainerCreating),
+      # gateway s configem odkazujícím na cert by stejně nenastartovala.
+      - name: tls
+        secret: {secretName: agentgateway-tls}
+      - name: git-token
+        secret: {secretName: agentgateway-git-token}

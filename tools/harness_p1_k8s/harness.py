@@ -73,6 +73,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -600,7 +601,7 @@ class PortForward:
         if self.p: self.p.terminate()
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů."""
     import psycopg, jwt, hashlib as _h, base64 as _b
@@ -618,6 +619,39 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
     head_now = (sh(["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{os.environ.get('GITHUB_REF_NAME', '')}"]).stdout.split() or [""])[0] if os.environ.get("GITHUB_REF_NAME") else ""
     want_shas = {want_sha} | ({head_now} if head_now else set())
     def rev_ok(r): return any(r.endswith(w) for w in want_shas)
+    # P2-4: tajemství egressu gateway mimo Git – CA + cert *.platform.internal (Secret agentgateway-tls), token git backendu (Secret
+    # agentgateway-git-token), CA pro pody rolí (ConfigMap platform-ca). Gateway bez Secretů nenastartuje (Flux health check) → před čekáním na Flux.
+    # Idempotentní (existující nechá); dev CA harnessu – P3: cert-manager + ESO/OpenBao.
+    def ensure_egress_secrets():
+        import secrets as _sec, datetime as _dt
+        def get(ns, kind, name): r = kubectl(a, "-n", ns, "get", kind, name, "-o", "json"); return json.loads(r.stdout) if r.returncode == 0 else None
+        created = []
+        if not get(NS, "secret", "agentgateway-tls"):
+            from cryptography import x509; from cryptography.x509.oid import NameOID; from cryptography.hazmat.primitives import hashes, serialization; from cryptography.hazmat.primitives.asymmetric import ec
+            def cert(cn, key, issuer=None, ikey=None, ca=False, sans=()):
+                now = _dt.datetime.now(_dt.timezone.utc); sub_ = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+                b = x509.CertificateBuilder().subject_name(sub_).issuer_name(issuer.subject if issuer else sub_).public_key(key.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now - _dt.timedelta(minutes=5)).not_valid_after(now + _dt.timedelta(days=90)).add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
+                if sans: b = b.add_extension(x509.SubjectAlternativeName([x509.DNSName(x) for x in sans]), critical=False)
+                return b.sign(ikey or key, hashes.SHA256())
+            hosts = ["git.platform.internal", "mirror.platform.internal"]
+            ca_key = ec.generate_private_key(ec.SECP256R1()); ca_c = cert("platform-dev-ca", ca_key, ca=True)
+            lk = ec.generate_private_key(ec.SECP256R1()); leaf = cert(hosts[0], lk, ca_c, ca_key, sans=hosts)
+            pem = lambda c: c.public_bytes(serialization.Encoding.PEM).decode()
+            with tempfile.TemporaryDirectory() as td:
+                (Path(td) / "tls.crt").write_text(pem(leaf) + pem(ca_c)); (Path(td) / "ca.crt").write_text(pem(ca_c))
+                (Path(td) / "tls.key").write_text(lk.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode())
+                kubectl(a, "-n", NS, "create", "secret", "tls", "agentgateway-tls", f"--cert={td}/tls.crt", f"--key={td}/tls.key")
+                kubectl(a, "-n", NS, "delete", "configmap", "platform-ca", "--ignore-not-found"); kubectl(a, "-n", NS, "create", "configmap", "platform-ca", f"--from-file=ca.crt={td}/ca.crt")
+            created.append("tls")
+        if not get(NS, "secret", "agentgateway-git-token"):
+            kubectl(a, "-n", NS, "create", "secret", "generic", "agentgateway-git-token", f"--from-literal=token=git-{_sec.token_urlsafe(24)}"); created.append("token")
+        ca_pem = ((get(NS, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt", "")
+        if ca_pem and kubectl(a, "get", "ns", RNS).returncode == 0 and ((get(RNS, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt") != ca_pem:
+            with tempfile.TemporaryDirectory() as td:
+                (Path(td) / "ca.crt").write_text(ca_pem); kubectl(a, "-n", RNS, "delete", "configmap", "platform-ca", "--ignore-not-found"); kubectl(a, "-n", RNS, "create", "configmap", "platform-ca", f"--from-file=ca.crt={td}/ca.crt"); created.append(f"ca-{RNS}")
+        tok = _b.b64decode(((get(NS, "secret", "agentgateway-git-token") or {}).get("data") or {}).get("token", "")).decode()
+        return {"created": created, "token_sha12": _h.sha256(tok.encode()).hexdigest()[:12] if tok else None, "ca_present": bool(ca_pem)}
+    egress_secrets = ensure_egress_secrets()
     # StatefulSet s podem v CrashLoopBackOff rolling update nenahradí (kubernetes/kubernetes#67250): po Flux applyi smazat pody, které nejsou na updateRevision
     # (ne jen currentRevision – pod může stát na mezilehlé revizi, když se nedokončil ani předchozí rollout; měřeno 2026-10-25). Flux health check
     # (wait) kustomizace platform projde až s novým podem → mazání musí běžet uvnitř čekání na Flux.
@@ -642,6 +676,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
     flux_msg = {k["metadata"]["name"]: next((c.get("message", "")[:1500] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks_now}
     print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
     assert flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now), f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
+    egress_secrets["created"] += ensure_egress_secrets()["created"]   # ns platform-roles existuje až po Flux → CA pro pody rolí
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
     if kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620).returncode != 0:   # P2-3: nový config (seal plugin) → pod se restartuje
         st_ = kubectl(a, "-n", NS, "get", "pod", "openbao-0", "-o", "jsonpath={range .status.initContainerStatuses[*]}{.name}={.state}{'\\n'}{end}{range .status.containerStatuses[*]}{.name}={.state}{'\\n'}{end}").stdout
@@ -870,6 +905,39 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
             ents_now = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
             rep.add("P23d", "SPIRE OIDC discovery provider (sidecar serveru) vydává JWKS pro JWT-SVID; registrace z rolegen (alias uzlu + workload per role) v serveru", "PASS" if jk.get("keys") and disc.status_code == 200 and all(f"spiffe://platform/role/{r}/acme" in ents_now for r in ROLE_CLIENTS) else "FAIL", {"jwks_keys": len(jk.get("keys", [])), "discovery": disc.status_code, "entries": ents_now.count("Entry ID")})
 
+        if egress:
+            # P2-4 – egress naostro: git a mirror z Kata podu role jen přes gateway CONNECT (srt parentProxy), terminace TLS + token z gateway, chráněné větve
+            import yaml as _y4
+            gcfg = _y4.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-config").get("data") or {}).get("config.yaml") or "{}")
+            binds = gcfg.get("binds") or []; lst = {l["name"]: l for l in ((gcfg.get("gateways") or {}).get("secure") or {}).get("listeners", [])}; rts = {r_["name"]: r_ for r_ in gcfg.get("routes") or []}
+            git_rt = rts.get("git-acme", {}); allow = " ".join(x.get("allow", "") for x in ((git_rt.get("policies") or {}).get("authorization") or {}).get("rules", []))
+            svc_ports = {p_["port"] for p_ in (kj("-n", NS, "get", "svc", "agentgateway").get("spec") or {}).get("ports", [])}
+            gw_dep = kj("-n", NS, "get", "deploy", "agentgateway").get("status") or {}
+            np_ok = kubectl(a, "-n", NS, "get", "networkpolicy", "agentgateway-egress").returncode == 0
+            ok_cfg = any(b.get("port") == 3128 and b.get("tunnelProtocol") == "connect" for b in binds) and all(lst.get(n, {}).get("protocol") == "HTTPS" and (lst[n].get("tls") or {}).get("cert") for n in ("git", "mirror")) and lst.get("public-egress", {}).get("protocol") == "TLS" \
+                     and ((git_rt.get("policies") or {}).get("backendAuth") or {}).get("key", {}).get("value", {}).get("file") and "POST" in allow and "GET" in allow and "mirror-acme" in rts and 3128 in svc_ports and gw_dep.get("readyReplicas") == gw_dep.get("replicas") and np_ok
+            rep.add("P24a", "Gateway egress z Gitu (rolegen → agentgateway-config): CONNECT bind 3128, HTTPS listenery git/mirror.platform.internal s certem (Secret mimo Git, vydává harness), passthrough jen allow-list; routa git-acme = metody z authz.http rolí + backendAuth (token jen v gateway); Service 3128; NetworkPolicy egressu gateway (ne IMDS/link-local/privátní sítě); obě repliky Ready", "PASS" if ok_cfg else "FAIL", {"binds": binds, "listeners": {k: v.get("protocol") for k, v in lst.items()}, "git_route_allow": allow, "git_backend_auth": bool((git_rt.get("policies") or {}).get("backendAuth")), "routes": sorted(rts), "svc_ports": sorted(svc_ports), "networkpolicy": np_ok, "gw_ready": [gw_dep.get("readyReplicas"), gw_dep.get("replicas")], "secrets": egress_secrets})
+            gp = (pods_led.get("vyvojar") or {}).get("git_probe") or {}
+            pf_gh = PortForward(a, "mock-github", 19811, 9801); pf_mi = PortForward(a, "mock-mirror", 19812, 9803)
+            try:
+                gdbg = http("GET", "http://127.0.0.1:19811/_debug/git", timeout=15).json()
+                mdbg = http("GET", "http://127.0.0.1:19812/_debug/requests", timeout=15).json()
+            finally: pf_gh.stop(); pf_mi.stop()
+            refs = (gdbg.get("refs") or {}).get("acme/platform") or {}; greq = gdbg.get("requests") or []
+            rp = [q for q in greq if "git-receive-pack" in q.get("path", "") and q.get("method") == "POST"]
+            branch_ref = f"refs/heads/agent/{zid}/ukol-1"
+            ok_git = gp.get("clone") == 0 and gp.get("commit") == 0 and gp.get("push_branch") == 0 and gp.get("push_main") not in (None, 0) and ("chráněný" in str(gp.get("push_main_err", "")) or "pre-receive" in str(gp.get("push_main_err", ""))) \
+                     and gp.get("token_env") == 0 and branch_ref in refs and bool(rp) and all(q.get("auth_scheme") == "Bearer" and q.get("auth_sha256_12") == egress_secrets.get("token_sha12") for q in greq)
+            rep.add("P24b", "Vývojář z Kata podu: clone, commit a push větve agent/<wf>/ukol-1 přes gateway CONNECT (srt parentProxy → terminace TLS git.platform.internal, gateway vloží Bearer token – pod žádný token nemá), push do main odmítne git server (branch protection v pre-receive hooku; gateway ref v těle pkt-line nevidí); backend viděl každý git request s tokenem gateway", "PASS" if ok_git else "FAIL", {"probe": {k: v for k, v in gp.items() if not k.startswith(("pip", "npm", "evil", "http80", "other"))}, "refs": refs, "receive_pack_requests": len(rp), "git_requests_auth": sorted({(q.get("auth_scheme"), q.get("auth_sha256_12") == egress_secrets.get("token_sha12")) for q in greq}, key=str)})
+            mreq = mdbg.get("requests") or []
+            ok_mirror = gp.get("pip") == 0 and ".whl" in str(gp.get("pip_files", "")) and gp.get("npm") == 0 and ".tgz" in str(gp.get("npm_files", "")) and any("/pypi/" in q.get("path", "") for q in mreq) and any("/npm/" in q.get("path", "") for q in mreq)
+            rep.add("P24c", "Mirror balíčků z Kata podu: pip download (index mirror.platform.internal/pypi/simple) a npm pack (registry /npm/) přes gateway CONNECT – terminace TLS, routa jen GET; mirror viděl požadavky obou klientů", "PASS" if ok_mirror else "FAIL", {"pip": gp.get("pip"), "pip_files": gp.get("pip_files"), "pip_err": gp.get("pip_err"), "npm": gp.get("npm"), "npm_files": gp.get("npm_files"), "npm_err": gp.get("npm_err"), "mirror_paths": sorted({q.get("path") for q in mreq})[:10], "via": gp.get("via")})
+            gw_log = kubectl(a, "-n", NS, "logs", "-l", "app=agentgateway", "-c", "agentgateway", "--since=40m", "--tail=4000", "--prefix").stdout   # obě repliky
+            sni_lines = {h: sum(1 for l in gw_log.splitlines() if h in l) for h in ("git.platform.internal", "mirror.platform.internal", "evil.example.com")}
+            eg_v = ((pods_led.get("vyvojar") or {}).get("egress_probe") or {})
+            ok_edge = gp.get("evil_sni") not in (None, 0) and gp.get("http80") not in (None, 0) and str(gp.get("other_repo_http")) in ("404", "403") and eg_v.get("internet_1.1.1.1:443", {}).get("result") == "timeout" and sni_lines["git.platform.internal"] > 0
+            rep.add("P24d", "Hranice egressu podu role: cizí SNI (evil.example.com) přes proxy neprojde (srt allow-list / gateway route not found → TLS EOF, ne 403), HTTP :80 ven neexistuje (CONNECT jen :443), cizí repo mimo /acme/ → 404 z gateway, přímý internet timeout (NetworkPolicy); gateway loguje SNI egressu", "PASS" if ok_edge else "FAIL", {"evil_sni": gp.get("evil_sni"), "evil_err": gp.get("evil_err"), "http80": gp.get("http80"), "other_repo_http": gp.get("other_repo_http"), "internet": eg_v.get("internet_1.1.1.1:443"), "gateway_log_sni": sni_lines, "violations": gp.get("violations"), "srt_attempt": gp.get("srt_attempt")})
+
         if registry:
             # P2-5 – eval gate (Git → ConfigMap → aplikace) a registr org.* na Flexible Serveru
             import yaml as _y3, hashlib as _h3
@@ -942,7 +1010,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -962,7 +1030,7 @@ def main():
     if a.create_kind:
         assert a.kind, "chybí KIND"
         create_kind(a, env)
-    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True), "p2-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True)}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True), "p2-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True), "p2-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True)}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

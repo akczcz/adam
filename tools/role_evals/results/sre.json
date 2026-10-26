@@ -1,7 +1,7 @@
 {
  "role": "sre",
  "version": "0.1.0",
- "source_sha256_16": "2e445d31721500f3",
+ "source_sha256_16": "8f98cc95ccba2b5e",
  "status": "unevaluated",
  "reason": "role bez runtime v aplikaci (mock model bez chování SRE) – evaly až s deploy MCP serverem (P2)",
  "rows": []

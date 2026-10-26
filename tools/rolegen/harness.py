@@ -117,16 +117,19 @@ def main():
 
     # R1d agentgateway --validate-only
     keys = yaml.safe_load((BUILD / "agentgateway" / "apikeys-acme-Z1.yaml").read_text())
-    egress = yaml.safe_load((BUILD / "agentgateway/egress-allowlist.yaml").read_text())
+    egress = yaml.safe_load((BUILD / "agentgateway/egress.yaml").read_text())   # P2-4: binds + gateways.secure (listenery) + routes (+ tcpRoutes)
     for k in keys["policies"]["apiKey"]["keys"]: k["keyHash"] = "sha256:" + hashlib.sha256(k["keyHash"].encode()).hexdigest()  # placeholder → platný formát
-    cfg = {"config": {"enableIpv6": False, "database": {"url": str(LOGS / "agentgateway-budgets.db")}}, "binds": [{"port": 3128, "tunnelProtocol": "connect", "listeners": []}],
-           "gateways": {"llm": {"port": 4100}, "secure": {"port": 443, "listeners": [{"name": "public-egress", "hostname": "*", "protocol": "TLS"}]}},
+    for l in egress["gateways"]["secure"]["listeners"]:   # certy gateway jsou Secret mimo Git – pro validaci schématu stačí passthrough
+        if l.get("tls"): l.pop("tls"); l["protocol"] = "TLS"
+    for rt in egress["routes"]: rt.get("policies", {}).pop("backendAuth", None)   # token file mimo Git
+    cfg = {"config": {"enableIpv6": False, "database": {"url": str(LOGS / "agentgateway-budgets.db")}}, "binds": egress["binds"],
+           "gateways": {"llm": {"port": 4100}, "secure": egress["gateways"]["secure"]},
            "llm": {"gateways": "llm", "models": [{"name": "*", "provider": "anthropic", "params": {"apiKey": "sk-ant-placeholder"}}]},
-           "routes": [{"name": "llm-keys", "gateways": "llm", "policies": keys["policies"], "backends": [{"host": "127.0.0.1:9"}]}],
-           "tcpRoutes": egress["tcpRoutes"]}
+           "routes": [{"name": "llm-keys", "gateways": "llm", "policies": keys["policies"], "backends": [{"host": "127.0.0.1:9"}]}] + egress["routes"]}
+    if egress.get("tcpRoutes"): cfg["tcpRoutes"] = egress["tcpRoutes"]
     cfgp = LOGS / "agentgateway-validate.yaml"; cfgp.write_text(yaml.safe_dump(cfg, sort_keys=False))
-    r = subprocess.run([a.agentgateway_bin, "-f", str(cfgp), "--validate-only"], capture_output=True, text=True, timeout=60, env=env | {"ANTHROPIC_API_KEY": "x"})
-    rep.add("R1d", "agentgateway 1.6.0 --validate-only přijme apiKey.keys[] s budgets (USD/24h/30d, Audit|Block) a egress tcpRoute z rolí", "PASS" if r.returncode == 0 else "FAIL", {"exit": r.returncode, "note": "budgets vyžadují config.database (sqlite/postgres) a metadata.name na klíči", "budgets": [(k["metadata"]["role"], len(k["budgets"])) for k in keys["policies"]["apiKey"]["keys"]], "egress_hosts": egress["tcpRoutes"][0]["hostnames"], "stderr": (r.stdout + r.stderr).strip()[-300:] if r.returncode else ""})
+    r = subprocess.run([a.agentgateway_bin, "-f", str(cfgp), "--validate-only"], capture_output=True, text=True, timeout=60, env=env | {"ANTHROPIC_API_KEY": "x", "GIT_BACKEND_HOST": "127.0.0.1:9", "MIRROR_BACKEND_HOST": "127.0.0.1:9"})
+    rep.add("R1d", "agentgateway 1.6.0 --validate-only přijme apiKey.keys[] s budgets (USD/24h/30d, Audit|Block), CONNECT bind, listenery a routy egressu z rolí", "PASS" if r.returncode == 0 else "FAIL", {"exit": r.returncode, "note": "budgets vyžadují config.database (sqlite/postgres) a metadata.name na klíči", "budgets": [(k["metadata"]["role"], len(k["budgets"])) for k in keys["policies"]["apiKey"]["keys"]], "listeners": [l["hostname"] for l in egress["gateways"]["secure"]["listeners"]], "routes": [rt["name"] for rt in egress["routes"]], "stderr": (r.stdout + r.stderr).strip()[-300:] if r.returncode else ""})
 
     # R1e Inspect approval
     try:

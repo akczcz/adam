@@ -112,6 +112,17 @@ overlay aks), `infra/k8s/roles`: SA `role` (bez automountu), ConfigMap `spire-ag
 `spire-server:8081`. Server paměti přijímá JWT-SVID (`MEMORY_SPIRE_*`). Měření: workflow `measure` s `e2e=p2-3` – **17/17 2026-10-25**
 (run 40234528827); seal `azurekeyvault` = externí KMS plugin `openbao-plugin-kms-azure` stažený init kontejnerem (viz pasti níže).
 
+## P2-4: egress git a mirror přes gateway CONNECT (2026-10-26)
+
+Pody rolí (Kata, `platform-roles`) ven jen přes agentgateway `:3128` (CONNECT; srt `parentProxy`). rolegen generuje do `agentgateway-config`
+bind 3128, HTTPS listenery `git.platform.internal` a `mirror.platform.internal` (terminace certem ze Secretu `agentgateway-tls`), routu `git-acme`
+(metody z `authz.http` rolí, `backendAuth` Bearer ze Secretu `agentgateway-git-token`) a `mirror-acme` (GET); backendy z env Deploymentu
+(`GIT_BACKEND_HOST=mock-github:9801`, `MIRROR_BACKEND_HOST=mock-mirror:9803`). Secrety a ConfigMapu `platform-ca` (CA pro pody rolí) vydává
+harness (dev CA; P3 cert-manager + ESO) – Deployment gateway na ně čeká (`ContainerCreating`), Flux kustomizace `platform` je do té doby
+`HealthCheckFailed`. Mock GitHub nově mluví git smart HTTP (`git http-backend`, bare repo `acme/platform.git`, pre-receive hook = branch protection:
+jen `agent/*`, `zakazka/*`); mock mirror (`tools/harness_p0_o2/mock_mirror.py`) = pypi simple + npm registry s balíčkem `platform-hello`.
+NetworkPolicy `agentgateway-egress` (overlay aks) brání gateway v přístupu na IMDS, wireserver a privátní sítě. Měření: `measure` s `e2e=p2-4`.
+
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.

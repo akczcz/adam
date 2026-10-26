@@ -31,6 +31,58 @@ def _hp(url, default_port):
     u = urlparse(url); return u.hostname, u.port or default_port
 
 
+GIT_PROBE_SH = r"""
+set +e
+R="$1"; M="$2"; WF="$3"
+out(){ printf 'PROBE:%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\n\r' '  ' | cut -c1-300)"; }
+d=$(mktemp -d "$PWD/probe-XXXX") || { out mkdir fail; exit 0; }; cd "$d" || exit 0
+git clone -q "$R" repo 2>clone.err; out clone $?; out clone_err "$(tail -c 300 clone.err)"
+if cd repo 2>/dev/null; then
+  git config user.email role@platform.internal; git config user.name role
+  git checkout -q -b "agent/$WF/ukol-1" && echo "probe $WF" > PROBE.md && git add PROBE.md && git commit -qm "probe $WF"; out commit $?
+  git push -q origin "agent/$WF/ukol-1" 2>push.err; out push_branch $?; out push_branch_err "$(tail -c 300 push.err)"
+  git push -q origin HEAD:main 2>pushmain.err; out push_main $?; out push_main_err "$(tail -c 300 pushmain.err)"
+  cd ..
+fi
+out token_env "$(env | grep -ciE '^(GITHUB_TOKEN|GIT_TOKEN|GH_TOKEN)=|x-access-token')"
+pip download -q --no-deps --no-cache-dir --index-url "$M/pypi/simple" -d pkgs platform-hello 2>pip.err; out pip $?; out pip_err "$(tail -c 300 pip.err)"
+out pip_files "$(ls pkgs 2>/dev/null | tr '\n' ' ')"
+npm pack --silent --registry "$M/npm/" platform-hello >npm.out 2>npm.err; out npm $?; out npm_err "$(tail -c 300 npm.err)"; out npm_files "$(ls *.tgz 2>/dev/null | tr '\n' ' ')"
+curl -sS -o /dev/null -m 20 https://evil.example.com/ 2>evil.err; out evil_sni $?; out evil_err "$(tail -c 200 evil.err)"
+curl -sS -o /dev/null -m 20 http://neverssl.com/ 2>http80.err; out http80 $?; out http80_err "$(tail -c 200 http80.err)"
+curl -sS -o /dev/null -w '%{http_code}' -m 20 "https://git.platform.internal/other/repo.git/info/refs?service=git-upload-pack" 2>/dev/null | { read c; out other_repo_http "$c"; }
+"""
+
+
+def git_mirror_probe():
+    """Sonda egressu z podu role (P2-4): clone + push větve agent/<wf>/* + push do main (chráněná) + pip/npm z mirroru + cizí SNI/HTTP:80 –
+    přes srt (parentProxy = gateway CONNECT) jako sandboxed_bash; když srt sondu nepustí (clone selže), zopakuje přímo přes proxy gateway
+    (HTTPS_PROXY) a zaznamená obě varianty. Token gitu v podu není – vkládá ho gateway (backendAuth)."""
+    import subprocess
+    repo, mirror, wf = os.environ["P0_GIT_URL"], os.environ.get("P0_MIRROR_URL", ""), os.environ.get("P0_ZAKAZKA_ID") or json.loads(os.environ.get("P0_ZAKAZKA", "{}")).get("id", "wf")
+    work = f"/tmp/p0-o2/{wf}/work"; os.makedirs(work, exist_ok=True)
+    sh = f"{work}/.git-probe.sh"; open(sh, "w").write(GIT_PROBE_SH)
+    base_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
+    base_env |= {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_PARAMETERS": "", "npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false", "HOME": base_env.get("HOME") or "/tmp"}
+    def run(via):
+        env = dict(base_env)
+        if via == "direct": env["HTTPS_PROXY"] = env["HTTP_PROXY"] = env["https_proxy"] = env["http_proxy"] = os.environ.get("P0_EGRESS_PROXY", ""); env["NO_PROXY"] = ".svc,localhost,127.0.0.1"
+        cmd = [os.environ["P0_SRT"], "-s", os.environ["P0_SRT_SETTINGS"], "-c", f"bash {sh} {repo} {mirror} {wf}"] if via == "srt" else ["bash", sh, repo, mirror, wf]
+        t0 = time.time()
+        try: r = subprocess.run(cmd, capture_output=True, text=True, timeout=240, env=env, cwd=work)
+        except subprocess.TimeoutExpired as e: return {"via": via, "error": "timeout", "stdout": (e.stdout or "")[-800:] if isinstance(e.stdout, str) else "", "s": round(time.time() - t0, 1)}
+        res = {"via": via, "exit": r.returncode, "s": round(time.time() - t0, 1)}
+        for l in r.stdout.splitlines():
+            if l.startswith("PROBE:") and "=" in l: k, v = l[6:].split("=", 1); res[k] = int(v) if v.lstrip("-").isdigit() else v
+        res["violations"] = [l.split("] ", 1)[-1][:160] for l in r.stderr.splitlines() if "Connection blocked" in l or "denying" in l][-5:]
+        if "clone" not in res: res["stderr"] = r.stderr[-600:]
+        return res
+    out = run("srt") if os.environ.get("P0_SRT", "none") != "none" and os.environ.get("P0_SRT_SETTINGS") else {"via": "srt", "skipped": "srt není k dispozici"}
+    if out.get("clone") != 0 and os.environ.get("P0_EGRESS_PROXY"):
+        out = {"srt_attempt": out} | run("direct")
+    return out
+
+
 def main():
     role = os.environ["P0_ROLE"]; z = json.loads(os.environ["P0_ZAKAZKA"]); prompt = os.environ["P0_PROMPT"]
     tools = [t for t in os.environ.get("P0_TOOLS", "").split(",") if t]
@@ -78,6 +130,8 @@ def main():
             try: probe[name] = tcp_probe(h, p)
             except Exception as e: probe[name] = {"result": f"dns:{type(e).__name__}"}
     print("egress_probe=" + json.dumps(probe), flush=True)
+    git_probe = git_mirror_probe() if os.environ.get("P0_GIT_URL") else None   # P2-4: git/mirror přes gateway CONNECT (srt parentProxy), chráněná větev, cizí SNI
+    if git_probe is not None: print("git_probe=" + json.dumps(git_probe)[:3000], flush=True)
 
     root = f"/tmp/p0-o2/{z['id']}"
     for d in ("work", "artifacts"): os.makedirs(f"{root}/{d}", exist_ok=True)
@@ -124,7 +178,7 @@ def main():
     try: image_role = json.loads(open("/etc/platform/role.json").read()); image_role = {"role": image_role.get("role"), "version": image_role.get("version"), "managed_settings": os.path.exists("/etc/claude/managed-settings.json")}
     except Exception: image_role = None
     out |= {"egress_probe": probe, "pod": os.environ.get("HOSTNAME"), "srt": os.environ.get("P0_SRT"), "uid": os.getuid(), "agent_s": agent_s, "uploaded": len(up), "kernel": os.uname().release,
-            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity}
+            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity, "git_probe": git_probe}
     try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": led}, headers=H, timeout=120)
     except Exception as e: print(f"result post error: {e}", flush=True)
     print("RESULT::" + json.dumps(out, ensure_ascii=False)[:30000], flush=True)

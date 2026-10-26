@@ -314,3 +314,43 @@ spec:
       volumes:
       - name: data
         emptyDir: {}
+---
+# P2-4: mock mirror balíčků (pypi simple + npm) za terminovaným listenerem mirror.platform.internal gateway – sonda role stahuje platform-hello
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-mirror
+  labels: {app: mock-mirror}
+spec:
+  selector: {app: mock-mirror}
+  ports:
+  - {name: http, port: 9803, targetPort: 9803}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-mirror
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mock-mirror}
+  template:
+    metadata:
+      labels: {app: mock-mirror}
+    spec:
+      containers:
+      - name: mock-mirror
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/harness_p0_o2/mock_mirror.py"]
+        env:
+        - {name: MOCK_MIRROR_HOST, value: "0.0.0.0"}
+        - {name: MOCK_MIRROR_PORT, value: "9803"}
+        - {name: MOCK_MIRROR_URL, value: https://mirror.platform.internal}
+        ports:
+        - {containerPort: 9803, name: http}
+        readinessProbe:
+          httpGet: {path: /health, port: 9803}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 20m, memory: 64Mi}
+          limits: {memory: 256Mi}

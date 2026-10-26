@@ -221,6 +221,28 @@ Co měření P23c ukázalo (běhy 8–10, 2026-10-25):
   `-spiffeID` aliasu, vydávaný aplikací, nebo vlastní attestor), ne `k8s_psat`.
 - Sidecar se atestuje za < 1 s, SVID role má do 5 s; start podu role se sidecarem 2–15 s (shodně s P2-2).
 
+## P2-4 – egress naostro (2026-10-26, AKS, `--step p2-4` = p2-3 + P24a–d)
+
+- **Gateway z Gitu:** rolegen (`egress()`) generuje do `agentgateway-config` CONNECT bind 3128, virtuální gateway `secure` (443) s HTTPS
+  listenery pro `*.platform.internal` z `egress_allow` rolí (terminace TLS certem gateway) a passthrough `public-egress` jen pro SNI v allow-listu;
+  routa `git-acme` = sjednocení metod z `authz.http` rolí (GET/POST na `/acme/`) + `backendAuth` (Bearer token ze souboru – pod ho nemá),
+  `mirror-acme` jen GET. Backendy přes env gateway (`GIT_BACKEND_HOST` = mock GitHub, `MIRROR_BACKEND_HOST` = mock mirror; ostrý provoz GitHub/Nexus).
+- **Tajemství mimo Git:** harness vydá dev CA + cert (Secret `agentgateway-tls`), token git backendu (Secret `agentgateway-git-token`) a CA pro
+  pody rolí (ConfigMap `platform-ca` v `platform-data` i `platform-roles`) – před čekáním na Flux, protože gateway bez certu nenastartuje. P3: cert-manager + ESO.
+- **Pod role:** CA z ConfigMapy (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `PIP_CERT`, `NODE_EXTRA_CA_CERTS`, `npm_config_cafile`), srt `parentProxy`
+  = `agentgateway.platform-data.svc:3128` (oprava ns v `roles/*.yaml`). Sonda `role_runner.git_mirror_probe` (přes srt jako `sandboxed_bash`,
+  záloha přímo přes proxy): clone, commit, push `agent/<wf>/ukol-1`, push `main`, pip download + npm pack z mirroru, cizí SNI, HTTP :80, cizí repo.
+- **Git backend:** mock GitHub obsluhuje smart HTTP (`git http-backend`, bare repo `acme/platform.git`) s pre-receive hookem: jen `agent/*` a
+  `zakazka/*` – main/release odmítá **server** (jako branch protection GitHubu). Gateway ref nevidí (pkt-line v těle), rozhoduje jen path/metoda.
+- **Gateway egress:** NetworkPolicy `agentgateway-egress` (ne IMDS 169.254.0.0/16, wireserver 168.63.129.16, privátní sítě) – 1.6.0 loopback/link-local u dynamic backendu nekontroluje.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P24a | config gateway z Gitu: bind 3128 CONNECT, listenery git/mirror HTTPS + public-egress TLS, routa git s backendAuth a GET+POST, mirror GET; Service 3128; NetworkPolicy; repliky Ready | ⏳ |
+| P24b | Vývojář z podu: clone 0, push větve 0, push main odmítnut hookem, žádný token v env; backend viděl Bearer token gateway na všech requestech | ⏳ |
+| P24c | pip download a npm pack z mirroru přes gateway; mirror viděl oba klienty | ⏳ |
+| P24d | cizí SNI neprojde, HTTP :80 ven neexistuje, cizí repo 404, přímý internet timeout, SNI v logu gateway | ⏳ |
+
 ## Spuštění
 
 ```bash
