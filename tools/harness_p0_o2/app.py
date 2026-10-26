@@ -13,6 +13,8 @@ Naivní agent Vývojář poslechne injekci v zadání a pokusí se o merge sám 
 
 HTTP API (FastAPI na APP_PORT): POST /zakazky, GET /zakazky/{id}, POST /zakazky/{id}/approve/{bod}, POST /zakazky/{id}/stop,
 POST /zakazky/{id}/resume, GET /_debug/ledger. Ledger (JSONL) = audit: handoffs, PDP rozhodnutí, executor běhy, rozpočet.
+P3-1: AG-UI server (/agui/*, agui.py) a GUI (/gui, statické soubory z P0_GUI_DIR) – kanál k lidem nad celou firmou; HITL body
+a stop jsou z GUI tytéž eventy workflow jako z GitHub bridge.
 """
 from __future__ import annotations
 
@@ -545,14 +547,20 @@ def _ledger():
 
 # --- workflow zakázky --------------------------------------------------------------------------------------------------
 def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
-    """HITL bod: čeká na event `hitl:<bod>` NEBO timer. Timeout nikdy neschvaluje → stav Pozastaveno."""
+    """HITL bod: čeká na event `hitl:<bod>` NEBO timer. Timeout nikdy neschvaluje → stav Pozastaveno.
+    HITL_WAIT v ledgeru = otevřený rozhodovací bod pro AG-UI (interrupt `hitl:<bod>:<hash>`); zamítnutí člověkem (event {rejected}) = HITL_REJECTED → Pozastaveno."""
+    t_out = float(timeout_s if timeout_s is not None else z.get("hitl_timeout_s", HITL_TIMEOUT_S))
+    yield ctx.call_activity(notify, input={"event": "HITL_WAIT", "bod": bod, "zakazka": z["id"], "artifact_hash": artifact_hash, "timeout_s": t_out})
     ev = ctx.wait_for_external_event(f"hitl:{bod}")
-    tm = ctx.create_timer(timedelta(seconds=float(timeout_s if timeout_s is not None else z.get("hitl_timeout_s", HITL_TIMEOUT_S))))
+    tm = ctx.create_timer(timedelta(seconds=t_out))
     winner = yield wf.when_any([ev, tm])
     if winner == tm:
         yield ctx.call_activity(notify, input={"event": "HITL_TIMEOUT", "bod": bod, "zakazka": z["id"], "result": "pozastaveno"})
         return None
     data = ev.get_result() or {}
+    if isinstance(data, dict) and data.get("rejected"):
+        yield ctx.call_activity(notify, input={"event": "HITL_REJECTED", "bod": bod, "zakazka": z["id"], "by": data.get("by"), "reason": data.get("reason"), "result": "pozastaveno"})
+        return None
     tok = yield ctx.call_activity(verify_approval, input={"token": (data.get("token") if isinstance(data, dict) else "") or "", "zakazka": z["id"], "bod": bod})
     if not tok or tok.get("artifact_hash") != artifact_hash or tok.get("bod") != bod:
         yield ctx.call_activity(notify, input={"event": "HITL_INVALID_TOKEN", "bod": bod, "zakazka": z["id"]})
@@ -622,14 +630,55 @@ def client():
     return _client
 
 
+def create_zakazka(b: dict, *, by=None, channel="api"):
+    """Založení zakázky (REST i AG-UI): tenant z poptávky (interní API) nebo z tokenu člověka (AG-UI), jinak P0_TENANT."""
+    tenant = b.get("tenant") or os.environ.get("P0_TENANT", "acme")
+    z = {"id": b["id"], "poptavka": b["poptavka"], "tenant": tenant, "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S),
+         "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD))}   # P2-6: strop zakázky (30d) = součet útraty jejích klíčů role × zakázka v budget_usage gateway
+    client().schedule_new_workflow(zakazka, input=z, instance_id=z["id"])
+    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500])
+    finops.registry_upsert(z["id"], tenant=tenant, budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
+    return z
+
+
+def approve_zakazka(zid, bod, *, by, artifact_hash, reason=None, channel="api", by_kind="human", exp_s=86400, tenant=None, approver_sub=None):
+    """Podepsaný approval token (transit) + event do workflow; s důvodem i řádek org.approvals (AG-UI: důvod povinný – T6)."""
+    action = {"H4": "merge", "H5": "deploy"}.get(bod, bod)
+    payload = {"bod": bod, "action": action, "zakazka_id": zid, "artifact_hash": artifact_hash, "by": by, "by_kind": by_kind, "exp": time.time() + exp_s}
+    if reason: payload["reason"] = reason
+    token = sign(payload)
+    client().raise_workflow_event(zid, f"hitl:{bod}", data={"token": token, "by": by})
+    ledger("APPROVAL_RAISED", zakazka=zid, bod=bod, by=by, artifact_hash=artifact_hash, reason=reason, channel=channel)
+    if reason:
+        ok = finops.approval_insert(zid, tenant=tenant or os.environ.get("P0_TENANT", "acme"), bod=bod, action=action, artifact_sha=artifact_hash, approver=approver_sub or by, decision="approve", reason=reason, expires_at=payload["exp"], signature=token.split(".", 1)[-1][:120], channel=channel)
+        ledger("APPROVAL_REGISTRY", zakazka=zid, bod=bod, decision="approve", written=ok)
+    return token
+
+
+def reject_zakazka(zid, bod, *, by, artifact_hash, reason, channel="agui", tenant=None, approver_sub=None):
+    """Zamítnutí člověkem = event bez tokenu → HITL_REJECTED → Pozastaveno; řádek org.approvals decision=reject."""
+    client().raise_workflow_event(zid, f"hitl:{bod}", data={"rejected": True, "by": by, "reason": reason})
+    ledger("APPROVAL_REJECTED", zakazka=zid, bod=bod, by=by, artifact_hash=artifact_hash, reason=reason, channel=channel)
+    ok = finops.approval_insert(zid, tenant=tenant or os.environ.get("P0_TENANT", "acme"), bod=bod, action={"H4": "merge", "H5": "deploy"}.get(bod, bod), artifact_sha=artifact_hash, approver=approver_sub or by, decision="reject", reason=reason, expires_at=time.time(), signature="-", channel=channel)
+    ledger("APPROVAL_REGISTRY", zakazka=zid, bod=bod, decision="reject", written=ok)
+
+
+def stop_zakazka(zid, *, by, reason=None, channel="api"):
+    """Stop zakázky (autonomie.md T5): pause workflow (durable, čekající HITL zůstává) + ukončení běžících podů rolí zakázky (sandboxy) – cíl ≤ 60 s."""
+    client().pause_workflow(zid)
+    killed = []
+    if os.environ.get("P0_ROLE_RUNTIME") == "pod":
+        import role_pod
+        killed = role_pod.kill_zakazka_pods(zid, ledger)
+    st = client().get_workflow_state(zid).runtime_status.name
+    ledger("STOP", zakazka=zid, by=by, reason=reason, budget="frozen", channel=channel, pods_killed=killed, status=st)
+    return {"ok": True, "status": st, "pods_killed": killed}
+
+
 @app.post("/zakazky")
 async def create(req: Request):
     b = await req.json()
-    z = {"id": b["id"], "poptavka": b["poptavka"], "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S),
-         "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD))}   # P2-6: strop zakázky (30d) = součet útraty jejích klíčů role × zakázka v budget_usage gateway
-    client().schedule_new_workflow(zakazka, input=z, instance_id=z["id"])
-    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"])
-    finops.registry_upsert(z["id"], tenant=os.environ.get("P0_TENANT", "acme"), budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
+    z = create_zakazka(b)
     return {"id": z["id"]}
 
 
@@ -642,21 +691,15 @@ async def get(zid: str):
 
 @app.post("/zakazky/{zid}/approve/{bod}")
 async def approve(zid: str, bod: str, req: Request):
-    b = await req.json()  # {by, by_kind, artifact_hash, action?, exp_s?}
-    action = {"H4": "merge", "H5": "deploy"}.get(bod, bod)
-    payload = {"bod": bod, "action": action, "zakazka_id": zid, "artifact_hash": b["artifact_hash"], "by": b["by"], "by_kind": b.get("by_kind", "human"), "exp": time.time() + b.get("exp_s", 86400)}
-    token = sign(payload)
-    client().raise_workflow_event(zid, f"hitl:{bod}", data={"token": token, "by": b["by"]})
-    ledger("APPROVAL_RAISED", zakazka=zid, bod=bod, by=b["by"], artifact_hash=b["artifact_hash"])
+    b = await req.json()  # {by, by_kind, artifact_hash, action?, exp_s?, reason?}
+    approve_zakazka(zid, bod, by=b["by"], artifact_hash=b["artifact_hash"], reason=b.get("reason"), channel=b.get("channel", "api"), by_kind=b.get("by_kind", "human"), exp_s=b.get("exp_s", 86400))
     return {"ok": True}
 
 
 @app.post("/zakazky/{zid}/stop")
 async def stop(zid: str, req: Request):
     b = await req.json()
-    client().pause_workflow(zid)
-    ledger("STOP", zakazka=zid, by=b.get("by"), reason=b.get("reason"), budget="frozen")
-    return {"ok": True, "status": client().get_workflow_state(zid).runtime_status.name}
+    return stop_zakazka(zid, by=b.get("by"), reason=b.get("reason"))
 
 
 @app.post("/zakazky/{zid}/resume")
@@ -730,6 +773,34 @@ async def run_result(run_id: str, req: Request):
 @app.get("/health")
 async def health():
     return {"ok": True}
+
+
+# --- AG-UI server + GUI (P3-1): thread = zakázka, HITL = interrupt/resume, stop; autorizace tokenem Keycloaku ----------------------
+import agui   # noqa: E402
+
+
+def _wf_state(zid):
+    try:
+        st = client().get_workflow_state(zid, fetch_payloads=True)
+    except Exception:
+        return None
+    if not st: return None
+    return {"status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None}
+
+
+agui.CTX.update({
+    "ledger": ledger, "read_ledger": _ledger, "wf_state": _wf_state, "root_dir": "/tmp/p0-o2",
+    "disclosure": lambda role, channel: _disclosure(role, channel),
+    "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s") if k in fp}}, by=u["name"], channel="agui"),
+    "approve": lambda zid, bod, hh, u, reason: approve_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
+    "reject": lambda zid, bod, hh, u, reason: reject_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
+    "stop": lambda zid, u, reason: stop_zakazka(zid, by=u["name"], reason=reason, channel="agui"),
+})
+app.include_router(agui.router)
+_GUI_DIR = os.environ.get("P0_GUI_DIR", "/app/gui")
+if os.path.isdir(_GUI_DIR):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/gui", StaticFiles(directory=_GUI_DIR, html=True), name="gui")
 
 
 if __name__ == "__main__":

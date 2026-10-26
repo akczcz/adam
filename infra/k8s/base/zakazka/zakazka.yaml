@@ -63,6 +63,11 @@ data:
   P0_BAO_ADDR: http://openbao:8200
   P0_BAO_KEY: approval
   P0_KC_TOKEN_URL: http://keycloak:8080/realms/p0/protocol/openid-connect/token
+  P0_KC_JWKS_URL: http://keycloak:8080/realms/p0/protocol/openid-connect/certs   # P3-1: AG-UI server ověřuje token člověka (RS256, iss = KC_HOSTNAME)
+  P0_KC_ISSUER: http://keycloak:8080/realms/p0
+  P0_GUI_CLIENT: harness-human            # P3-1: login GUI = password grant přes tento veřejný klient (zjednodušení; PKCE v prohlížeči = P3-6)
+  P0_GUI_DIR: /app/gui
+  P0_TENANT: acme                         # tenant zakázek z interního API; z AG-UI je tenant z tokenu člověka (P3-2: org.tenants)
   P0_GITHUB_MODE: "1"
   P0_GITHUB_PUBLISH: "1"
   P0_HITL_GITHUB: "1"

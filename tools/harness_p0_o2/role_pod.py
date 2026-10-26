@@ -161,6 +161,22 @@ def gc_orphans(ns, ledger):
         ledger("ROLE_POD_GC_ERROR", error=f"{type(e).__name__}: {str(e)[:200]}")
 
 
+def kill_zakazka_pods(zid, ledger, grace_s=20):
+    """Stop zakázky (P3-1, autonomie.md T5): ukončit běžící pody rolí zakázky (label platform.zakazka) – sandbox končí, checkpoint je
+    poslední sync-up artefaktů; Secret běhu smaže pod_run po návratu. Vrací jména smazaných podů."""
+    ns = os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"); safe = re.sub(r"[^A-Za-z0-9_.-]", "-", zid)[:63]; killed = []
+    try:
+        for p in k8s("GET", f"/api/v1/namespaces/{ns}/pods?labelSelector=app%3Drole,platform.zakazka%3D{safe}").get("items", []):
+            name = p["metadata"]["name"]
+            if p.get("status", {}).get("phase") in ("Succeeded", "Failed") or p["metadata"].get("deletionTimestamp"): continue
+            try: k8s("DELETE", f"/api/v1/namespaces/{ns}/pods/{name}", {"gracePeriodSeconds": grace_s}); killed.append(name)
+            except Exception as e: ledger("ROLE_POD_KILL_ERROR", zakazka=zid, pod=name, error=f"{type(e).__name__}: {str(e)[:200]}")
+    except Exception as e:
+        ledger("ROLE_POD_KILL_ERROR", zakazka=zid, error=f"{type(e).__name__}: {str(e)[:200]}")
+    if killed: ledger("ROLE_POD_KILLED", zakazka=zid, pods=killed, grace_s=grace_s)
+    return killed
+
+
 def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
     """Spustí roli jako pod a vrátí výsledek ve tvaru agent_run (text, cost, files, work, arts, error, budget_exceeded)."""
     gc_orphans(os.environ.get("P0_ROLE_NAMESPACE", "platform-roles"), ledger)

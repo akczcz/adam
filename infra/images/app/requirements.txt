@@ -10,3 +10,4 @@ psycopg[binary]>=3.2
 PyJWT[crypto]>=2.9
 opentelemetry-sdk>=1.30
 spiffe>=0.2
+ag-ui-protocol==1.0.0

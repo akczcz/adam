@@ -145,6 +145,7 @@ escalation:
 
 disclosure:
   channels:
+    agui: "Mluvíte s AI agentem (role Reviewer, verze 0.1.0) platformy {firma}; jedná jménem {vlastník procesu}. Review je podklad pro rozhodnutí člověka, ne rozhodnutí."
     review_comment: "Toto review napsal AI agent (role Reviewer, verze 0.1.0) platformy {firma} jménem {vlastník procesu}. O sloučení rozhoduje člověk; přiložený Inspect log je důkaz, ne verdikt."
     memory_approval: "verification.by = spiffe://…/agent/reviewer/…, method = agent"   # viditelné v HITL dávce člověka
 

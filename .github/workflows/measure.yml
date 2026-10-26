@@ -12,7 +12,7 @@ on:
         description: krok harnessu P1/P2 (zakázka end-to-end v AKS, role jako Kata pody; ~15–30 min, škáluje pool kata z 0) – none = jen stav
         type: choice
         default: none
-        options: [none, p2-6, p2-4, p2-3, p2-5, p2-2, p2-1]
+        options: [none, p3-1, p2-6, p2-4, p2-3, p2-5, p2-2, p2-1]
 permissions:
   id-token: write
   contents: read
@@ -69,6 +69,7 @@ jobs:
         run: |
           set -o pipefail
           pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]' fastapi opentelemetry-sdk inspect-ai anthropic uvicorn pandas pyarrow   # fastapi/otel: embedding M1; inspect-ai…: negativní kontrola evalů (p2-5)
+          case "${{ inputs.e2e }}" in p3-*) pip install -q playwright && python -m playwright install --with-deps chromium >/dev/null;; esac   # P3-1: U-1 = GUI v prohlížeči (Playwright)
           python tools/harness_p1_k8s/harness.py --step "${{ inputs.e2e }}" --context "$CLUSTER-admin" --acr "acrplatformdev${{ vars.NAME_SUFFIX }}.azurecr.io" 2>&1 | tee "$RUNNER_TEMP/e2e.log"
           { echo "## ${{ inputs.e2e }}"; echo '```'; grep -E "^  (✅|❌|ℹ️|⏭️)|^== výsledek" "$RUNNER_TEMP/e2e.log" | cut -c1-1500; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: diagnostika (pody, které nejsou Ready; události; s1-kata; autoscaler)
@@ -102,6 +103,7 @@ jobs:
           path: |
             tools/harness_sandbox_s1/results/aks-*.json
             tools/harness_p1_k8s/results/p*-*.json
+            tools/harness_p1_k8s/logs/gui-shots/*.png
           if-no-files-found: ignore
       - name: výsledek
         if: always()

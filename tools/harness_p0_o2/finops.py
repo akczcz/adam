@@ -44,6 +44,45 @@ CREATE TABLE IF NOT EXISTS org.zakazky (
 """
 
 
+DDL_APPROVALS = """
+CREATE SCHEMA IF NOT EXISTS org;
+CREATE TABLE IF NOT EXISTS org.approvals (
+  approval_id        text PRIMARY KEY,
+  tenant_id          text NOT NULL,
+  workflow_instance  text NOT NULL,
+  process_id         text NOT NULL,
+  action             text NOT NULL,
+  artifact_ref       text NOT NULL,
+  artifact_sha       text NOT NULL,
+  requested_by_agent text,
+  approver           text NOT NULL,
+  decision           text NOT NULL CHECK (decision IN ('approve','reject','override')),
+  reason             text NOT NULL CHECK (length(reason) >= 10),
+  limits_shown       jsonb,
+  decided_at         timestamptz NOT NULL DEFAULT now(),
+  expires_at         timestamptz NOT NULL,
+  signature          text NOT NULL,
+  channel            text);
+"""
+BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2"}
+
+
+def approval_insert(zid: str, *, tenant: str, bod: str, action: str, artifact_sha: str, approver: str, decision: str, reason: str, expires_at: float, signature: str, channel: str, limits_shown: dict | None = None, artifact_ref: str | None = None) -> bool:
+    """Append-only záznam rozhodnutí člověka (metriky.md org.approvals, T6: důvod ≥ 10 znaků vynucuje i DB). False bez DSN nebo při chybě."""
+    import json, uuid, datetime as dt
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return False
+    try:
+        c.execute(DDL_APPROVALS)
+        c.execute("""INSERT INTO org.approvals (approval_id, tenant_id, workflow_instance, process_id, action, artifact_ref, artifact_sha, approver, decision, reason, limits_shown, expires_at, signature, channel)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)""",
+                  (uuid.uuid4().hex, tenant, zid, BOD_PROCESS.get(bod, bod), action, artifact_ref or f"{bod}://{zid}", artifact_sha or "-", approver, decision, reason, json.dumps(limits_shown or {}), dt.datetime.fromtimestamp(expires_at, dt.timezone.utc), signature, channel))
+        return True
+    except Exception:
+        return False
+    finally: c.close()
+
+
 def registry_upsert(zid: str, *, tenant: str, budget_usd: float, spent: dict | None, status: str, keys_source: str | None, key_hashes: dict | None) -> bool:
     """Řádek zakázky v registru org.zakazky (cena zakázky čitelná z jedné tabulky). False bez DSN nebo při chybě (ledger rozhodne, co s tím)."""
     import json
