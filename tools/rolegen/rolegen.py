@@ -91,7 +91,7 @@ def egress(roles, tenant="acme"):
     Backendy přes env gateway: $GIT_BACKEND_HOST, $MIRROR_BACKEND_HOST (Deployment: mock servery v clusteru; ostrý provoz: GitHub, Nexus)."""
     hosts = sorted({h for r in roles for h in r["sandbox"].get("egress_allow", [])})
     internal = [h for h in hosts if h.endswith(".platform.internal")]; public = [h for h in hosts if h not in internal]
-    listeners = [{"name": h.split(".")[0], "hostname": h, "protocol": "HTTPS", "tls": {"cert": "/etc/agentgateway/tls/tls.crt", "key": "/etc/agentgateway/tls/tls.key"}} for h in internal]
+    listeners = [{"name": h.split(".")[0], "hostname": h, "protocol": "HTTPS", "tls": {"cert": "/etc/platform-tls/tls.crt", "key": "/etc/platform-tls/tls.key"}} for h in internal]
     listeners.append({"name": "public-egress", "hostname": "*", "protocol": "TLS"})
     routes, by_route = [], {}
     for r in roles:   # routa gateway = sjednocení metod všech rolí (gateway dnes roli na CONNECT nerozezná – mTLS/SPIFFE na CONNECT bindu až P3);
@@ -101,7 +101,7 @@ def egress(roles, tenant="acme"):
             allow = " || ".join(f'request.method == "{m}"' for m in sorted(methods))
             routes.append({"name": f"{route}-{tenant}", "gateways": f"secure/{route}", "matches": [{"path": {"pathPrefix": sub(prefix, {"tenant": tenant})}}],
                            "policies": {"authorization": {"rules": [{"allow": allow}]},   # push na chráněné větve (main/release) odmítá git server (branch protection) – ref je až v těle pkt-line, gateway ho nevidí
-                                        "backendAuth": {"key": {"value": {"file": f"/etc/agentgateway/{route}/token"}, "location": {"header": {"name": "Authorization", "prefix": "Bearer "}}}}},
+                                        "backendAuth": {"key": {"value": {"file": f"/etc/platform-egress/{route}/token"}, "location": {"header": {"name": "Authorization", "prefix": "Bearer "}}}}},
                            "backends": [{"host": f"${route.upper()}_BACKEND_HOST"}]})
     for l in listeners:   # terminovaný host bez authz.http (mirror): jen GET, bez tokenu
         if l["name"] != "public-egress" and not any(rt["gateways"] == f"secure/{l['name']}" for rt in routes):

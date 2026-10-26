@@ -118,8 +118,8 @@ spec:
         - {containerPort: 19002, name: stats}
         volumeMounts:
         - {name: config, mountPath: /etc/agentgateway, readOnly: true}
-        - {name: tls, mountPath: /etc/agentgateway/tls, readOnly: true}        # P2-4: cert *.platform.internal pro terminaci egressu
-        - {name: git-token, mountPath: /etc/agentgateway/git, readOnly: true}  # P2-4: token git backendu (backendAuth key file, watched)
+        - {name: tls, mountPath: /etc/platform-tls, readOnly: true}            # P2-4: cert *.platform.internal pro terminaci egressu (mimo /etc/agentgateway – ten je read-only emptyDir, runc by mountpoint nevytvořil)
+        - {name: git-token, mountPath: /etc/platform-egress/git, readOnly: true}  # P2-4: token git backendu (backendAuth key file, watched)
         readinessProbe:
           httpGet: {path: /healthz/ready, port: 19001}
           periodSeconds: 3
