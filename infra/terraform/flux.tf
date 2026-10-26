@@ -1,5 +1,5 @@
 # GitOps: AKS GitOps extension (Microsoft.Flux) sleduje repo a aplikuje infra/k8s/overlays/aks. Proměnné pro manifesty
-# (${ACR_LOGIN_SERVER}, ${PG_HOST}, ${PG_PASSWORD}) dosazuje postBuild substitute – heslo PG tak leží v konfiguraci Flux
+# (${ACR_LOGIN_SERVER}, ${PG_HOST}, ${PG_PASSWORD}, ${KV_NAME}, ${OPENBAO_CLIENT_ID}) dosazuje postBuild substitute – heslo PG tak leží v konfiguraci Flux
 # extension a v tf state (dev); cíl P2 = External Secrets Operator nad Key Vault/OpenBao a substitute_from Secret.
 resource "azurerm_kubernetes_cluster_extension" "flux" {
   name           = "flux"
@@ -37,9 +37,11 @@ resource "azurerm_kubernetes_flux_configuration" "platform" {
     sync_interval_in_seconds = 120
     post_build {
       substitute = {
-        ACR_LOGIN_SERVER = azurerm_container_registry.acr.login_server
-        PG_HOST          = azurerm_postgresql_flexible_server.pg.fqdn
-        PG_PASSWORD      = random_password.pg.result
+        ACR_LOGIN_SERVER  = azurerm_container_registry.acr.login_server
+        PG_HOST           = azurerm_postgresql_flexible_server.pg.fqdn
+        PG_PASSWORD       = random_password.pg.result
+        KV_NAME           = azurerm_key_vault.kv.name                        # P2-3: auto-unseal OpenBao
+        OPENBAO_CLIENT_ID = azurerm_user_assigned_identity.openbao.client_id # workload identity SA openbao
       }
     }
   }

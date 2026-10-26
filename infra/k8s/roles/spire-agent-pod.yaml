@@ -1,0 +1,32 @@
+# P2-3: konfigurace SPIRE agenta jako sidecaru podu role (Kata VM: hostPath socket DaemonSet agenta do VM nevede → agent per pod).
+# Atestace uzlu k8s_psat (pod = „uzel“, selektory agent_ns/agent_sa/agent_pod_label:platform.role), workload přes unix uid (sdílený PID ns).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent-pod
+  namespace: platform-roles
+data:
+  agent.conf: |
+    agent {
+      data_dir = "/run/spire/data"
+      log_level = "INFO"
+      server_address = "spire-server.platform-data.svc"
+      server_port = "8081"
+      socket_path = "/run/spire/sockets/agent.sock"
+      trust_domain = "platform"
+      insecure_bootstrap = true        # dev: bundle serveru není v ns rolí (notifier k8sbundle plní jen platform-data); P3: bundle ConfigMap i sem
+    }
+    plugins {
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          cluster = "platform"
+          token_path = "/var/run/secrets/tokens/spire-agent"
+        }
+      }
+      KeyManager "memory" {
+        plugin_data {}
+      }
+      WorkloadAttestor "unix" {
+        plugin_data {}
+      }
+    }

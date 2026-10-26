@@ -6,6 +6,7 @@ kind: Kustomization
 namespace: platform-data
 resources:
 - namespace.yaml
+- spire-oidc.yaml
 - ../../base/clickhouse
 - ../../base/otel-collector
 - ../../base/keycloak
@@ -28,6 +29,7 @@ images:
 components:
 - ../../rolegen   # P2-1: ConfigMap rolegen-build + patch agentgateway-config z Gitu (generuje tools/rolegen/render_k8s.py)
 patches:
+- path: openbao-aks.yaml   # P2-3: config OpenBao se seal azurekeyvault (patch base ConfigMapy)
 # P2-1: upstream modelu gateway přes env (config z rolegen má baseUrl $LLM_UPSTREAM_URL)
 - target: {kind: Deployment, name: agentgateway}
   patch: |
@@ -130,3 +132,59 @@ patches:
 - target: {kind: Deployment, name: mock-upstream}
   patch: |
     - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+# P2-3: OpenBao auto-unseal (seal azurekeyvault přes workload identitu SA openbao), auth kubernetes pro aplikaci (žádný token v Secretu)
+- target: {kind: ServiceAccount, name: openbao}
+  patch: |
+    - {op: add, path: /metadata/annotations, value: {azure.workload.identity/client-id: "${OPENBAO_CLIENT_ID}"}}
+- target: {kind: StatefulSet, name: openbao}
+  patch: |
+    - {op: add, path: /spec/template/metadata/labels/azure.workload.identity~1use, value: "true"}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: VAULT_AZUREKEYVAULT_VAULT_NAME, value: "${KV_NAME}"}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: VAULT_AZUREKEYVAULT_KEY_NAME, value: openbao-unseal}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: VAULT_AZUREKEYVAULT_AUTH_METHOD, value: workload_identity}}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: plugins, mountPath: /openbao/plugins}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: plugins, emptyDir: {}}}
+    - op: add
+      path: /spec/template/spec/initContainers
+      value:
+      - name: kms-plugin          # stáhne a ověří KMS plugin Azure Key Vault (sha256 z checksums releasu); jméno binárky normalizuje na openbao-plugin-kms-azure
+        image: "${ACR_LOGIN_SERVER}/zakazka-app:p1"
+        command: ["bash", "-ec"]
+        args:                     # bez shellových proměnných: Flux postBuild substitute by $V/$A/$bin nahradil prázdným řetězcem (StatefulSet substitute potřebuje)
+        - |
+          cd /tmp
+          curl -fsSL -o plugin.tgz https://github.com/openbao/openbao-plugins/releases/download/kms-azure-v0.1.0/openbao-plugin-kms-azure_linux_amd64_v1.tar.gz
+          curl -fsSL -o sums https://github.com/openbao/openbao-plugins/releases/download/kms-azure-v0.1.0/checksums-kms-azure.txt
+          grep -F ' openbao-plugin-kms-azure_linux_amd64_v1.tar.gz' sums | sed 's/ .*/  plugin.tgz/' | sha256sum -c -
+          mkdir -p x && tar -xzf plugin.tgz -C x
+          find x -type f -size +1M -exec cp {} /openbao/plugins/openbao-plugin-kms-azure ';'
+          chmod 755 /openbao/plugins/openbao-plugin-kms-azure && ls -la /openbao/plugins && sha256sum /openbao/plugins/openbao-plugin-kms-azure
+        volumeMounts: [{name: plugins, mountPath: /openbao/plugins}]
+        resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 256Mi}}
+# P2-3: SPIRE OIDC discovery provider jako sidecar serveru (JWKS pro JWT-SVID rolí), server paměti přijímá i JWT-SVID
+- target: {kind: StatefulSet, name: spire-server}
+  patch: |
+    - op: add
+      path: /spec/template/spec/containers/-
+      value:
+        name: oidc
+        image: "${ACR_LOGIN_SERVER}/oidc-discovery-provider:1.14.2"
+        args: ["-config", "/run/spire/oidc/oidc.conf"]
+        ports: [{containerPort: 8082, name: oidc}]
+        volumeMounts:
+        - {name: server-sock, mountPath: /tmp/spire-server/private}
+        - {name: oidc-config, mountPath: /run/spire/oidc, readOnly: true}
+        resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}
+    - op: add
+      path: /spec/template/spec/volumes/-
+      value: {name: oidc-config, configMap: {name: spire-oidc-config}}
+- target: {kind: Deployment, name: memory}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: MEMORY_SPIRE_JWKS_URL, value: http://spire-oidc:8082/keys}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: MEMORY_SPIRE_ISSUER, value: http://spire-oidc.platform-data.svc:8082}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: MEMORY_SPIRE_DEFAULT_TENANT, value: acme}}
+- target: {kind: ConfigMap, name: zakazka-env}
+  patch: |
+    - {op: add, path: /data/P0_BAO_K8S_ROLE, value: zakazka}
+    - {op: add, path: /data/P0_ROLE_IDENTITY, value: svid}
+    - {op: add, path: /data/P0_ROLE_SPIRE_AGENT_IMAGE, value: "${ACR_LOGIN_SERVER}/spire-agent:1.14.2"}

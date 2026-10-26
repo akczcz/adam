@@ -49,6 +49,9 @@ Tvrzení (krok p1-5 – workflow, paměť, bridge v clusteru):
 
 --step p2-5 = p2-2 + eval gate a registr (P2-5): P25a eval-status.json Git == ConfigMap, ROLE_GATE v ledgeru; P25b org.role_definitions/eval_gates/agents v DB org; P25c negativní kontrola gate
 
+--step p2-3 = p2-5 + identita (P2-3): P23a OpenBao auto-unseal (Key Vault, workload identity) přežije restart podu; P23b auth kubernetes aplikace (bez tokenu v Secretu);
+  P23c SVID podu role (sidecar spire-agent, JWT-SVID → paměť); P23d SPIRE OIDC provider + registrace z rolegen
+
 --step p1-6 (původní znění checků P16, dnes alias p2-1):
   P16a  Flux Ready; platforma (vč. mock-upstream v clusteru) Ready; OpenBao init do Secretu openbao-init + unseal; paměť na Flexible Serveru
   P16b  Zakázka end-to-end jako P15b, role běží jako pody: 4× ROLE_POD Succeeded s výsledkem, AGENT_RUN z podu (via=pod), Dokonceno
@@ -82,6 +85,7 @@ INFRA = ROOT / "infra"
 RESULTS, LOGS = HERE / "results", HERE / "logs"
 M1, O1 = T / "harness_memory_m1", T / "harness_observability_o1"
 NS = "platform-data"
+SPIRE_SERVER_BIN = "/opt/spire/bin/spire-server"   # oficiální obraz ghcr.io/spiffe/spire-server (AKS): binárka není v PATH
 PG_PORT, CH_HTTP, CH_NATIVE, OTLP_GRPC, OTLP_HTTP = 30432, 30123, 30900, 30317, 30318
 PG_PASSWORD = "platform-dev"   # infra/k8s/base/postgres/postgres.yaml – dev heslo jen pro kind
 ROLE_CLIENTS = ("account", "architekt", "vyvojar", "reviewer")   # modelové role P0 (klienti agent-<role> v realmu p0)
@@ -596,7 +600,7 @@ class PortForward:
         if self.p: self.p.terminate()
 
 
-def step_p2_1(a, rep, env, images=False, registry=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů."""
     import psycopg, jwt, hashlib as _h, base64 as _b
@@ -610,25 +614,68 @@ def step_p2_1(a, rep, env, images=False, registry=False):
         v = kubectl(a, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}").stdout.strip(); return _b.b64decode(v).decode() if v else None
     # Flux: obě kustomizations Ready a mock-upstream (nový objekt overlay) existuje
     want_sha = os.environ.get("GITHUB_SHA") or sh(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).stdout.strip()
+    # Flux sleduje hlavu větve: commit pushnutý během měření (např. jen docs) by jinak měření shodil; přijmout i aktuální hlavu větve z originu
+    head_now = (sh(["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{os.environ.get('GITHUB_REF_NAME', '')}"]).stdout.split() or [""])[0] if os.environ.get("GITHUB_REF_NAME") else ""
+    want_shas = {want_sha} | ({head_now} if head_now else set())
+    def rev_ok(r): return any(r.endswith(w) for w in want_shas)
+    # StatefulSet s podem v CrashLoopBackOff rolling update nenahradí (kubernetes/kubernetes#67250): po Flux applyi smazat pody, které nejsou na updateRevision
+    # (ne jen currentRevision – pod může stát na mezilehlé revizi, když se nedokončil ani předchozí rollout; měřeno 2026-10-25). Flux health check
+    # (wait) kustomizace platform projde až s novým podem → mazání musí běžet uvnitř čekání na Flux.
+    sts_deleted = {}
+    def sts_unstick():
+        for sts in kj("-n", NS, "get", "sts").get("items", []):
+            upd = sts.get("status", {}).get("updateRevision"); n = sts["metadata"]["name"]
+            if not upd or sts.get("status", {}).get("currentRevision") == upd: continue
+            for p_ in kj("-n", NS, "get", "pods", "-l", f"app={n}").get("items", []) or kj("-n", NS, "get", "pods", "-l", f"statefulset.kubernetes.io/pod-name={n}-0").get("items", []):
+                h = p_["metadata"].get("labels", {}).get("controller-revision-hash")
+                if h and h != upd and not p_["metadata"].get("deletionTimestamp"):
+                    kubectl(a, "-n", NS, "delete", "pod", p_["metadata"]["name"], "--wait=false"); sts_deleted.setdefault(n, []).append(f"{p_['metadata']['name']}@{h}→{upd}")
     t0 = time.time(); flux = {}
-    while time.time() - t0 < 600:
+    while time.time() - t0 < 900:
         ks = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
         flux = {k["metadata"]["name"]: next((c["status"] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks}
         revs = [(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks]
-        if flux and all(v == "True" for v in flux.values()) and all(r.endswith(want_sha) for r in revs) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
-        time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
-    flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}
+        if flux and all(v == "True" for v in flux.values()) and all(rev_ok(r) for r in revs) and kubectl(a, "-n", NS, "get", "deploy/mock-upstream").returncode == 0 and kubectl(a, "get", "ns", RNS).returncode == 0: break
+        sts_unstick(); time.sleep(10)   # Flux sync 120 s + rollout po změně manifestů; měříme vždy stav z aktuálního commitu
+    ks_now = kj("-n", "flux-system", "get", "kustomizations").get("items", [])
+    flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in ks_now}
+    flux_msg = {k["metadata"]["name"]: next((c.get("message", "")[:1500] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks_now}
+    print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
+    assert flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now), f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
+    if kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620).returncode != 0:   # P2-3: nový config (seal plugin) → pod se restartuje
+        st_ = kubectl(a, "-n", NS, "get", "pod", "openbao-0", "-o", "jsonpath={range .status.initContainerStatuses[*]}{.name}={.state}{'\\n'}{end}{range .status.containerStatuses[*]}{.name}={.state}{'\\n'}{end}").stdout
+        raise AssertionError(f"openbao-0 nenaběhl:\n{st_}\n{kubectl(a, '-n', NS, 'logs', 'openbao-0', '--all-containers', '--tail=40', '--prefix').stdout[-3000:]}")
     pf_bao = PortForward(a, "openbao", 18200, 8200); BAO = "http://127.0.0.1:18200"
+    seal0 = None
+    for _ in range(40):
+        try: seal0 = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json(); break
+        except Exception: time.sleep(3); pf_bao.start()
+    assert seal0 is not None, "OpenBao neodpovídá na seal-status (pod padá? kubectl -n platform-data logs openbao-0)"
+    seal_type = seal0.get("type")
     st = httpx.get(f"{BAO}/v1/sys/init", timeout=10).json()
     if not st.get("initialized"):
-        init = httpx.post(f"{BAO}/v1/sys/init", json={"secret_shares": 1, "secret_threshold": 1}, timeout=30).json()
+        body = {"recovery_shares": 1, "recovery_threshold": 1} if seal_type and seal_type != "shamir" else {"secret_shares": 1, "secret_threshold": 1}   # auto-unseal (P2-3): recovery klíče místo unseal klíčů
+        init = httpx.post(f"{BAO}/v1/sys/init", json=body, timeout=30).json(); assert "root_token" in init, f"init selhal: {init}"
         sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "openbao-init", f"--from-literal=init.json={json.dumps(init)}", "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
         subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
     init_s = secret("openbao-init", "init\\.json"); assert init_s, "OpenBao je inicializovaný, ale Secret openbao-init chybí – smazat PVC data-openbao-0 a pod openbao-0, nebo Secret doplnit"
-    init = json.loads(init_s)
-    if httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json().get("sealed"): httpx.post(f"{BAO}/v1/sys/unseal", json={"key": init["keys_base64"][0]}, timeout=30)
+    init = json.loads(init_s); bao_migrated = False
+    seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
+    if seal.get("sealed"):
+        if seal.get("type") not in (None, "shamir") and init.get("keys_base64"):   # storage z shamir, config už s azurekeyvault → migrace (klíče se stanou recovery klíči)
+            httpx.post(f"{BAO}/v1/sys/unseal", json={"key": init["keys_base64"][0], "migrate": True}, timeout=60); bao_migrated = True
+        elif init.get("keys_base64"): httpx.post(f"{BAO}/v1/sys/unseal", json={"key": init["keys_base64"][0]}, timeout=30)
+        for _ in range(30):
+            if not httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json().get("sealed"): break
+            time.sleep(2)
+    seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
     o2m.BAO = BAO; bao_app = o2m.bao_setup(init["root_token"], LOGS / "openbao-audit-aks.log")
+    # P2-3: auth metoda kubernetes pro aplikaci (SA zakazka) – žádný token OpenBao v Secretu; TokenReview vlastním SA tokenem OpenBao (auth-delegator)
+    Hb = {"X-Vault-Token": init["root_token"]}
+    if "kubernetes/" not in httpx.get(f"{BAO}/v1/sys/auth", headers=Hb, timeout=10).json(): httpx.post(f"{BAO}/v1/sys/auth/kubernetes", json={"type": "kubernetes"}, headers=Hb, timeout=10)
+    httpx.post(f"{BAO}/v1/auth/kubernetes/config", json={"kubernetes_host": "https://kubernetes.default.svc:443"}, headers=Hb, timeout=10)
+    httpx.post(f"{BAO}/v1/auth/kubernetes/role/zakazka", json={"bound_service_account_names": ["zakazka"], "bound_service_account_namespaces": [NS], "token_policies": ["approval-signer"], "token_ttl": "1h", "token_max_ttl": "4h"}, headers=Hb, timeout=10)
     # Postgres = Flexible Server: admin `platform`, heslo ze Secretu postgres-auth (Flux substitute), TLS; z runneru přímo (pravidlo Allow Azure services),
     # jinak přes socat pod + port-forward
     pg_host = kubectl(a, "-n", NS, "get", "svc", "postgres", "-o", "jsonpath={.spec.externalName}").stdout.strip(); pg_pw = secret("postgres-auth", "POSTGRES_PASSWORD")
@@ -670,9 +717,22 @@ def step_p2_1(a, rep, env, images=False, registry=False):
     gw_cfg = _y.safe_load((cfg_cluster["agentgateway-config"] or {}).get("config.yaml") or "{}")
     gw_env = {e["name"]: e.get("value") for e in (kj("-n", NS, "get", "deploy", "agentgateway").get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("env", [])}
     sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "zakazka-secrets",
-                          "--from-literal=P0_ROLE_CLIENT_SECRETS=" + json.dumps({r: f"p0-{r}-secret" for r in ROLE_CLIENTS}), f"--from-literal=P0_BAO_TOKEN={bao_app}",
+                          "--from-literal=P0_ROLE_CLIENT_SECRETS=" + json.dumps({r: f"p0-{r}-secret" for r in ROLE_CLIENTS}), *([] if identity else [f"--from-literal=P0_BAO_TOKEN={bao_app}"]),   # P2-3: token OpenBao si aplikace bere auth kubernetes
                           "--from-literal=P0_API_KEY=sk-ant-harness-mock", "--from-literal=BRIDGE_WEBHOOK_SECRET=bridge-webhook-secret",   # bez P0_ROLE_KEYS – klíče vydá aplikace (gateway_keys.py)
                           "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
+    # P2-3: registrace SPIRE z rolegen (ConfigMap rolegen-build/spire-entries.json): alias uzlu per role (sidecar agent podu) + workload entry
+    spire_applied = []
+    if identity:
+        import yaml as _ys
+        ents = json.loads((kj("-n", NS, "get", "configmap", "rolegen-build").get("data") or {}).get("spire-entries.json") or "[]")
+        for e in ents:
+            show = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-spiffeID", e["spiffe_id"], "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+            if e["spiffe_id"] in show: continue
+            args = [SPIRE_SERVER_BIN, "entry", "create", "-socketPath", "/tmp/spire-server/private/api.sock", "-spiffeID", e["spiffe_id"]] + (["-node"] if e.get("node") else ["-parentID", e["parent_id"]])
+            for sel in e["selectors"]: args += ["-selector", sel]
+            if e.get("x509_svid_ttl"): args += ["-x509SVIDTTL", str(e["x509_svid_ttl"])]
+            if e.get("jwt_svid_ttl"): args += ["-jwtSVIDTTL", str(e["jwt_svid_ttl"])]
+            r = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", *args); spire_applied.append((e["spiffe_id"], r.returncode, (r.stderr or r.stdout)[-120:]))
     subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
     restart_pods(a, "zakazka", "memory", "bridge", "mock-github"); time.sleep(5)
     t0 = time.time()
@@ -724,7 +784,7 @@ def step_p2_1(a, rep, env, images=False, registry=False):
         def gh_post(path, payload, user): return http("POST", f"{GHM}{path}", json=payload, headers={"X-Mock-User": user}, timeout=15).json()
 
         # P21b – zakázka end-to-end, role jako pody (první pod čeká na scale-up poolu kata z 0 → dlouhé timeouty)
-        run_tag = time.strftime("%H%M%S"); zid = f"{'P25' if registry else 'P22' if images else 'P21'}-{run_tag}-1"; t1 = time.time()
+        run_tag = time.strftime("%H%M%S"); zid = f"{'P23' if identity else 'P25' if registry else 'P22' if images else 'P21'}-{run_tag}-1"; t1 = time.time()
         http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS s konfigurací rolí z Gitu.", "hitl_timeout_s": 7200}, timeout=15)
         issue = pub(zid, "issue"); assert issue, f"issue nebylo publikováno; ledger: {[(e['kind'], e.get('role'), e.get('error') or e.get('phase')) for e in led() if e.get('zakazka') == zid][-8:]}"
         gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "stranger")
@@ -774,11 +834,41 @@ def step_p2_1(a, rep, env, images=False, registry=False):
             by_pods = all(pulled.get(r, "").startswith(f"{a.acr}/roles/{r}:{versions[r]}") for r in ROLE_CLIENTS)
             rep.add("P22a", "Obrazy rolí v ACR: roles/<role>:<verze z roles/*.yaml> pro každou roli (CI images.yml: az acr build vrstvy nad zakazka-app z infra/images/roles, které generuje rolegen – Dockerfile + devcontainer.json + etc/platform); důkaz = tagy z ACR (identita Actions s AcrPull) nebo aspoň pody, které obraz stáhly a doběhly", "PASS" if by_tags or by_pods else "FAIL", {"source": "acr_tags" if by_tags else ("pods" if by_pods else None), "tags": tags, "pulled": pulled, "versions_yaml": versions})
             ALLOWED = {"image.registry", "securityContext.seccompProfile", "securityContext.runAsGroup", "securityContext.fsGroup", "env+", "command", "envFrom", "imagePullPolicy", "volumeMounts", "nodeSelector", "tolerations", "restartPolicy", "activeDeadlineSeconds", "volumes"}
+            if identity: ALLOWED |= {"initContainers", "serviceAccountName", "shareProcessNamespace"}   # P2-3: sidecar SPIRE agenta (SA role jen pro projektovaný token sidecaru, sdílený PID ns pro unix attestor)
             tplinfo = {k: {"template": p.get("template"), "image": p.get("image"), "overrides": p.get("overrides"), "unexpected": sorted(set(p.get("overrides") or []) - ALLOWED), "resources": p.get("resources"), "image_role": p.get("image_role")} for k, p in pods_led.items()}
             ok_tpl = bool(tplinfo) and all(v["template"] and not v["unexpected"] and (v["image"] or "").startswith(f"{a.acr}/roles/{k}:{versions[k]}") and (v["image_role"] or {}).get("role") == k and (v["image_role"] or {}).get("version") == versions[k] and (v["image_role"] or {}).get("managed_settings") for k, v in tplinfo.items())
             rep.add("P22b", "Pod role ze šablony rolegen (pod-<role>.yaml z build/k8s): RuntimeClass, non-root, SA token off, drop ALL, resources, env a labels z definice role; aplikace doplní jen běh (jméno, Secret, env běhu, uzel, timeout, registry obrazu, seccomp Localhost → RuntimeDefault na Katě); obraz = roles/<role>:<verze> a /etc/platform/role.json v obrazu nese tutéž roli a verzi, managed settings zapečené", "PASS" if ok_tpl else "FAIL", tplinfo)
             tools_ok = bool(pods_led) and all((p.get("image_tools") or {}).get("present") and all((p["image_tools"]["present"]).values()) and all((p["image_tools"]["absent"]).values()) for p in pods_led.values())
             rep.add("P22c", "Obsah obrazu role (sonda z podu): git, node, python3, srt, bwrap, claude přítomny; az, gcloud, aws, kubectl, docker, helm, terraform nepřítomny (role.md: obraz role bez cloud CLI)", "PASS" if tools_ok else "FAIL", {k: p.get("image_tools") for k, p in pods_led.items()})
+
+        if identity:
+            # P2-3 – OpenBao auto-unseal + auth kubernetes, SVID podů rolí
+            pf_bao2 = PortForward(a, "openbao", 18201, 8200); B2 = "http://127.0.0.1:18201"
+            kubectl(a, "-n", NS, "delete", "pod", "openbao-0", "--wait=true", timeout=180)   # restart: musí naběhnout unsealed bez operátora
+            t_un = time.time(); unsealed_after = None
+            for _ in range(60):
+                try:
+                    pf_bao2.start(); hs = httpx.get(f"{B2}/v1/sys/seal-status", timeout=5).json()
+                    if hs.get("initialized") and not hs.get("sealed"): unsealed_after = round(time.time() - t_un, 1); break
+                except Exception: pass
+                time.sleep(3)
+            seal_after = httpx.get(f"{B2}/v1/sys/seal-status", timeout=10).json() if unsealed_after else {}
+            pf_bao2.stop()
+            rep.add("P23a", "OpenBao auto-unseal přes Azure Key Vault (seal azurekeyvault, klíč openbao-unseal, workload identity SA openbao přes UAMI + federated credential – žádné tajemství v podu): po smazání podu openbao-0 naběhne unsealed bez operátora; init s recovery klíči (Secret openbao-init), případně migrace z shamir", "PASS" if seal.get("type") == "azurekeyvault" and unsealed_after is not None and seal_after.get("type") == "azurekeyvault" and seal_after.get("recovery_seal") else "FAIL", {"seal_type": seal.get("type"), "recovery_seal": seal.get("recovery_seal"), "migrated_now": bao_migrated, "unsealed_after_restart_s": unsealed_after, "seal_after": {k: seal_after.get(k) for k in ("type", "sealed", "initialized", "recovery_seal", "version")}})
+            bl = [e for e in L if e["kind"] == "BAO_LOGIN"]
+            signs_ok = signs and all(s_["backend"] == "openbao-transit" for s_ in signs)
+            sec_keys_app = kj("-n", NS, "get", "secret", "zakazka-secrets").get("data") or {}
+            rep.add("P23b", "Aplikace zakázky bez tokenu OpenBao v Secretu: login auth/kubernetes projektovaným SA tokenem (role zakazka → policy approval-signer, TTL 1 h), approval tokeny podepsané transitem jako dřív (ledger SIGN backend openbao-transit)", "PASS" if bl and all(b.get("method") == "kubernetes" and "approval-signer" in (b.get("policies") or []) for b in bl) and signs_ok and "P0_BAO_TOKEN" not in sec_keys_app else "FAIL", {"bao_logins": [{k: b.get(k) for k in ("role", "policies", "ttl_s", "sa")} for b in bl][:3], "signs": len(signs), "secret_keys": sorted(sec_keys_app)})
+            ids = {k: (p.get("identity") or {}) for k, p in pods_led.items()}
+            ok_svid = bool(ids) and all(v.get("kind") == "svid" and v.get("spiffe_id") == f"spiffe://platform/role/{k}/acme" and v.get("iss") == "http://spire-oidc.platform-data.svc:8082" and p.get("svid_sidecar") for k, v in ids.items() for p in [pods_led[k]])
+            rep.add("P23c", "Identita role v Kata podu = SVID: sidecar spire-agent (atestace k8s_psat projektovaným tokenem SA role, alias uzlu per role z rolegen entries, workload unix uid 1000) vydá X.509-SVID a JWT-SVID spiffe://platform/role/<role>/acme; role s ním volá paměť (server paměti ověřuje JWT-SVID přes spire-oidc /keys, tenant z cesty SPIFFE ID), Keycloak token ze Secretu nepoužit", "PASS" if ok_svid and mem_calls and all(c.get("http") == 200 for c in mem_calls) else "FAIL", {"identity": ids, "spire_entries_applied_now": spire_applied, "memory_calls_200": sum(1 for c in mem_calls if c.get("http") == 200)} | ({} if ok_svid else {"sidecar": {k: p.get("svid_sidecar_state") for k, p in pods_led.items()}, "spire_server_log": [l_[-300:] for l_ in kubectl(a, "-n", NS, "logs", "spire-server-0", "-c", "spire-server", "--since=20m").stdout.splitlines() if "attest" in l_.lower() or "error" in l_.lower()][-12:]}))
+            pf_oidc = PortForward(a, "spire-oidc", 18082, 8082)
+            try:
+                jwks = http("GET", "http://127.0.0.1:18082/keys", headers={"Host": "spire-oidc"}, timeout=10); jk = jwks.json() if jwks.status_code == 200 else {}
+                disc = http("GET", "http://127.0.0.1:18082/.well-known/openid-configuration", headers={"Host": "spire-oidc"}, timeout=10)
+            finally: pf_oidc.stop()
+            ents_now = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+            rep.add("P23d", "SPIRE OIDC discovery provider (sidecar serveru) vydává JWKS pro JWT-SVID; registrace z rolegen (alias uzlu + workload per role) v serveru", "PASS" if jk.get("keys") and disc.status_code == 200 and all(f"spiffe://platform/role/{r}/acme" in ents_now for r in ROLE_CLIENTS) else "FAIL", {"jwks_keys": len(jk.get("keys", [])), "discovery": disc.status_code, "entries": ents_now.count("Entry ID")})
 
         if registry:
             # P2-5 – eval gate (Git → ConfigMap → aplikace) a registr org.* na Flexible Serveru
@@ -852,7 +942,7 @@ def step_p2_1(a, rep, env, images=False, registry=False):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -863,7 +953,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -872,7 +962,7 @@ def main():
     if a.create_kind:
         assert a.kind, "chybí KIND"
         create_kind(a, env)
-    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True)}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+    {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True), "p2-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True)}[a.step](a, rep, env)   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

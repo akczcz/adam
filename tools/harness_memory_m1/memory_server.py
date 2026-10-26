@@ -42,6 +42,9 @@ JWKS_URL = os.environ.get("MEMORY_JWKS_URL")           # nastaveno → jen RS256
 JWT_ISSUER = os.environ.get("MEMORY_ISSUER")
 JWT_AUDIENCE = os.environ.get("MEMORY_AUDIENCE", "memory")
 _jwks = jwt.PyJWKClient(JWKS_URL, cache_keys=True, lifespan=300) if JWKS_URL else None
+SPIRE_JWKS_URL, SPIRE_ISSUER = os.environ.get("MEMORY_SPIRE_JWKS_URL"), os.environ.get("MEMORY_SPIRE_ISSUER")   # P2-3: JWT-SVID rolí (spire-oidc /keys, ES256)
+SPIRE_DEFAULT_TENANT = os.environ.get("MEMORY_SPIRE_DEFAULT_TENANT", "acme")
+_spire_jwks = jwt.PyJWKClient(SPIRE_JWKS_URL, cache_keys=True, lifespan=300) if SPIRE_JWKS_URL else None
 OPA_URL = os.environ.get("MEMORY_OPA_URL", "http://127.0.0.1:8181/v1/data/memory/decision")
 DIM = 64
 
@@ -82,6 +85,14 @@ def principal(authorization: str | None) -> dict:
     raw = authorization.split(" ", 1)[1]
     try:
         if _jwks:
+            unverified = jwt.decode(raw, options={"verify_signature": False})
+            if _spire_jwks and unverified.get("iss") == SPIRE_ISSUER:
+                # JWT-SVID (P2-3): sub = SPIFFE ID spiffe://platform/role/<role>/<tenant>; bez vlastních claimů → roles [agent], tenant z cesty
+                key = _spire_jwks.get_signing_key_from_jwt(raw).key
+                c = jwt.decode(raw, key, algorithms=["ES256", "RS256"], issuer=SPIRE_ISSUER, audience=JWT_AUDIENCE, options={"require": ["exp", "sub", "iss", "aud"]})
+                parts = c["sub"].split("/")
+                tenant = parts[5] if len(parts) > 5 and parts[3] == "role" else SPIRE_DEFAULT_TENANT
+                return {"sub": c["sub"], "tenant_id": tenant, "roles": ["agent"], "agent_id": c["sub"], "on_behalf_of": None, "iss": c["iss"], "alg": jwt.get_unverified_header(raw).get("alg"), "identity": "svid"}
             key = _jwks.get_signing_key_from_jwt(raw).key   # kid z hlavičky → klíč z JWKS; HS256 token nemá kid → 401
             c = jwt.decode(raw, key, algorithms=["RS256"], issuer=JWT_ISSUER, audience=JWT_AUDIENCE, options={"require": ["exp", "sub", "tenant_id", "iss", "aud"]})
         else:

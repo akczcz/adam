@@ -186,6 +186,41 @@ evalů, `org.agents` z ledgeru – SPIFFE ID instance role, model, klíč gatewa
 
 Výsledek: **13/13 + 2 INFO** (`measure` run 40206756683, `results/p2-5-20261025-153648.json`).
 
+
+## P2-3 – identita role a tajemství bez operátora (2026-10-25, AKS, `--step p2-3` = p2-5 + P23a–d)
+
+- **OpenBao auto-unseal**: `seal "azurekeyvault"` (Key Vault `kv-platform-dev-<suffix>`, klíč `openbao-unseal`, Terraform `keyvault.tf`), pod se
+  přihlašuje workload identitou (UAMI `id-openbao-<suffix>` + federated credential na SA `platform-data:openbao`, webhook injektuje token;
+  `VAULT_AZUREKEYVAULT_AUTH_METHOD=workload_identity`). Harness: init s recovery klíči do Secretu `openbao-init`, migrace shamir → auto-unseal
+  (`unseal` s `migrate`), po smazání podu musí naběhnout unsealed sám.
+- **Auth kubernetes**: OpenBao `auth/kubernetes` (TokenReview vlastním SA tokenem, ClusterRoleBinding `system:auth-delegator`), role `zakazka`
+  → policy `approval-signer`; aplikace se přihlašuje projektovaným SA tokenem (`app.bao_token`, ledger `BAO_LOGIN`); `zakazka-secrets` bez `P0_BAO_TOKEN`.
+- **SVID podu role na Katě**: hostPath socket DaemonSet agenta do VM nevede → **SPIRE agent jako sidecar podu** (nativní initContainer), atestace
+  `k8s_psat` projektovaným tokenem SA `role` (jen v sidecaru; kontejner role token nemá), server má alias uzlu per role
+  (`k8s_psat:agent_ns/agent_sa/agent_pod_label:platform.role`) a workload entry `spiffe://platform/role/<role>/acme` přes `unix:uid:1000`
+  (sdílený PID ns) – entries generuje rolegen (`spire-entries.json` v `rolegen-build`), aplikuje harness. Role si v `role_runner.py` vezme
+  X.509-SVID a JWT-SVID (aud `memory`, py-spiffe) a volá paměť s ním; server paměti ověřuje JWT-SVID přes `spire-oidc` (OIDC discovery provider
+  jako sidecar spire-server, JWKS `/keys`), tenant z cesty SPIFFE ID. Keycloak token zůstává záloha (`P0_ROLE_IDENTITY=svid` v overlay aks).
+  Socket Workload API i data agenta jsou emptyDir `medium: Memory` (tmpfs v guestu) – na emptyDir přes virtiofs se workload na unix socket nepřipojí.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| P23a | seal `azurekeyvault`, recovery seal; po `delete pod openbao-0` unsealed bez operátora | ✅ `seal_type=azurekeyvault recovery_seal=true`, unsealed 38 s po smazání podu (init kontejner stáhne KMS plugin, pak start), OpenBao 2.7.1 |
+| P23b | `BAO_LOGIN method=kubernetes role=zakazka policies=[approval-signer]`, podpisy `openbao-transit`, Secret bez `P0_BAO_TOKEN` | ✅ login SA `zakazka` → policies `[approval-signer, default]`, TTL 3600 s; 4 podpisy transitem; `zakazka-secrets` = `P0_API_KEY`, `P0_ROLE_CLIENT_SECRETS`, `BRIDGE_WEBHOOK_SECRET` |
+| P23c | 4 role: `identity.kind=svid`, `spiffe://platform/role/<role>/acme`, iss `spire-oidc`, sidecar přítomen; paměť 200 | ✅ všechny 4 role JWT-SVID i X.509-SVID vlastní role (aud `memory`, exp 1800 s), SVID k dispozici 0,5–5 s po startu role, 4 volání paměti 200 s JWT-SVID; sidecar `Completed` 0 restartů |
+| P23d | `spire-oidc` `/keys` + discovery; entries z rolegen v serveru | ✅ JWKS 1 klíč, discovery 200, 10 entries (5 aliasů + 5 workloadů z rolegen) |
+
+Výsledek: **17/17 + 2 INFO** (`measure` run 40234528827, `results/p2-3-20261025-213412.json`; 10 běhů – pasti v `infra/README.md`).
+Časy podů rolí se sidecarem: start 2–15 s, běh 11–17 s (shodně s P2-2); útrata 4 rolí 0,051 USD (mock upstream).
+
+Co měření P23c ukázalo (běhy 8–10, 2026-10-25):
+- **Agent ID `k8s_psat` je UID uzlu**, ne podu: sidecary postupných podů rolí na tomtéž uzlu Kata se re-atestují pod jedním agent ID
+  (`CanReattest: true`). Server tak má pro agenta vždy selektory *posledního* sidecaru a prvních ~5 s (cache entries serveru) vydá
+  předchozí entry – Architekt dostal `spiffe://platform/role/account/acme`. `role_runner.py` proto čeká na SVID vlastní role (`stale_svids`
+  v identitě). **Omezení:** dva pody rolí na jednom uzlu Kata současně by se přetahovaly → v P3 agent identita per pod (join token s
+  `-spiffeID` aliasu, vydávaný aplikací, nebo vlastní attestor), ne `k8s_psat`.
+- Sidecar se atestuje za < 1 s, SVID role má do 5 s; start podu role se sidecarem 2–15 s (shodně s P2-2).
+
 ## Spuštění
 
 ```bash
@@ -196,7 +231,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
-python harness.py --step p2-5 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-5); p2-2 bez registru, p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
+python harness.py --step p2-3 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-3); p2-5 bez identity, p2-2 bez registru, p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
 ```
 
 Pasti prostředí (cgroup v1, chybějící `CAP_SYS_RESOURCE`, proxy uzlu): [`infra/README.md`](../../infra/README.md).

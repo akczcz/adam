@@ -75,6 +75,24 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
                     "tolerations": [{"key": "sandbox", "operator": "Equal", "value": "kata", "effect": "NoSchedule"}],
                     "restartPolicy": "Never", "activeDeadlineSeconds": int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")), "volumes": [{"name": "tmp", "emptyDir": {}}]}
     if not runtime_spec["nodeSelector"]: runtime_spec.pop("nodeSelector"); runtime_spec.pop("tolerations")
+    # P2-3: identita role = SVID ze SPIRE agenta jako sidecaru (Kata: hostPath socket DaemonSet agenta do VM nevede). Agent se atestuje
+    # k8s_psat projektovaným tokenem SA `role` (jen v sidecaru; kontejner role token nemá), workload přes unix uid ve sdíleném PID ns.
+    svid = os.environ.get("P0_ROLE_IDENTITY") == "svid"
+    if svid:
+        env |= {"P0_ROLE_IDENTITY": "svid", "SPIFFE_ENDPOINT_SOCKET": "unix:///run/spire/sockets/agent.sock", "P0_TENANT": tenant}
+        runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "spire-sockets", "mountPath": "/run/spire/sockets"}]
+        runtime_spec |= {"serviceAccountName": os.environ.get("P0_ROLE_SA", "role"), "shareProcessNamespace": True,
+                         "initContainers": [{"name": "spire-agent", "image": os.environ.get("P0_ROLE_SPIRE_AGENT_IMAGE", "ghcr.io/spiffe/spire-agent:1.14.2"), "restartPolicy": "Always",
+                                             "args": ["-config", "/run/spire/config/agent.conf"],
+                                             "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}, "runAsUser": 1000, "runAsGroup": 1000},
+                                             "volumeMounts": [{"name": "spire-agent-config", "mountPath": "/run/spire/config", "readOnly": True}, {"name": "spire-sockets", "mountPath": "/run/spire/sockets"},
+                                                              {"name": "spire-data", "mountPath": "/run/spire/data"}, {"name": "spire-token", "mountPath": "/var/run/secrets/tokens", "readOnly": True}],
+                                             "resources": {"requests": {"cpu": "20m", "memory": "32Mi"}, "limits": {"memory": "128Mi"}}}]}
+        # Kata: emptyDir bez media je adresář hostitele přes virtiofs – unix socket na něm nejde (agent se atestoval, workload „failed to connect“, P23c 2026-10-25);
+        # medium Memory = tmpfs uvnitř guestu
+        runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "spire-sockets", "emptyDir": {"medium": "Memory", "sizeLimit": "4Mi"}}, {"name": "spire-data", "emptyDir": {"medium": "Memory", "sizeLimit": "16Mi"}},
+                                                             {"name": "spire-agent-config", "configMap": {"name": os.environ.get("P0_ROLE_SPIRE_AGENT_CONFIG", "spire-agent-pod")}},
+                                                             {"name": "spire-token", "projected": {"sources": [{"serviceAccountToken": {"path": "spire-agent", "expirationSeconds": 7200, "audience": "spire-server"}}]}}]
     tpl = _template(role); overrides = []
     if tpl:
         # P2-2: pole z definice role (RuntimeClass, non-root, SA token, drop ALL, resources, env, labels, image) jsou ze šablony; aplikace doplní jen běh
@@ -94,6 +112,7 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
         if rc and rc != "none" and spec.get("runtimeClassName") != rc: spec["runtimeClassName"] = rc; overrides.append("runtimeClassName")
         if rc == "none": spec.pop("runtimeClassName", None); overrides.append("runtimeClassName-")
         spec.update(runtime_spec); overrides += [f"{k}" for k in runtime_spec]
+        if svid: spec["securityContext"]["fsGroup"] = spec["securityContext"].get("runAsUser", 1000)   # socket agenta čitelný pro roli
         pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": ns, "labels": labels, "annotations": {"platform.template": f"pod-{role}.yaml"}}, "spec": spec}
     else:
         spec = {"automountServiceAccountToken": False,
@@ -162,6 +181,11 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
                 try: res = json.loads(line[8:])
                 except Exception: pass
                 break
+    sidecar = None
+    if pod["spec"].get("initContainers"):   # P2-3: stav a log sidecaru spire-agent (důkaz atestace / příčina chybějícího SVID)
+        try: sidecar = {"status": next((c.get("state") for c in (p.get("status", {}).get("initContainerStatuses") or []) if c.get("name") == "spire-agent"), None), "restarts": next((c.get("restartCount") for c in (p.get("status", {}).get("initContainerStatuses") or []) if c.get("name") == "spire-agent"), None),
+                        "log": k8s("GET", f"/api/v1/namespaces/{ns}/pods/{name}/log?container=spire-agent&tailLines=25", raw=True)[-1500:]}
+        except Exception as e: sidecar = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
     st = p.get("status", {}); cs = (st.get("containerStatuses") or [{}])[0]; term = (cs.get("state") or {}).get("terminated") or {}
     created = _ts(p.get("metadata", {}).get("creationTimestamp", "")); sched = next((_ts(c.get("lastTransitionTime", "")) for c in st.get("conditions", []) if c.get("type") == "PodScheduled" and c.get("status") == "True"), None)
     started, finished = _ts(term.get("startedAt", "")), _ts(term.get("finishedAt", ""))
@@ -172,7 +196,7 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
            t_run_s=round(finished - started, 1) if finished and started else None, t_total_s=round(time.time() - t0, 1),
            egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:],
            image=info["image"], template=info["template"], overrides=info["overrides"], image_tools=(res or {}).get("image_tools"), image_role=(res or {}).get("image_role"),
-           resources=pod["spec"]["containers"][0].get("resources"))
+           resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar)
     if not os.environ.get("P0_ROLE_KEEP_PODS"):
         for kind in ("pods", "secrets"):
             try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")

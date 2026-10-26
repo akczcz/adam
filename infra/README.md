@@ -101,6 +101,17 @@ devcontainer.json. `images.yml` staví `roles/<role>:<verze>` (`az acr build --b
 která propadne L3, se tak do clusteru nedostane dvakrát: CI neprojde (PR nelze mergnout) a i kdyby, aplikace ji odmítne. Registr `org.*`
 (DB `org` na Flexible Serveru) plní harness `p2-5` – v cíli Dapr workflow při založení instance role (P3).
 
+## P2-3: auto-unseal, auth kubernetes, SVID v Kata podu (2026-10-25)
+
+`infra/terraform/keyvault.tf`: Key Vault (RBAC) + klíč `openbao-unseal`, UAMI `id-openbao` s federated credential na SA `platform-data:openbao`
+(OIDC issuer AKS), role Key Vault Crypto User; identita Actions dostává Crypto Officer (klíč zakládá Terraform – data-plane role, propagace
+může první apply shodit). Flux substitute `${KV_NAME}`, `${OPENBAO_CLIENT_ID}`. Overlay aks: SA `openbao` s anotací client-id, label
+`azure.workload.identity/use`, config se `seal "azurekeyvault" {}` (parametry z env), `auth/kubernetes` nastavuje harness.
+SPIRE: `jwt_issuer`, `allowed_pod_label_keys`, allow-list `platform-roles:role`, OIDC discovery provider jako sidecar serveru (`spire-oidc:8082`,
+overlay aks), `infra/k8s/roles`: SA `role` (bez automountu), ConfigMap `spire-agent-pod` (agent per pod, `insecure_bootstrap` v dev), egress na
+`spire-server:8081`. Server paměti přijímá JWT-SVID (`MEMORY_SPIRE_*`). Měření: workflow `measure` s `e2e=p2-3` – **17/17 2026-10-25**
+(run 40234528827); seal `azurekeyvault` = externí KMS plugin `openbao-plugin-kms-azure` stažený init kontejnerem (viz pasti níže).
+
 ## Pasti (AKS + Flux)
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku
   (headless Service), ne ClusterIP – jinak část requestů 401 (P21b 2026-10-25). Propagace + merge + hot reload: 36–69 s.
@@ -113,6 +124,18 @@ která propadne L3, se tak do clusteru nedostane dvakrát: CI neprojde (PR nelze
   čerstvém clusteru vůbec nezaložil).
 - Smazání Kata podu je asynchronní (VM se vypíná, desítky sekund); pod zabité aplikace zůstane jako sirotek → GC v `role_pod.py`.
 - Flexible Server je z runneru GitHub Actions dosažitelný přímo (pravidlo „Allow Azure services“ 0.0.0.0) – pro schéma paměti a FinOps dotazy; záloha socat pod.
+- **OpenBao 2.7 nemá cloud sealy zabudované** (`Error configuring seal "azurekeyvault": unknown wrapper`; changelog 2.7.0, P2-3 2026-10-25) →
+  `seal "azurekeyvault"` je externí KMS plugin `openbao-plugin-kms-azure` (repo openbao-plugins, release `kms-azure-v0.1.0`): `plugin_directory`
+  + stanza `plugin "kms" "azurekeyvault" { command version }`; binárku stáhne a ověří (sha256 z `checksums-kms-azure.txt`) init kontejner do emptyDir.
+- Flux `postBuild.substitute` maže i `$V`/`$A`/`$bin` ve **shellovém skriptu uvnitř manifestu**, který substituci potřebuje (StatefulSet s `${KV_NAME}`) →
+  skript bez shellových proměnných (literály, `find -exec`), nebo skript v ConfigMapě se `substitute: disabled`.
+- **StatefulSet s podem v CrashLoopBackOff rolling update nikdy nenahradí** (kubernetes/kubernetes#67250) a pod může stát na *mezilehlé* revizi
+  (předchozí rollout se nedokončil) → mazat pody s `controller-revision-hash != updateRevision`, ne jen `currentRevision` (3 běhy P2-3 propadly na
+  starém podu). Flux `wait` health check pak hlásí `StatefulSet … status: 'Failed'` a `lastAppliedRevision` zůstane na posledním zdravém commitu,
+  i když objekty applynuté jsou → odblokování (measure.yml krok + harness ve smyčce čekání na Flux) musí běžet před čekáním na Ready.
+- `oidc-discovery-provider`: `domains` **bez portu** (`host:port` → `not a valid domain name: idna`, port z `Host` provider odřezává). Padající sidecar
+  udělá pod spire-server NotReady → Service bez endpointů → agenti DaemonSetu padají na `connection refused` (P2-3 2026-10-25).
+- Oficiální obrazy `ghcr.io/spiffe/spire-*` nemají binárky v PATH: `kubectl exec … /opt/spire/bin/spire-server entry create …`.
 
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.

@@ -103,6 +103,18 @@ def pod(r, tenant):
                      "restartPolicy": "Never"}}
 
 
+def spire_entries(roles, tenant):
+    """Registrace SPIRE (P2-3): per role alias uzlu = sidecar agent podu role (k8s_psat selektory ns/SA/pod-label platform.role) a workload entry
+    spiffe://platform/role/<role>/<tenant> přes unix uid 1000 (sdílený PID ns podu). Aplikuje harness/operátor přes `spire-server entry create`."""
+    out = []
+    for r in roles:
+        if not r["sandbox"].get("pod"): continue
+        alias = f"spiffe://platform/agent-pod/role/{r['role']}"
+        out.append({"spiffe_id": alias, "node": True, "selectors": ["k8s_psat:cluster:platform", "k8s_psat:agent_ns:platform-roles", "k8s_psat:agent_sa:role", f"k8s_psat:agent_pod_label:platform.role:{r['role']}"]})
+        out.append({"spiffe_id": f"spiffe://platform/role/{r['role']}/{tenant}", "parent_id": alias, "selectors": [f"unix:uid:{r['sandbox']['pod'].get('run_as_user', 1000)}"], "x509_svid_ttl": 3600, "jwt_svid_ttl": 1800})
+    return out
+
+
 def image_files(r, agent_sdk_json):
     """Obraz role (P2-2): vrstva nad obrazem platformy – ClaudeAgentOptions, srt settings a managed settings zapečené v /etc/platform,
     OCI labely s rolí/verzí/hashem zdroje, bez cloud CLI. Dockerfile je devcontainer-kompatibilní (devcontainer.json ukazuje na něj)."""
@@ -144,6 +156,7 @@ def main():
     (out / "opa/data.json").write_text(json.dumps(opa_data(roles), ensure_ascii=False, indent=1, sort_keys=True))
     (out / f"agentgateway/apikeys-{a.tenant}-{a.zakazka}.yaml").write_text(yaml.safe_dump(gateway_keys(roles, a.tenant, a.zakazka), sort_keys=False, allow_unicode=True))
     (out / "agentgateway/egress-allowlist.yaml").write_text(yaml.safe_dump(egress(roles), sort_keys=False))
+    (out / "spire").mkdir(exist_ok=True); (out / "spire/entries.json").write_text(json.dumps(spire_entries(roles, a.tenant), ensure_ascii=False, indent=1))
     registry = []
     for r in roles:
         srt = r["sandbox"].get("srt_settings")

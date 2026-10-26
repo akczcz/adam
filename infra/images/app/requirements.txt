@@ -9,3 +9,4 @@ uvicorn>=0.30
 psycopg[binary]>=3.2
 PyJWT[crypto]>=2.9
 opentelemetry-sdk>=1.30
+spiffe>=0.2

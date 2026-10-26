@@ -12,7 +12,7 @@ on:
         description: krok harnessu P1/P2 (zakázka end-to-end v AKS, role jako Kata pody; ~15–30 min, škáluje pool kata z 0) – none = jen stav
         type: choice
         default: none
-        options: [none, p2-5, p2-2, p2-1]
+        options: [none, p2-3, p2-5, p2-2, p2-1]
 permissions:
   id-token: write
   contents: read
@@ -32,12 +32,12 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
-      - name: StatefulSety uvázlé na rozbitém podu (rolling update nenahradí pod v CrashLoopBackOff – kubernetes/kubernetes#67250) → smazat starý pod
+      - name: StatefulSety uvázlé na rozbitém podu (rolling update nenahradí pod v CrashLoopBackOff – kubernetes/kubernetes#67250) → smazat pody mimo updateRevision
         run: |
           for sts in $(kubectl -n platform-data get sts -o jsonpath='{.items[*].metadata.name}'); do
             cur=$(kubectl -n platform-data get sts "$sts" -o jsonpath='{.status.currentRevision}'); upd=$(kubectl -n platform-data get sts "$sts" -o jsonpath='{.status.updateRevision}')
-            if [ -n "$upd" ] && [ "$cur" != "$upd" ]; then
-              for p in $(kubectl -n platform-data get pods -l "controller-revision-hash=$cur" -o jsonpath='{.items[*].metadata.name}'); do echo "sts $sts: mažu pod $p (revize $cur → $upd)"; kubectl -n platform-data delete pod "$p" --wait=false; done
+            if [ -n "$upd" ] && [ "$cur" != "$upd" ]; then   # pod může stát i na mezilehlé revizi (ne currentRevision) – mazat vše, co není updateRevision
+              for p in $(kubectl -n platform-data get pods -l "app=$sts,controller-revision-hash!=$upd" -o jsonpath='{.items[*].metadata.name}'); do echo "sts $sts: mažu pod $p (revize → $upd)"; kubectl -n platform-data delete pod "$p" --wait=false; done
             fi
           done
       - name: stav clusteru a platformy
@@ -76,6 +76,10 @@ jobs:
         run: |
           {
             echo '## diagnostika'
+            echo '### Flux kustomizations (Ready, revize, zpráva) a revize StatefulSetů'; echo '```'
+            kubectl -n flux-system get kustomizations -o jsonpath='{range .items[*]}{.metadata.name}{" applied="}{.status.lastAppliedRevision}{" attempted="}{.status.lastAttemptedRevision}{"\n"}{range .status.conditions[*]}{"  "}{.type}{"="}{.status}{" "}{.reason}{": "}{.message}{"\n"}{end}{end}' 2>&1 | cut -c1-1500
+            kubectl -n platform-data get sts -o jsonpath='{range .items[*]}{.metadata.name}{" current="}{.status.currentRevision}{" update="}{.status.updateRevision}{" ready="}{.status.readyReplicas}{"\n"}{end}' 2>&1
+            echo '```'
             for p in $(kubectl -n platform-data get pods --no-headers | awk '{split($2,a,"/")} a[1]!=a[2] || $3!="Running" {print $1}'); do
               echo "### pod $p"; echo '```'
               kubectl -n platform-data get pod "$p" -o jsonpath='{range .status.containerStatuses[*]}{.name}{" ready="}{.ready}{" restarts="}{.restartCount}{" state="}{.state}{" last="}{.lastState}{"\n"}{end}'
