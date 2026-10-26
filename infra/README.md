@@ -147,6 +147,13 @@ NetworkPolicy `agentgateway-egress` (overlay aks) brání gateway v přístupu n
 - `oidc-discovery-provider`: `domains` **bez portu** (`host:port` → `not a valid domain name: idna`, port z `Host` provider odřezává). Padající sidecar
   udělá pod spire-server NotReady → Service bez endpointů → agenti DaemonSetu padají na `connection refused` (P2-3 2026-10-25).
 - Oficiální obrazy `ghcr.io/spiffe/spire-*` nemají binárky v PATH: `kubectl exec … /opt/spire/bin/spire-server entry create …`.
+- **srt 0.0.81 bez `ripgrep` odmítne start** (`Sandbox dependencies not available: ripgrep (rg) not found`) – v obrazu aplikace chyběl, takže
+  `sandboxed_bash` v podech rolí od P1-6 tiše padal (exit 1) a nic nesandboxoval; P21c měřilo jen přítomnost binárky. Od P2-4 je `ripgrep`
+  v `Dockerfile.aks` a sonda egressu hlásí, zda šla přes srt nebo přímo (`via`). Poučení: měřit funkci (příkaz přes srt projde), ne přítomnost.
+- Secret/ConfigMap mountovaný **pod** jiný read-only mount (`/etc/agentgateway/tls` uvnitř read-only emptyDir `/etc/agentgateway`) → runc nevytvoří
+  mountpoint (`mkdirat … read-only file system`, exit 128). Každý mount na vlastní cestu (`/etc/platform-tls`, `/etc/platform-egress/git`).
+- Soubory sondy (klon, wheel, tgz) nesmí ležet ve `work/` role: aplikace z `work/` staví PR přes git data API jako textové bloby a binárka shodila
+  aktivitu workflow (PR se nikdy nepublikoval, harness čekal 25 min). Sonda běží v `egress-probe/` mimo upload; publish ne-UTF-8 soubory přeskočí.
 
 ## Pasti (kind v cloudovém kontejneru)
 - ConfigMap mount celého adresáře přidá `..data`/`..<ts>` symlinky: OPA načte pravidla dvakrát (`multiple default rules`), daprd varuje.
