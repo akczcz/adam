@@ -984,6 +984,50 @@ def e3_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
         g.close()
 
 
+def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
+    """E4 (P3-6): per-request ledger z gateway – tracing agentgateway (span každého LLM requestu s tenant/zakazka/role/llm.cost.total) → Collector → ClickHouse;
+    FinOps pohled v Governance MCP (nástroj `ledger`, hranice tenanta jako RLS) a v GUI; součet per zakázka == budget_usage ± tolerance (nezávislý zdroj)."""
+    import psycopg, yaml as _yk
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui
+    def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
+    t_e = time.time(); time.sleep(20)   # batch Collectoru + flush gateway
+    pf_ch = PortForward(a, "clickhouse", 18123, 8123); rows = []; ch_err = None
+    try:
+        q = f"SELECT SpanAttributes['tenant'], SpanAttributes['zakazka'], SpanAttributes['role'], count(), sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])), ServiceName FROM otel.otel_traces WHERE SpanAttributes['zakazka'] LIKE '{tag}%' AND Timestamp > now() - INTERVAL 6 HOUR GROUP BY 1,2,3,7 FORMAT JSONCompact"
+        for _ in range(6):
+            r = http("POST", "http://127.0.0.1:18123/", content=q, timeout=30)
+            if r.status_code == 200: rows = r.json().get("data", []); break
+            ch_err = r.text[:200]; time.sleep(5)
+    finally: pf_ch.stop()
+    keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
+    with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c: usage = {r_[0]: r_[1] for r_ in c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()}
+    gw = {}
+    for k in keys_cm:
+        md = k.get("metadata") or {}; zk = md.get("zakazka", "")
+        if not str(zk).startswith(tag): continue
+        hsh = k["keyHash"].split(":", 1)[1]; gw[zk] = round(gw.get(zk, 0.0) + sum(u / 1e9 for bid, u in usage.items() if hsh in bid), 6)
+    ch = {}
+    for t_, z_, r_, n_, cost, tin, svc in rows: ch[z_] = round(ch.get(z_, 0.0) + float(cost), 6)
+    cmp = {z_: {"gateway_usd": gw.get(z_, 0.0), "ledger_usd": ch.get(z_, 0.0), "diff": round(abs(gw.get(z_, 0.0) - ch.get(z_, 0.0)), 6)} for z_ in sorted(set(gw) | set(ch))}
+    with_spend = [z_ for z_, v in cmp.items() if v["gateway_usd"] > 0]
+    ok_sum = bool(with_spend) and all(cmp[z_]["ledger_usd"] > 0 and cmp[z_]["diff"] <= 0.002 + 0.05 * max(cmp[z_]["gateway_usd"], cmp[z_]["ledger_usd"]) for z_ in with_spend)
+    attrs_ok = bool(rows) and all(t_ in ("acme", "beta") and r_ and float(cost) >= 0 for t_, z_, r_, n_, cost, tin, svc in rows)
+    rep.add("E4a", "Per-request ledger z gateway: tracing agentgateway (randomSampling, fields tenant/zakazka/role z metadat klíče + llm.cost.total) posílá span každého LLM requestu rolí do OTEL Collectoru → ClickHouse otel.otel_traces; součet llm.cost.total per zakázka tohoto běhu == útrata klíčů v budget_usage (± 5 % + 0,002 USD) – nezávislý zdroj FinOps bez tabulky gateway; každý span nese tenant, zakázku a roli", "PASS" if attrs_ok and ok_sum and not ch_err else "FAIL", {"spans_rows": len(rows), "services": sorted({svc for *_, svc in rows}), "per_zakazka": cmp, "zakazky_with_spend": len(with_spend), "sample": rows[:4], "clickhouse_error": ch_err})
+    ta, tb, tp = tok("adam", "adam"), tok("bea", "bea"), tok("platform-admin", "platform-admin")
+    def gov(t_, args=None): r = http("POST", f"{APP}/agui/gov/tools/ledger", json=args or {}, headers={"Authorization": f"Bearer {t_}"}, timeout=60); return r.status_code, (r.json() if r.headers.get("content-type", "").startswith("application/json") else {"text": r.text[:200]})
+    sp, sb = gov(tp), gov(tb)
+    res_p = (sp[1].get("result") or {}) if sp[0] == 200 else {}; res_b = (sb[1].get("result") or {}) if sb[0] == 200 else {}
+    ten_p = {r_["tenant_id"] for r_ in res_p.get("rows", [])}; ten_b = {r_["tenant_id"] for r_ in res_b.get("rows", [])}
+    run_z = [z for z in res_p.get("by_zakazka", []) if str(z["zakazka_id"]).startswith(tag)]
+    delta_ok = all(z.get("delta_usd") is not None and abs(z["delta_usd"]) <= 0.002 + 0.05 * max(z["ledger_usd"], z.get("spent_usd") or 0) for z in run_z if z["ledger_usd"] > 0 and (z.get("status") in ("Dokonceno", "Pozastaveno")))
+    g = Gui(f"{APP}/gui/", shots=gui_shots / "e4").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
+    try:
+        g.login("platform-admin", "platform-admin"); pages = g.page_rows("finops", ["finops-ledger", "finops-ledger-zakazky"]); src = g.t("ledger-source").inner_text() if g.t("ledger-source").count() else None
+    finally: g.close()
+    rep.add("E4b", "FinOps pohled z ledgeru: Governance MCP nástroj `ledger` čte ClickHouse (per tenant/zakázka/role, okno N dní) a přikládá rozdíl proti org.zakazky.spent_usd; hranice tenanta jako u RLS (bea vidí jen beta, platform-admin oba); u dokončených a zastavených zakázek běhu rozdíl ledger vs. registr ≤ 5 % + 0,002 USD; GUI FinOps má tabulky ledgeru s řádky", "PASS" if sp[0] == 200 and sb[0] == 200 and {"acme", "beta"} <= ten_p and ten_b == {"beta"} and run_z and delta_ok and isinstance(pages.get("finops-ledger"), int) and pages["finops-ledger"] >= 1 and pages.get("finops-ledger-zakazky", 0) >= 1 and src and "ClickHouse" in src else "FAIL", {"http": [sp[0], sb[0]], "tenants_platform": sorted(ten_p), "tenants_bea": sorted(ten_b), "run_zakazky": [{k: z.get(k) for k in ("zakazka_id", "status", "requests", "ledger_usd", "spent_usd", "delta_usd")} for z in run_z], "gui": pages, "source": src})
+    rep.add("E4c", "E4: čas", "INFO", {"wall_s": round(time.time() - t_e, 1)})
+
+
 def klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots):
     """K-1 (P3-4): klasifikační brána K1–K6 před první rolí (profil → org.zakazky + OPA data, high-risk zamyká autonomii, čl. 5 → Odmitnuto bez podu,
     nejasné → H1a právník), čl. 50 naostro (e-mail + ticket přes mock-channels s disclosure z definice role a značením generated_by), SLA bodů (org.sla_events, eskalace)."""
@@ -1128,7 +1172,7 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
 KLAS_NO = {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}   # P3-4: zakázky z interního API musí nést dotazník, jinak čekají na klasifikaci v AG-UI
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1402,6 +1446,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if klas: klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-4: K1a–K1g
         if o3: o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-5: O3a–O3f
         if e3: e3_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E3: strop v gateway + navýšení z GUI
+        if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E4: per-request ledger → ClickHouse
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
         if images:
@@ -1635,7 +1680,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

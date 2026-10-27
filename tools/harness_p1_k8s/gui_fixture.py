@@ -149,7 +149,8 @@ def main():
                 "agent_events": [], "risk_register": [],
                 "finops": {"tenants": [{"tenant_id": t, "budget_usd": 20.0, "spent_usd": 17.0 if t == "beta" else 1.0, "pct": 85.0 if t == "beta" else 5.0, "alert": t == "beta", "status": "active"} for t in ten], "zakazky": [], "by_role": {"account": 0.1}, "window": "30d"},
                 "governance_report": {"generated_at": "now", "tenant_view": u["tenant"], "zakazky": [{"zakazka_id": e["zakazka"], "tenant_id": e.get("tenant") or "acme", "status": "Running", "missing": (["T15:klasifikace"] if not any(k.get("kind") == "KLASIFIKACE" and k.get("zakazka") == e["zakazka"] for k in L) else []) + ["T11:risk_register"], "spent_usd": 0.0, "budget_usd": 20.0} for e in zs], "roles": [], "summary": {"zakazky": len(zs), "with_gaps": len(zs), "complete": 0, "t_items": {"T15": "klasifikace"}}},
-                "export": [{"table": "zakazky", "tenant_id": e.get("tenant") or "acme", "zakazka_id": e["zakazka"]} for e in zs]}
+                "export": [{"table": "zakazky", "tenant_id": e.get("tenant") or "acme", "zakazka_id": e["zakazka"]} for e in zs],
+                "ledger": {"rows": [{"tenant_id": e.get("tenant") or "acme", "zakazka_id": e["zakazka"], "role": "account", "requests": 3, "cost_usd": 0.004, "input_tokens": 120, "output_tokens": 40, "last": "now"} for e in zs], "by_zakazka": [{"zakazka_id": e["zakazka"], "tenant_id": e.get("tenant") or "acme", "status": "Running", "requests": 3, "ledger_usd": 0.004, "spent_usd": 0.004, "delta_usd": 0.0} for e in zs], "by_tenant": {}, "window_days": 30, "source": "fixture (ClickHouse mock)"}}
         return {"tenant": u["tenant"], "result": data.get(name, [])}
     @fx.get("/export.jsonl", response_class=PlainTextResponse)
     async def _exp(req: Request):

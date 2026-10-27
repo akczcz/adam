@@ -93,7 +93,7 @@ export function RegistrPage() {
 }
 
 export function FinopsPage() {
-  const f = useTool<Row>("finops");
+  const f = useTool<Row>("finops"); const l = useTool<Row>("ledger");
   return (
     <div className="card">
       <h2 style={{ marginTop: 0 }}>FinOps – 30d okno (zdroj: útrata klíčů v gateway → org.zakazky)</h2>
@@ -106,6 +106,13 @@ export function FinopsPage() {
         <Table id="finops-zakazky" rows={f.data.zakazky} cols={["zakazka_id", "tenant_id", "status", "budget_usd", "spent_usd", "pct", "spent_by_role"]} />
         <h3>Per role (součet)</h3>
         <Table id="finops-roles" rows={Object.entries(f.data.by_role).map(([role, usd]) => ({ role, usd }))} cols={["role", "usd"]} />
+      </>)}
+      <h3>Per-request ledger z gateway (ClickHouse, nezávisle na budget_usage)</h3>
+      {l.err && <p className="err">{l.err}</p>}
+      {l.data && (<>
+        <p className="muted" data-testid="ledger-source">{l.data.source}{l.data.error ? ` · ${l.data.error}` : ""} · okno {l.data.window_days} d</p>
+        <Table id="finops-ledger-zakazky" rows={(l.data.by_zakazka ?? []).map((z: Row) => ({ ...z, roles: undefined }))} cols={["zakazka_id", "tenant_id", "status", "requests", "ledger_usd", "spent_usd", "delta_usd"]} />
+        <Table id="finops-ledger" rows={l.data.rows ?? []} cols={["tenant_id", "zakazka_id", "role", "requests", "cost_usd", "input_tokens", "output_tokens", "last"]} />
       </>)}
     </div>
   );
