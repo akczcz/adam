@@ -105,4 +105,5 @@ Ověřeno 2026-09-29.
   podpoře u finalistů – Microsoft Agent Framework AG-UI má.
 - 2026-10-20: spec 1.0 (2026-09-17), nové eventy, versioning policy, rozšířený seznam integrací; opraveno
   tvrzení o 0.x; MAF 1.6.0 stále pinuje `ag-ui-protocol<0.2`; auth/tenancy ve spec nenalezeno.
+- 2026-10-27: P3-4 – třetí druh interruptu `reason=klasifikace` (dotazník K1–K6, `response_schema` s booleany, resume `{answers}`), aktivity `klasifikace`/`sla`/`channel`; nález: run končí interruptem, takže události během čekání (SLA) GUI dostane jen dotazem na stav threadu – AG-UI nemá „push bez runu“.
 - 2026-10-26: P3-1 – vlastní AG-UI server a GUI platformy (interrupt/resume pro HITL, subagenti = role); sekce Použití v platformě.

@@ -114,6 +114,7 @@ ven (čl. 50 disclosure), platba, smazání dat – všechny kryté approval pol
 - [ ] Mapování na AI Act T1–T15 per proces (klasifikační brána, čl. 14, čl. 50).
 
 ## Changelog
+- 2026-10-27: P3-4 na AKS – klasifikační brána K1–K6 (profil per zakázka, OPA data, high-risk zamyká autonomii), čl. 50 disclosure + T8 značení v kanálech k lidem (e-mail, ticket přes adaptér), SLA bodů jako timery (`org.sla_events`); viz autonomie.md a procesy.md.
 - 2026-10-23: **rozhodnuto (Adam)** podle návrhu v1 – zapsáno v `platforma/cilova-architektura.md`.
 - 2026-10-23: harness O-1 9/9 PASS – executor s approval tokenem, fail-closed timeout, stop/resume, restart.
 - 2026-10-23: kolo 1 návrhu – procesy, autonomie, role, metriky; diagram doplněn o Eskalaci, Předání, Post-mortem a Pozastaveno; otázky Q1–Q9 s výchozími odpověďmi.

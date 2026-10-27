@@ -12,7 +12,7 @@ on:
         description: krok harnessu P1/P2 (zakázka end-to-end v AKS, role jako Kata pody; ~15–30 min, škáluje pool kata z 0) – none = jen stav
         type: choice
         default: none
-        options: [none, p3-3, p3-2, p3-1, p2-6, p2-4, p2-3, p2-5, p2-2, p2-1]
+        options: [none, p3-4, p3-3, p3-2, p3-1, p2-6, p2-4, p2-3, p2-5, p2-2, p2-1]
 permissions:
   id-token: write
   contents: read

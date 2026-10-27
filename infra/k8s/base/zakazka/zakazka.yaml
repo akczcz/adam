@@ -68,6 +68,7 @@ data:
   P0_GUI_CLIENT: platform-gui             # P3-2: veřejný klient GUI (preferred_username mapper, PKCE redirecty); login zatím password grantem (PKCE v prohlížeči = P3-6)
   P0_GUI_DIR: /app/gui
   P0_GOV_URL: http://governance:9910        # P3-3: Governance MCP (čtení org.* jako org_reader, RLS per tenant) pro GUI
+  P0_CHANNELS_URL: http://mock-channels:9804   # P3-4: adaptér kanálů k lidem (e-mail, ticket) – čl. 50(1) disclosure a T8 značení vkládá adaptér; ostrý provoz SMTP/helpdesk za gateway
   P0_TENANT: acme                         # tenant zakázek z interního API; z AG-UI je tenant z tokenu člověka (P3-2: org.tenants)
   P0_GITHUB_MODE: "1"
   P0_GITHUB_PUBLISH: "1"
@@ -281,6 +282,43 @@ spec:
         resources:
           requests: {cpu: 50m, memory: 128Mi}
           limits: {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-channels
+  labels: {app: mock-channels}
+spec:
+  selector: {app: mock-channels}
+  ports:
+  - {name: http, port: 9804, targetPort: 9804}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-channels            # P3-4: mock e-mailu a ticketů zákazníka (čl. 50 naostro) – harness čte /_debug/messages
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mock-channels}
+  template:
+    metadata:
+      labels: {app: mock-channels}
+    spec:
+      containers:
+      - name: mock-channels
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/harness_p0_o2/mock_channels.py"]
+        env:
+        - {name: MOCK_CHANNELS_PORT, value: "9804"}
+        ports:
+        - {containerPort: 9804, name: http}
+        readinessProbe:
+          httpGet: {path: /health, port: 9804}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 20m, memory: 64Mi}
+          limits: {memory: 256Mi}
 ---
 apiVersion: v1
 kind: Service

@@ -105,6 +105,10 @@ stateDiagram-v2
 výsledek `profil_rizika ∈ {standard, high-risk-III/4, high-risk-III/2, odmitnout, nejasne}` se zapíše do Zadání
 a do OPA data (`tenants[tenant].profile`) – profil mění schvalovatele N2 a povinnost T2–T6 (regulace.md T9).
 Dogfooding = `standard` (overview.md: bez přílohy III).
+*Implementace P3-4 (2026-10-27):* brána běží **před Upřesněním** (dotazník jde s poptávkou nebo jako interrupt `klasifikace`),
+aby odmítnutá zakázka nespustila žádnou roli; profil se zapisuje per zakázka (`org.zakazky.profile`, OPA `zakazky/<id>`), ne per tenant.
+N3 stavové zprávy zákazníkovi (e-mail po H1 od Account, komentář ticketu po nasazení od SRE) jdou adaptérem kanálu s disclosure
+z definice role (T7) a značením `generated_by` (T8); SLA bodů jako timery uvnitř HITL čekání (autonomie.md „Timeouty a eskalace“).
 
 | Stav | Dapr | Protokol | Sandbox | Paměť čte / zapisuje | Gateway | Observabilita |
 |---|---|---|---|---|---|---|

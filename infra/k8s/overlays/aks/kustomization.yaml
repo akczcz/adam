@@ -146,6 +146,9 @@ patches:
 - target: {kind: Deployment, name: mock-mirror}
   patch: |
     - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
+- target: {kind: Deployment, name: mock-channels}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/imagePullPolicy, value: Always}
 # P2-3: OpenBao auto-unseal (seal azurekeyvault přes workload identitu SA openbao), auth kubernetes pro aplikaci (žádný token v Secretu)
 - target: {kind: ServiceAccount, name: openbao}
   patch: |

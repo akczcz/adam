@@ -21,3 +21,9 @@ PW_CHROMIUM=/opt/pw-browsers/chromium python ../tools/harness_p1_k8s/gui_checks.
 
 Prvky mají `data-testid` (harness U-1 je drží jako kontrakt). Bez i18n, bez mobilu, A2UI renderer zatím není (formuláře jsou vlastní;
 A2UI za adaptérem = P3-3/P3-4, viz `knowledge/platforma/p3-zakaznik.md`).
+
+## P3-4 (2026-10-27)
+- Nová zakázka: dotazník klasifikační brány K1–K6 (`GET /agui/klasifikace`, checkboxy `new-k-K1..K6`) jde s poptávkou jako `forwardedProps.klasifikace`;
+  zakázka založená bez něj (interní API) ukáže interrupt `reason=klasifikace` (formulář `klas-*`, resume `{answers, reason}`).
+- Stav zakázky: profil rizika (`state-profile`) a „SLA překročeno“ (`state-sla`); při otevřeném interruptu GUI čte stav threadu každých 5 s
+  (`GET /agui/threads/<id>`), protože run AG-UI končí interruptem. Aktivity `klasifikace`, `sla`, `channel` v průběhu; Governance: tabulka SLA.

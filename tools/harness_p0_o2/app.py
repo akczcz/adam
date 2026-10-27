@@ -530,7 +530,7 @@ def registry_zakazka(ctx, inp):
     try:
         import gateway_keys; src = gateway_keys.keys_source(z["id"])
     except Exception: src = None
-    ok = finops.registry_upsert(z["id"], tenant=os.environ.get("P0_TENANT", "acme"), budget_usd=float(z.get("budget_usd") or BUDGET_USD), spent=fin, status=status, keys_source=src, key_hashes=hashes)
+    ok = finops.registry_upsert(z["id"], tenant=z.get("tenant") or os.environ.get("P0_TENANT", "acme"), budget_usd=float(z.get("budget_usd") or BUDGET_USD), spent=fin, status=status, keys_source=src, key_hashes=hashes)   # P3-4: tenant zakázky, ne env
     ledger("REGISTRY_ZAKAZKA", zakazka=z["id"], status=status, written=ok, spent_usd=(fin or {}).get("total_usd"), keys_source=src)
     return ok
 
@@ -572,19 +572,104 @@ def _ledger():
     return [json.loads(l) for l in open(LEDGER) if l.strip()]
 
 
+# --- P3-4: klasifikační brána (P1a, T9/T15), SLA bodů (procesy.md), kanály k lidem (čl. 50(1) T7, T8) --------------------------------
+KLAS_QUESTIONS = [   # autonomie.md „Klasifikační brána (příloha III)“ – odpovídá zadavatel (self-declaration), vyhodnocení je deterministické (ne model)
+    ("K1", "Použije výsledek zakázky nebo agent platformy praktiku z čl. 5 AI Act (manipulace, social scoring, …)?", "odmitnout"),
+    ("K2", "Bude agent přidělovat práci lidem, hodnotit výkon lidí nebo rozhodovat o náboru/povýšení/ukončení?", "high-risk-III/4"),
+    ("K3", "Bude agent SRE / dodávaný systém safety komponentou v provozu kritické infrastruktury (CER entita)?", "high-risk-III/2"),
+    ("K4", "Je zákazník ve veřejné správě, vymáhání práva, migraci, justici, vzdělávání nebo přístupu k základním službám?", "nejasne"),
+    ("K5", "Mění zákazník intended purpose platformy nebo ji značí vlastní značkou (čl. 25 – stává se providerem)?", "nejasne"),
+    ("K6", "Zpracovávají se osobní údaje nad rámec kontaktů (GDPR)?", "sensitivity=personal"),
+]
+KLAS_KEYS = [k for k, _, _ in KLAS_QUESTIONS]
+SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0)
+SLA_ESCALATION = {"klasifikace": "vlastnik:account", "dialog": "vlastnik:account", "H1": "vlastnik:account", "H1a": "governance", "H2": "vlastnik:architekt", "H4": "vlastnik:vyvoj", "H5": "vlastnik:nasazeni", "rozpocet": "governance"}   # autonomie.md T2 eskalace
+CHANNELS_URL = os.environ.get("P0_CHANNELS_URL", "")   # adaptér kanálů k lidem (mock-channels v clusteru; ostrý provoz SMTP/helpdesk za gateway); prázdné = suchý běh
+
+
+def classify_profile(answers: dict) -> dict:
+    """Rozhodovací tabulka autonomie.md: první platné „ano“ v pořadí K1 > K2 > K3 > K4/K5; K6 nemění profil (sensitivity)."""
+    a = {k: bool((answers or {}).get(k)) for k in KLAS_KEYS}
+    profile = "odmitnout" if a["K1"] else "high-risk-III/4" if a["K2"] else "high-risk-III/2" if a["K3"] else "nejasne" if (a["K4"] or a["K5"]) else "standard"
+    return {"profile": profile, "sensitivity": "personal" if a["K6"] else "none", "yes": [k for k in KLAS_KEYS if a[k]], "answers": a}
+
+
+def klasifikace_run(z):
+    """P1a: profil rizika z odpovědí K1–K6 → org.zakazky.profile + klasifikace (T15), auditní řádek org.approvals (zadani.classify), OPA data zakazky/<id> (T9)."""
+    res = classify_profile(z.get("klasifikace") or {}); tenant = z.get("tenant") or os.environ.get("P0_TENANT", "acme")
+    by = z.get("klasifikace_by") or z.get("by") or "api"
+    ok = finops.zakazka_classify(z["id"], tenant=tenant, profile=res["profile"], answers={**res["answers"], "by": by, "sensitivity": res["sensitivity"]}, by=z.get("klasifikace_sub") or by,   # approver = Keycloak sub jako u ostatních approvalů (T6)
+                                 reason=z.get("klasifikace_reason") or f"dotazník K1–K6 zadavatele: ano = {res['yes'] or 'nic'} → {res['profile']}", budget_usd=float(z.get("budget_usd") or BUDGET_USD))
+    opa = None
+    try:
+        r = httpx.put(f"{OPA.split('/v1/data')[0]}/v1/data/zakazky/{z['id']}", json={"profile": res["profile"], "sensitivity": res["sensitivity"], "pass_k": res["profile"] == "standard", "stopped": False}, timeout=10); opa = r.status_code
+    except Exception as e: opa = type(e).__name__
+    hh = h(json.dumps(res["answers"], sort_keys=True) + res["profile"])
+    ledger("KLASIFIKACE", zakazka=z["id"], tenant=tenant, profile=res["profile"], sensitivity=res["sensitivity"], answers=res["answers"], by=by, registry=ok, opa_http=opa, hash=hh)
+    return {**res, "hash": hh}
+
+
+@rt.activity(name="klasifikace")
+def klasifikace(ctx, inp): return klasifikace_run(inp["z"])
+
+
+def sla_breach_run(z, bod, sla_s):
+    """SLA bodu překročeno (procesy.md lhůty): org.sla_events + ledger + eskalace vlastníkovi procesu (autonomie.md T2); zakázka čeká dál – pozastaví ji až timeout."""
+    sla_s = float(sla_s); esc = SLA_ESCALATION.get(bod, "vlastnik procesu")
+    ok = finops.sla_event(z["id"], tenant=z.get("tenant") or os.environ.get("P0_TENANT", "acme"), process=finops.BOD_PROCESS.get(bod, "P1"), bod=bod, sla_s=sla_s, elapsed_s=sla_s, escalated_to=esc)
+    ledger("SLA_BREACH", zakazka=z["id"], bod=bod, sla_s=sla_s, escalated_to=esc, registry=ok, result="ceka_dal")
+    return ok
+
+
+@rt.activity(name="sla_breach")
+def sla_breach(ctx, inp): return sla_breach_run(inp["z"], inp["bod"], inp["sla_s"])
+
+
+def notify_customer_run(inp):
+    """N3 stavová zpráva zákazníkovi (schválená v H1 jako stavová notifikace – autonomie.md T3) přes adaptér kanálu: disclosure čl. 50(1) z definice
+    role vkládá adaptér (T7), značení generovaného obsahu `generated_by` jen na kanálu k lidem (T8). Bez P0_CHANNELS_URL suchý běh (jen ledger)."""
+    z, channel, role = inp["z"], inp["channel"], inp["role"]; tenant = z.get("tenant") or os.environ.get("P0_TENANT", "acme")
+    disc = _disclosure(role, "email" if channel == "email" else "ticket_comment"); body = f"{disc}\n\n{inp['body']}"
+    gen = {"generated_by": f"ai-agent:{role}", "platform": "adam-platform", "zakazka": z["id"], "model": os.environ.get("P0_MODEL", "?"), "disclosure": "cl50-1"}
+    to = z.get("contact") or f"{tenant}@example.test"; rec = {"zakazka": z["id"], "channel": channel, "role": role, "to": to, "hash": h(body), "disclosure": disc[:80], "generated_by": gen["generated_by"]}
+    if not CHANNELS_URL: ledger("CHANNEL_DRYRUN", **rec); return {"dry_run": True, **rec}
+    try:
+        if channel == "email": r = httpx.post(f"{CHANNELS_URL}/email", json={"to": to, "subject": inp.get("subject") or f"Zakázka {z['id']}", "body": body, "headers": {"X-AI-Generated": "true", "X-AI-Generated-By": gen["generated_by"]}, "generated_by": gen, "zakazka": z["id"]}, timeout=15)
+        else: r = httpx.post(f"{CHANNELS_URL}/tickets/{z['id']}/comments", json={"body": body, "generated_by": gen, "zakazka": z["id"]}, timeout=15)
+        ledger("CHANNEL_SENT", http=r.status_code, **rec); return {"http": r.status_code, **rec}
+    except Exception as e:
+        ledger("CHANNEL_ERROR", error=f"{type(e).__name__}: {str(e)[:120]}", **rec); return {"error": type(e).__name__, **rec}
+
+
+@rt.activity(name="notify_customer")
+def notify_customer(ctx, inp): return notify_customer_run(inp)
+
+
+def wait_with_sla(ctx: wf.DaprWorkflowContext, z, event_name, bod, t_out):
+    """when_any(event, timeout, SLA): SLA bodu = z['sla'][bod] nebo SLA_DEFAULT_S; překročení → sla_breach (eskalace, org.sla_events), čeká se dál;
+    timeout → None (pozastavení řeší volající). Úlohy ev/tm se po SLA timeru použijí znovu (durabletask je přeparentuje do nového when_any)."""
+    ev = ctx.wait_for_external_event(event_name); tm = ctx.create_timer(timedelta(seconds=t_out))
+    sla_s = float((z.get("sla") or {}).get(bod, SLA_DEFAULT_S.get(bod, 0)) or 0)
+    sla = ctx.create_timer(timedelta(seconds=sla_s)) if 0 < sla_s < t_out else None
+    winner = yield wf.when_any([ev, tm, sla] if sla is not None else [ev, tm])
+    if sla is not None and winner == sla:
+        yield ctx.call_activity(sla_breach, input={"z": z, "bod": bod, "sla_s": sla_s})
+        winner = yield wf.when_any([ev, tm])
+    if winner == tm: return None
+    return ev.get_result() or {}
+
+
 # --- workflow zakázky --------------------------------------------------------------------------------------------------
 def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
     """HITL bod: čeká na event `hitl:<bod>` NEBO timer. Timeout nikdy neschvaluje → stav Pozastaveno.
-    HITL_WAIT v ledgeru = otevřený rozhodovací bod pro AG-UI (interrupt `hitl:<bod>:<hash>`); zamítnutí člověkem (event {rejected}) = HITL_REJECTED → Pozastaveno."""
+    HITL_WAIT v ledgeru = otevřený rozhodovací bod pro AG-UI (interrupt `hitl:<bod>:<hash>`); zamítnutí člověkem (event {rejected}) = HITL_REJECTED → Pozastaveno.
+    P3-4: SLA bodu (procesy.md) běží uvnitř čekání – překročení eskaluje, nerozhoduje."""
     t_out = float(timeout_s if timeout_s is not None else z.get("hitl_timeout_s", HITL_TIMEOUT_S))
-    yield ctx.call_activity(notify, input={"event": "HITL_WAIT", "bod": bod, "zakazka": z["id"], "artifact_hash": artifact_hash, "timeout_s": t_out})
-    ev = ctx.wait_for_external_event(f"hitl:{bod}")
-    tm = ctx.create_timer(timedelta(seconds=t_out))
-    winner = yield wf.when_any([ev, tm])
-    if winner == tm:
+    yield ctx.call_activity(notify, input={"event": "HITL_WAIT", "bod": bod, "zakazka": z["id"], "artifact_hash": artifact_hash, "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get(bod, SLA_DEFAULT_S.get(bod, 0)) or 0)})
+    data = yield from wait_with_sla(ctx, z, f"hitl:{bod}", bod, t_out)
+    if data is None:
         yield ctx.call_activity(notify, input={"event": "HITL_TIMEOUT", "bod": bod, "zakazka": z["id"], "result": "pozastaveno"})
         return None
-    data = ev.get_result() or {}
     if isinstance(data, dict) and data.get("rejected"):
         yield ctx.call_activity(notify, input={"event": "HITL_REJECTED", "bod": bod, "zakazka": z["id"], "by": data.get("by"), "reason": data.get("reason"), "result": "pozastaveno"})
         return None
@@ -614,16 +699,30 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
 @rt.workflow(name="zakazka")
 def zakazka(ctx: wf.DaprWorkflowContext, z):
     state = {"id": z["id"], "stav": "P1"}
+    # P3-4 P1a klasifikační brána (T9/T15) PŘED prvním během role (odchylka od procesy.md Upresneni → Klasifikace: odmítnutá zakázka nespustí žádný pod ani neutratí nic);
+    # odpovědi K1–K6 buď v poptávce (GUI formulář / API), jinak interrupt `klasifikace` v AG-UI; timeout → Pozastaveno
+    if not z.get("klasifikace"):
+        t_out = float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))
+        yield ctx.call_activity(notify, input={"event": "KLASIFIKACE_WAIT", "bod": "klasifikace", "zakazka": z["id"], "artifact_hash": h(z["poptavka"]), "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get("klasifikace", SLA_DEFAULT_S["klasifikace"]) or 0)})
+        data = yield from wait_with_sla(ctx, z, "klasifikace", "klasifikace", t_out)
+        if data is None: yield ctx.call_activity(notify, input={"event": "KLASIFIKACE_TIMEOUT", "bod": "klasifikace", "zakazka": z["id"], "result": "pozastaveno"}); return {**state, "stav": "Pozastaveno", "bod": "klasifikace"}
+        z = {**z, "klasifikace": data.get("answers") or {}, "klasifikace_by": data.get("by"), "klasifikace_sub": data.get("sub"), "klasifikace_reason": data.get("reason")}
+    kl = yield ctx.call_activity(klasifikace, input={"z": z})
+    z = {**z, "profile": kl["profile"], "sensitivity": kl["sensitivity"]}
+    if kl["profile"] == "odmitnout":                                              # čl. 5 → zakázka končí v P1 s auditním záznamem (org.approvals decision=reject)
+        yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Odmitnuto"}); return {**state, "stav": "Odmitnuto", "bod": "klasifikace", "reason": "čl. 5 (K1 = ano)", "profile": kl["profile"]}
+    if kl["profile"] == "nejasne":                                                # H1a stanovisko právníka; do stanoviska high-risk zacházení (autonomie zamčena)
+        t1a = yield from hitl(ctx, z, "H1a", kl["hash"])
+        if not t1a: return {**state, "stav": "Pozastaveno", "bod": "H1a", "profile": kl["profile"]}
     for rnd in range(int(z.get("dialog_max", 3)) + 1):                            # P1 Přijetí zadání – P3-3: ≤ 3 kola upřesňujících otázek Account ↔ zadavatel (AG-UI)
         zad = yield from run_role(ctx, z, "account", role_account, z)
         if not zad: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
         if zad.get("type") != "otazky": break
         if rnd >= int(z.get("dialog_max", 3)): yield ctx.call_activity(notify, input={"event": "DIALOG_LIMIT", "zakazka": z["id"], "rounds": rnd}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
         yield ctx.call_activity(notify, input={"event": "DIALOG_WAIT", "bod": "dialog", "zakazka": z["id"], "artifact_hash": zad["hash"], "round": rnd + 1, "timeout_s": float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))})
-        ev = ctx.wait_for_external_event("dialog:account"); tm = ctx.create_timer(timedelta(seconds=float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))))
-        if (yield wf.when_any([ev, tm])) == tm:
+        data = yield from wait_with_sla(ctx, z, "dialog:account", "dialog", float(z.get("hitl_timeout_s", HITL_TIMEOUT_S)))
+        if data is None:
             yield ctx.call_activity(notify, input={"event": "DIALOG_TIMEOUT", "bod": "dialog", "zakazka": z["id"], "result": "pozastaveno"}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
-        data = ev.get_result() or {}
         yield ctx.call_activity(notify, input={"event": "DIALOG_ANSWER", "bod": "dialog", "zakazka": z["id"], "by": data.get("by"), "round": rnd + 1, "answer": str(data.get("answer", ""))[:500]})
         z = {**z, "dialog": (z.get("dialog") or []) + [str(data.get("answer", ""))[:2000]]}
     gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
@@ -633,6 +732,8 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     if not t1: return {**state, "stav": "Pozastaveno", "bod": "H1"}
     if os.environ.get("P0_GITHUB_MODE") == "1" and not gh_hitl:
         yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # bez GitHub HITL: issue až po schválení (N3)
+    yield ctx.call_activity(notify_customer, input={"z": z, "channel": "email", "role": "account", "subject": f"Zakázka {z['id']}: zadání přijato (H1)",   # P3-4 N3 stavová zpráva (čl. 50 naostro)
+                                                     "body": f"Zadání zakázky {z['id']} bylo schváleno člověkem (H1); profil rizika {kl['profile']}. Artefakt {zad['ref']} · hash {zad['hash']}."})
     adr = yield from run_role(ctx, z, "architekt", role_architekt, z)          # P2 Návrh
     if not adr: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "architekt"}
     t2 = yield from hitl(ctx, z, "H2", adr["hash"])
@@ -652,6 +753,7 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     t5 = yield from hitl(ctx, z, "H5", pr["hash"])                            # deploy = N2
     if not t5: return {**state, "stav": "Pozastaveno", "bod": "H5"}
     d = yield ctx.call_activity(executor, input={"z": z, "action": "deploy", "artifact_hash": pr["hash"], "token": t5})
+    yield ctx.call_activity(notify_customer, input={"z": z, "channel": "ticket", "role": "sre", "body": f"Nasazení zakázky {z['id']} {'provedeno' if d['allow'] else 'zamítnuto'} (H5 schválil člověk; PR {pr['ref']} · hash {pr['hash']})."})   # P3-4 N3 ticket
     spent = yield ctx.call_activity(budget_check, input=z)
     yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Dokonceno" if d["allow"] else "Zamitnuto"})   # P2-6: cena zakázky v registru org.zakazky
     return {**state, "stav": "Dokonceno" if d["allow"] else "Zamitnuto", "artefakty": [zad["ref"], adr["ref"], pr["ref"], rev["ref"]], "cost_usd": spent}
@@ -668,13 +770,16 @@ def client():
     return _client
 
 
-def create_zakazka(b: dict, *, by=None, channel="api"):
+def create_zakazka(b: dict, *, by=None, channel="api", by_sub=None):
     """Založení zakázky (REST i AG-UI): tenant z poptávky (interní API) nebo z tokenu člověka (AG-UI), jinak P0_TENANT."""
     tenant = b.get("tenant") or os.environ.get("P0_TENANT", "acme")
+    kl = b.get("klasifikace") if isinstance(b.get("klasifikace"), dict) else None   # P3-4: odpovědi K1–K6 s poptávkou (GUI formulář); bez nich interrupt `klasifikace`
+    sla = {k: float(v) for k, v in (b.get("sla") or {}).items() if k in SLA_DEFAULT_S} if isinstance(b.get("sla"), dict) else {}   # P3-4: SLA bodů (s) – harness/K1f; jinak procesy.md
     z = {"id": b["id"], "poptavka": b["poptavka"], "tenant": tenant, "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S),
-         "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD))}   # P2-6: strop zakázky (30d) = součet útraty jejích klíčů role × zakázka v budget_usage gateway
+         "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD)), "by": by, "klasifikace": ({k: bool(kl.get(k)) for k in KLAS_KEYS} if kl is not None else None), "klasifikace_by": by if kl is not None else None, "klasifikace_sub": by_sub if kl is not None else None,
+         "sla": sla, "contact": b.get("contact")}   # P2-6: strop zakázky (30d) = součet útraty jejích klíčů role × zakázka v budget_usage gateway
     client().schedule_new_workflow(zakazka, input=z, instance_id=z["id"])
-    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500])
+    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500], klasifikace=z["klasifikace"], sla=sla or None)
     finops.registry_upsert(z["id"], tenant=tenant, budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
     return z
 
@@ -716,6 +821,14 @@ def stop_zakazka(zid, *, by, reason=None, channel="api"):
     st = client().get_workflow_state(zid).runtime_status.name
     ledger("STOP", zakazka=zid, by=by, reason=reason, budget="frozen", channel=channel, pods_killed=killed, status=st)
     return {"ok": True, "status": st, "pods_killed": killed}
+
+
+def classify_zakazka(zid, *, by, answers, reason=None, channel="agui", sub=None):
+    """P3-4: odpovědi zadavatele na dotazník K1–K6 (interrupt `klasifikace` v AG-UI) → event do workflow; profil počítá aktivita klasifikace."""
+    a = {k: bool((answers or {}).get(k)) for k in KLAS_KEYS}
+    client().raise_workflow_event(zid, "klasifikace", data={"answers": a, "by": by, "reason": reason, "sub": sub})
+    ledger("KLASIFIKACE_RAISED", zakazka=zid, by=by, channel=channel, answers=a, reason=reason)
+    return a
 
 
 def answer_dialog(zid, *, by, answer, channel="agui"):
@@ -884,7 +997,9 @@ def _wf_state(zid):
 agui.CTX.update({
     "ledger": ledger, "read_ledger": _ledger, "wf_state": _wf_state, "root_dir": "/tmp/p0-o2",
     "disclosure": lambda role, channel: _disclosure(role, channel),
-    "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s") if k in fp}}, by=u["name"], channel="agui"),
+    "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s", "klasifikace", "sla", "contact") if k in fp}}, by=u["name"], channel="agui", by_sub=u["sub"]),
+    "classify": lambda zid, u, answers, reason: classify_zakazka(zid, by=u["name"], answers=answers, reason=reason, channel="agui", sub=u["sub"]),
+    "klas_questions": KLAS_QUESTIONS,
     "approve": lambda zid, bod, hh, u, reason: approve_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
     "reject": lambda zid, bod, hh, u, reason: reject_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
     "stop": lambda zid, u, reason: stop_zakazka(zid, by=u["name"], reason=reason, channel="agui"),

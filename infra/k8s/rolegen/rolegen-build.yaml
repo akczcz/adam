@@ -197,13 +197,15 @@ data:
     : \"adam\",\n  \"processes\": [\n   \"P1-prijeti-zadani\"\n  ],\n  \"autonomy_max\"\
     : \"A2\",\n  \"spiffe_id\": \"spiffe://platform.example/agent/account/{tenant}/{workflow_instance}\"\
     ,\n  \"image\": \"registry.platform.internal/roles/account:0.1.0\",\n  \"source\"\
-    : \"account.yaml\",\n  \"source_sha256_16\": \"ac79d946a1e719f6\",\n  \"disclosure\"\
+    : \"account.yaml\",\n  \"source_sha256_16\": \"338bbf739f58ed71\",\n  \"disclosure\"\
     : {\n   \"agui\": \"Mluvíte s AI agentem (role Account) firmy {firma}; jedná jménem\
     \ {vlastník procesu}. Nabídku, cenu a termín potvrzuje člověk.\",\n   \"issue\"\
     : \"Zadání sepsal AI agent (Account) jménem {vlastník procesu}; schvaluje člověk\
-    \ zákazníka.\"\n  },\n  \"evals_gate\": [\n   {\n    \"layer\": \"L0\",\n    \"\
-    gate\": {\n     \"metric\": \"pass_rate\",\n     \"min\": 1.0\n    }\n   },\n\
-    \   {\n    \"layer\": \"L1\",\n    \"gate\": {\n     \"metric\": \"policy_compliance\"\
+    \ zákazníka.\",\n   \"email\": \"Tento e-mail odeslal AI agent (role Account)\
+    \ firmy {firma} jménem {vlastník procesu}; odpovědi čte člověk. Obsah byl vygenerován\
+    \ AI.\"\n  },\n  \"evals_gate\": [\n   {\n    \"layer\": \"L0\",\n    \"gate\"\
+    : {\n     \"metric\": \"pass_rate\",\n     \"min\": 1.0\n    }\n   },\n   {\n\
+    \    \"layer\": \"L1\",\n    \"gate\": {\n     \"metric\": \"policy_compliance\"\
     ,\n     \"min\": 1.0\n    }\n   },\n   {\n    \"layer\": \"L3\",\n    \"gate\"\
     : {\n     \"metric\": \"pass_k\",\n     \"min\": 0.7\n    }\n   }\n  ]\n },\n\
     \ {\n  \"role\": \"architekt\",\n  \"version\": \"0.1.0\",\n  \"owner\": \"adam\"\
@@ -356,7 +358,7 @@ data:
     ,\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n\
     \   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
     : 0.7,\n    \"value\": 1.0\n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\"\
-    : {},\n  \"reason\": null,\n  \"source_sha256_16\": \"ac79d946a1e719f6\",\n  \"\
+    : {},\n  \"reason\": null,\n  \"source_sha256_16\": \"338bbf739f58ed71\",\n  \"\
     status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"architekt\": {\n  \"\
     k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n    \"\
     passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L1\"\

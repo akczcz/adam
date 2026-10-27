@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 
 ROLES = ["account", "architekt", "vyvojar", "reviewer"]
+KLAS_KEYS = ["K1", "K2", "K3", "K4", "K5", "K6"]
+KLAS_NO = {k: False for k in KLAS_KEYS}   # P3-4: dogfooding = vše „ne“ → profil standard
 
 
 class Gui:
@@ -71,10 +73,13 @@ class Gui:
         self.shot("threads")
         return out
 
-    def create_thread(self, zid, poptavka, budget=None):
-        self.page.goto(self.base + "#/"); self.t("new-id").wait_for()
+    def create_thread(self, zid, poptavka, budget=None, klasifikace=None):
+        """Nová zakázka z GUI: poptávka + dotazník K1–K6 (P3-4; výchozí vše „ne“) → první run s forwardedProps.klasifikace."""
+        self.page.goto(self.base + "#/"); self.t("new-id").wait_for(); self.t("new-k-form").wait_for(timeout=30_000)
         self.t("new-id").fill(zid); self.t("new-poptavka").fill(poptavka)
         if budget is not None: self.t("new-budget").fill(str(budget))
+        for k, v in (klasifikace or {}).items():
+            if v: self.t(f"new-k-{k}").check()
         self.t("new-submit").click()
         self.page.wait_for_function("document.querySelector('[data-testid=run-protocol]') && document.querySelector('[data-testid=run-protocol]').textContent !== '?'", timeout=60_000)
         return {"protocol": self.t("run-protocol").inner_text(), "run_id": self.t("run-id").inner_text(), "url": self.page.url}
@@ -93,7 +98,9 @@ class Gui:
             msgs.append({"name": m.get_attribute("data-testid")[len("msg-"):], "role": m.get_attribute("data-role"), "disclosure": d.inner_text() if d.count() else None})
         evs = [e.get_attribute("data-event-type") for e in self.page.locator("[data-testid=event-log] [data-event-type]").all()]
         st = {k: (self.t(f"state-{k}").inner_text() if self.t(f"state-{k}").count() else None) for k in ("stav", "status", "bod", "spent")}
-        return {"run_status": self.t("run-status").inner_text(), "protocol": self.t("run-protocol").inner_text(), "subagents": subs, "messages": msgs, "events": evs, "state": st,
+        st["profile"] = self.t("state-profile").inner_text().strip() if self.t("state-profile").count() else None
+        acts = {t: self.page.locator(f"[data-testid=act-{t}]").count() for t in ("klasifikace", "sla", "channel")}
+        return {"run_status": self.t("run-status").inner_text(), "protocol": self.t("run-protocol").inner_text(), "subagents": subs, "messages": msgs, "events": evs, "state": st, "acts": acts,
                 "interrupt": self.t("interrupt").get_attribute("data-interrupt-id") if self.t("interrupt").count() else None, "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
 
     def wait_interrupt(self, bod, timeout_s=900):
@@ -141,6 +148,37 @@ class Gui:
             if rs in ("finished", "cancelled"): break
             self.page.wait_for_timeout(1500)
         return {"waited_s": round(time.time() - t0, 1), "kind": None, "bod": None, **self.snapshot()}
+
+    def classify(self, answers, reason=""):
+        """P3-4: interrupt reason=klasifikace (zakázka založená bez dotazníku, např. interním API) – zaškrtnout „ano“, odeslat, nový run."""
+        self.t("klas-form").wait_for(); q = self.page.locator("[data-testid^=klas-K]").count()
+        for k, v in (answers or {}).items():
+            if v: self.t(f"klas-{k}").check()
+        if reason: self.t("klas-reason").fill(reason)
+        rid0 = self.t("run-id").inner_text(); self.t("klas-submit").click()
+        self.page.wait_for_function(f"document.querySelector('[data-testid=run-id]') && document.querySelector('[data-testid=run-id]').textContent !== {json.dumps(rid0)}", timeout=60_000)
+        self.shot("klasifikace-answered")
+        return {"questions_shown": q, "new_run": True}
+
+    def wait_profile(self, timeout_s=120):
+        """Čeká na profil rizika ve stavu zakázky (STATE_SNAPSHOT.profile z KLASIFIKACE) nebo konec runu."""
+        t0 = time.time()
+        while time.time() - t0 < timeout_s:
+            if self.t("state-profile").count(): break
+            rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
+            if rs in ("finished", "cancelled"): break
+            self.page.wait_for_timeout(1000)
+        self.shot("profile")
+        return {"waited_s": round(time.time() - t0, 1), "profile": self.t("state-profile").inner_text().strip() if self.t("state-profile").count() else None, **self.snapshot()}
+
+    def wait_sla(self, timeout_s=120):
+        """Čeká na indikaci překročení SLA (state-sla / aktivita sla) – zakázka přitom dál čeká na rozhodnutí."""
+        t0 = time.time()
+        while time.time() - t0 < timeout_s:
+            if self.t("state-sla").count() or self.t("act-sla").count(): break
+            self.page.wait_for_timeout(1000)
+        self.shot("sla")
+        return {"waited_s": round(time.time() - t0, 1), "sla_text": self.t("state-sla").inner_text() if self.t("state-sla").count() else None, "act_sla": self.t("act-sla").count(), "interrupt": self.t("interrupt").get_attribute("data-interrupt-id") if self.t("interrupt").count() else None}
 
     def answer_dialog(self, text):
         """Odpověď na otázky Account (P3-3): tlačítko bez textu zakázané, pak nový run."""
@@ -248,7 +286,25 @@ def run_local(base, shots):
         add("U2c-local", not r1["ok"] and r2["ok"], {"beta": r1, "acme": r2})
         st2 = g.tenant_stop("beta", "Zákazník beta pozastavil spolupráci – stop tenanta."); rs2 = g.tenant_stop("beta", "Beta zpět do provozu.", resume=True)
         add("U2d-local", st2["ok"] and st2["disabled_empty"] and rs2["ok"], {"stop": st2, "resume": rs2})
-        rp = g.report(); add("U2e-local", rp["gaps"] >= 1 and rp["export_lines"] >= 1 and all("T15:klasifikace" in r["missing"] for r in rp["rows"]), {k: rp[k] for k in ("gaps", "export_lines")})
+        rp = g.report(); add("U2e-local", rp["gaps"] >= 1 and rp["export_lines"] >= 1 and not any("T15:klasifikace" in r["missing"] for r in rp["rows"] if r["id"] == z1), {k: rp[k] for k in ("gaps", "export_lines")})
+        # K-1 lokálně (P3-4): klasifikační brána, čl. 50 kanály, SLA
+        g.close(); g = Gui(base + "/gui/", shots=shots).open(); g.login("adam", "adam")
+        ch = httpx.get(f"{base}/channels/_debug/messages", timeout=10).json()["messages"]; mine = [m for m in ch if m.get("zakazka") == z1]
+        add("K1d-local", fin["acts"]["channel"] >= 2 and any(m["channel"] == "email" and "AI agent" in m["body"] and m.get("generated_by", {}).get("generated_by") == "ai-agent:account" for m in mine) and any(m["channel"] == "ticket" and "AI agent" in m["body"] and (m.get("generated_by") or {}).get("generated_by") == "ai-agent:sre" for m in mine), {"channel_acts": fin["acts"]["channel"], "messages": [(m["channel"], m["body"][:60], (m.get("generated_by") or {}).get("generated_by")) for m in mine]})
+        z3 = f"U1-{tag}-hr"; g.create_thread(z3, "Agent bude přidělovat úkoly lidem v týmu.", klasifikace={"K2": True}); pr3 = g.wait_profile(60)
+        auto = httpx.post(f"{base}/agui/gov/autonomy", headers={"Authorization": f"Bearer {g.token}"}, json={"role": "account", "tenant": "acme", "level": "A1", "reason": "Zkouška – high-risk zamyká posun."}, timeout=10)
+        st3 = g.stop("High-risk zakázka – lokální test, zastavit.")
+        add("K1a-local", pr3["profile"] == "high-risk-III/4" and pr3["acts"]["klasifikace"] >= 1 and st3["run_status"] == "cancelled", {"profile": pr3["profile"], "autonomy_http": auto.status_code, "stop": st3["run_status"]})
+        z4 = f"U1-{tag}-k1"; g.create_thread(z4, "Social scoring občanů.", klasifikace={"K1": True}); f4 = g.wait_finished(60)
+        add("K1b-local", f4["state"]["stav"] == "Odmitnuto" and f4["state"]["profile"] == "odmitnout" and not f4["subagents"], {"state": f4["state"], "subagents": f4["subagents"]})
+        z5 = f"U1-{tag}-api"; httpx.post(f"{base}/zakazky", json={"id": z5, "poptavka": "Zakázka z interního API bez dotazníku.", "tenant": "acme"}, timeout=10); ot5 = g.open_thread(z5); w5 = g.wait_any_interrupt(60)
+        c5 = g.classify({"K4": True}, "Zákazník je obecní úřad."); h1a = g.wait_interrupt("H1a", 60); d1a = g.decide("Stanovisko právníka: veřejná správa mimo přílohu III – pokračovat jako high-risk do doplnění smlouvy.")
+        pr5 = g.wait_profile(30); st5 = g.stop("Lokální test – zastavit po stanovisku.")
+        add("K1c-local", w5.get("kind") == "klasifikace" and c5["questions_shown"] == 6 and h1a["interrupt"] and h1a["interrupt"].startswith("hitl:H1a:") and d1a["new_run"] and pr5["profile"] == "nejasne", {"first_interrupt": w5.get("kind"), "h1a": h1a["interrupt"], "profile": pr5["profile"], "stop": st5["run_status"]})
+        z6 = f"U1-{tag}-sla"; httpx.post(f"{base}/zakazky", json={"id": z6, "poptavka": "Zakázka s krátkým SLA H1.", "tenant": "acme", "klasifikace": KLAS_NO, "sla": {"H1": 3}}, timeout=10); g.open_thread(z6)
+        if g.wait_any_interrupt(60).get("kind") == "dialog": g.answer_dialog("Soubor do zakazky/<id>/NOTES.md; rozpočet výchozí.")
+        h6 = g.wait_interrupt("H1", 60); sla6 = g.wait_sla(30); d6 = g.decide("SLA překročeno, ale zadání je v pořádku – schvaluji."); ws6 = g.wait_subagent("architekt", 30); g.stop("Lokální test SLA – zastavit.")
+        add("K1f-local", h6["interrupt"] and sla6["sla_text"] and "H1" in sla6["sla_text"] and sla6["interrupt"] == h6["interrupt"] and d6["new_run"] and ws6["status"] == "running", {"sla": sla6, "after_decide": ws6})
     finally:
         g.close()
     n = sum(1 for c in checks if c["status"] == "FAIL"); print(f"== U-1 lokálně: {len(checks) - n}/{len(checks)} PASS; console: {g.log[:5]}")

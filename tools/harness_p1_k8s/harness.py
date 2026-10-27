@@ -469,7 +469,7 @@ def step_p1_5(a, rep, env):
         subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
         kubectl(a, "-n", NS, "rollout", "restart", "deploy/zakazka", "deploy/memory", "deploy/bridge", "deploy/mock-github")
         t0 = time.time()
-        rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=420s", timeout=440).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
+        rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=420s", timeout=440).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka", "deployment/mock-channels")}
         with psycopg.connect(f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/dapr_state", autocommit=True, connect_timeout=10) as c:
             dapr_tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
         health = {"app": httpx.get(f"{APP}/health", timeout=10).status_code, "memory": httpx.get(f"{MEM}/health", timeout=10).status_code, "mock_github": httpx.get(f"http://{ip}:30801/health", timeout=10).status_code, "bridge": httpx.get(f"http://{ip}:30802/health", timeout=10).status_code}
@@ -507,7 +507,7 @@ def step_p1_5(a, rep, env):
 
         # P15b – zakázka přes GitHub HITL v clusteru
         run_tag = time.strftime("%H%M%S"); zid = f"P15-{run_tag}-1"; t1 = time.time()   # unikátní: stav workflow (Postgres) i ledger (PVC) přežívají běhy
-        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v Kubernetes.", "hitl_timeout_s": 3600}, timeout=15)
+        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v Kubernetes.", "hitl_timeout_s": 3600, "klasifikace": KLAS_NO}, timeout=15)
         issue = pub(zid, "issue"); assert issue, "issue nebylo publikováno (ledger app)"
         gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "platform-bot"); gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "stranger")
         time.sleep(5); adr_early = hash_of(zid, "adr://")
@@ -529,7 +529,7 @@ def step_p1_5(a, rep, env):
 
         # P15c – durabilita: smazat pod uprostřed (čeká na H2)
         zid2 = f"P15-{run_tag}-2"; t2 = time.time()
-        httpx.post(f"{APP}/zakazky", json={"id": zid2, "poptavka": "Přidej endpoint /version do služby ACME (test durability).", "hitl_timeout_s": 3600}, timeout=15)
+        httpx.post(f"{APP}/zakazky", json={"id": zid2, "poptavka": "Přidej endpoint /version do služby ACME (test durability).", "hitl_timeout_s": 3600, "klasifikace": KLAS_NO}, timeout=15)
         issue2 = pub(zid2, "issue"); assert issue2, "issue 2 nebylo publikováno"
         gh_post(f"/issues/{issue2['number']}/comments", {"body": "/schvaluji"}, "adam")
         adr2 = wait_handoff(zid2, "adr://", 240); assert adr2, "ADR 2 nevzniklo"
@@ -698,7 +698,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
                 tn_ = sorted(r[0] for r in c.execute("SELECT tenant_id FROM org.tenants").fetchall())
                 return {"zakazky": z_, "approvals": ap_, "tenants": tn_}
         r_acme, r_beta, r_plat, r_none = rls("acme"), rls("beta"), rls("platform"), rls("")
-        rep.add("T1c", "RLS per tenant_id na org.* (role org_reader = čtení pro Governance MCP): s app.tenant_id=beta jsou vidět jen zakázky/approvaly/tenant beta, s acme jen acme (zakázka beta chybí), s platform průřez obou, bez tenanta nic", "PASS" if zb in r_beta["zakazky"] and zid_acme not in r_beta["zakazky"] and zid_acme in r_acme["zakazky"] and zb not in r_acme["zakazky"] and {zid_acme, zb} <= set(r_plat["zakazky"]) and r_none["zakazky"] == [] and r_beta["tenants"] == ["beta"] and r_acme["approvals"] >= 4 and r_beta["approvals"] == 0 else "FAIL", {"beta": r_beta, "acme": {"zakazky_n": len(r_acme["zakazky"]), "has_acme": zid_acme in r_acme["zakazky"], "has_beta": zb in r_acme["zakazky"], "approvals": r_acme["approvals"]}, "platform": {"n": len(r_plat["zakazky"]), "tenants": r_plat["tenants"]}, "none": r_none})
+        rep.add("T1c", "RLS per tenant_id na org.* (role org_reader = čtení pro Governance MCP): s app.tenant_id=beta jsou vidět jen zakázky/approvaly/tenant beta, s acme jen acme (zakázka beta chybí), s platform průřez obou, bez tenanta nic", "PASS" if zb in r_beta["zakazky"] and zid_acme not in r_beta["zakazky"] and zid_acme in r_acme["zakazky"] and zb not in r_acme["zakazky"] and {zid_acme, zb} <= set(r_plat["zakazky"]) and r_none["zakazky"] == [] and r_beta["tenants"] == ["beta"] and r_acme["approvals"] >= 4 and 1 <= r_beta["approvals"] < r_acme["approvals"] and r_beta["approvals"] + r_acme["approvals"] <= r_plat["approvals"] else "FAIL", {"beta": r_beta, "acme": {"zakazky_n": len(r_acme["zakazky"]), "has_acme": zid_acme in r_acme["zakazky"], "has_beta": zb in r_acme["zakazky"], "approvals": r_acme["approvals"]}, "platform": {"n": len(r_plat["zakazky"]), "tenants": r_plat["tenants"]}, "none": r_none})
         lst_b = g.threads_list(); ot = g.open_thread(zid_acme)
         r403 = http("POST", f"{APP}/agui/run", headers={"Authorization": f"Bearer {g.token}"}, json={"threadId": zid_acme, "runId": "t1e", "messages": []}, timeout=15).status_code
         g.page.goto(f"{APP}/gui/#/t/{zb}"); g.page.wait_for_timeout(1500)
@@ -766,7 +766,7 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         rp = g.report(); exp_b = http("GET", f"{APP}/agui/gov/export.jsonl", headers={"Authorization": f"Bearer {tb}"}, timeout=60).text
         lines_b = [json.loads(l) for l in exp_b.splitlines() if l.strip()]; tenants_b = {l.get("tenant_id") for l in lines_b if l.get("tenant_id")}
         exp_p = http("GET", f"{APP}/agui/gov/export.jsonl", headers={"Authorization": f"Bearer {tp}"}, timeout=60).text; tenants_p = {json.loads(l).get("tenant_id") for l in exp_p.splitlines() if l.strip()}
-        rep.add("U2e", "Governance report (metriky.md §5) v GUI: per zakázka chybějící položky T11–T15 – bez klasifikační brány (P3-4) chybí T15:klasifikace u každé zakázky, u zakázek bez registru T12; zakázka acme z tohoto běhu má řádek registru (T12 ok) a approvaly merge/deploy (T13 ok)", "PASS" if rp["gaps"] >= 1 and any(r["id"] == zid_acme for r in rp["rows"]) and all("T15:klasifikace" in r["missing"] for r in rp["rows"]) and not any(m.startswith("T12") or m.startswith("T13") for r in rp["rows"] if r["id"] == zid_acme for m in r["missing"]) else "FAIL", {"gaps": rp["gaps"], "rows": len(rp["rows"]), "acme_row": next((r for r in rp["rows"] if r["id"] == zid_acme), None), "sample": rp["rows"][:3]})
+        rep.add("U2e", "Governance report (metriky.md §5) v GUI: per zakázka chybějící položky T11–T15 – zakázka acme z tohoto běhu má klasifikaci (T15 ok – P3-4), řádek registru (T12 ok) a approvaly merge/deploy (T13 ok); mezery zůstávají u starších zakázek a u T11 risk register", "PASS" if rp["gaps"] >= 1 and any(r["id"] == zid_acme for r in rp["rows"]) and not any(m.startswith("T12") or m.startswith("T13") or m.startswith("T15") for r in rp["rows"] if r["id"] == zid_acme for m in r["missing"]) else "FAIL", {"gaps": rp["gaps"], "rows": len(rp["rows"]), "acme_row": next((r for r in rp["rows"] if r["id"] == zid_acme), None), "sample": rp["rows"][:3]})
         rep.add("U2f", "Export JSONL per tenant (čl. 13(3)(f)) přes Governance MCP: bea dostane jen řádky tenanta beta (RLS), platform-admin všechny tenanty; GUI tlačítko exportu", "PASS" if lines_b and tenants_b == {"beta"} and {"acme", "beta"} <= tenants_p and rp["export_lines"] > 0 else "FAIL", {"bea_lines": len(lines_b), "bea_tenants": sorted(tenants_b), "platform_tenants": sorted(t for t in tenants_p if t), "gui_export_lines": rp["export_lines"]})
         # U2g – agentní token nesmí číst governance (jen lidé); org_writer DSN není v MCP
         ag = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "client_credentials"}, auth=("agent-account", "p0-account-secret"), timeout=15).json().get("access_token", "")
@@ -810,6 +810,68 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         rep.add("U2h", "GUI nad firmou: čas scénáře, screenshoty", "INFO", {"wall_s": round(time.time() - t_g, 1), "shots": sorted(p.name for p in (gui_shots / "gov").glob("*.png")) if (gui_shots / "gov").exists() else []})
     finally:
         g.close()
+
+def klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots):
+    """K-1 (P3-4): klasifikační brána K1–K6 před první rolí (profil → org.zakazky + OPA data, high-risk zamyká autonomii, čl. 5 → Odmitnuto bez podu,
+    nejasné → H1a právník), čl. 50 naostro (e-mail + ticket přes mock-channels s disclosure z definice role a značením generated_by), SLA bodů (org.sla_events, eskalace)."""
+    import psycopg, yaml as _yg
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui, KLAS_NO
+    RNS = "tenant-acme"
+    def pods_of(z): return [p["metadata"]["name"] for p in kj("-n", RNS, "get", "pods", "-l", f"platform.zakazka={re.sub(r'[^A-Za-z0-9_.-]', '-', z)[:63]}").get("items", [])]
+    def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+    def db(sql, args=()):
+        with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args).fetchall()
+    roles_disc = {r: (_yg.safe_load((ROOT / f"knowledge/organization/roles/{r}.yaml").read_text()).get("disclosure") or {}).get("channels", {}) for r in ("account", "sre")}
+    pf_ch = PortForward(a, "mock-channels", 19804, 9804); pf_opa = PortForward(a, "opa", 18181, 8181)
+    g = Gui(f"{APP}/gui/", shots=gui_shots / "klas").open(); t_k = time.time()
+    def wait_i(bod, timeout):   # čekání po 60s úsecích, mezi nimi /health obnoví spadlý port-forward (GUI se samo znovu připojí)
+        t0 = time.time()
+        while True:
+            r = g.wait_interrupt(bod, min(60, max(1, timeout - (time.time() - t0))))
+            if r["interrupt"] or r["run_status"] in ("finished", "cancelled") or time.time() - t0 >= timeout: r["waited_s"] = round(time.time() - t0, 1); return r
+            try: http("GET", f"{APP}/health", timeout=10)
+            except Exception: pass
+    try:
+        g.login("adam", "adam"); L = led()
+        # K1d/K1e – zakázka z gui_flow prošla celá: e-mail po H1 (Account) a komentář ticketu po deployi (SRE) v mock-channels, disclosure z roles/*.yaml kanál email/ticket_comment, generated_by jen tam
+        msgs = [m for m in http("GET", "http://127.0.0.1:19804/_debug/messages", timeout=15).json()["messages"] if m.get("zakazka") == zid_acme]
+        em = next((m for m in msgs if m["channel"] == "email"), {}); tk = next((m for m in msgs if m["channel"] == "ticket"), {})
+        sent = [e for e in L if e["kind"] == "CHANNEL_SENT" and e["zakazka"] == zid_acme]; hand = [e for e in L if e["kind"] == "HANDOFF" and e["zakazka"] == zid_acme]
+        want_e, want_t = roles_disc["account"].get("email", ""), roles_disc["sre"].get("ticket_comment", "")
+        rep.add("K1d", "Čl. 50(1) naostro (T7): stavové zprávy zákazníkovi jdou reálným kanálem přes adaptér (mock-channels: e-mail po H1 od role Account, komentář ticketu po deployi od SRE); disclosure vkládá adaptér z definice role (roles/account.yaml channels.email, roles/sre.yaml channels.ticket_comment), ne model; CHANNEL_SENT http 200 v ledgeru, aktivita channel v GUI", "PASS" if em and tk and em["body"].startswith(want_e.split("{")[0][:30]) and tk["body"].startswith(want_t.split("{")[0][:30]) and len(sent) >= 2 and all(e.get("http") == 200 for e in sent) else "FAIL", {"email": {k: (em.get(k) if k != "body" else (em.get("body") or "")[:120]) for k in ("to", "subject", "body")}, "ticket": {"ticket": tk.get("ticket"), "body": (tk.get("body") or "")[:120]}, "ledger_sent": [(e.get("channel"), e.get("http")) for e in sent], "want_prefix": {"email": want_e[:50], "ticket": want_t[:50]}})
+        rep.add("K1e", "Značení generovaného obsahu (T8) jen na kanálech k lidem: e-mail nese hlavičky X-AI-Generated/X-AI-Generated-By a metadata generated_by=ai-agent:account, ticket generated_by=ai-agent:sre (model, zakázka, disclosure=cl50-1); interní předání mezi rolemi (HANDOFF, AG-UI zprávy) značení nenesou", "PASS" if (em.get("headers") or {}).get("X-AI-Generated") == "true" and (em.get("generated_by") or {}).get("generated_by") == "ai-agent:account" and (tk.get("generated_by") or {}).get("generated_by") == "ai-agent:sre" and (em.get("generated_by") or {}).get("zakazka") == zid_acme and hand and not any("generated_by" in e for e in hand) else "FAIL", {"email_headers": em.get("headers"), "email_generated_by": em.get("generated_by"), "ticket_generated_by": tk.get("generated_by"), "handoffs": len(hand)})
+        # K1a – K2 = ano → high-risk-III/4: profil v org.zakazky + klasifikace jsonb, approvals zadani.classify, OPA data zakazky/<id>, posun autonomie acme/account A1→A2 odmítnut kvůli high-risk; pak stop
+        za = f"{tag}-hr"; g.create_thread(za, f"Zakázka {za}: agent bude přidělovat úkoly lidem v týmu zákazníka (test brány).", klasifikace={"K2": True}); pa = g.wait_profile(120)
+        rowa = db("SELECT profile, klasifikace, status FROM org.zakazky WHERE zakazka_id = %s", (za,)); apra = db("SELECT action, decision, approver, channel FROM org.approvals WHERE workflow_instance = %s AND action = 'zadani.classify'", (za,))
+        opa_a = http("GET", f"http://127.0.0.1:18181/v1/data/zakazky/{za}", timeout=10); opa_j = (opa_a.json().get("result") or {}) if opa_a.status_code == 200 else {}
+        auto = http("POST", f"{APP}/agui/gov/autonomy", headers={"Authorization": f"Bearer {g.token}"}, json={"role": "account", "tenant": "acme", "level": "A2", "reason": "Zkouška: high-risk zakázka tenanta musí posun zamknout (T9)."}, timeout=30)
+        auto_j = auto.json() if auto.headers.get("content-type", "").startswith("application/json") else {}
+        sta = g.stop("High-risk test hotov – zastavit zakázku, aby neutrácela."); gone = pods_of(za)
+        rep.add("K1a", "Klasifikační brána P1a (T9/T15) z GUI: K2 = ano → profil high-risk-III/4 vyhodnocen deterministicky (ne modelem) před první rolí; org.zakazky.profile + klasifikace (odpovědi, by), auditní řádek org.approvals action=zadani.classify approver=adam channel=agui, OPA data zakazky/<id>.profile (PUT /v1/data), STATE_SNAPSHOT.profile v GUI; posun autonomie acme/account na A2 odmítnut s důvodem high-risk (autonomie.md: pass^k vypnuto)", "PASS" if pa["profile"] == "high-risk-III/4" and rowa and rowa[0][0] == "high-risk-III/4" and (rowa[0][1] or {}).get("K2") is True and apra and apra[0][1] == "approve" and apra[0][3] == "agui" and opa_j.get("profile") == "high-risk-III/4" and auto.status_code == 409 and any("high-risk" in r for r in auto_j.get("reasons", [])) and sta["run_status"] == "cancelled" else "FAIL", {"gui_profile": pa["profile"], "db": {"row": [rowa[0][0], rowa[0][2]] if rowa else None, "klasifikace": rowa[0][1] if rowa else None, "approvals": [list(r) for r in apra]}, "opa": {"http": opa_a.status_code, "data": opa_j}, "autonomy": {"http": auto.status_code, "reasons": auto_j.get("reasons"), "metrics": auto_j.get("metrics")}, "stop": sta["run_status"], "pods_after_stop": gone})
+        # K1b – K1 = ano → Odmitnuto: workflow končí v P1 bez jediného podu role, org.zakazky status Odmitnuto, approvals decision=reject
+        zb = f"{tag}-k1"; g.create_thread(zb, f"Zakázka {zb}: social scoring občanů (čl. 5 – musí být odmítnuta).", klasifikace={"K1": True}); fb = g.wait_finished(120); stb = status(zb)
+        rowb = db("SELECT profile, status FROM org.zakazky WHERE zakazka_id = %s", (zb,)); aprb = db("SELECT decision, reason FROM org.approvals WHERE workflow_instance = %s AND action = 'zadani.classify'", (zb,))
+        Lb = [e for e in led() if e.get("zakazka") == zb]; pods_b = [e for e in Lb if e["kind"] in ("ROLE_POD_CREATE", "ROLE_GATE", "AGENT_RUN")]
+        rep.add("K1b", "Čl. 5 (K1 = ano) → profil odmitnout: zakázka končí v P1 stavem Odmitnuto s auditním záznamem (org.approvals zadani.classify decision=reject, org.zakazky status Odmitnuto) – žádná role neběžela (žádný ROLE_GATE/ROLE_POD_CREATE, žádný pod v ns tenanta), GUI run finished se stavem Odmitnuto", "PASS" if fb["state"]["stav"] == "Odmitnuto" and fb["state"]["profile"] == "odmitnout" and (stb.get("output") or {}).get("stav") == "Odmitnuto" and rowb and rowb[0] == ("odmitnout", "Odmitnuto") and aprb and aprb[0][0] == "reject" and not pods_b and not fb["subagents"] and not pods_of(zb) else "FAIL", {"gui": fb["state"], "wf": stb.get("output"), "db": {"row": list(rowb[0]) if rowb else None, "approval": [aprb[0][0], (aprb[0][1] or "")[:60]] if aprb else None}, "role_events": len(pods_b), "ledger_kinds": sorted({e["kind"] for e in Lb})})
+        # K1c – zakázka z interního API bez dotazníku → interrupt reason=klasifikace v GUI; K4 = ano → nejasne → H1a stanovisko právníka (approvals pravnik.stanovisko) → pokračuje; stop
+        zc = f"{tag}-api"; http("POST", f"{APP}/zakazky", json={"id": zc, "poptavka": f"Zakázka {zc} z interního API bez dotazníku (test interruptu klasifikace).", "tenant": "acme", "hitl_timeout_s": 1800}, timeout=15); time.sleep(2)
+        otc = g.open_thread(zc); wc = g.wait_any_interrupt(120); cc = g.classify({"K4": True}, "Zákazník je obecní úřad – zařazení nejasné.") if wc.get("kind") == "klasifikace" else None
+        h1a = wait_i("H1a", 120); d1a = g.decide("Stanovisko právníka: agenda obecního úřadu mimo body přílohy III, pokračovat; smluvně vymezit intended purpose.") if h1a["interrupt"] else None
+        pc = g.wait_profile(60); rowc = db("SELECT profile, klasifikace FROM org.zakazky WHERE zakazka_id = %s", (zc,)); aprc = db("SELECT action, decision, channel FROM org.approvals WHERE workflow_instance = %s ORDER BY decided_at", (zc,))
+        stc = g.stop("Test H1a hotov – zastavit zakázku.")
+        rep.add("K1c", "Zakázka založená bez dotazníku (interní API) čeká na klasifikaci jako AG-UI interrupt reason=klasifikace (resume payload {answers K1–K6}); K4 = ano → profil nejasne → H1a stanovisko právníka jako HITL s důvodem (org.approvals action=pravnik.stanovisko) → zakázka pokračuje k Account; profil zůstává nejasne (do stanoviska high-risk zacházení)", "PASS" if wc.get("kind") == "klasifikace" and cc and cc["questions_shown"] == 6 and h1a["interrupt"] and h1a["interrupt"].startswith("hitl:H1a:") and d1a and d1a["new_run"] and pc["profile"] == "nejasne" and rowc and rowc[0][0] == "nejasne" and (rowc[0][1] or {}).get("by") == "adam" and any(r[0] == "pravnik.stanovisko" and r[1] == "approve" and r[2] == "agui" for r in aprc) and stc["run_status"] == "cancelled" else "FAIL", {"open": otc, "first_interrupt": wc.get("kind"), "classify": cc, "h1a": h1a["interrupt"], "profile": pc["profile"], "db": {"row": [rowc[0][0], rowc[0][1]] if rowc else None, "approvals": [list(r) for r in aprc]}, "stop": stc["run_status"]})
+        # K1f – SLA bodu H1 = 20 s (procesy.md lhůta zkrácena pro měření): překročení → SLA_BREACH + org.sla_events + eskalace vlastníkovi, GUI ukáže „SLA překročeno“, zakázka dál čeká; po schválení pokračuje
+        zf = f"{tag}-sla"; http("POST", f"{APP}/zakazky", json={"id": zf, "poptavka": f"Zakázka {zf}: přidej soubor zakazky/{zf}/NOTES.md (test SLA H1).", "tenant": "acme", "klasifikace": KLAS_NO, "sla": {"H1": 20}, "hitl_timeout_s": 1800}, timeout=15); time.sleep(2)
+        g.open_thread(zf); dialog_then(g, zf, 1200)
+        hf = wait_i("H1", 600); slaf = g.wait_sla(90); stf0 = status(zf)
+        df = g.decide("SLA překročeno, zadání je přesto v pořádku – schvaluji vstup zakázky.") if hf["interrupt"] else None; wsf = g.wait_subagent("architekt", 600); fin_f = g.snapshot()
+        rowf = [(r[0], float(r[1]), r[2], r[3]) for r in db("SELECT bod, sla_s, escalated_to, process_id FROM org.sla_events WHERE zakazka_id = %s", (zf,))]; brf = [e for e in led() if e["kind"] == "SLA_BREACH" and e["zakazka"] == zf]
+        stf = g.stop("Test SLA hotov – zastavit zakázku."); 
+        rep.add("K1f", "SLA bodů (procesy.md) jako timer uvnitř HITL čekání: H1 s SLA 20 s překročeno → SLA_BREACH v ledgeru + řádek org.sla_events (bod H1, eskalace vlastnik:account, proces P1), GUI ukáže „SLA překročeno: H1“ při otevřeném interruptu (stav threadu), zakázka zůstává RUNNING a čeká dál (timeout teprve pozastaví); po schválení pokračuje (architekt běží), aktivita sla v GUI", "PASS" if hf["interrupt"] and slaf["sla_text"] and "H1" in slaf["sla_text"] and slaf["interrupt"] == hf["interrupt"] and stf0.get("status") == "RUNNING" and rowf and rowf[0][0] == "H1" and float(rowf[0][1]) == 20 and rowf[0][2] == "vlastnik:account" and brf and brf[0].get("result") == "ceka_dal" and df and df["new_run"] and wsf["status"] == "running" and fin_f["acts"]["sla"] >= 1 else "FAIL", {"h1": hf["interrupt"], "sla_gui": slaf, "wf_during_wait": stf0.get("status"), "db_sla_events": [list(r) for r in rowf], "ledger_breach": [{k: e.get(k) for k in ("bod", "sla_s", "escalated_to", "registry")} for e in brf], "after_decide": wsf, "acts": fin_f["acts"], "stop": stf["run_status"]})
+        rep.add("K1g", "Klasifikační brána, kanály a SLA: čas scénáře, screenshoty", "INFO", {"wall_s": round(time.time() - t_k, 1), "shots": sorted(p.name for p in (gui_shots / "klas").glob("*.png")) if (gui_shots / "klas").exists() else []})
+    finally:
+        g.close(); pf_ch.stop(); pf_opa.stop()
+
 
 def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
     """U-1 (P3-1): zakázka řízená z GUI v prohlížeči (Playwright nad port-forwardem aplikace). Vrací to, co P21b potřebuje dál
@@ -890,7 +952,10 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
     return zid, issue, pr, merged, st, False
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False):
+KLAS_NO = {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}   # P3-4: zakázky z interního API musí nést dotazník, jinak čekají na klasifikaci v AG-UI
+
+
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1071,7 +1136,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             if e.get("jwt_svid_ttl"): args += ["-jwtSVIDTTL", str(e["jwt_svid_ttl"])]
             r = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", *args); spire_applied.append((e["spiffe_id"], r.returncode, (r.stderr or r.stdout)[-120:]))
     subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
-    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror", "mock-upstream", "governance"); time.sleep(5)   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
+    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror", "mock-upstream", "governance", "mock-channels"); time.sleep(5)   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
     t0 = time.time()
     rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=600s", timeout=620).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/agentgateway", "deployment/mock-upstream", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
     for n, p in (("zakazka", 8010), ("memory", 9900), ("mock-github", 9801), ("bridge", 9802)):
@@ -1128,7 +1193,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if gui:
             zid, issue, pr, merged, st, adr_early = gui_flow(a, rep, http, led, zid, APP, GHS, dsn)
         else:
-            http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS s konfigurací rolí z Gitu.", "hitl_timeout_s": 7200}, timeout=15)
+            http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS s konfigurací rolí z Gitu.", "hitl_timeout_s": 7200, "klasifikace": KLAS_NO}, timeout=15)
             issue = pub(zid, "issue"); assert issue, f"issue nebylo publikováno; ledger: {[(e['kind'], e.get('role'), e.get('error') or e.get('phase')) for e in led() if e.get('zakazka') == zid][-8:]}"
             gh_post(f"/issues/{issue['number']}/comments", {"body": "/schvaluji"}, "stranger")
             time.sleep(5); adr_early = hash_of(zid, "adr://")
@@ -1161,6 +1226,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         sec_keys = kubectl(a, "-n", NS, "get", "secret", f"zakazka-keys-{zid.lower()}", "-o", "jsonpath={.metadata.name}").stdout.strip()
         if tenant: tenant_flow(a, rep, http, led, APP, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-2: T1a–T1f
         if gov: gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-3: U2a–U2h
+        if klas: klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-4: K1a–K1g
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
         if images:
@@ -1275,7 +1341,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             rep.add("P26b", "Cena zakázky = součet 30d útraty jejích 4 klíčů v budget_usage gateway (Flexible Server), ne usage SDK; aplikace ji zapsala do ledgeru (BUDGET source=budget_usage) a do registru org.zakazky (spent_usd, by_role, status Dokonceno, keys_source openbao); nezávislý součet harnessu z DB souhlasí", "PASS" if ok_cost else "FAIL", {"budget_ledger": {k: bud.get(k) for k in ("spent_usd", "limit_usd", "source", "window", "by_role")}, "db_sum_by_role": {k: round(v, 6) for k, v in db_sum.items()}, "db_total": round(sum(db_sum.values()), 6), "registry_row": [str(x) for x in zrow] if zrow else None})
             # P26c – strop zakázky: zakázka s budget_usd 0.01 → po první roli (~0,015 USD) gate před další rolí → BudgetExceeded (zakazka-sum) → HITL rozpocet → timeout → Pozastaveno
             zid2 = f"P26-{run_tag}-2"; t26 = time.time()
-            http("POST", f"{APP}/zakazky", json={"id": zid2, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid2}/NOTES.md (test stropu zakázky).", "hitl_timeout_s": 600, "budget_timeout_s": 25, "budget_usd": 0.01}, timeout=15)
+            http("POST", f"{APP}/zakazky", json={"id": zid2, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid2}/NOTES.md (test stropu zakázky).", "hitl_timeout_s": 600, "budget_timeout_s": 25, "budget_usd": 0.01, "klasifikace": KLAS_NO}, timeout=15)
             approved = set(); exc = None; issue2 = None
             while time.time() - t26 < 480:
                 L2 = led(); exc = next((e for e in L2 if e["kind"] == "BUDGET_EXCEEDED" and e["zakazka"] == zid2 and e.get("source") == "zakazka-sum"), None)
@@ -1368,7 +1434,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -1379,7 +1445,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -1391,7 +1457,8 @@ def main():
     {"p1-2": step_p1_2, "p1-3": step_p1_3, "p1-4": step_p1_4, "p1-5": step_p1_5, "p1-6": step_p2_1, "p2-1": step_p2_1, "p2-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True), "p2-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True), "p2-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True), "p2-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True), "p2-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, registry=True, identity=True, egress=True, finops=True),
      "p3-1": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True),
      "p3-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True),
-     "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
+     "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

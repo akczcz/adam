@@ -2,7 +2,7 @@
 // předání artefaktů jako zprávy s disclosure čl. 50, aktivity, stav), HITL = interrupt → formulář s povinným důvodem → resume, stop.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EventType } from "@ag-ui/core";
-import { hasToken, listThreads, login, me, runAgent, setToken, type ThreadState, type User } from "./api";
+import { hasToken, klasQuestions, listThreads, login, me, runAgent, setToken, threadState, type KlasQuestion, type ThreadState, type User } from "./api";
 import { AuditPage, FinopsPage, FirmaPage, GovernancePage, Nav, RegistrPage } from "./Firma";
 
 type Ev = Record<string, any>;
@@ -11,7 +11,19 @@ type Act = { id: string; type: string; content: Record<string, any>; sub?: strin
 type Sub = { id: string; name: string; status: "running" | "done" | "error"; result?: any; message?: string };
 type Interrupt = { id: string; reason: string; message?: string; metadata?: Record<string, any>; expiresAt?: string };
 
-const pendingCreate: Record<string, { poptavka: string; budget?: number }> = {};
+const pendingCreate: Record<string, { poptavka: string; budget?: number; klasifikace?: Record<string, boolean> }> = {};
+
+// P3-4: dotazník klasifikační brány K1–K6 (autonomie.md) – checkboxy, výchozí „ne“; profil počítá platforma (deterministicky), ne GUI ani model
+function KlasForm({ qs, val, onChange, prefix }: { qs: KlasQuestion[]; val: Record<string, boolean>; onChange: (v: Record<string, boolean>) => void; prefix: string }) {
+  return (
+    <div data-testid={`${prefix}-form`} style={{ marginTop: 8 }}>
+      {qs.map((q) => (
+        <label key={q.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontWeight: "normal" }}>
+          <input type="checkbox" data-testid={`${prefix}-${q.id}`} checked={!!val[q.id]} onChange={(x) => onChange({ ...val, [q.id]: x.target.checked })} style={{ width: "auto", marginTop: 3 }} />
+          <span><b>{q.id}</b> {q.text} <span className="muted">(ano → {q.yes})</span></span>
+        </label>))}
+    </div>);
+}
 
 function useHash() {
   const [h, setH] = useState(window.location.hash);
@@ -66,20 +78,23 @@ function Login({ onLogin }: { onLogin: (u: User) => void }) {
 function Threads() {
   const [list, setList] = useState<ThreadState[] | null>(null); const [e, setE] = useState<string | null>(null);
   const [nid, setNid] = useState(() => `Z-${new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "")}`); const [pop, setPop] = useState(""); const [bud, setBud] = useState("");
+  const [qs, setQs] = useState<KlasQuestion[]>([]); const [kl, setKl] = useState<Record<string, boolean>>({});
   const load = () => listThreads().then((r) => { setList(r.threads); setE(null); }).catch((x) => setE(String(x.message ?? x)));
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
+  useEffect(() => { load(); klasQuestions().then(setQs).catch(() => setQs([])); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
   return (
     <>
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Nová zakázka</h2>
         <p className="muted">První zpráva uživatele = poptávka; Account z ní sepíše Zadání, které schválíte (H1). Thread = zakázka.</p>
-        <form onSubmit={(ev) => { ev.preventDefault(); pendingCreate[nid] = { poptavka: pop, budget: bud ? Number(bud) : undefined }; window.location.hash = `#/t/${encodeURIComponent(nid)}`; }}>
+        <form onSubmit={(ev) => { ev.preventDefault(); pendingCreate[nid] = { poptavka: pop, budget: bud ? Number(bud) : undefined, klasifikace: Object.fromEntries(qs.map((q) => [q.id, !!kl[q.id]])) }; window.location.hash = `#/t/${encodeURIComponent(nid)}`; }}>
           <div className="row">
             <div style={{ flex: 1 }}><label>ID zakázky</label><input data-testid="new-id" value={nid} onChange={(x) => setNid(x.target.value)} pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{2,39}" /></div>
             <div style={{ width: 160 }}><label>Rozpočet (USD, 30 d)</label><input data-testid="new-budget" value={bud} onChange={(x) => setBud(x.target.value)} placeholder="výchozí" /></div>
           </div>
           <label>Poptávka</label><textarea data-testid="new-poptavka" value={pop} onChange={(x) => setPop(x.target.value)} />
-          <div style={{ marginTop: 10 }}><button className="primary" type="submit" disabled={!pop.trim() || !nid} data-testid="new-submit">Založit a sledovat</button></div>
+          <label>Klasifikační brána P1a (AI Act) – zaškrtněte, co platí; profil rizika určí platforma</label>
+          {qs.length ? <KlasForm qs={qs} val={kl} onChange={setKl} prefix="new-k" /> : <p className="muted">otázky brány nedostupné</p>}
+          <div style={{ marginTop: 10 }}><button className="primary" type="submit" disabled={!pop.trim() || !nid || !qs.length} data-testid="new-submit">Založit a sledovat</button></div>
         </form>
       </div>
       <div className="card">
@@ -118,6 +133,7 @@ function Thread({ id, user }: { id: string; user: User }) {
   const [reason, setReason] = useState("");
   const [stopReason, setStopReason] = useState("");
   const [stopOpen, setStopOpen] = useState(false);
+  const [kl, setKl] = useState<Record<string, boolean>>({});
   const abort = useRef<AbortController | null>(null);
 
   const reset = () => { setEvents([]); setMsgs([]); setActs([]); setSubs([]); setInterrupt(null); setErr(null); };
@@ -160,10 +176,17 @@ function Thread({ id, user }: { id: string; user: User }) {
 
   useEffect(() => {
     const c = pendingCreate[id]; delete pendingCreate[id];
-    start(c ? { messages: [{ id: crypto.randomUUID(), role: "user", content: c.poptavka }], forwardedProps: c.budget ? { budget_usd: c.budget } : {} } : {});
+    start(c ? { messages: [{ id: crypto.randomUUID(), role: "user", content: c.poptavka }], forwardedProps: { ...(c.budget ? { budget_usd: c.budget } : {}), ...(c.klasifikace ? { klasifikace: c.klasifikace } : {}) } } : {});
     return () => abort.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // P3-4: run končí interruptem; než člověk rozhodne, GUI každých 5 s čte stav threadu (SLA překročení, profil) – zdroj je stále ledger
+  useEffect(() => {
+    if (runStatus !== "interrupt") return;
+    const t = setInterval(() => threadState(id).then(setState).catch(() => undefined), 5000);
+    return () => clearInterval(t);
+  }, [runStatus, id]);
 
   const decide = (decision: "approve" | "reject") => {
     if (!interrupt) return;
@@ -217,6 +240,8 @@ function Thread({ id, user }: { id: string; user: User }) {
             <span>stav <b data-testid="state-stav">{state.stav ?? state.status ?? "?"}</b></span>
             <span>workflow <code data-testid="state-status">{state.status ?? "?"}</code></span>
             {state.bod && <span>bod <code data-testid="state-bod">{state.bod}</code></span>}
+            {state.profile && <span>profil <b data-testid="state-profile" className={`badge ${state.profile === "standard" ? "done" : "error"}`}>{state.profile}</b></span>}
+            {!!state.sla_breaches?.length && <span className="err" data-testid="state-sla">SLA překročeno: {state.sla_breaches.join(", ")}</span>}
             <span>rozpočet <code>{state.budget_usd ?? "?"}</code> USD</span>
             <span>útrata <code data-testid="state-spent">{state.spent_usd != null ? state.spent_usd.toFixed(4) : "-"}</code> USD</span>
             <span className="muted">tenant {state.tenant}</span>
@@ -231,6 +256,17 @@ function Thread({ id, user }: { id: string; user: User }) {
         </div>
       </div>
 
+      {interrupt && interrupt.reason === "klasifikace" && (
+        <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id} data-kind="klasifikace">
+          <h3 style={{ marginTop: 0 }}>Klasifikační brána <span data-testid="interrupt-bod">klasifikace</span> <span className="muted">(P1a, zadani.classify)</span></h3>
+          <p>{interrupt.message}</p>
+          <KlasForm qs={(interrupt.metadata?.questions ?? []) as KlasQuestion[]} val={kl} onChange={setKl} prefix="klas" />
+          <label>Poznámka (volitelná)</label>
+          <textarea data-testid="klas-reason" value={reason} onChange={(x) => setReason(x.target.value)} />
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="primary" onClick={() => { const qs = (interrupt.metadata?.questions ?? []) as KlasQuestion[]; start({ resume: [{ interruptId: interrupt.id, status: "resolved", payload: { answers: Object.fromEntries(qs.map((q) => [q.id, !!kl[q.id]])), reason: reason.trim() } }] }); setReason(""); setKl({}); }} data-testid="klas-submit">Odeslat klasifikaci</button>
+          </div>
+        </div>)}
       {interrupt && interrupt.reason === "dialog" && (
         <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id} data-kind="dialog">
           <h3 style={{ marginTop: 0 }}>Account se ptá (kolo <span data-testid="dialog-round">{interrupt.metadata?.round}</span>)</h3>
@@ -241,7 +277,7 @@ function Thread({ id, user }: { id: string; user: User }) {
             <button className="primary" disabled={reason.trim().length < 3} onClick={() => { start({ resume: [{ interruptId: interrupt.id, status: "resolved", payload: { answer: reason.trim() } }] }); setReason(""); }} data-testid="dialog-submit">Odpovědět</button>
           </div>
         </div>)}
-      {interrupt && interrupt.reason !== "dialog" && (
+      {interrupt && interrupt.reason !== "dialog" && interrupt.reason !== "klasifikace" && (
         <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id} data-kind="approval">
           <h3 style={{ marginTop: 0 }}>Rozhodnutí člověka: <span data-testid="interrupt-bod">{interrupt.metadata?.bod}</span> <span className="muted">({interrupt.metadata?.action})</span></h3>
           <p>{interrupt.message} · artefakt <code>{interrupt.metadata?.artifact}</code> · hash <code data-testid="interrupt-hash">{interrupt.metadata?.artifact_hash}</code> · od role <b>{interrupt.metadata?.from}</b>{interrupt.expiresAt && <span className="muted"> · timeout {new Date(interrupt.expiresAt).toLocaleString("cs-CZ")} (bez rozhodnutí → Pozastaveno)</span>}</p>

@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS org.risk_register (
   controls jsonb NOT NULL, evidence_ref jsonb, owner text NOT NULL, status text NOT NULL CHECK (status IN ('open','mitigated','accepted','closed')),
   review_at date NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 """
-RLS_TABLES = ("tenants", "zakazky", "approvals", "agents", "agent_events", "role_autonomy", "risk_register")   # tabulky s tenant_id (role_definitions/eval_gates jsou globální)
+RLS_TABLES = ("tenants", "zakazky", "approvals", "agents", "agent_events", "role_autonomy", "risk_register", "sla_events")   # tabulky s tenant_id (role_definitions/eval_gates jsou globální)
 AUTONOMY_ORDER = ["A0", "A1", "A2", "A3"]
 # metriky.md §6 – podmínka vstupu (per role × tenant); v0 strop A2, A3 jen po v0 (rozhodnutí v0: člověk zůstává u nevratných kroků)
 AUTONOMY_RULES = {"A1": {"min_tasks": 10, "max_reject_rate": 0.2}, "A2": {"min_tasks": 30, "max_reject_rate": 0.10, "eval_layers": ("L2",), "no_violation_A": True}, "A3": {"min_tasks": 100, "max_reject_rate": 0.10, "eval_layers": ("L2",), "no_violation_A": True, "blocked": "A3 až po v0 (autonomie.md: strop v0 = A2)"}}
@@ -105,6 +105,11 @@ def autonomy_check(c, role: str, tenant: str, target: str) -> dict:
     for l in rule.get("eval_layers", ()):
         if not gates.get(l): reasons.append(f"eval gate {l} neprošel nebo chybí")
     if rule.get("no_violation_A") and viol: reasons.append(f"porušení třídy A: {viol}")
+    try:   # P3-4 (T9): high-risk profil zamyká posun autonomie (autonomie.md: pravidlo pass^k vypnuto) – zakázky tenanta s profilem přílohy III
+        hr = c.execute("SELECT count(*) FROM org.zakazky WHERE tenant_id = %s AND profile = ANY(%s) AND status NOT IN ('Dokonceno','Zamitnuto','Odmitnuto')", (tenant, list(HIGH_RISK))).fetchone()[0]
+        metrics["high_risk_zakazky"] = hr
+        if hr: reasons.append(f"high-risk profil (příloha III) u {hr} zakázek tenanta – posun autonomie zamčen (T9)")
+    except Exception: pass
     return {"ok": not reasons, "current": cur, "target": target, "metrics": metrics, "reasons": reasons, "direction": "up"}
 
 
@@ -138,6 +143,46 @@ def agent_insert(zid: str, *, tenant: str, role: str, version: str, process: str
                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (agent_id) DO NOTHING""",
                   (agent_id, tenant, role, version, zid, process, zid, model, version, opa_rev, key_id, sandbox_profile, pod.get("image"), pod.get("node"), pod.get("runtime_class"), pod.get("exit_code"), run.get("cost_usd")))
         c.execute("INSERT INTO org.agent_events (agent_id, role_id, role_version, tenant_id, kind, reason, actor) VALUES (%s, %s, %s, %s, 'created', %s, 'workflow')", (agent_id, role, version, tenant, f"běh role v zakázce {zid}"))
+        return True
+    except Exception:
+        return False
+    finally: c.close()
+
+
+DDL_P34 = """
+ALTER TABLE org.zakazky ADD COLUMN IF NOT EXISTS profile text;
+ALTER TABLE org.zakazky ADD COLUMN IF NOT EXISTS klasifikace jsonb;
+CREATE TABLE IF NOT EXISTS org.sla_events (
+  event_id bigserial PRIMARY KEY, tenant_id text NOT NULL, zakazka_id text NOT NULL, process_id text NOT NULL, bod text NOT NULL,
+  sla_s numeric NOT NULL, elapsed_s numeric NOT NULL, escalated_to text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+"""
+HIGH_RISK = ("high-risk-III/4", "high-risk-III/2", "nejasne")   # autonomie.md: nejasne se do stanoviska bere jako high-risk
+
+
+def zakazka_classify(zid: str, *, tenant: str, profile: str, answers: dict, by: str, reason: str, budget_usd: float) -> bool:
+    """P3-4 (T9, T15): profil rizika zakázky do org.zakazky (+ odpovědi K1–K6) a auditní řádek org.approvals (action zadani.classify)."""
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return False
+    try:
+        import json
+        c.execute(DDL_ZAKAZKY); c.execute(DDL_APPROVALS); c.execute(DDL_P34)
+        c.execute("""INSERT INTO org.zakazky (zakazka_id, tenant_id, budget_usd, status, profile, klasifikace) VALUES (%s, %s, %s, 'Running', %s, %s::jsonb)
+                     ON CONFLICT (zakazka_id) DO UPDATE SET profile = EXCLUDED.profile, klasifikace = EXCLUDED.klasifikace, updated_at = now()""", (zid, tenant, budget_usd, profile, json.dumps(answers)))
+        c.execute("""INSERT INTO org.approvals (approval_id, tenant_id, workflow_instance, process_id, action, artifact_ref, artifact_sha, approver, decision, reason, limits_shown, expires_at, signature, channel)
+                     VALUES (%s, %s, %s, 'P1a', 'zadani.classify', %s, %s, %s, %s, %s, %s::jsonb, now(), '-', 'agui')""",
+                  (__import__("uuid").uuid4().hex, tenant, zid, f"klasifikace://{zid}", profile, by, "reject" if profile == "odmitnout" else "approve", reason, json.dumps(answers)))
+        return True
+    except Exception:
+        return False
+    finally: c.close()
+
+
+def sla_event(zid: str, *, tenant: str, process: str, bod: str, sla_s: float, elapsed_s: float, escalated_to: str) -> bool:
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return False
+    try:
+        c.execute(DDL_P34)
+        c.execute("INSERT INTO org.sla_events (tenant_id, zakazka_id, process_id, bod, sla_s, elapsed_s, escalated_to) VALUES (%s, %s, %s, %s, %s, %s, %s)", (tenant, zid, process, bod, sla_s, elapsed_s, escalated_to))
         return True
     except Exception:
         return False
@@ -189,7 +234,7 @@ def tenants_sync(tenants: list[dict]) -> dict:
     c = _conn("P0_REGISTRY_DSN")
     if c is None: return {"written": False}
     try:
-        c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY); c.execute(DDL_APPROVALS); c.execute(DDL_GOVERNANCE)
+        c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY); c.execute(DDL_APPROVALS); c.execute(DDL_GOVERNANCE); c.execute(DDL_P34)   # P3-4: profile/klasifikace, org.sla_events
         for t in tenants:
             c.execute("""INSERT INTO org.tenants (tenant_id, name, profile, budget_usd, role_pods, namespace) VALUES (%s, %s, %s, %s, %s, %s)
                          ON CONFLICT (tenant_id) DO UPDATE SET name = EXCLUDED.name, profile = EXCLUDED.profile, budget_usd = EXCLUDED.budget_usd, role_pods = EXCLUDED.role_pods, namespace = EXCLUDED.namespace, updated_at = now()""",

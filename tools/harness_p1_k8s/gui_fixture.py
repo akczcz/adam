@@ -34,7 +34,9 @@ def main():
     os.environ.update({"O1_LEDGER": led, "P0_GUI_DIR": a.gui, "P0_TENANT": "acme", "P0_AGUI_RUN_MAX_S": "600",
                        "P0_AGUI_DEV_USERS": json.dumps({"adam": {"password": "adam", "tenant_id": "acme", "roles": ["human", "reviewer"]}, "bea": {"password": "bea", "tenant_id": "beta", "roles": ["human"]}, "bot": {"password": "bot", "tenant_id": "acme", "roles": ["agent"]}, "platform-admin": {"password": "platform-admin", "tenant_id": "platform", "roles": ["human", "platform_admin"]}})})
     os.environ.pop("P0_KC_TOKEN_URL", None); os.environ.pop("P0_KC_JWKS_URL", None); os.environ.pop("P0_BAO_ADDR", None)
+    os.environ["P0_CHANNELS_URL"] = f"http://127.0.0.1:{a.port}/channels"   # P3-4: mock kanálů (e-mail, ticket) namountovaný do téhož serveru
     import app as A
+    import mock_channels
 
     class FakeState:
         def __init__(self, status, output=None):
@@ -48,9 +50,10 @@ def main():
             self.inst[instance_id] = st
             threading.Thread(target=self._run, args=(instance_id,), daemon=True).start()
         def _wait(self, zid, bod, hh, timeout):
-            st = self.inst[zid]; A.ledger("NOTIFY", event="HITL_WAIT", bod=bod, zakazka=zid, artifact_hash=hh, timeout_s=timeout); t0 = time.time()
+            st = self.inst[zid]; sla = float((st["z"].get("sla") or {}).get(bod, 0) or 0); A.ledger("NOTIFY", event="HITL_WAIT", bod=bod, zakazka=zid, artifact_hash=hh, timeout_s=timeout, sla_s=sla); t0 = time.time(); breached = False
             while time.time() - t0 < timeout:
                 if st["paused"]: return "paused"
+                if sla and not breached and time.time() - t0 > sla: breached = True; A.sla_breach_run(st["z"], bod, sla)   # P3-4: SLA eskaluje, nerozhoduje
                 ev = st["events"].pop(f"hitl:{bod}", None)
                 if ev is not None:
                     if ev.get("rejected"): A.ledger("NOTIFY", event="HITL_REJECTED", bod=bod, zakazka=zid, by=ev.get("by"), reason=ev.get("reason"), result="pozastaveno"); return None
@@ -79,6 +82,17 @@ def main():
         def _run(self, zid):
             st = self.inst[zid]; z = st["z"]
             def end(out): st["status"] = "COMPLETED"; st["output"] = out; A.ledger("REGISTRY_ZAKAZKA", zakazka=zid, status=out.get("stav"), written=False)
+            if not z.get("klasifikace"):   # P3-4: dotazník K1–K6 jako interrupt, když nepřišel s poptávkou
+                A.ledger("NOTIFY", event="KLASIFIKACE_WAIT", bod="klasifikace", zakazka=zid, artifact_hash=A.h(z["poptavka"]), timeout_s=3600.0, sla_s=0); t0 = time.time(); ans = None
+                while time.time() - t0 < 3600:
+                    if st["paused"]: return
+                    ev = st["events"].pop("klasifikace", None)
+                    if ev is not None: ans = ev; break
+                    time.sleep(0.2)
+                z = st["z"] = {**z, "klasifikace": ans.get("answers") or {}, "klasifikace_by": ans.get("by"), "klasifikace_reason": ans.get("reason")}
+            kl = A.klasifikace_run(z); z = st["z"] = {**z, "profile": kl["profile"]}
+            if kl["profile"] == "odmitnout": return end({"id": zid, "stav": "Odmitnuto", "bod": "klasifikace", "profile": kl["profile"]})
+            if kl["profile"] == "nejasne" and (t := self._wait(zid, "H1a", kl["hash"], z.get("hitl_timeout_s", 3600))) in (None, "paused"): return (None if t == "paused" else end({"id": zid, "stav": "Pozastaveno", "bod": "H1a"}))
             if os.environ.get("FX_DIALOG", "1") == "1":   # P3-3: Account se nejdřív ptá (1 kolo)
                 hq = self._role(zid, "account", f"otazky://{zid}/1", "human:zadavatel", "# Upřesňující otázky\n\n1. Kam má soubor přijít?\n2. Je rozpočet výchozí?")
                 if hq is None: return
@@ -94,6 +108,7 @@ def main():
             if h1 is None: return
             if (t := self._wait(zid, "H1", h1, z.get("hitl_timeout_s", 3600))) in (None, "paused"): return (None if t == "paused" else end({"id": zid, "stav": "Pozastaveno", "bod": "H1"}))
             A.ledger("PUBLISHED", zakazka=zid, publish_kind="issue", number=7, mode="mock")
+            A.notify_customer_run({"z": z, "channel": "email", "role": "account", "subject": f"Zakázka {zid}: zadání přijato (H1)", "body": f"Zadání zakázky {zid} bylo schváleno člověkem (H1); profil rizika {kl['profile']}."})
             h2 = self._role(zid, "architekt", f"adr://{zid}", "human:vlastnik", "# ADR\n\n| varianta | + | - |\n|---|---|---|\n| A | jednoduchá | – |\n\nRozhodnutí: A.")
             if h2 is None: return
             if (t := self._wait(zid, "H2", h2, z.get("hitl_timeout_s", 3600))) in (None, "paused"): return (None if t == "paused" else end({"id": zid, "stav": "Pozastaveno", "bod": "H2"}))
@@ -107,6 +122,7 @@ def main():
             A.ledger("PDP", action="merge", actor="merge-executor", zakazka=zid, decision={"allow": True}, approval_by="adam"); A.ledger("EXECUTED", action="merge", by="merge-executor", zakazka=zid, artifact_hash=hp, applied=[])
             if (t := self._wait(zid, "H5", hp, z.get("hitl_timeout_s", 3600))) in (None, "paused"): return (None if t == "paused" else end({"id": zid, "stav": "Pozastaveno", "bod": "H5"}))
             A.ledger("PDP", action="deploy", actor="deploy-executor", zakazka=zid, decision={"allow": True}, approval_by="adam"); A.ledger("EXECUTED", action="deploy", by="deploy-executor", zakazka=zid, artifact_hash=hp, applied=[])
+            A.notify_customer_run({"z": z, "channel": "ticket", "role": "sre", "body": f"Nasazení zakázky {zid} provedeno (H5 schválil člověk)."})
             end({"id": zid, "stav": "Dokonceno", "artefakty": [f"issue://{zid}", f"adr://{zid}", f"pr://{zid}", f"review://{zid}"], "cost_usd": 0.016})
         def get_workflow_state(self, zid, fetch_payloads=False):
             st = self.inst.get(zid)
@@ -132,7 +148,7 @@ def main():
                 "approvals": [{"decided_at": "", "tenant_id": e.get("tenant") or "acme", "workflow_instance": e["zakazka"], "process_id": e.get("bod"), "action": e.get("bod"), "decision": "approve", "approver": e.get("by"), "reason": e.get("reason"), "channel": e.get("channel")} for e in L if e.get("kind") == "APPROVAL_RAISED"],
                 "agent_events": [], "risk_register": [],
                 "finops": {"tenants": [{"tenant_id": t, "budget_usd": 20.0, "spent_usd": 17.0 if t == "beta" else 1.0, "pct": 85.0 if t == "beta" else 5.0, "alert": t == "beta", "status": "active"} for t in ten], "zakazky": [], "by_role": {"account": 0.1}, "window": "30d"},
-                "governance_report": {"generated_at": "now", "tenant_view": u["tenant"], "zakazky": [{"zakazka_id": e["zakazka"], "tenant_id": e.get("tenant") or "acme", "status": "Running", "missing": ["T15:klasifikace"], "spent_usd": 0.0, "budget_usd": 20.0} for e in zs], "roles": [], "summary": {"zakazky": len(zs), "with_gaps": len(zs), "complete": 0, "t_items": {"T15": "klasifikace"}}},
+                "governance_report": {"generated_at": "now", "tenant_view": u["tenant"], "zakazky": [{"zakazka_id": e["zakazka"], "tenant_id": e.get("tenant") or "acme", "status": "Running", "missing": (["T15:klasifikace"] if not any(k.get("kind") == "KLASIFIKACE" and k.get("zakazka") == e["zakazka"] for k in L) else []) + ["T11:risk_register"], "spent_usd": 0.0, "budget_usd": 20.0} for e in zs], "roles": [], "summary": {"zakazky": len(zs), "with_gaps": len(zs), "complete": 0, "t_items": {"T15": "klasifikace"}}},
                 "export": [{"table": "zakazky", "tenant_id": e.get("tenant") or "acme", "zakazka_id": e["zakazka"]} for e in zs]}
         return {"tenant": u["tenant"], "result": data.get(name, [])}
     @fx.get("/export.jsonl", response_class=PlainTextResponse)
@@ -140,6 +156,7 @@ def main():
         u = _u(req); ten = ["acme", "beta", "platform"] if u["tenant"] == "platform" else [u["tenant"]]
         return "\n".join(json.dumps({"table": "zakazky", "tenant_id": e.get("tenant") or "acme", "zakazka_id": e["zakazka"]}) for e in A._ledger() if e.get("kind") == "ZAKAZKA_START" and (e.get("tenant") or "acme") in ten) + "\n"
     A.app.include_router(fx); A.agui.GOV_URL = f"http://127.0.0.1:{a.port}/govfake"
+    A.app.mount("/channels", mock_channels.app)
     A.agui.CTX["autonomy"] = lambda role, tenant, level, u, reason: ({"ok": True, "current": "A0", "target": level, "written": True, "metrics": {"tasks": 12}} if tenant == "acme" else {"ok": False, "current": "A0", "target": level, "reasons": ["úkolů 0 < 10"], "metrics": {"tasks": 0}})
     A.agui.CTX["stop_tenant"] = lambda tenant, u, reason: {"ok": True, "tenant": tenant, "paused": [z for z, st_ in A._client.inst.items() if st_["z"].get("tenant") == tenant and not st_["paused"] and not [st_.__setitem__("paused", True)]], "pods_killed": [], "keys_blocked": 0, "registry": False}
     A.agui.CTX["resume_tenant"] = lambda tenant, u, reason: {"ok": True, "tenant": tenant, "resumed": [z for z, st_ in A._client.inst.items() if st_["z"].get("tenant") == tenant and st_["paused"] and not [st_.__setitem__("paused", False)]], "keys_unblocked": 0, "registry": False}
