@@ -85,6 +85,9 @@ Detail v [standardy.md](standardy.md). Pět věcí, které mění návrh (2026-1
   `samplingRate` default 0.0001.
 - **agentgateway je nejbohatší zdroj**: `gen_ai.*` spany, cache tokeny, cost USD metrika, `jwt.sub` a `extauthz.*`
   jako CEL pole, propagace k modelu i MCP (i do `_meta`).
+  **Ověřeno na AKS 2026-10-27 (P3-6 E4)**: `config.tracing` + `fields.add` z `apiKey.<metadata>` a `llm.cost.total`, `randomSampling: "true"`
+  → span každého LLM requestu v ClickHouse `otel.otel_traces` s tenantem, zakázkou a rolí; součet ceny per zakázka == `budget_usage` → per-request
+  ledger pro FinOps a audit (Governance MCP nástroj `ledger`, GUI FinOps). Tracing se načítá jen při startu gateway.
 - **Model na Azure Foundry žádné spany neposílá**; Claude Platform má beta serverové spany do telemetry destination.
   MCP Python SDK v2 má OTEL default on, TypeScript SDK nic, A2A SDK nepropaguje.
 
@@ -122,6 +125,7 @@ Dapr Workflow v řetězu, LLM-as-judge a kalibrace (L2/L5), Langfuse jako druhý
 - [x] ~~Evaluační frameworky pro trajektorie agentů, metodika~~ → [evaluace.md](evaluace.md), 2026-10-23.
 
 ## Changelog
+- 2026-10-27: P3-6 E4 – per-request ledger ze spanů agentgateway v ClickHouse (tenant/zakázka/role/cena) změřen na AKS; FinOps pohled v Governance MCP a GUI.
 - 2026-10-23: rozhodnuto (Adam): Collector + ClickHouse + Prometheus, Langfuse druhý konzument, Inspect AI + promptfoo + MLflow.
 - 2026-10-23: harnessy O1 (9/9) a O2 (6/6) změřeny.
 - 2026-10-23: síto kolo 1 – 15 backendů; návrh Collector + ClickHouse + Prometheus, Langfuse jako druhý konzument, Grafana jen UI.

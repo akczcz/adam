@@ -174,6 +174,40 @@ def t_report(c, u, a):
     return {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "tenant_view": u["tenant"], "zakazky": items, "roles": role_items, "summary": {"zakazky": len(items), "with_gaps": n_missing, "complete": len(items) - n_missing, "t_items": T_ITEMS}}
 
 
+CH_URL = os.environ.get("GOV_CLICKHOUSE_URL", "")   # P3-6 E4: spany agentgateway (per request: tenant, zakázka, role, llm.cost.total) v ClickHouse
+
+
+def clickhouse(sql: str, params: dict) -> list[dict]:
+    import httpx
+    r = httpx.post(CH_URL.rstrip("/") + "/", params={f"param_{k}": v for k, v in params.items()}, content=sql, timeout=30)
+    if r.status_code != 200: raise HTTPException(502, f"ClickHouse: {r.text[:200]}")
+    return [json.loads(l) for l in r.text.splitlines() if l.strip()]
+
+
+@tool("ledger", "Per-request ledger z gateway (P3-6 E4): spany agentgateway v ClickHouse – requesty, tokeny a cena per tenant/zakázka/role za N dní, nezávisle na budget_usage; rozdíl proti org.zakazky.spent_usd")
+def t_ledger(c, u, a):
+    if not CH_URL: return {"rows": [], "by_zakazka": [], "error": "GOV_CLICKHOUSE_URL není nastaven"}
+    days = int(a.get("days", 30)); params = {"days": days}
+    q = ("SELECT SpanAttributes['tenant'] AS tenant_id, SpanAttributes['zakazka'] AS zakazka_id, SpanAttributes['role'] AS role, count() AS requests, "
+         "round(sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), 6) AS cost_usd, sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])) AS input_tokens, "
+         "sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.output_tokens'])) AS output_tokens, toString(min(Timestamp)) AS first, toString(max(Timestamp)) AS last "
+         "FROM otel.otel_traces WHERE SpanAttributes['zakazka'] != '' AND Timestamp > now() - INTERVAL {days:UInt32} DAY")
+    if u["tenant"] != "platform": q += " AND SpanAttributes['tenant'] = {tenant:String}"; params["tenant"] = u["tenant"]   # stejná hranice jako RLS org.*: jen vlastní tenant
+    q += " GROUP BY tenant_id, zakazka_id, role ORDER BY last DESC LIMIT 1000 FORMAT JSONEachRow"
+    rws = clickhouse(q, params)
+    spent = {r["zakazka_id"]: (float(r["spent_usd"] or 0), r["status"]) for r in rows(c, "SELECT zakazka_id, spent_usd, status FROM org.zakazky")}   # RLS org_reader
+    by_z = {}
+    for r in rws:
+        z = by_z.setdefault(r["zakazka_id"], {"zakazka_id": r["zakazka_id"], "tenant_id": r["tenant_id"], "requests": 0, "ledger_usd": 0.0, "roles": {}})
+        z["requests"] += int(r["requests"]); z["ledger_usd"] = round(z["ledger_usd"] + float(r["cost_usd"]), 6); z["roles"][r["role"]] = float(r["cost_usd"])
+    for z in by_z.values():
+        sp = spent.get(z["zakazka_id"]); z["spent_usd"] = sp[0] if sp else None; z["status"] = sp[1] if sp else None
+        z["delta_usd"] = round(z["ledger_usd"] - sp[0], 6) if sp else None
+    by_t = {}
+    for z in by_z.values(): by_t[z["tenant_id"]] = round(by_t.get(z["tenant_id"], 0.0) + z["ledger_usd"], 6)
+    return {"rows": rws, "by_zakazka": sorted(by_z.values(), key=lambda x: x["zakazka_id"], reverse=True), "by_tenant": by_t, "window_days": days, "source": "agentgateway spany (tracing fields tenant/zakazka/role/llm.cost.total) → OTEL Collector → ClickHouse otel.otel_traces"}
+
+
 @tool("export", "Export JSONL všech viditelných řádků org.* pro deployera (čl. 13(3)(f)) – RLS vrací jen tenant volajícího")
 def t_export(c, u, a):
     out = []

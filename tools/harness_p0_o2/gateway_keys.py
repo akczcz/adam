@@ -21,6 +21,7 @@ import httpx
 import yaml
 
 import role_pod
+from finops import CAP_BUDGET
 
 SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 _CACHE: dict = {}
@@ -103,10 +104,13 @@ def block_tenant(tenant, ledger=None, block=True):
             md = k.get("metadata") or {}
             if md.get("tenant") != tenant: continue
             if block:
+                cap = next((b["limit"]["amount"] for b in k.get("budgets", []) if b.get("name") == CAP_BUDGET), None)
+                if cap is not None and not md.get("cap_usd"): md["cap_usd"] = str(cap)   # P3-6 E4 nález: resume vracel jen šablonu rolegen → strop zakázky z klíče zmizel
                 for b in k.get("budgets", []): b["limit"]["amount"] = 0
                 md["blocked"] = "tenant-stop"
             else:
                 k["budgets"] = [dict(b) for b in (tpl.get(md.get("role")) or {}).get("budgets", k.get("budgets", []))]; md.pop("blocked", None)
+                if md.get("cap_usd"): k["budgets"].append(cap_budget(float(md.pop("cap_usd"))))
             n += 1
         cm["data"] = {"keys.yaml": yaml.safe_dump(cur, sort_keys=False, allow_unicode=True)}
         try: role_pod.k8s("PUT", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys", cm); break
@@ -131,7 +135,7 @@ def block_tenant(tenant, ledger=None, block=True):
     return n
 
 
-CAP_BUDGET = "zakazka-30d-block"   # P3-6 (E3): strop zakázky i v gateway – rozpočet per klíč = strop zakázky (agentgateway 1.6 rozpočty jen per klíč; součet napříč rolemi hlídá orchestrátor budget_gate)
+# CAP_BUDGET (finops) – P3-6 (E3): strop zakázky i v gateway – rozpočet per klíč = strop zakázky (agentgateway 1.6 rozpočty jen per klíč; součet napříč rolemi hlídá orchestrátor budget_gate)
 
 
 def cap_budget(cap_usd):

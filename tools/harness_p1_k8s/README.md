@@ -459,6 +459,37 @@ resume dostal 429 – sonda po odblokování vracela 200 hned, protože replika 
 je proto per-key pojistka (přestřel ≤ N klíčů × strop), součet drží `budget_gate`; hot reload rozpočtů bez restartu potvrzen (útrata zachována
 při změně `amount`).
 
+## P3-6 E4 – per-request ledger z gateway (2026-10-27, AKS, `--step p3-6` = p3-5 + E3a–c + E4a–c)
+
+- **Zdroj**: agentgateway `config.tracing` (OTLP HTTP na `otel-collector:4318`, `randomSampling: "true"` = každý request i bez inbound
+  `traceparent`, `fields.add` `tenant`/`zakazka`/`role` z `apiKey.<metadata>` klíče + `llm.cost.total`) → Collector → ClickHouse
+  `otel.otel_traces` (`ServiceName = agentgateway`). Ledger tedy vzniká mimo tabulku `budget_usage` – nezávislý zdroj pro FinOps a audit.
+  `config.tracing` se načítá **jen při startu** (hot reload jen klíče/rozpočty) → harness při `e4` restartuje pody gateway (smazáním, ne `rollout restart`).
+- **Pohled**: Governance MCP nástroj `ledger` (`GOV_CLICKHOUSE_URL`, ClickHouse HTTP s parametry): řádky per tenant × zakázka × role
+  (requesty, tokeny, cena, první/poslední request, okno N dní), součty per zakázka a tenant, `delta_usd` = ledger − `org.zakazky.spent_usd`;
+  hranice tenanta stejná jako RLS `org.*` (bea vidí jen beta, platform-admin oba). GUI FinOps: tabulky `finops-ledger-zakazky` a `finops-ledger` + zdroj.
+- **Harness**: E4a součet `llm.cost.total` per zakázka tohoto běhu == útrata klíčů zakázky v `budget_usage` (± 5 % + 0,002 USD), každý span nese
+  tenant/zakázku/roli; E4b nástroj pro platform-admin a bea, delta u dokončených/zastavených zakázek běhu, GUI tabulky s řádky.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E4a | spany každého LLM requestu rolí v ClickHouse s tenant/zakazka/role/llm.cost.total; součet per zakázka == budget_usage ± 5 % + 0,002 USD | ✅ 15 řádků tenant × zakázka × role (ServiceName agentgateway), 9 zakázek běhu s útratou, diff 0,0 USD u všech (např. P31-205943-1 0,060311 vs. 0,060311; beta 0,235217 vs. 0,235217); každý span nese tenant/zakázku/roli |
+| E4b | nástroj `ledger` (platform-admin acme+beta, bea jen beta), delta ledger vs. org.zakazky ≤ tolerance u Dokonceno/Pozastaveno, GUI tabulky ledgeru | ✅ nástroj 200/200, platform-admin vidí acme + beta, bea jen beta; delta ledger vs. org.zakazky 0,0 USD u všech 9 zakázek běhu (Dokonceno/Pozastaveno/Running); GUI finops-ledger 15 řádků, finops-ledger-zakazky 9, zdroj „agentgateway spany → OTEL Collector → ClickHouse“ |
+| E4c | čas | ℹ️ E4 33,5 s (celý p3-6 49 min) |
+
+Výsledek: **53/53 + 8 INFO** (`measure` run 40581766759, `results/p3-6-20261027-214121.json`; 3 běhy). Nálezy:
+1. **Dvojí započtení útraty od E3** – první běh: ledger per zakázka byl přesně **polovina** `budget_usage` (0,0603 vs. 0,1206 USD). Příčina ne v ledgeru,
+   ale ve `finops.spend` a v harnessu: sčítaly všechny řádky `budget_usage` klíče končící `-30d-block`, a od E3 má každý klíč dva takové rozpočty
+   (`<role>-30d-block` + `zakazka-30d-block`) – gateway účtuje tentýž request do obou. `org.zakazky.spent_usd`, `budget_gate` i O3e/P26b tedy od E3
+   ukazovaly dvojnásobek (O3e prošel, protože porovnával dva stejně chybné součty). Oprava: útrata jen z rozpočtu role (`finops.is_role_usage`).
+   Přesně ten případ, kvůli kterému E4 existuje: nezávislý zdroj odhalí chybu ve zdroji pravdy.
+2. **Strop zakázky zmizel po resume tenanta** – `block_tenant(False)` vracel klíčům jen šablonu rolegen (bez `zakazka-30d-block`) → u zakázek
+   beta po stopu/resume poměr 1,5× místo 2×. Oprava: strop se při blokaci uloží do `metadata.cap_usd` klíče a po resume vrátí.
+3. **O3b měřil i čekání na blokaci**: stop tenanta od E3 čeká, až blokace klíčů platí na všech replikách (~45–80 s), a zánik podu se měřil až po
+   návratu stopu (81 s > 60 s). Zánik podu se teď sleduje souběžně od odeslání stopu (6,8 s; stop 44,9 s).
+4. **Historie v `org.*` roste přes měření** (stejná DB, 200+ zakázek): U2c – beta/vývojář má ≥ 10 úkolů, posun A0→A1 je legitimní → harness bere roli
+   beta s nejmenší historií a očekávání odvozuje z pravidla (úkolů < 10 ⇒ odmítnut); U2a – nástroj `zakazky` vrací max 200 řádků.
+
 ## Spuštění
 
 ```bash

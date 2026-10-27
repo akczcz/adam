@@ -177,6 +177,14 @@ Klíče role × zakázka v ConfigMapě `agentgateway-keys` nesou rozpočet `zaka
 `rozpocet` přepíše rozpočty (`set_cap`) a sondou počká, až všechny repliky klíč pustí. Stop tenanta čeká, až blokace klíčů platí na všech replikách
 (429), resume na 200 – ConfigMap se do replik propaguje nezávisle (~40–70 s).
 
+## P3-6 E4: per-request ledger z gateway (2026-10-27)
+
+`agentgateway.yaml` `config.tracing`: OTLP HTTP na `otel-collector:4318`, `randomSampling: "true"` (span každého requestu i bez inbound trace),
+`fields.add` `tenant`/`zakazka`/`role` z metadat klíče a `llm.cost.total` → ClickHouse `otel.otel_traces`. Tracing se načítá **jen při startu**
+gateway (klíče a rozpočty hot reload) – změna = restart podů (smazáním; `rollout restart` se hádá s Fluxem). Governance MCP má
+`GOV_CLICKHOUSE_URL=http://clickhouse:8123` (nástroj `ledger`, hranice tenanta jako RLS). Nález: od E3 má každý klíč dva rozpočty
+`*-30d-block` – útrata zakázky se počítá jen z rozpočtu role, jinak dvojnásobek (viz `tools/harness_p1_k8s/README.md`).
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).

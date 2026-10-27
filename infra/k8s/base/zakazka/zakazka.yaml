@@ -445,6 +445,7 @@ spec:
         - {name: GOV_DSN, value: "postgresql://org_reader:org_reader@postgres:5432/org"}   # role org_reader (jen SELECT, RLS); heslo dev – P3-6 ESO/OpenBao
         - {name: GOV_KC_JWKS_URL, value: http://keycloak:8080/realms/p0/protocol/openid-connect/certs}
         - {name: GOV_KC_ISSUER, value: http://keycloak:8080/realms/p0}
+        - {name: GOV_CLICKHOUSE_URL, value: http://clickhouse:8123}   # P3-6 E4: per-request ledger ze spanů gateway (otel.otel_traces); uživatel default bez hesla – dev
         ports:
         - {containerPort: 9910, name: http}
         readinessProbe:

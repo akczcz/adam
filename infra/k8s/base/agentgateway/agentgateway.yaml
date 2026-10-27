@@ -30,6 +30,17 @@ data:
             zakazka: '"x-zakazka" in request.headers ? request.headers["x-zakazka"] : ""'
             role: 'apiKey != null ? string(apiKey.role) : ""'
             sni: 'destination.hostname'    # P2-4: egress CONNECT – cílový host (SNI) v logu
+      tracing:                            # P3-6 E4: per-request ledger – span každého LLM requestu (i bez inbound traceparent) s tenantem, zakázkou, rolí a cenou → Collector → ClickHouse
+        otlpEndpoint: http://otel-collector:4318
+        otlpProtocol: http
+        clientSampling: "true"
+        randomSampling: "true"
+        fields:
+          add:
+            tenant: 'apiKey != null ? string(apiKey.tenant) : ""'
+            zakazka: 'apiKey != null ? string(apiKey.zakazka) : ""'
+            role: 'apiKey != null ? string(apiKey.role) : ""'
+            llm.cost.total: llm.cost.total
     llm:
       port: 4100
       models:
