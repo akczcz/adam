@@ -12,6 +12,13 @@ import os
 import time
 
 NANO = 1e9   # agentgateway ukládá USD v nanodolarech, okna v ms (harness O-2 B3)
+CAP_BUDGET = "zakazka-30d-block"   # P3-6 (E3): druhý rozpočet každého klíče = strop zakázky; tentýž request se počítá do obou → útrata jen z rozpočtu role
+
+
+def is_role_usage(budget_id: str, window: str = "30d") -> bool:
+    """Řádek budget_usage rozpočtu ROLE (`<role>-<window>-block`), ne stropu zakázky (`zakazka-30d-block`, P3-6 E3) – nález E4: ledger z gateway
+    ukázal, že součet všech `-30d-block` řádků klíče počítal každý request dvakrát."""
+    return budget_id.endswith(f"-{window}-block") and not budget_id.endswith(CAP_BUDGET)
 
 
 def _conn(dsn_env):
@@ -30,7 +37,7 @@ def spend(zid: str, key_hashes: dict[str, str], window: str = "30d") -> dict | N
     finally: c.close()
     by_role = {}
     for role, h in key_hashes.items():
-        used = [u for bid, u, unit in rows if h in bid and bid.endswith(f"-{window}-block") and unit == "USD"]
+        used = [u for bid, u, unit in rows if h in bid and is_role_usage(bid, window) and unit == "USD"]
         by_role[role] = round(sum(used) / NANO, 6)
     return {"total_usd": round(sum(by_role.values()), 6), "by_role": by_role, "window": window, "rows": len(rows), "ts": time.time()}
 

@@ -87,6 +87,12 @@ INFRA = ROOT / "infra"
 RESULTS, LOGS = HERE / "results", HERE / "logs"
 M1, O1 = T / "harness_memory_m1", T / "harness_observability_o1"
 NS = "platform-data"
+CAP_BUDGET = "zakazka-30d-block"   # P3-6 E3: druhý rozpočet klíče (strop zakázky) – útrata klíče jen z rozpočtu role, jinak dvojí započtení (nález E4)
+
+
+def role_usage_usd(rows, h):
+    """Útrata klíče (hash h) v USD z řádků budget_usage (budget_id, used_amount): jen rozpočet role `<role>-30d-block`, ne `zakazka-30d-block`."""
+    return sum(u / 1e9 for bid, u in rows if h in bid and not bid.endswith(CAP_BUDGET))
 SPIRE_SERVER_BIN = "/opt/spire/bin/spire-server"   # oficiální obraz ghcr.io/spiffe/spire-server (AKS): binárka není v PATH
 PG_PORT, CH_HTTP, CH_NATIVE, OTLP_GRPC, OTLP_HTTP = 30432, 30123, 30900, 30317, 30318
 PG_PASSWORD = "platform-dev"   # infra/k8s/base/postgres/postgres.yaml – dev heslo jen pro kind
@@ -687,7 +693,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         mine = [k for k in keys_cm if (k.get("metadata") or {}).get("zakazka") == zb]; hashes = {(k.get("metadata") or {}).get("role"): k["keyHash"].split(":", 1)[1] for k in mine}
         with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c:
             rows = c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()
-        spend_b = {r_: next((u / 1e9 for bid, u in rows if h in bid), 0.0) for r_, h in hashes.items()}
+        spend_b = {r_: role_usage_usd(rows, h) for r_, h in hashes.items()}
         gate_b = next((e for e in L if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zb), {})
         rep.add("T1d", "Klíče gateway per tenant: klíče zakázky beta jsou k-beta-<zakazka>-<role> s metadata.tenant=beta a user_id beta/…, vydané z šablony s placeholderem {tenant}; útrata account v budget_usage > 0; budget_gate zná strop tenanta (org.tenants.budget_usd 20) a útratu tenanta", "PASS" if len(mine) >= 4 and all((k.get("metadata") or {}).get("tenant") == "beta" and (k.get("metadata") or {}).get("name", "").startswith("k-beta-") and (k.get("metadata") or {}).get("user_id", "").startswith("beta/") for k in mine) and spend_b.get("account", 0) > 0 and (gate_b.get("tenant") or {}).get("budget_usd") == 20 else "FAIL", {"keys": [(k.get("metadata") or {}).get("name") for k in mine], "spend_usd": {k: round(v, 6) for k, v in spend_b.items()}, "gate": {k: gate_b.get(k) for k in ("role", "tenant", "exceeded")}})
         def rls(tenant):
@@ -727,7 +733,7 @@ def dialog_then(g, zid, timeout_s):
 def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_root_token):
     """U-2 (P3-3): GUI nad celou firmou – pohledy z Governance MCP (org.*, RLS), posun autonomie, stop tenanta, governance report, export, dialog Account."""
     import psycopg, yaml as _yg
-    sys.path.insert(0, str(HERE)); from gui_checks import Gui
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui, ROLES
     rg = __import__("importlib.util").util.spec_from_file_location("regm", ROOT / "tools/role_evals/registry.py"); rgm = __import__("importlib.util").util.module_from_spec(rg); rg.loader.exec_module(rgm)
     def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
     def gov(token, name, args=None): r = http("POST", f"{APP}/agui/gov/tools/{name}", json=args or {}, headers={"Authorization": f"Bearer {token}"}, timeout=30); return r.status_code, (r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text[:200])
@@ -754,14 +760,20 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         pages = {"firma": g.page_rows("firma", ["roles-table", "tenants-table"]), "registr": g.page_rows("registr", ["agents-table", "events-table"]), "finops": g.page_rows("finops", ["finops-tenants", "finops-zakazky"]), "audit": g.page_rows("audit", ["approvals-table"])}
         rep.add("U2a", "Každý pohled GUI (Firma, Registr agentů, FinOps, Governance, Audit) čte přes Governance MCP (org_reader, token člověka, RLS) z org.*, ne z ledgeru harnessu: počty řádků z API == DB (tenant platform), tabulky v GUI vykreslené; org.agents nově plní workflow po každém běhu role (REGISTRY_AGENT)", "PASS" if all(api[t][0] == 200 for t in api) and cnt["tenants"] == db["tenants"] and cnt["zakazky"] == db["zakazky"] and cnt["approvals"] == min(db["approvals"], 200) and cnt["agents"] == min(db["agents"], 200) and len(wf_rows) >= 4 and pages["firma"]["roles-table"] >= 5 and pages["firma"]["tenants-table"] == db["tenants"] and pages["registr"]["agents-table"] >= 4 and pages["audit"]["approvals-table"] >= 4 and pages["finops"]["finops-tenants"] == db["tenants"] else "FAIL", {"api_http": {t: api[t][0] for t in api}, "api_counts": cnt, "db_counts": db, "workflow_agent_rows": len(wf_rows), "seeded_history": n_seed, "pages": pages})
         # U2c – autonomie: beta vyvojar A0→A1 bez podmínek odmítnut (úkolů < 10), acme account A0→A1 zapsán (historie ≥ 10 úkolů), acme account A1→A2 odmítnut (L2 gate chybí)
-        r1 = g.autonomy("vyvojar", "beta", "A1", "Zkouška posunu bez splněných podmínek – musí být odmítnut.")
+        with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:   # P3-6 nález: historie beta/vývojář přes měření narostla na ≥ 10 úkolů → posun legitimní; role s nejmenší historií, očekávání z pravidla (úkolů < 10)
+            hist = {r_[0]: r_[1] for r_ in c.execute("SELECT role_id, count(*) FROM org.agents WHERE tenant_id = 'beta' GROUP BY role_id").fetchall()}
+            cur_b = {r_[0]: r_[1] for r_ in c.execute("SELECT role_id, level FROM org.role_autonomy WHERE tenant_id = 'beta'").fetchall()}
+            apd_b = {r_[0]: r_[1] for r_ in c.execute("SELECT decision, count(*) FROM org.approvals WHERE tenant_id = 'beta' GROUP BY decision").fetchall()}
+        rej_b = apd_b.get("reject", 0) / max(1, apd_b.get("approve", 0) + apd_b.get("reject", 0))
+        role_b = min((r_ for r_ in ROLES if cur_b.get(r_, "A0") == "A0"), key=lambda r_: hist.get(r_, 0), default="vyvojar"); tasks_b = hist.get(role_b, 0); expect_b = tasks_b >= 10 and rej_b <= 0.2
+        r1 = g.autonomy(role_b, "beta", "A1", "Zkouška posunu bez splněných podmínek – musí být odmítnut." if not expect_b else "Role má ≥ 10 úkolů bez odmítnutí – posun na A1 podle pravidla.")
         r2 = g.autonomy("account", "acme", "A1", "Account prošel evaly a má přes 10 běhů bez odmítnutí – posun na A1.")
         r3 = g.autonomy("account", "acme", "A2", "Zkouška A2 – podmínky nesplněny (L2 gate, počet úkolů).")
         with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
             ra = c.execute("SELECT level, changed_by, reason FROM org.role_autonomy WHERE role_id = 'account' AND tenant_id = 'acme'").fetchone()
             ev = c.execute("SELECT count(*) FROM org.agent_events WHERE kind = 'autonomy_changed' AND role_id = 'account' AND tenant_id = 'acme'").fetchone()[0]
-            rb = c.execute("SELECT level FROM org.role_autonomy WHERE role_id = 'vyvojar' AND tenant_id = 'beta'").fetchone()
-        rep.add("U2c", "Posun autonomie z GUI (metriky.md §6): beta/vyvojar A0→A1 odmítnut (úkolů < 10), acme/account A0→A1 zapsán s důvodem (org.role_autonomy + agent_events autonomy_changed, changed_by = Keycloak sub), acme/account A1→A2 odmítnut (eval gate L2 chybí, úkolů < 30); důvod povinný, posun jen o úroveň", "PASS" if not r1["ok"] and r2["ok"] and not r3["ok"] and ra and ra[0] == "A1" and ev >= 1 and rb is None else "FAIL", {"beta_vyvojar_A1": r1, "acme_account_A1": r2, "acme_account_A2": r3, "db": {"account_acme": list(ra) if ra else None, "events": ev, "vyvojar_beta": rb}})
+            rb = c.execute("SELECT level FROM org.role_autonomy WHERE role_id = %s AND tenant_id = 'beta'", (role_b,)).fetchone()
+        rep.add("U2c", "Posun autonomie z GUI (metriky.md §6): beta/<role s nejmenší historií> A0→A1 odmítnut při úkolů < 10 (zapsán při ≥ 10 – pravidlo, ne stav DB), acme/account A0→A1 zapsán s důvodem (org.role_autonomy + agent_events autonomy_changed, changed_by = Keycloak sub), acme/account A1→A2 odmítnut (eval gate L2 chybí, úkolů < 30); důvod povinný, posun jen o úroveň", "PASS" if r1["ok"] == expect_b and r2["ok"] and not r3["ok"] and ra and ra[0] == "A1" and ev >= 1 and ((rb is None) if not expect_b else (rb and rb[0] == "A1")) else "FAIL", {"beta_role": {"role": role_b, "tasks": tasks_b, "reject_rate": round(rej_b, 3), "expect_ok": expect_b}, "beta_A1": r1, "acme_account_A1": r2, "acme_account_A2": r3, "db": {"account_acme": list(ra) if ra else None, "events": ev, "beta_role_level": rb}})
         # U2e/U2f – governance report a export (platform-admin vidí vše, bea jen beta)
         rp = g.report(); exp_b = http("GET", f"{APP}/agui/gov/export.jsonl", headers={"Authorization": f"Bearer {tb}"}, timeout=60).text
         lines_b = [json.loads(l) for l in exp_b.splitlines() if l.strip()]; tenants_b = {l.get("tenant_id") for l in lines_b if l.get("tenant_id")}
@@ -861,17 +873,24 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         t_pod = time.time()
         while time.time() - t_pod < 120 and not any((p_.get("status") or {}).get("phase") == "Running" for p_ in kj("-n", "tenant-beta", "get", "pods", "-l", f"platform.zakazka={zb}").get("items", [])): time.sleep(3)   # SIGTERM má smysl až v běžícím kontejneru
         time.sleep(8); st_a0 = status(za)
-        t_s = time.time(); stp = http("POST", f"{APP}/agui/gov/tenant/beta/stop", json={"reason": "O3b: stop tenanta beta uprostřed běžící role vývojáře (test checkpointu)."}, headers={"Authorization": f"Bearer {tp}"}, timeout=120); stp_j = stp.json() if stp.status_code == 200 else {"http": stp.status_code}
-        pods_after = pods_before
-        while time.time() - t_s < 90 and pods_after: pods_after = pods_of("tenant-beta", zb); time.sleep(2)
-        gone_s = round(time.time() - t_s, 1); t_w = time.time(); pod_v = {}
+        import threading
+        t_s = time.time(); watch = {"pods": pods_before, "gone_s": None}
+        def _watch():   # P3-6 nález: stop čeká na blokaci klíčů na všech replikách (~40–80 s) – zánik podu se měří souběžně, od odeslání stopu, ne až po návratu
+            while time.time() - t_s < 150 and watch["pods"]:
+                watch["pods"] = pods_of("tenant-beta", zb)
+                if not watch["pods"]: watch["gone_s"] = round(time.time() - t_s, 1); break
+                time.sleep(2)
+        th = threading.Thread(target=_watch, daemon=True); th.start()
+        stp = http("POST", f"{APP}/agui/gov/tenant/beta/stop", json={"reason": "O3b: stop tenanta beta uprostřed běžící role vývojáře (test checkpointu)."}, headers={"Authorization": f"Bearer {tp}"}, timeout=180); stp_j = stp.json() if stp.status_code == 200 else {"http": stp.status_code}
+        stop_s = round(time.time() - t_s, 1); th.join(max(1.0, 150 - (time.time() - t_s)))
+        pods_after = watch["pods"]; gone_s = watch["gone_s"] if watch["gone_s"] is not None else round(time.time() - t_s, 1); t_w = time.time(); pod_v = {}
         while time.time() - t_w < 120 and not pod_v:   # ROLE_POD zabitého podu zapíše pod_run až po 404 a pokusu o logy (řádově desítky s)
             L = led(); pod_v = next((e for e in reversed(L) if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "vyvojar" and e.get("ts", 0) > t_s - 1), {})
             if not pod_v: time.sleep(5)
         L = led(); ck = [e for e in L if e["kind"] == "ROLE_CHECKPOINT" and e["zakazka"] == zb]; killed = [e for e in L if e["kind"] == "ROLE_POD_KILLED"]
         killed_mine = [p_ for e in killed if e["zakazka"] == zb for p_ in e.get("pods", [])]; killed_acme = [e for e in killed if e["zakazka"] == za and e.get("ts", 0) > t_s - 1]
         st_b, st_a1 = status(zb), status(za)
-        rep.add("O3b", "Stop tenanta beta při běžící roli vývojář v Kata podu (autonomie.md T5, 60 s grace): workflow SUSPENDED, pod dostal SIGTERM → role_runner nahrál checkpoint (artifacts/work sync-up, ROLE_CHECKPOINT) a poslal výsledek stopped → pod pryč ≤ 60 s (ROLE_POD_KILLED), ROLE_POD stopped=True s checkpointem; zakázka acme běží dál (RUNNING, žádný její pod zabit)", "PASS" if ws["status"] == "running" and pods_before and stp.status_code == 200 and zb in (stp_j.get("paused") or []) and not pods_after and gone_s <= 60 and set(killed_mine) & set(pods_before) and ck and ck[0].get("written", 0) >= 0 and pod_v.get("stopped") and (pod_v.get("checkpoint") or {}).get("files") is not None and st_b.get("status") == "SUSPENDED" and st_a0.get("status") == "RUNNING" and st_a1.get("status") == "RUNNING" and not killed_acme else "FAIL", {"subagent": ws, "pods_before": pods_before, "pods_after": pods_after, "pod_gone_s": gone_s, "stop": {k: stp_j.get(k) for k in ("paused", "pods_killed", "keys_blocked")}, "checkpoint": [{k: e.get(k) for k in ("role", "files", "written", "signal")} for e in ck], "role_pod": {k: pod_v.get(k) for k in ("phase", "stopped", "checkpoint", "exit_code")}, "beta_wf": st_b.get("status"), "acme_wf": [st_a0.get("status"), st_a1.get("status")], "acme_killed": len(killed_acme)})
+        rep.add("O3b", "Stop tenanta beta při běžící roli vývojář v Kata podu (autonomie.md T5, 60 s grace): workflow SUSPENDED, pod dostal SIGTERM → role_runner nahrál checkpoint (artifacts/work sync-up, ROLE_CHECKPOINT) a poslal výsledek stopped → pod pryč ≤ 60 s (ROLE_POD_KILLED), ROLE_POD stopped=True s checkpointem; zakázka acme běží dál (RUNNING, žádný její pod zabit)", "PASS" if ws["status"] == "running" and pods_before and stp.status_code == 200 and zb in (stp_j.get("paused") or []) and not pods_after and gone_s <= 60 and set(killed_mine) & set(pods_before) and ck and ck[0].get("written", 0) >= 0 and pod_v.get("stopped") and (pod_v.get("checkpoint") or {}).get("files") is not None and st_b.get("status") == "SUSPENDED" and st_a0.get("status") == "RUNNING" and st_a1.get("status") == "RUNNING" and not killed_acme else "FAIL", {"subagent": ws, "pods_before": pods_before, "pods_after": pods_after, "pod_gone_s": gone_s, "stop_call_s": stop_s, "stop": {k: stp_j.get(k) for k in ("paused", "pods_killed", "keys_blocked")}, "checkpoint": [{k: e.get(k) for k in ("role", "files", "written", "signal")} for e in ck], "role_pod": {k: pod_v.get(k) for k in ("phase", "stopped", "checkpoint", "exit_code")}, "beta_wf": st_b.get("status"), "acme_wf": [st_a0.get("status"), st_a1.get("status")], "acme_killed": len(killed_acme)})
         # O3c – resume tenanta beta: vývojář se spustí znovu od checkpointu (ROLE_STOPPED → nový ROLE_GATE/pod), reviewer, H4 znovu v GUI, schválení projde (merge executor allow)
         t_r = time.time(); rs = http("POST", f"{APP}/agui/gov/tenant/beta/resume", json={"reason": "O3c: resume tenanta beta po testu stopu."}, headers={"Authorization": f"Bearer {tp}"}, timeout=120); rs_j = rs.json() if rs.status_code == 200 else {"http": rs.status_code}
         t_rr = time.time()
@@ -921,7 +940,7 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         usage = {r_[0]: r_[1] for r_ in db("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'", name="agentgateway")}
         gw = {}
         for k in mine:
-            hsh = k["keyHash"].split(":", 1)[1]; t = (k.get("metadata") or {}).get("tenant"); gw[t] = gw.get(t, 0.0) + sum(u / 1e9 for bid, u in usage.items() if hsh in bid)
+            hsh = k["keyHash"].split(":", 1)[1]; t = (k.get("metadata") or {}).get("tenant"); gw[t] = gw.get(t, 0.0) + role_usage_usd(usage.items(), hsh)
         org = {r_[0]: float(r_[1] or 0) for r_ in db("SELECT tenant_id, sum(spent_usd) FROM org.zakazky WHERE zakazka_id LIKE %s GROUP BY tenant_id", (tag + "%",))}
         per_z = {r_[0]: [r_[1], float(r_[2] or 0)] for r_ in db("SELECT zakazka_id, status, spent_usd FROM org.zakazky WHERE zakazka_id LIKE %s", (tag + "%",))}
         for k in mine:
@@ -1005,7 +1024,7 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     for k in keys_cm:
         md = k.get("metadata") or {}; zk = md.get("zakazka", "")
         if not str(zk).startswith(tag): continue
-        hsh = k["keyHash"].split(":", 1)[1]; gw[zk] = round(gw.get(zk, 0.0) + sum(u / 1e9 for bid, u in usage.items() if hsh in bid), 6)
+        hsh = k["keyHash"].split(":", 1)[1]; gw[zk] = round(gw.get(zk, 0.0) + role_usage_usd(usage.items(), hsh), 6)
     ch = {}
     for t_, z_, r_, n_, cost, tin, svc in rows: ch[z_] = round(ch.get(z_, 0.0) + float(cost), 6)
     cmp = {z_: {"gateway_usd": gw.get(z_, 0.0), "ledger_usd": ch.get(z_, 0.0), "diff": round(abs(gw.get(z_, 0.0) - ch.get(z_, 0.0)), 6)} for z_ in sorted(set(gw) | set(ch))}
@@ -1553,7 +1572,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             bud = next((e for e in reversed(L) if e["kind"] == "BUDGET" and e["zakazka"] == zid), {})
             with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c:
                 rows30 = c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()
-            db_sum = {r_: next((u / 1e9 for bid, u in rows30 if cm_hashes.get(r_, "∅") in bid), 0.0) for r_ in ROLE_CLIENTS}
+            db_sum = {r_: role_usage_usd(rows30, cm_hashes.get(r_, "∅")) for r_ in ROLE_CLIENTS}
             with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
                 zrow = c.execute("SELECT budget_usd, spent_usd, status, keys_source, spend_source, key_hashes FROM org.zakazky WHERE zakazka_id = %s", (zid,)).fetchone()
             ok_cost = bud.get("source") == "budget_usage" and bud.get("window") == "30d" and abs(float(bud.get("spent_usd", 0)) - sum(db_sum.values())) < 0.002 and set(ROLE_CLIENTS) <= set(bud.get("by_role") or {}) and bud.get("spent_usd", 0) > 0 \
