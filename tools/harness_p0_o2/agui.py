@@ -36,8 +36,9 @@ CTX: dict = {}   # dodá app.py: ledger, read_ledger, wf_state, create, approve,
 THREAD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
 MIN_REASON = 10   # org.approvals CHECK (length(reason) >= 10) – proti automation bias (metriky.md T6)
 RUN_MAX_S = float(os.environ.get("P0_AGUI_RUN_MAX_S", "1800"))
-BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2"}
-BOD_ACTION = {"H1": "zadani.accept", "H2": "navrh.accept", "H4": "pr.merge", "H5": "deploy.apply", "rozpocet": "budget.raise"}
+BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2", "klasifikace": "P1a", "dialog": "P1"}
+BOD_ACTION = {"H1": "zadani.accept", "H1a": "pravnik.stanovisko", "H2": "navrh.accept", "H4": "pr.merge", "H5": "deploy.apply", "rozpocet": "budget.raise", "klasifikace": "zadani.classify"}
+WAIT_EVENTS = ("HITL_WAIT", "DIALOG_WAIT", "KLASIFIKACE_WAIT")   # P3-4: + dotazník klasifikační brány (interrupt reason=klasifikace)
 ARTIFACT_FILE = {"account": "artifacts/zadani.md", "architekt": "artifacts/adr.md", "reviewer": "artifacts/review.md"}
 
 
@@ -141,11 +142,13 @@ PLATFORM_TENANT = "platform"   # P3-2: průřezový tenant (governance) – vid�
 
 
 def pending_interrupt(entries):
-    """Poslední HITL_WAIT / DIALOG_WAIT bez pozdějšího rozhodnutí (resp. odpovědi) → záznam čekání; jinak None. Dialog (P3-3): otázky Account zadavateli."""
-    waits = [(i, e) for i, e in enumerate(entries) if e.get("kind") == "NOTIFY" and e.get("event") in ("HITL_WAIT", "DIALOG_WAIT")]
+    """Poslední HITL_WAIT / DIALOG_WAIT / KLASIFIKACE_WAIT bez pozdějšího rozhodnutí (resp. odpovědi) → záznam čekání; jinak None. Dialog (P3-3): otázky Account zadavateli; klasifikace (P3-4): K1–K6."""
+    waits = [(i, e) for i, e in enumerate(entries) if e.get("kind") == "NOTIFY" and e.get("event") in WAIT_EVENTS]
     if not waits: return None
     i, w = waits[-1]
-    if w.get("event") == "DIALOG_WAIT":
+    if w.get("event") == "KLASIFIKACE_WAIT":
+        later = [e for e in entries[i + 1:] if e.get("kind") in ("KLASIFIKACE", "KLASIFIKACE_RAISED") or (e.get("kind") == "NOTIFY" and e.get("event") == "KLASIFIKACE_TIMEOUT")]
+    elif w.get("event") == "DIALOG_WAIT":
         later = [e for e in entries[i + 1:] if e.get("kind") == "NOTIFY" and e.get("event") in ("DIALOG_ANSWER", "DIALOG_TIMEOUT", "DIALOG_LIMIT")]
     else:
         later = [e for e in entries[i + 1:] if e.get("kind") == "NOTIFY" and e.get("event") in ("HITL_APPROVED", "HITL_TIMEOUT", "HITL_INVALID_TOKEN", "HITL_REJECTED") and e.get("bod") == w.get("bod")]
@@ -153,7 +156,7 @@ def pending_interrupt(entries):
     return w
 
 
-def interrupt_id(w): return f"{'dialog' if w.get('event') == 'DIALOG_WAIT' else 'hitl'}:{w['bod']}:{w.get('artifact_hash')}"
+def interrupt_id(w): return f"{'dialog' if w.get('event') == 'DIALOG_WAIT' else 'klasifikace' if w.get('event') == 'KLASIFIKACE_WAIT' else 'hitl'}:{w['bod']}:{w.get('artifact_hash')}"
 
 
 def state_of(zid, entries):
@@ -166,8 +169,10 @@ def state_of(zid, entries):
         if e.get("kind") == "AGENT_RUN": roles[e["role"]] = "error" if e.get("error") else "done"
     w = pending_interrupt(entries)
     out = st.get("output") or {}
+    kl = next((e for e in reversed(entries) if e.get("kind") == "KLASIFIKACE"), {}); sla = [e for e in entries if e.get("kind") == "SLA_BREACH"]
     return {"id": zid, "tenant": start.get("tenant") or os.environ.get("P0_TENANT", "acme"), "status": st.get("status"), "stav": out.get("stav") or ("čeká na " + w["bod"] if w else ("běží" if st.get("status") == "RUNNING" else st.get("status"))),
-            "bod": w.get("bod") if w else out.get("bod"), "budget_usd": start.get("budget_usd"), "spent_usd": bud.get("spent_usd"), "roles": roles, "started": start.get("ts"), "poptavka": start.get("poptavka")}
+            "bod": w.get("bod") if w else out.get("bod"), "budget_usd": start.get("budget_usd"), "spent_usd": bud.get("spent_usd"), "roles": roles, "started": start.get("ts"), "poptavka": start.get("poptavka"),
+            "profile": kl.get("profile"), "sensitivity": kl.get("sensitivity"), "sla_breaches": [e.get("bod") for e in sla]}
 
 
 @router.get("/threads")
@@ -239,7 +244,8 @@ def events_for(zid, entries, start_idx=0, subagents=None):
         elif k == "PUBLISHED": act(i, "published", {"kind": e.get("publish_kind"), "number": e.get("number"), "url": e.get("url"), "mode": e.get("mode")})
         elif k == "NOTIFY":
             evn = e.get("event")
-            if evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "result": e.get("result"), "reason": e.get("reason")})
+            if evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result"), "reason": e.get("reason")})
+            elif evn and evn.startswith("KLASIFIKACE_"): act(i, "klasifikace", {"state": evn[12:].lower(), "bod": "klasifikace", "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result")})
             elif evn and evn.startswith("DIALOG_"):
                 act(i, "dialog", {"state": evn[7:].lower(), "round": e.get("round"), "by": e.get("by"), "answer": e.get("answer"), "result": e.get("result")})
                 if evn == "DIALOG_ANSWER": msg(i, "user", e.get("by") or "zadavatel", str(e.get("answer") or ""))
@@ -248,6 +254,10 @@ def events_for(zid, entries, start_idx=0, subagents=None):
         elif k in ("APPROVAL_RAISED", "APPROVAL_REJECTED"): act(i, "approval", {"decision": "approve" if k == "APPROVAL_RAISED" else "reject", "bod": e.get("bod"), "by": e.get("by"), "reason": e.get("reason"), "channel": e.get("channel")})
         elif k in ("STOP", "RESUME"): act(i, "stop", {"kind": k.lower(), "by": e.get("by"), "reason": e.get("reason"), "pods_killed": e.get("pods_killed")})
         elif k in ("REGISTRY_AGENT", "DIALOG_RAISED"): act(i, "registry" if k == "REGISTRY_AGENT" else "dialog", {k2: v for k2, v in e.items() if k2 not in ("ts", "kind", "zakazka")})
+        elif k == "KLASIFIKACE": act(i, "klasifikace", {"state": "done", "profile": e.get("profile"), "sensitivity": e.get("sensitivity"), "by": e.get("by"), "yes": ",".join(q for q, v in (e.get("answers") or {}).items() if v) or "-", "registry": e.get("registry"), "opa_http": e.get("opa_http"), "hash": e.get("hash")})   # P3-4
+        elif k == "KLASIFIKACE_RAISED": act(i, "klasifikace", {"state": "answered", "by": e.get("by"), "channel": e.get("channel"), "yes": ",".join(q for q, v in (e.get("answers") or {}).items() if v) or "-"})
+        elif k == "SLA_BREACH": act(i, "sla", {"state": "breach", "bod": e.get("bod"), "sla_s": e.get("sla_s"), "escalated_to": e.get("escalated_to"), "registry": e.get("registry"), "result": e.get("result")})   # P3-4: SLA eskalace, zakázka čeká dál
+        elif k in ("CHANNEL_SENT", "CHANNEL_DRYRUN", "CHANNEL_ERROR"): act(i, "channel", {"state": k[8:].lower(), "channel": e.get("channel"), "to": e.get("to"), "role": e.get("role"), "http": e.get("http"), "generated_by": e.get("generated_by"), "disclosure": e.get("disclosure"), "hash": e.get("hash"), "error": e.get("error")})   # P3-4: N3 čl. 50 naostro
         elif k == "REGISTRY_ZAKAZKA": act(i, "registry", {"status": e.get("status"), "spent_usd": e.get("spent_usd"), "written": e.get("written")})
     return ev
 
@@ -264,6 +274,11 @@ def _validate_resume(inp: RunAgentInput, zid, entries):
             answer = (p.get("answer") or "").strip()
             if len(answer) < 3: raise HTTPException(422, "odpověď na otázky Account je povinná")
             out.append({"kind": "dialog", "answer": answer, "interrupt_id": r.interrupt_id}); continue
+        if w.get("event") == "KLASIFIKACE_WAIT":   # P3-4: dotazník K1–K6 – každá otázka zodpovězena (bool), důvod volitelný
+            ans = p.get("answers") if isinstance(p.get("answers"), dict) else None
+            keys = [q[0] for q in CTX.get("klas_questions") or []]
+            if ans is None or any(k not in ans or not isinstance(ans[k], bool) for k in keys): raise HTTPException(422, f"klasifikace vyžaduje odpovědi ano/ne na {', '.join(keys)}")
+            out.append({"kind": "klasifikace", "answers": {k: ans[k] for k in keys}, "reason": (p.get("reason") or "").strip() or None, "interrupt_id": r.interrupt_id}); continue
         reason = (p.get("reason") or "").strip()
         if len(reason) < MIN_REASON: raise HTTPException(422, f"důvod rozhodnutí je povinný (≥ {MIN_REASON} znaků) – org.approvals.reason, T6")
         decision = "reject" if r.status == "cancelled" or p.get("decision") == "reject" else "approve"
@@ -284,6 +299,7 @@ async def run(req: Request):
     if not start:
         if fp.get("action") or inp.resume: raise HTTPException(404, "thread neexistuje")
         if u["tenant"] == PLATFORM_TENANT: raise HTTPException(403, "tenant platform zakázky nezakládá (průřez)")
+        if "klasifikace" in fp and (not isinstance(fp["klasifikace"], dict) or any(not isinstance(fp["klasifikace"].get(q[0]), bool) for q in CTX.get("klas_questions") or [])): raise HTTPException(422, "forwardedProps.klasifikace: odpovědi ano/ne na K1–K6")
         user_msgs = [m for m in inp.messages if getattr(m, "role", None) == "user"]
         text = user_msgs[-1].content if user_msgs else None
         if not isinstance(text, str) or not text.strip(): raise HTTPException(422, "nový thread = první zpráva uživatele je poptávka")
@@ -293,6 +309,7 @@ async def run(req: Request):
     decisions = _validate_resume(inp, zid, entries) if inp.resume else []
     for d in decisions:
         if d["kind"] == "dialog": await asyncio.to_thread(CTX["answer"], zid, u, d["answer"]); continue
+        if d["kind"] == "klasifikace": await asyncio.to_thread(CTX["classify"], zid, u, d["answers"], d["reason"]); continue
         await asyncio.to_thread(CTX["approve"] if d["decision"] == "approve" else CTX["reject"], zid, d["bod"], d["artifact_hash"], u, d["reason"])
     stopped = None
     if fp.get("action") == "stop":
@@ -323,7 +340,12 @@ async def run(req: Request):
             if w and interrupt_id(w) not in resolved:
                 art = next((e for e in reversed(ents) if e.get("kind") == "HANDOFF" and e.get("hash") == w.get("artifact_hash")), {})
                 exp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(w.get("ts", t0) + float(w.get("timeout_s") or 0))) if w.get("timeout_s") else None
-                if w.get("event") == "DIALOG_WAIT":
+                if w.get("event") == "KLASIFIKACE_WAIT":   # P3-4: dotazník klasifikační brány (A2UI zatím ne – vlastní schéma formuláře, viz p3-zakaznik.md)
+                    qs = [{"id": q, "text": t, "yes": y} for q, t, y in (CTX.get("klas_questions") or [])]
+                    itr = Interrupt(id=interrupt_id(w), reason="klasifikace", message="Klasifikační brána P1a (AI Act příloha III, čl. 5): odpovězte ano/ne na K1–K6 – profil rizika zakázky určí platforma", expires_at=exp,
+                                    response_schema={"type": "object", "required": ["answers"], "properties": {"answers": {"type": "object", "required": [q["id"] for q in qs], "properties": {q["id"]: {"type": "boolean", "title": q["text"]} for q in qs}}, "reason": {"type": "string"}}},
+                                    metadata={"bod": "klasifikace", "artifact_hash": w.get("artifact_hash"), "process": "P1a", "action": "zadani.classify", "questions": qs, "sla_s": w.get("sla_s")})
+                elif w.get("event") == "DIALOG_WAIT":
                     itr = Interrupt(id=interrupt_id(w), reason="dialog", message=f"Account má upřesňující otázky (kolo {w.get('round')}) – odpovězte", expires_at=exp,
                                     response_schema={"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string", "minLength": 3}}},
                                     metadata={"bod": "dialog", "round": w.get("round"), "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": "account", "questions": _artifact_text_path(zid, "artifacts/otazky.md")})
@@ -355,7 +377,7 @@ async def thread_get(zid: str, req: Request):
     if not thread_of_tenant(zid, u): raise HTTPException(404, "thread neexistuje")
     ents = thread_entries(zid)
     w = pending_interrupt(ents)
-    return {"state": state_of(zid, ents), "interrupt": ({"id": f"hitl:{w['bod']}:{w.get('artifact_hash')}", "bod": w["bod"], "artifact_hash": w.get("artifact_hash")} if w else None), "entries": len(ents)}
+    return {"state": state_of(zid, ents), "interrupt": ({"id": interrupt_id(w), "bod": w["bod"], "artifact_hash": w.get("artifact_hash")} if w else None), "entries": len(ents)}
 
 
 # --- governance (P3-3): čtení přes Governance MCP (org_reader, RLS per tenant), akce přes aplikaci (zápis org.*) -----------------------
@@ -421,6 +443,13 @@ async def gov_tenant_resume(tenant: str, req: Request):
     _platform_or_owner(u, tenant)
     if len(reason) < MIN_REASON: raise HTTPException(422, "resume tenanta vyžaduje důvod (≥ 10 znaků)")
     return await asyncio.to_thread(CTX["resume_tenant"], tenant, u, reason)
+
+
+@router.get("/klasifikace")
+async def klas_questions(req: Request):
+    """P3-4: otázky klasifikační brány K1–K6 (autonomie.md) pro formulář nové zakázky v GUI – odpovědi jdou s poptávkou (forwardedProps.klasifikace) nebo jako resume interruptu."""
+    user_from_request(req)
+    return {"questions": [{"id": q, "text": t, "yes": y} for q, t, y in (CTX.get("klas_questions") or [])], "profiles": ["standard", "high-risk-III/4", "high-risk-III/2", "nejasne", "odmitnout"]}
 
 
 @router.get("/capabilities")

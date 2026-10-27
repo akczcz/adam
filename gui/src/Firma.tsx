@@ -112,7 +112,7 @@ export function FinopsPage() {
 }
 
 export function GovernancePage() {
-  const rep = useTool<Row>("governance_report"); const risks = useTool("risk_register"); const [exp, setExp] = useState<string | null>(null);
+  const rep = useTool<Row>("governance_report"); const risks = useTool("risk_register"); const sla = useTool("sla_events"); const [exp, setExp] = useState<string | null>(null);
   return (
     <>
       <div className="card">
@@ -128,6 +128,7 @@ export function GovernancePage() {
         </>)}
       </div>
       <div className="card"><h3 style={{ marginTop: 0 }}>Risk register (T11)</h3>{risks.data && <Table id="risks-table" rows={risks.data} cols={["risk_id", "tenant_id", "use_case_id", "ai_act_class", "category", "likelihood", "impact", "status", "owner", "review_at"]} />}</div>
+      <div className="card"><h3 style={{ marginTop: 0 }}>SLA bodů (procesy.md) – překročení a eskalace</h3>{sla.data && <Table id="sla-table" rows={sla.data} cols={["created_at", "tenant_id", "zakazka_id", "process_id", "bod", "sla_s", "escalated_to"]} />}</div>
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Export pro deployera (čl. 13(3)(f)) – JSONL, jen řádky tenanta (RLS)</h3>
         <button onClick={async () => setExp(await govExport())} data-testid="export-button">Stáhnout export</button>

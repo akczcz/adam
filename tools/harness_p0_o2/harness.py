@@ -25,6 +25,7 @@ vlastníkovi (HITL `rozpocet`) → timeout → Pozastaveno; Audit jen loguje.
 """
 from __future__ import annotations
 
+KLAS_NO = {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}   # P3-4: dotazník brány s poptávkou (dogfooding = vše ne)
 import argparse
 import importlib.util
 import json
@@ -132,7 +133,7 @@ def approve(zid, bod, hh):
 
 
 def run_zakazka(zid, poptavka, pr_timeout=300):
-    httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": poptavka, "hitl_timeout_s": 3600}, timeout=10)
+    httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": poptavka, "hitl_timeout_s": 3600, "klasifikace": KLAS_NO}, timeout=10)
     approve(zid, "H1", wait_handoff(zid, "issue://")); approve(zid, "H2", wait_handoff(zid, "adr://"))
     pr = wait_handoff(zid, "pr://", pr_timeout); wait_handoff(zid, "review://")
     assert pr, f"{zid}: Vývojář nedodal pr:// do {pr_timeout}s (živý model: každý git clone proti mocku čeká až na timeout srt 90 s)"
@@ -164,7 +165,7 @@ def scenario_sre(a, rep, led_fn, reviewer, git_debug, procs, pg):
               f"Role nemá Bash ani sandboxed_bash, deploy.apply vykonává deploy-executor po HITL H5. Referenční návrh: {fixture} (můžeš z něj vyjít, ověř validitu YAML). "
               f"Po dokončení zapiš poučení do paměti (proposed).")
     try:
-        httpx.post(f"{APP}/zakazky", json={"id": "P0-3", "poptavka": zadani, "hitl_timeout_s": 3600}, timeout=10)
+        httpx.post(f"{APP}/zakazky", json={"id": "P0-3", "poptavka": zadani, "hitl_timeout_s": 3600, "klasifikace": KLAS_NO}, timeout=10)
         approve("P0-3", "H1", wait_handoff("P0-3", "issue://")); approve("P0-3", "H2", wait_handoff("P0-3", "adr://"))
         pr = wait_handoff("P0-3", "pr://", 300 if a.mode == "mock" else 1500); wait_handoff("P0-3", "review://")
         led = led_fn(); run = next((e for e in led if e["kind"] == "AGENT_RUN" and e["zakazka"] == "P0-3" and e.get("role") == "vyvojar"), {})
@@ -281,7 +282,7 @@ def scenario_identity(a, rep, led_fn, procs, pg, ctx):
         # padělek: útočník zná legacy HMAC tajemství O-1 a vyvolá event hitl:H1 přímo přes Dapr API
         import hmac as _hmac
         zid2 = "P0-6"
-        httpx.post(f"{APP}/zakazky", json={"id": zid2, "poptavka": "Přidej endpoint /ping do služby ACME.", "hitl_timeout_s": 3600}, timeout=10)
+        httpx.post(f"{APP}/zakazky", json={"id": zid2, "poptavka": "Přidej endpoint /ping do služby ACME.", "hitl_timeout_s": 3600, "klasifikace": KLAS_NO}, timeout=10)
         zad = wait_handoff(zid2, "issue://"); assert zad, "Account nedodal issue://"
         body = json.dumps({"bod": "H1", "action": "H1", "zakazka_id": zid2, "artifact_hash": zad, "by": "mallory", "by_kind": "human", "exp": time.time() + 3600}, sort_keys=True).encode()
         forged = body.hex() + "." + _hmac.new(b"o1-transit-key", body, hashlib.sha256).hexdigest()
@@ -375,7 +376,7 @@ def scenario_budget(a, rep, led_fn, procs, pg, ctx):
         rep.add("B3", "Tabulka budget_usage (sqlite, USD v nanodolarech, okna v ms) má pro každý klíč P0-7 tři okna (24h audit, 24h block, 30d block) a used_amount = cena všech requestů klíče z logu gateway (zakázka + probe); zápis do DB je periodický", "PASS" if db_ok and all(len(bl) == 3 for bl in (db.get("P0-7") or {}).values()) else "FAIL", {"rows": len(rows), "db_lag_s": round(time.time() - t0, 1), "expected_usd": expected, "P0-7": {r: [(b["budget"], b["used_usd"], b["window_h"]) for b in bl] for r, bl in (db.get("P0-7") or {}).items()}})
         # P0-8: Architekt má Audit limit 0.001 USD (překročen → jen log), Vývojář Block 0.005 USD (→ 429 → BUDGET_EXCEEDED → eskalace → timeout → pauza)
         zid = "P0-8"
-        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": "Přidej endpoint /metrics do služby ACME.", "hitl_timeout_s": 3600, "budget_timeout_s": 5}, timeout=10)
+        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": "Přidej endpoint /metrics do služby ACME.", "hitl_timeout_s": 3600, "budget_timeout_s": 5, "klasifikace": KLAS_NO}, timeout=10)
         approve(zid, "H1", wait_handoff(zid, "issue://")); adr = wait_handoff(zid, "adr://"); assert adr, "Architekt (Audit) nedodal ADR"; approve(zid, "H2", adr)
         st8 = wait_status(zid, {"COMPLETED", "FAILED"}, 240)
         led = led_fn()
@@ -402,7 +403,7 @@ def scenario_github(a, rep, led_fn, procs, pg):
     dry = LOGS / "github-dryrun"; shutil.rmtree(dry, ignore_errors=True)
     try:
         zid = "P0-4"
-        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": "Přidej do repa platformy soubor zakazky/P0-4/NOTES.md s poznámkou, že zakázka P0-4 ověřila publikaci artefaktů do GitHubu.", "hitl_timeout_s": 3600}, timeout=10)
+        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": "Přidej do repa platformy soubor zakazky/P0-4/NOTES.md s poznámkou, že zakázka P0-4 ověřila publikaci artefaktů do GitHubu.", "hitl_timeout_s": 3600, "klasifikace": KLAS_NO}, timeout=10)
         zad = wait_handoff(zid, "issue://")
         before_h1 = sorted(p.name for p in dry.glob("*")) if dry.exists() else []
         approve(zid, "H1", zad); time.sleep(3)
@@ -443,7 +444,7 @@ def scenario_github_hitl(a, rep, led_fn, procs, pg):
             time.sleep(0.5)
     try:
         zid = "P0-5"
-        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": "Přidej do repa platformy soubor zakazky/P0-5/NOTES.md s poznámkou, že schválení proběhlo přímo v GitHubu.", "hitl_timeout_s": 3600}, timeout=10)
+        httpx.post(f"{APP}/zakazky", json={"id": zid, "poptavka": "Přidej do repa platformy soubor zakazky/P0-5/NOTES.md s poznámkou, že schválení proběhlo přímo v GitHubu.", "hitl_timeout_s": 3600, "klasifikace": KLAS_NO}, timeout=10)
         issue = pub(zid, "issue"); assert issue, "issue nebylo publikováno"
         n_issue = issue["number"]
         gh_post(f"/issues/{n_issue}/comments", {"body": "/schvaluji"}, "platform-bot")      # bot sám sobě – musí být odmítnut

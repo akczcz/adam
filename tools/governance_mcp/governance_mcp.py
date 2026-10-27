@@ -78,7 +78,8 @@ def t_tenants(c, u, a): return rows(c, "SELECT tenant_id, name, profile, budget_
 
 @tool("zakazky", "org.zakazky: rozpočet, útrata per role, stav, zdroj klíčů; args {status?, limit?}")
 def t_zakazky(c, u, a):
-    q = "SELECT zakazka_id, tenant_id, budget_usd, spent_usd, spent_by_role, spend_source, status, keys_source, created_at, updated_at FROM org.zakazky"
+    has_profile = c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='org' AND table_name='zakazky' AND column_name='profile'").fetchone() is not None
+    q = f"SELECT zakazka_id, tenant_id, budget_usd, spent_usd, spent_by_role, spend_source, status, keys_source, created_at, updated_at{', profile, klasifikace' if has_profile else ''} FROM org.zakazky"   # P3-4: profil rizika (T15)
     args = []
     if a.get("status"): q += " WHERE status = %s"; args.append(a["status"])
     return rows(c, q + " ORDER BY created_at DESC LIMIT %s", (*args, int(a.get("limit", 200))))
@@ -122,6 +123,12 @@ def t_events(c, u, a):
 def t_risks(c, u, a):
     if not table_exists(c, "risk_register"): return []
     return rows(c, "SELECT risk_id, tenant_id, use_case_id, ai_act_class, category, description, likelihood, impact, controls, owner, status, review_at, updated_at FROM org.risk_register ORDER BY tenant_id, risk_id")
+
+
+@tool("sla_events", "SLA bodů (procesy.md, P3-4): překročení lhůt HITL bodů per zakázka s eskalací (org.sla_events)")
+def t_sla(c, u, a):
+    if not table_exists(c, "sla_events"): return []
+    return rows(c, "SELECT event_id, tenant_id, zakazka_id, process_id, bod, sla_s, elapsed_s, escalated_to, created_at FROM org.sla_events ORDER BY created_at DESC LIMIT %s", (int(a.get("limit", 200)),))
 
 
 @tool("finops", "FinOps: per tenant strop vs. útrata 30d (alert ≥ 80 %), per zakázka útrata a per role")
@@ -170,7 +177,7 @@ def t_report(c, u, a):
 @tool("export", "Export JSONL všech viditelných řádků org.* pro deployera (čl. 13(3)(f)) – RLS vrací jen tenant volajícího")
 def t_export(c, u, a):
     out = []
-    for t in ("tenants", "zakazky", "approvals", "agents", "agent_events", "risk_register", "role_autonomy"):
+    for t in ("tenants", "zakazky", "approvals", "agents", "agent_events", "risk_register", "role_autonomy", "sla_events"):
         if not table_exists(c, t): continue
         for r in rows(c, f"SELECT * FROM org.{t}"): out.append({"table": t, **r})
     return out

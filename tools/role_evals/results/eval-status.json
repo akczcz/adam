@@ -16,16 +16,18 @@
    },
    "L3": {
     "metric": "pass_k",
-    "passed": true,
+    "passed": false,
     "threshold": 0.7,
-    "value": 1.0
+    "value": 0.0
    }
   },
   "model": "mock",
-  "on_fail": {},
+  "on_fail": {
+   "L3": "suspend"
+  },
   "reason": null,
-  "source_sha256_16": "ac79d946a1e719f6",
-  "status": "passed",
+  "source_sha256_16": "338bbf739f58ed71",
+  "status": "failed",
   "version": "0.1.0"
  },
  "architekt": {

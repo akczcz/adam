@@ -6,7 +6,9 @@ export type User = { sub: string; name: string; tenant: string; roles: string[] 
 export type ThreadState = {
   id: string; tenant: string; status: string | null; stav: string | null; bod: string | null;
   budget_usd: number | null; spent_usd: number | null; roles: Record<string, string>; started: number | null; poptavka?: string;
+  profile?: string | null; sensitivity?: string | null; sla_breaches?: string[];
 };
+export type KlasQuestion = { id: string; text: string; yes: string };
 
 const BASE = (import.meta.env.VITE_AGUI_BASE as string | undefined) ?? "";
 let token: string | null = sessionStorage.getItem("agui_token");
@@ -43,6 +45,21 @@ export async function me(): Promise<User> {
   const r = await fetch(`${BASE}/agui/me`, { headers: auth() });
   if (!r.ok) throw new Error(`me ${r.status}`);
   return (await r.json()) as User;
+}
+
+export async function klasQuestions(): Promise<KlasQuestion[]> {
+  await ensureFresh();
+  const r = await fetch(`${BASE}/agui/klasifikace`, { headers: auth() });
+  if (!r.ok) throw new Error(`klasifikace: ${r.status}`);
+  return (await r.json()).questions as KlasQuestion[];
+}
+
+/** Stav threadu mimo run (P3-4): při otevřeném interruptu GUI dotazuje stav – SLA překročení a profil přijdou i bez nového runu. */
+export async function threadState(id: string): Promise<ThreadState> {
+  await ensureFresh();
+  const r = await fetch(`${BASE}/agui/threads/${encodeURIComponent(id)}`, { headers: auth() });
+  if (!r.ok) throw new Error(`thread ${r.status}`);
+  return (await r.json()).state as ThreadState;
 }
 
 export async function listThreads(): Promise<{ tenant: string; threads: ThreadState[] }> {

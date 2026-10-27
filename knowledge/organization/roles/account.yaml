@@ -139,6 +139,7 @@ disclosure:
   channels:
     agui: "Mluvíte s AI agentem (role Account) firmy {firma}; jedná jménem {vlastník procesu}. Nabídku, cenu a termín potvrzuje člověk."
     issue: "Zadání sepsal AI agent (Account) jménem {vlastník procesu}; schvaluje člověk zákazníka." 
+    email: "Tento e-mail odeslal AI agent (role Account) firmy {firma} jménem {vlastník procesu}; odpovědi čte člověk. Obsah byl vygenerován AI."   # čl. 50(1) T7 + T8 značení
 
 # Co ověřit dál
 # - [ ] Harness O-2: role běží přes Agent SDK s options z rolegen (2026-10-24 mock)
