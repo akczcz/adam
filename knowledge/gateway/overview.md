@@ -172,12 +172,14 @@ Co z toho plyne:
 
 **Rozhodnutí (Adam, 2026-10-22): agentgateway jako model gateway platformy.** Přijatá rizika:
 - strop zakázky napříč klíči rolí drží orchestrátor (součet `budget_usage` v `budget_gate`); gateway je pojistka per klíč – rozpočet `zakazka-30d-block` každého klíče = strop zakázky (P3-6 E3, 2026-10-27), navýšení = přepis ConfigMapy klíčů + hot reload.
+- **per-request ledger existuje** (P3-6 E4, 2026-10-27): `config.tracing` se `fields.add` z `apiKey.<metadata>` + `llm.cost.total` a `randomSampling: "true"` dává span každého requestu → Collector → ClickHouse; součet per zakázka == `budget_usage` (1e-6 USD). Riziko „FinOps bez ledgeru“ tím padá; `config.tracing` jen při startu. Pozor: request se účtuje do **každého** rozpočtu klíče – útrata = jeden rozpočet, ne součet řádků `budget_usage` klíče.
 bus factor (jeden člověk 51 % commitů), bez CLA/DCO, FinOps bez ledgeru per tým (rozpočty jen per
 API klíč → klíč per agent/tým jako pracovní model), persistence rozpočtů mezi replikami neověřena.
 LiteLLM zůstává záloha pro případ, že FinOps bez ledgeru nebude stačit – pak s vědomým
 porušením kontraktu (passthrough režim) a výhradou k A1.
 
 ## Co ověřit dál
+- [x] ~~agentgateway: per-request ledger mimo `budget_usage`~~ – **změřeno 2026-10-27 (P3-6 E4, AKS)**: tracing s CEL poli z metadat klíče + `llm.cost.total`, `randomSampling` = každý request; ClickHouse součet == `budget_usage`.
 - [ ] agentgateway: změřit hot reload rozpočtů (změna `amount` → útrata zachována; `name`/`keyHash` → reset) v O-2; E3 měří jen navýšení stropu.
 - [ ] agentgateway: spike `remoteRateLimit` + Envoy RLS s `cost: int(llm.cost.total*1e6)` keyed `apiKey.zakazka` (sdílený USD strop bez orchestrátoru) – převod double→int v CEL a jednotky okna neověřeny.
 - [ ] docs vs. kód: `localRateLimit` `fillInterval` 24h (docs tvrdí jen s/m/h).
@@ -209,6 +211,7 @@ porušením kontraktu (passthrough režim) a výhradou k A1.
 - [x] ~~Změřit režii gateway P50/P95 vs. přímé volání~~ – mock, non-stream, n=20: agentgateway +0,7 ms, LiteLLM +13 ms p50.
 
 ## Changelog
+- 2026-10-27: P3-6 E4 – per-request ledger z tracingu agentgateway (span per request s tenant/zakazka/role/`llm.cost.total`, ClickHouse) změřen na AKS; nález: tentýž request se účtuje do každého rozpočtu klíče (`<role>-30d-block` i `zakazka-30d-block`) – útrata se čte z jednoho rozpočtu.
 - 2026-10-27: rozpočty agentgateway 1.6.0 ověřeny v kódu (gateway-scout) – scope jen per klíč, rate limity bez USD, hot reload rozpočtů i klíčů bez restartu; strop zakázky drží orchestrátor, gateway pojistka per klíč (P3-6 E3). Zdroje: `agentgateway/agentgateway` tag v1.6.0 `crates/agentgateway/src/http/{apikey.rs,budget/mod.rs,localratelimit.rs,remoteratelimit.rs}`, `state_manager.rs`; `agentgateway/website` `assets/agw-docs/standalone/setup/update.md`.
 - 2026-10-24: P1-4 kind – agentgateway ×2 s Postgres: persistence rozpočtů aditivní, vynucení eventually consistent (flush 5 s); G1 21/21 proti clusteru.
 - 2026-10-24: rozpočty agentgateway změřeny za běhu v O-2 (`--scenario budget`): Block/Audit, `budget_usage`, cena per role × zakázka z logu.
