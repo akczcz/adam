@@ -748,7 +748,7 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
     ta, tb, tp = tok("adam", "adam"), tok("bea", "bea"), tok("platform-admin", "platform-admin")
     api = {t: gov(tp, t) for t in ("tenants", "zakazky", "agents", "approvals", "roles", "finops", "governance_report", "risk_register")}
     cnt = {t: (len(api[t][1]["result"]) if api[t][0] == 200 and isinstance(api[t][1].get("result"), list) else None) for t in ("tenants", "zakazky", "agents", "approvals", "roles")}
-    g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); t_g = time.time()
+    g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); t_g = time.time(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
     try:
         g.login("platform-admin", "platform-admin")
         pages = {"firma": g.page_rows("firma", ["roles-table", "tenants-table"]), "registr": g.page_rows("registr", ["agents-table", "events-table"]), "finops": g.page_rows("finops", ["finops-tenants", "finops-zakazky"]), "audit": g.page_rows("audit", ["approvals-table"])}
@@ -778,7 +778,7 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         try:
             gb.login("bea", "bea"); zb2 = f"{tag}-beta2"; gb.create_thread(zb2, f"Druhá zakázka beta {zb2} – test stopu tenanta."); w2 = gb.wait_any_interrupt(1200)
         finally: gb.close()
-        g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); g.login("platform-admin", "platform-admin")
+        g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); g.login("platform-admin", "platform-admin")
         beta_z = [z_ for z_ in sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})]
         def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json().get("status") if r.status_code == 200 else f"http{r.status_code}"
         before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING" and z_.startswith(tag)]   # jen zakázky tohoto běhu: instance ze starého obrazu po pause/resume končí FAILED (změna kódu workflow = nedeterministický replay)
