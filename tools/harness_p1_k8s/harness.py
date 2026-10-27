@@ -1203,7 +1203,7 @@ def e1_checks(a, rep, kj, pre):
     def managers(obj): return sorted({m.get("manager", "") for m in (obj.get("metadata") or {}).get("managedFields", [])})
     tenants = [n["metadata"]["name"] for n in kj("get", "ns", "-l", "platform.tenant").get("items", [])]
     hr = {f'{h["metadata"]["namespace"]}/{h["metadata"]["name"]}': {"ready": ready(h), "version": (h.get("status") or {}).get("lastAttemptedRevision") or h["spec"]["chart"]["spec"].get("version")} for h in kj("get", "helmreleases", "-A").get("items", [])}
-    ks = {k["metadata"]["name"]: {"ready": ready(k), "substitute": sorted((((k.get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).keys()), "dependsOn": [d["name"] for d in (k.get("spec") or {}).get("dependsOn", [])]} for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}
+    ks = {k["metadata"]["name"].removeprefix("platform-"): {"ready": ready(k), "substitute": sorted((((k.get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).keys()), "dependsOn": [d["name"].removeprefix("platform-") for d in (k.get("spec") or {}).get("dependsOn", [])]} for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}   # Flux extension AKS: kustomizace <konfigurace>-<název> (platform-trust)
     # E1a – cert-manager + trust-manager
     cert = get(NS, "certificate", "agentgateway-tls"); tls = get(NS, "secret", "agentgateway-tls"); ann = (tls.get("metadata") or {}).get("annotations") or {}
     root = _b64.b64decode((get("cert-manager", "secret", "platform-root-ca").get("data") or {}).get("ca.crt", "")).decode()
@@ -1222,7 +1222,7 @@ def e1_checks(a, rep, kj, pre):
     want = ["postgres-auth", "agentgateway-secrets", "zakazka-secrets", "zakazka-finops", "agentgateway-git-token", "dapr-components"]
     secs = {n: get(NS, "secret", n) for n in want}
     owned = {n: any(o.get("kind") == "ExternalSecret" and o.get("name") == n for o in ((s_.get("metadata") or {}).get("ownerReferences") or [])) for n, s_ in secs.items()}
-    kv_name = ((((get("flux-system", "kustomization", "trust").get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME"))
+    kv_name = ((((get("flux-system", "kustomization", "platform-trust").get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME"))
     def kv(name):
         r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name or "", "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120); return r.stdout.strip() if r.returncode == 0 else None
     kv_tok, kv_pg = kv("git-backend-token"), kv("pg-platform-password")
