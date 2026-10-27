@@ -368,6 +368,40 @@ Playwright čte starý; (4) Playwright sync API: v jednom vlákně jen jedna ins
 se měří jen na zakázkách běžících před stopem – staré pozastavené (pod zabit dřív) po resume končí FAILED. Lokálně (fixture s falešným Governance MCP): 12/12.
 Úroveň autonomie v `org.role_autonomy` přetrvává mezi běhy (idempotentní zápis: A1 → A1 = ok bez nové události).
 
+## P3-4 – klasifikační brána, čl. 50 kanály, SLA (2026-10-27, AKS, `--step p3-4` = p3-3 + K1a–g)
+
+- **Klasifikační brána P1a** (`app.py`): dotazník K1–K6 (autonomie.md) jde s poptávkou (GUI formulář → `forwardedProps.klasifikace`) nebo jako
+  AG-UI interrupt `reason=klasifikace` (zakázka z interního API bez odpovědí; resume `{answers}`); aktivita `klasifikace` vyhodnotí profil
+  **deterministicky před první rolí** (K1 → `odmitnout`, K2 → `high-risk-III/4`, K3 → `high-risk-III/2`, K4/K5 → `nejasne`, K6 → `sensitivity`),
+  zapíše `org.zakazky.profile` + `klasifikace` (T15), auditní řádek `org.approvals` (`zadani.classify`, approver = Keycloak sub) a OPA data
+  `zakazky/<id>` (T9); `odmitnout` = `Odmitnuto` bez jediného podu; `nejasne` = HITL H1a `pravnik.stanovisko`. High-risk/nejasný profil
+  zamyká posun autonomie (`finops.autonomy_check`).
+- **Čl. 50 naostro**: aktivita `notify_customer` → adaptér kanálů (`mock_channels.py`, Deployment `mock-channels`): e-mail zadavateli po H1 (role
+  Account, disclosure `channels.email` z `roles/account.yaml`), komentář ticketu po nasazení (SRE, `channels.ticket_comment`); značení T8
+  `generated_by` + hlavičky `X-AI-Generated` jen na těchto kanálech (HANDOFF mezi rolemi nic nenese).
+- **SLA**: `wait_with_sla` = `when_any(event, timeout, SLA timer)` uvnitř každého čekání (HITL, dialog, klasifikace); překročení → `SLA_BREACH`
+  + `org.sla_events` (eskalace vlastníkovi procesu) + „SLA překročeno“ ve stavu threadu (GUI při otevřeném interruptu čte stav každých 5 s);
+  zakázka čeká dál. Lhůty z procesy.md (`SLA_DEFAULT_S`), poptávka je může zkrátit (`sla: {H1: 20}`).
+- **GUI**: dotazník v založení i jako interrupt, profil a SLA ve stavu, tabulka SLA v Governance; Governance MCP: `zakazky.profile`, nástroj `sla_events`.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| K1a | K2 = ano → `high-risk-III/4` před první rolí; org.zakazky.profile + klasifikace, approvals zadani.classify, OPA data, profil v GUI; posun autonomie acme/account A2 odmítnut kvůli high-risk | ✅ profil high-risk-III/4 v GUI, DB i OPA (`PUT /v1/data` 200→GET), approvals zadani.classify approve/agui, autonomie 409 „high-risk profil (příloha III) u 1 zakázek tenanta“; stop → cancelled |
+| K1b | K1 = ano → Odmitnuto bez role: žádný ROLE_GATE/pod, approvals reject, org.zakazky Odmitnuto | ✅ workflow `Odmitnuto` (bod klasifikace, čl. 5), DB profile odmitnout + status Odmitnuto, approvals reject, 0 událostí rolí, 0 podů |
+| K1c | zakázka z API bez dotazníku → interrupt klasifikace; K4 → nejasne → H1a právník (approvals pravnik.stanovisko) → pokračuje | ✅ první interrupt `klasifikace` (6 otázek), `hitl:H1a:<hash>`, approvals pravnik.stanovisko approve/agui, profil nejasne (by adam), po stanovisku Account běží; stop |
+| K1d | e-mail po H1 a ticket po deployi v mock-channels s disclosure z roles/*.yaml (email, ticket_comment), CHANNEL_SENT 200 | ✅ e-mail `acme@example.test` „Zakázka …: zadání přijato (H1)“ začíná větou z account.yaml, ticket větou z sre.yaml; CHANNEL_SENT 2× http 200 |
+| K1e | generated_by + X-AI-Generated jen na kanálech k lidem; HANDOFF bez značení | ✅ e-mail hlavičky X-AI-Generated/-By, generated_by ai-agent:account (model, zakázka, cl50-1), ticket ai-agent:sre; 4 HANDOFF bez generated_by |
+| K1f | SLA H1 = 20 s → SLA_BREACH + org.sla_events (H1, vlastnik:account, P1) + „SLA překročeno: H1“ v GUI, zakázka RUNNING a čeká; po schválení pokračuje | ✅ SLA v GUI ~25 s po H1 (interrupt stále otevřený), org.sla_events (H1, 20 s, vlastnik:account, P1), SLA_BREACH result ceka_dal, workflow RUNNING; po schválení architekt running, aktivita sla v GUI |
+| K1g | čas, screenshoty | ℹ️ K-1 317 s (U-1 563 s, U-2 244 s), 9 screenshotů |
+
+Výsledek: **44/44 + 5 INFO** (`measure` run 40466070233, `results/p3-4-20261027-074732.json`; 3 běhy). Nálezy: (1) po P3-3 dialogu Account **padal eval L3 Account**
+(mock psal `otazky.md` místo `zadani.md`) → `eval-status.json` failed → gate blokoval Account v clusteru (první běh 2026-10-27: U1b/P21b/T1b–f/U2b/U2d
+FAIL); evaly teď spouštějí mock s `MOCK_ACCOUNT_DIALOG=0` (kolo otázek měří U2b); (2) run AG-UI končí interruptem, takže překročení SLA během čekání
+GUI nevidí – GUI při otevřeném interruptu čte stav threadu (`GET /agui/threads/<id>`) každých 5 s; (3) `org.sla_events.sla_s` je `numeric` → Decimal
+v JSON detailu checku (K1f spadl, cast na float); (4) approver klasifikačního řádku musí být Keycloak sub jako u ostatních approvalů (U1c);
+(5) beta tenant má od P3-4 vlastní řádek approvals (zadani.classify) → T1c už nečeká 0. Lokálně (fixture + mock kanálů): 17/17. Odchylka od
+procesy.md: brána běží před Upřesněním (zamítnutá zakázka nespustí žádný pod); profil `nejasne` po H1a zůstává (změna profilu = N9, zatím bez GUI).
+
 ## Spuštění
 
 ```bash
@@ -378,7 +412,7 @@ export KUBECTL=… KIND=… OPA_BIN=… AGENTGATEWAY_BIN=…        # + venvy ha
 DAPR_BIN_DIR=… ../harness_p0_o2/.venv/bin/python harness.py --step p1-3  # identita: vyžaduje lokálně postavené obrazy (infra/images) nahrané do kind
 ../harness_p0_o2/.venv/bin/python harness.py --step p1-4                 # gateway: docker (bridge IP), venv G1, obraz platform/agentgateway v kind
 ../harness_p0_o2/.venv/bin/python -u harness.py --step p1-5              # workflow v clusteru: obrazy platform/{zakazka-app,dapr,opa}, po p1-3 (logs/openbao-init.json); ~5 min
-python gui_fixture.py --port 8010 & PW_CHROMIUM=/opt/pw-browsers/chromium python gui_checks.py   # P3-1 lokálně: GUI (gui/dist) nad falešným workflow, U-1 bez clusteru
+python gui_fixture.py --port 8010 & PW_CHROMIUM=/opt/pw-browsers/chromium python gui_checks.py   # P3-1/P3-4 lokálně: GUI (gui/dist) nad falešným workflow + mock kanálů, U-1/U-2/K-1 bez clusteru
 python harness.py --step p2-3 --context aks-platform-dev-admin --acr acrplatformdev<suffix>.azurecr.io   # AKS: workflow measure (e2e=p2-3); p2-5 bez identity, p2-2 bez registru, p2-1 bez obrazů rolí; pip httpx pyyaml psycopg PyJWT fastapi opentelemetry-sdk; p1-6 = alias
 ```
 
