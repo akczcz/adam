@@ -1,6 +1,6 @@
 # GitOps: AKS GitOps extension (Microsoft.Flux) sleduje repo a aplikuje čtyři kustomizace: operators (cert-manager, trust-manager, ESO – P3-6 E1),
 # trust (CA, bundle, ClusterSecretStore; závisí na operators), roles (namespace tenantů) a platform (infra/k8s/overlays/aks, závisí na trust). Proměnné pro manifesty
-# (${ACR_LOGIN_SERVER}, ${PG_HOST}, ${KV_NAME}, ${OPENBAO_CLIENT_ID}, ${ESO_CLIENT_ID}) dosazuje postBuild substitute – žádné tajemství: heslo PG
+# (${ACR_LOGIN_SERVER}, ${PG_HOST}, ${KV_NAME}, ${OPENBAO_CLIENT_ID}, ${ESO_CLIENT_ID}, ${AZURE_TENANT_ID}) dosazuje postBuild substitute – žádné tajemství: heslo PG
 # a ostatní bootstrap tajemství nese ESO z Key Vaultu (secrets.tf), substitute jen identifikátory.
 resource "azurerm_kubernetes_cluster_extension" "flux" {
   name           = "flux"
@@ -45,8 +45,9 @@ resource "azurerm_kubernetes_flux_configuration" "platform" {
     depends_on               = ["operators"]
     post_build {
       substitute = {
-        KV_NAME       = azurerm_key_vault.kv.name
-        ESO_CLIENT_ID = azurerm_user_assigned_identity.eso.client_id
+        KV_NAME         = azurerm_key_vault.kv.name
+        ESO_CLIENT_ID   = azurerm_user_assigned_identity.eso.client_id
+        AZURE_TENANT_ID = data.azurerm_client_config.current.tenant_id # workload identity: tenant z anotace SA
       }
     }
   }

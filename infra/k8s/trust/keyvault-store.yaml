@@ -7,6 +7,7 @@ metadata:
   namespace: external-secrets
   annotations:
     azure.workload.identity/client-id: "${ESO_CLIENT_ID}"
+    azure.workload.identity/tenant-id: "${AZURE_TENANT_ID}"   # ESO bere tenant z anotace SA (bez ní výměna tokenu selže – první běh E1)
 ---
 apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
@@ -16,5 +17,6 @@ spec:
   provider:
     azurekv:
       authType: WorkloadIdentity
+      tenantId: "${AZURE_TENANT_ID}"
       vaultUrl: "https://${KV_NAME}.vault.azure.net"
       serviceAccountRef: {name: eso-keyvault, namespace: external-secrets}
