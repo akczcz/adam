@@ -171,6 +171,12 @@ Pod role: `role_runner` má handler SIGTERM – stop zakázky/tenanta (DELETE po
 po každé roli a aplikace při stop/resume. Harness čte ClickHouse přes `kubectl port-forward svc/clickhouse 8123` (uživatel default bez hesla –
 dev). Měření: `measure` s `e2e=p3-5`.
 
+## P3-6 E3: strop zakázky v gateway (2026-10-27)
+
+Klíče role × zakázka v ConfigMapě `agentgateway-keys` nesou rozpočet `zakazka-30d-block` = strop zakázky (`gateway_keys.issue(cap_usd)`); navýšení z HITL
+`rozpocet` přepíše rozpočty (`set_cap`) a sondou počká, až všechny repliky klíč pustí. Stop tenanta čeká, až blokace klíčů platí na všech replikách
+(429), resume na 200 – ConfigMap se do replik propaguje nezávisle (~40–70 s).
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).

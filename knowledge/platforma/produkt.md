@@ -92,6 +92,7 @@ Nově oproti původnímu checklistu: **GUI nad celou firmou** (AG-UI 1.0 vlastn�
 | P3-6 Produkční hrany (token exchange SVID→Keycloak, cap v gateway, ledger do ClickHouse, cert-manager + ESO, SPIRE bundle, VNet) | ⬜ (průběžně) |
 
 ## Changelog
+- 2026-10-27: P3-6 E3 hotovo na AKS (51/51); další položky P3-6 (E4 ledger → ClickHouse, E1 ESO/cert-manager, E2 token exchange) po jednom PR.
 - 2026-10-27: P3-5 hotovo na AKS (49/49) – O-3 multi-tenant harness; zbývá P3-6 (produkční hrany).
 - 2026-10-27: P3-4 hotovo na AKS (44/44) – klasifikační brána, čl. 50 kanály, SLA; další krok P3-5 (O-3 multi-tenant harness).
 - 2026-10-27: P3-3 hotovo na AKS (38/38) – GUI nad celou firmou: Governance MCP, autonomie, stop tenanta, dialog Account, org.agents z workflow.

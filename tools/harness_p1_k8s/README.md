@@ -448,11 +448,16 @@ ještě SUSPENDED končí `cancelled`; řidič GUI musí thread otevřít novým
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E3a | zakázka 0,01 USD: klíče nesou zakazka-30d-block 0,01, první role 429 z gateway (BUDGET_EXCEEDED source=agentgateway), HITL rozpocet v GUI s útratou/stropem/zdrojem | RESULT_E3A |
-| E3b | schválení s novým stropem 5 USD: BUDGET_CAP, ConfigMap 5 na všech klíčích, sonda 200 na obou replikách, org.zakazky 5, approvals budget.raise + limits_shown, role znovu bez 429, GUI ukazuje 5 | RESULT_E3B |
-| E3c | čas, screenshoty | RESULT_E3C |
+| E3a | zakázka 0,01 USD: klíče nesou zakazka-30d-block 0,01, první role 429 z gateway (BUDGET_EXCEEDED source=agentgateway), HITL rozpocet v GUI s útratou/stropem/zdrojem | ✅ ConfigMap: 5 klíčů zakázky se zakazka-30d-block 0,01; account `Request rejected (429) · Budget exceeded` → BUDGET_EXCEEDED source=agentgateway (gate před rolí: limit 0,01, nevyčerpán); interrupt `hitl:rozpocet:account` v GUI se zdrojem agentgateway, útratou a stropem |
+| E3b | schválení s novým stropem 5 USD: BUDGET_CAP, ConfigMap 5 na všech klíčích, sonda 200 na obou replikách, org.zakazky 5, approvals budget.raise + limits_shown, role znovu bez 429, GUI ukazuje 5 | ✅ schválení s 5 USD → BUDGET_RAISED, GATEWAY_KEYS_CAP (ConfigMap 5 na všech klíčích, sonda 200 na obou replikách), org.zakazky.budget_usd 5, approvals budget.raise approve/agui s limits_shown {old 0.01, new 5}; druhý běh Account bez 429, GUI rozpočet 5 |
+| E3c | čas, screenshoty | ℹ️ E3 253 s (celý p3-6 ~49 min), 2 screenshoty |
 
-Výsledek: **RESULT_TOTAL** (`measure` run RESULT_RUN, `results/RESULT_FILE`; RESULT_RUNS). RESULT_NALEZY
+Výsledek: **51/51 + 7 INFO** (`measure` run 40553062453, `results/p3-6-20261027-183111.json`; 2 běhy). Nálezy: (1) první běh: reviewer beta po
+resume dostal 429 – sonda po odblokování vracela 200 hned, protože replika ještě nenačetla ani *blokovanou* konfiguraci a načetla ji až po resume
+→ `block_tenant(True)` nově čeká, až blokace platí (429) na všech replikách, resume čeká na 200; (2) Governance MCP přes port-forward občas 5xx
+→ dotaz FinOps s opakováním; (3) agentgateway 1.6.0 má rozpočty jen per klíč (ověřeno v kódu, gateway-scout 2026-10-27) – strop zakázky v gateway
+je proto per-key pojistka (přestřel ≤ N klíčů × strop), součet drží `budget_gate`; hot reload rozpočtů bez restartu potvrzen (útrata zachována
+při změně `amount`).
 
 ## Spuštění
 
