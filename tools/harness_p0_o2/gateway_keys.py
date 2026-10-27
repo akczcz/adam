@@ -113,26 +113,65 @@ def block_tenant(tenant, ledger=None, block=True):
         except RuntimeError as e:
             if "409" not in str(e) or attempt == 5: raise
             time.sleep(0.5)
-    prop = None
-    if not block:   # P3-5 nález: ConfigMap se do replik gateway propaguje nezávisle (~40–70 s) – role spuštěná hned po resume dostala z jedné repliky ještě 429 → počkat, než všechny repliky klíč tenanta pustí
-        probe = next(((md["zakazka"], md["role"]) for k in cur for md in [k.get("metadata") or {}] if md.get("tenant") == tenant and md.get("zakazka") in _CACHE and md.get("role") in _CACHE[md["zakazka"]]), None)
-        if probe:
-            val = _CACHE[probe[0]][probe[1]]; t1 = time.time(); targets = _probe_targets(); status = {}
-            body = {"model": os.environ.get("P0_MODEL", "claude-haiku-4-5"), "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]}
-            while time.time() - t1 < float(os.environ.get("P0_GATEWAY_KEYS_WAIT_S", "240")):
-                for t in targets:
-                    try: status[t] = httpx.post(f"{t}/v1/messages", json=body, headers={"x-api-key": val, "anthropic-version": "2023-06-01"}, timeout=20).status_code
-                    except Exception as e: status[t] = type(e).__name__
-                if targets and all(v == 200 for v in status.values()): break
-                time.sleep(3)
-            prop = {"s": round(time.time() - t1, 1), "status": status, "key": f"{probe[0]}/{probe[1]}", "replicas": len(targets)}
-        else: prop = {"skipped": "žádný klíč tenanta v cache procesu"}
+    # P3-5/P3-6 nález: ConfigMap se do replik gateway propaguje nezávisle (~40–70 s). Stop musí počkat, až blokace PLATÍ na všech replikách (429),
+    # jinak replika načte blokovanou konfiguraci až po resume a role spuštěná po resume dostane 429; resume pak čeká na 200 na všech replikách.
+    probe = next(((md["zakazka"], md["role"]) for k in cur for md in [k.get("metadata") or {}] if md.get("tenant") == tenant and md.get("zakazka") in _CACHE and md.get("role") in _CACHE[md["zakazka"]]), None)
+    if probe:
+        val = _CACHE[probe[0]][probe[1]]; t1 = time.time(); targets = _probe_targets(); status = {}; want = 429 if block else 200
+        body = {"model": os.environ.get("P0_MODEL", "claude-haiku-4-5"), "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]}
+        while time.time() - t1 < float(os.environ.get("P0_GATEWAY_KEYS_WAIT_S", "240")):
+            for t in targets:
+                try: status[t] = httpx.post(f"{t}/v1/messages", json=body, headers={"x-api-key": val, "anthropic-version": "2023-06-01"}, timeout=20).status_code
+                except Exception as e: status[t] = type(e).__name__
+            if targets and all(v == want for v in status.values()): break
+            time.sleep(3)
+        prop = {"s": round(time.time() - t1, 1), "status": status, "want": want, "key": f"{probe[0]}/{probe[1]}", "replicas": len(targets)}
+    else: prop = {"skipped": "žádný klíč tenanta v cache procesu"}
     if ledger: ledger("GATEWAY_KEYS_BLOCK" if block else "GATEWAY_KEYS_UNBLOCK", tenant=tenant, keys=n, propagation=prop)
     return n
 
 
-def issue(zid, ledger=None, tenant=None):
-    """Vrátí {role: klíč} pro zakázku; vydá je, pokud ještě nejsou (idempotentní přes OpenBao KV, resp. Secret)."""
+CAP_BUDGET = "zakazka-30d-block"   # P3-6 (E3): strop zakázky i v gateway – rozpočet per klíč = strop zakázky (agentgateway 1.6 rozpočty jen per klíč; součet napříč rolemi hlídá orchestrátor budget_gate)
+
+
+def cap_budget(cap_usd):
+    return {"name": CAP_BUDGET, "limit": {"unit": "USD", "amount": float(cap_usd)}, "window": {"rolling": "30d"}, "onBudgetExceeded": "Block"}
+
+
+def set_cap(zid, cap_usd, ledger=None, probe_key=None):
+    """P3-6 (E3): navýšení stropu zakázky z HITL `rozpocet` – rozpočet `zakazka-30d-block` všech klíčů zakázky v ConfigMapě = nový strop; pak sonda,
+    až gateway (všechny repliky) klíč zase pustí (propagace ConfigMapy ~40–70 s per replika). Vrací {keys, propagation}."""
+    ns = _ns(); n = 0
+    for attempt in range(6):
+        cm = role_pod.k8s("GET", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys")
+        cur = yaml.safe_load((cm.get("data") or {}).get("keys.yaml") or "[]") or []; n = 0
+        for k in cur:
+            if (k.get("metadata") or {}).get("zakazka") != zid: continue
+            k["budgets"] = [b for b in k.get("budgets", []) if b.get("name") != CAP_BUDGET] + [cap_budget(cap_usd)]; n += 1
+        cm["data"] = {"keys.yaml": yaml.safe_dump(cur, sort_keys=False, allow_unicode=True)}
+        try: role_pod.k8s("PUT", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys", cm); break
+        except RuntimeError as e:
+            if "409" not in str(e) or attempt == 5: raise
+            time.sleep(0.5)
+    prop = None
+    val = probe_key or next(iter((_CACHE.get(zid) or {}).values()), None)
+    if val:
+        t1 = time.time(); targets = _probe_targets(); status = {}
+        body = {"model": os.environ.get("P0_MODEL", "claude-haiku-4-5"), "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]}
+        while time.time() - t1 < float(os.environ.get("P0_GATEWAY_KEYS_WAIT_S", "240")):
+            for t in targets:
+                try: status[t] = httpx.post(f"{t}/v1/messages", json=body, headers={"x-api-key": val, "anthropic-version": "2023-06-01"}, timeout=20).status_code
+                except Exception as e: status[t] = type(e).__name__
+            if targets and all(v == 200 for v in status.values()): break
+            time.sleep(3)
+        prop = {"s": round(time.time() - t1, 1), "status": status, "replicas": len(targets)}
+    if ledger: ledger("GATEWAY_KEYS_CAP", zakazka=zid, cap_usd=float(cap_usd), keys=n, propagation=prop)
+    return {"keys": n, "propagation": prop}
+
+
+def issue(zid, ledger=None, tenant=None, cap_usd=None):
+    """Vrátí {role: klíč} pro zakázku; vydá je, pokud ještě nejsou (idempotentní přes OpenBao KV, resp. Secret). cap_usd (P3-6 E3): strop zakázky
+    jako rozpočet `zakazka-30d-block` každého klíče – gateway vrátí 429 i bez orchestrátoru."""
     with _LOCK:
         if zid in _CACHE: return _CACHE[zid]
         ns = _ns(); sname = f"zakazka-keys-{_safe(zid)}"; use_bao = bool(os.environ.get("P0_BAO_KV") and os.environ.get("P0_BAO_ADDR"))
@@ -153,6 +192,7 @@ def issue(zid, ledger=None, tenant=None):
             role = k["metadata"]["role"]; rnd, src = _bao_random_hex(10) if use_bao else (_secrets.token_hex(10), "local"); entropy.add(src)
             val = f"sk-gw-{_safe(zid)}-{role}-{rnd}"
             e = _sub({kk: v for kk, v in k.items() if kk != "keyHash"}, zid, tenant); e["keyHash"] = "sha256:" + hashlib.sha256(val.encode()).hexdigest()
+            if cap_usd is not None: e["budgets"] = [b for b in e.get("budgets", []) if b.get("name") != CAP_BUDGET] + [cap_budget(cap_usd)]
             keys[role] = val; entries.append(e)
         # ConfigMap agentgateway-keys: get → union (bez starých klíčů této zakázky) → update s resourceVersion (409 → opakovat)
         for attempt in range(6):

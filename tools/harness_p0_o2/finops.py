@@ -311,7 +311,7 @@ def registry_upsert(zid: str, *, tenant: str, budget_usd: float, spent: dict | N
         c.execute(DDL_ZAKAZKY)
         c.execute("""INSERT INTO org.zakazky (zakazka_id, tenant_id, budget_usd, spent_usd, spent_by_role, spend_source, status, keys_source, key_hashes)
                      VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb)
-                     ON CONFLICT (zakazka_id) DO UPDATE SET spent_usd = EXCLUDED.spent_usd, spent_by_role = EXCLUDED.spent_by_role, spend_source = EXCLUDED.spend_source,
+                     ON CONFLICT (zakazka_id) DO UPDATE SET spent_usd = EXCLUDED.spent_usd, spent_by_role = EXCLUDED.spent_by_role, spend_source = EXCLUDED.spend_source, budget_usd = EXCLUDED.budget_usd,
                        status = EXCLUDED.status, keys_source = COALESCE(EXCLUDED.keys_source, org.zakazky.keys_source), key_hashes = COALESCE(EXCLUDED.key_hashes, org.zakazky.key_hashes), updated_at = now()""",
                   (zid, tenant, budget_usd, (spent or {}).get("total_usd", 0.0), json.dumps((spent or {}).get("by_role") or {}), "budget_usage" if spent else "sdk_usage", status, keys_source, json.dumps(key_hashes or {})))
         return True

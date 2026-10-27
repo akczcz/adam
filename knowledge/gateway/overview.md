@@ -1,6 +1,6 @@
 ---
 tema: Mapa model gateway a FinOps vrstvy pro přenositelnou multiagentní platformu
-naposledy_overeno: 2026-10-22
+naposledy_overeno: 2026-10-27
 zralost: n/a (přehled)
 primarni_zdroje:
   - https://github.com/BerriAI/litellm/blob/main/LICENSE
@@ -128,7 +128,7 @@ jsou ověřena jen z Anthropic docs.
 |---|---|---|---|---|---|---|
 | **LiteLLM** | OSS: globální, tým, člen týmu, uživatel, klíč, end-user, org. **Enterprise:** tag budgets, `model_max_budget` per klíč, soft alerty, spend reports. Bez Postgres **fail open** | Postgres (Prisma, denní agregace per user/team/org/tag/end-user/agent); ceník per deployment vč. cache; **offline mapa jen s `LITELLM_LOCAL_MODEL_COST_MAP=True`** | Hard stop (400) nebo **`budget_fallbacks`** na levnější model | OTEL callback, inbound `traceparent` respektován; Prometheus s labely end_user/key/team/model (end_user off by default) | **Vypnuto** (opt-in `store_prompts_in_spend_logs`) | `x-litellm-end-user-id` / `user` → Anthropic `metadata[user_id]` dokumentováno |
 | **Agent Router** | **Žádné USD rozpočty.** Tokenové limity přes Envoy `BackendTrafficPolicy` + `llmRequestCosts` (CEL), `QuotaPolicy` v1alpha1 | Redis čítače; **žádná spend DB ani USD katalog** | 429, běžící stream se nepřeruší | OTLP jen s endpointem, OpenInference default; Prometheus `gen_ai.*` + custom labely z hlaviček | **Traces OpenInference default obsahují plný request i response** (`OPENINFERENCE_HIDE_INPUTS/OUTPUTS`) | jen mapování hlaviček na atributy |
-| **agentgateway** | OSS: `apiKey.keys[].budgets[]` **USD nebo tokeny**, rolling okno 1h/24h/30d, `Audit|Block`; `localRateLimit` tokens s CEL klíčem (`jwt.sub`, `jwt.team`, model → tenant→tým→agent); remote RLS. Enterprise hranice nenalezena | Inline katalog cen vč. cache a reasoning sazeb; metrika `…cost_usd_total`; request log Postgres/SQLite; **persistence USD rozpočtů mezi replikami neověřena** | `Block` (429) nebo `Audit` | OTLP + CEL atributy, navazuje na inbound trace; Prometheus gen_ai + cost USD + CEL labely | Default jen metadata, DB log opt-in | `metadata.user_id` per klíč; **invoice-grade atribuce na Bedrocku** (STS session tags) |
+| **agentgateway** | OSS: `apiKey.keys[].budgets[]` **USD nebo tokeny**, rolling okno libovolná `Duration` (1h/24h/30d), `Audit|Block`; **scope výhradně jeden klíč** (`budget_id = api-key:<hash>:<name>`, žádné group/user_id/CEL – ověřeno v kódu v1.6.0 `http/budget/mod.rs`, 2026-10-27); `localRateLimit` jen `requests|tokens` s CEL klíčem (`jwt.sub`, `jwt.team`, model), buckety per replika; `remoteRateLimit` (Envoy RLS) `requests|tokens` + volitelný `cost` CEL (celé číslo) – USD nedokumentováno. Rozpočty i klíče **hot reload bez restartu** (notify 250 ms, K8s `..data` symlinky; `state_manager.rs`): útrata zachována při změně `amount`, reset při změně `rolling`/`unit`/`name`/`keyHash`; `config.database` jen při startu. Enterprise hranice nenalezena | Inline katalog cen vč. cache a reasoning sazeb; metrika `…cost_usd_total`; request log Postgres/SQLite; **persistence USD rozpočtů mezi replikami neověřena** | `Block` (429) nebo `Audit` | OTLP + CEL atributy, navazuje na inbound trace; Prometheus gen_ai + cost USD + CEL labely | Default jen metadata, DB log opt-in | `metadata.user_id` per klíč; **invoice-grade atribuce na Bedrocku** (STS session tags) |
 | **Bifrost** | OSS: Customer → Team → Virtual Key → Provider, každá úroveň budget + limit. **Enterprise:** business units, access profiles, RBAC. **„Multiple OSS nodes with Postgres is not supported“** – stav v paměti, HA enterprise | SQLite/Postgres/ClickHouse; `pricing_url` vč. `file://`; overrides per scope | Block, provider vyřazen z routingu | OTLP, inbound `traceparent` přednost; Prometheus `x-bf-dim-*` | **Zapnuto**, dokud není `disable_content_logging: true` | `x-bf-customer-id` enterprise; propagace k provideru neověřena |
 
 ### Co z kola 2 plyne
@@ -171,12 +171,16 @@ Co z toho plyne:
   závislost – potvrzeno `importlib.metadata` v harnessu (0.1.76.post1 vedle 1.106.2).
 
 **Rozhodnutí (Adam, 2026-10-22): agentgateway jako model gateway platformy.** Přijatá rizika:
+- strop zakázky napříč klíči rolí drží orchestrátor (součet `budget_usage` v `budget_gate`); gateway je pojistka per klíč – rozpočet `zakazka-30d-block` každého klíče = strop zakázky (P3-6 E3, 2026-10-27), navýšení = přepis ConfigMapy klíčů + hot reload.
 bus factor (jeden člověk 51 % commitů), bez CLA/DCO, FinOps bez ledgeru per tým (rozpočty jen per
 API klíč → klíč per agent/tým jako pracovní model), persistence rozpočtů mezi replikami neověřena.
 LiteLLM zůstává záloha pro případ, že FinOps bez ledgeru nebude stačit – pak s vědomým
 porušením kontraktu (passthrough režim) a výhradou k A1.
 
 ## Co ověřit dál
+- [ ] agentgateway: změřit hot reload rozpočtů (změna `amount` → útrata zachována; `name`/`keyHash` → reset) v O-2; E3 měří jen navýšení stropu.
+- [ ] agentgateway: spike `remoteRateLimit` + Envoy RLS s `cost: int(llm.cost.total*1e6)` keyed `apiKey.zakazka` (sdílený USD strop bez orchestrátoru) – převod double→int v CEL a jednotky okna neověřeny.
+- [ ] docs vs. kód: `localRateLimit` `fillInterval` 24h (docs tvrdí jen s/m/h).
 - [ ] agentgateway 1.7: PR #2162 (generická chybová těla klientům) vs. kontrakt Claude Code (chybová těla neobalovat) – přeměřit G1 na 1.7; egress proxy (CONNECT) viz `../sandbox/egress-agentgateway.md`.
 
 - [x] ~~**Harness G1** – přenos podle kontraktu z code.claude.com~~ – **změřeno 2026-10-22**: mock agentgateway 21/21,
@@ -205,6 +209,7 @@ porušením kontraktu (passthrough režim) a výhradou k A1.
 - [x] ~~Změřit režii gateway P50/P95 vs. přímé volání~~ – mock, non-stream, n=20: agentgateway +0,7 ms, LiteLLM +13 ms p50.
 
 ## Changelog
+- 2026-10-27: rozpočty agentgateway 1.6.0 ověřeny v kódu (gateway-scout) – scope jen per klíč, rate limity bez USD, hot reload rozpočtů i klíčů bez restartu; strop zakázky drží orchestrátor, gateway pojistka per klíč (P3-6 E3). Zdroje: `agentgateway/agentgateway` tag v1.6.0 `crates/agentgateway/src/http/{apikey.rs,budget/mod.rs,localratelimit.rs,remoteratelimit.rs}`, `state_manager.rs`; `agentgateway/website` `assets/agw-docs/standalone/setup/update.md`.
 - 2026-10-24: P1-4 kind – agentgateway ×2 s Postgres: persistence rozpočtů aditivní, vynucení eventually consistent (flush 5 s); G1 21/21 proti clusteru.
 - 2026-10-24: rozpočty agentgateway změřeny za běhu v O-2 (`--scenario budget`): Block/Audit, `budget_usage`, cena per role × zakázka z logu.
 - 2026-10-22: rozhodnuto (Adam) – agentgateway, LiteLLM záloha.

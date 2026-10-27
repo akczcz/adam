@@ -127,9 +127,10 @@ class Gui:
             self.page.wait_for_timeout(1000)
         return {"waited_s": round(time.time() - t0, 1), "status": "timeout"}
 
-    def decide(self, reason, decision="approve"):
-        """Tlačítka jsou bez důvodu (≥ 10 znaků) zakázaná – důkaz T6 v GUI; pak klik a čekání na nový run."""
+    def decide(self, reason, decision="approve", budget=None):
+        """Tlačítka jsou bez důvodu (≥ 10 znaků) zakázaná – důkaz T6 v GUI; pak klik a čekání na nový run. budget (P3-6 E3): nový strop u bodu rozpocet."""
         btn = self.t("approve-submit" if decision == "approve" else "reject-submit")
+        if budget is not None: self.t("budget-new").fill(str(budget))
         self.t("approve-reason").fill(""); d0 = btn.is_disabled()
         self.t("approve-reason").fill("ok"); d1 = btn.is_disabled()
         self.t("approve-reason").fill(reason); d2 = btn.is_disabled()
