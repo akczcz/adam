@@ -188,6 +188,7 @@ def role_gate(role):
 def agent_run(role, z, prompt, tool_names):
     """Role: P0_ROLE_RUNTIME=pod → Kata pod v ns rolí (role_pod.py, P1-6), jinak v procesu aplikace (agent_run_local).
     Před během eval gate (P2-5): role bez prošlých evalů se nespustí (ledger ROLE_GATE blocked, výsledek AGENT_ERROR)."""
+    if z.get("_rerun_delay_s"): ledger("ROLE_RERUN_DELAY", zakazka=z["id"], role=role, delay_s=z["_rerun_delay_s"]); time.sleep(float(z["_rerun_delay_s"]))   # P3-5: nový běh po resume až po odblokování klíčů
     ok, gate = role_gate(role)
     ledger("ROLE_GATE", zakazka=z["id"], role=role, passed=ok, **gate)
     if not ok:
@@ -691,8 +692,9 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
         if not art.get("stopped"): break
         yield ctx.call_activity(notify, input={"event": "ROLE_STOPPED", "role": role, "zakazka": z["id"], "attempt": attempt + 1, "result": "rerun_after_resume" if attempt == 0 else "pozastaveno"})
         if attempt == 1: return None
-        yield ctx.create_timer(timedelta(seconds=float(z.get("rerun_delay_s", 60))))   # klíče gateway tenanta po resume odblokuje ConfigMap (propagace ~1 min) – nový pod nesmí začít na 429
-        art = yield ctx.call_activity(activity, input=inp)
+        # prodleva před novým podem (klíče tenanta po resume odblokuje ConfigMap, propagace ~1 min) – uvnitř aktivity, ne timer workflow (P3-5 nález: timer po resume workflow ukončil)
+        inp2 = {**inp, "_rerun_delay_s": float(z.get("rerun_delay_s", 60))} if "poptavka" in inp else {**inp, "z": {**inp["z"], "_rerun_delay_s": float(z.get("rerun_delay_s", 60))}}
+        art = yield ctx.call_activity(activity, input=inp2)
     if not gate.get("exceeded"):
         yield ctx.call_activity(registry_agent, input={"z": z, "role": role})   # P3-3: řádek org.agents píše workflow (T12), ne harness
         yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Running"})   # P3-5 (O3e): útrata zakázky v org.zakazky po každé roli (FinOps per tenant bez čekání na konec)
@@ -827,7 +829,7 @@ def stop_zakazka(zid, *, by, reason=None, channel="api"):
         import role_pod
         killed = role_pod.kill_zakazka_pods(zid, ledger, tenant=tenant_of(zid))
     st = client().get_workflow_state(zid).runtime_status.name
-    registry_sync(zid, tenant_of(zid), "Pozastaveno", later_s=20)   # P3-5 (O3e): útrata do org.zakazky i u zastavené zakázky (+ znovu po flushi gateway)
+    registry_sync(zid, tenant_of(zid), "Pozastaveno", later_s=(20, 90))   # P3-5 (O3e): útrata do org.zakazky i u zastavené zakázky (+ znovu po flushi gateway)
     ledger("STOP", zakazka=zid, by=by, reason=reason, budget="frozen", channel=channel, pods_killed=killed, status=st)
     return {"ok": True, "status": st, "pods_killed": killed}
 
@@ -835,8 +837,8 @@ def stop_zakazka(zid, *, by, reason=None, channel="api"):
 def registry_sync(zid, tenant, status, later_s=0):
     """org.zakazky řádek s aktuální útratou (budget_usage gateway) – mimo workflow (stop/resume z HTTP handleru). later_s: druhý zápis po flushi
     čítačů gateway (P1-G eventually consistent: requesty zabitého podu doběhnou do budget_usage až po stopu)."""
-    if later_s:
-        import threading; threading.Timer(later_s, registry_sync, args=(zid, tenant, status)).start()
+    for d in ((later_s,) if isinstance(later_s, (int, float)) and later_s else (later_s or ())):
+        import threading; threading.Timer(float(d), registry_sync, args=(zid, tenant, status)).start()
     try:
         fin, hashes = zakazka_spend(zid)
         z_start = next((e for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid), {})
@@ -876,7 +878,7 @@ def stop_tenant(tenant, *, by, reason, channel="agui"):
             except Exception as e: ledger("STOP_TENANT_ERROR", tenant=tenant, zakazka=zid, error=f"{type(e).__name__}: {str(e)[:120]}")
         if os.environ.get("P0_ROLE_RUNTIME") == "pod":
             import role_pod; killed += role_pod.kill_zakazka_pods(zid, ledger, tenant=tenant)
-        if zid in paused: registry_sync(zid, tenant, "Pozastaveno", later_s=20)
+        if zid in paused: registry_sync(zid, tenant, "Pozastaveno", later_s=(20, 90))
     blocked = None
     if os.environ.get("P0_GATEWAY_KEYS") == "issue":
         import gateway_keys; blocked = gateway_keys.block_tenant(tenant, ledger, block=True)

@@ -169,7 +169,7 @@ def main():
         # P2-3: identita role = JWT-SVID (aud memory) z Workload API sidecaru spire-agent; Keycloak token ze Secretu zůstává záloha
         t_id = time.time(); err = None; stale = []
         want_id = f"spiffe://platform/role/{role}/{os.environ.get('P0_TENANT', 'acme')}"
-        for _ in range(60):
+        for _ in range(90):   # P3-5: až 180 s – paralelní pody dvou tenantů na jednom uzlu Kata sdílejí agent ID (k8s_psat) a SVID se střídá
             try:
                 from spiffe import WorkloadApiClient
                 with WorkloadApiClient() as c:
@@ -183,7 +183,9 @@ def main():
                     os.environ["P0_ROLE_TOKEN"] = j.token; err = None; break
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:120]}"; time.sleep(2)
-        if identity["kind"] != "svid": identity = {"kind": "keycloak-token", "svid_error": err, "wait_s": round(time.time() - t_id, 1)}
+        if identity["kind"] != "svid":
+            # fail-closed (P3-5 nález): záložní Keycloak token role nese tenant service accountu (acme) – pod cizího tenanta by paměť četl jako acme → žádný token
+            os.environ["P0_ROLE_TOKEN"] = ""; identity = {"kind": "none", "svid_error": err, "wait_s": round(time.time() - t_id, 1), "stale_svids": stale[-5:], "fail_closed": True}
     print("identity=" + json.dumps(identity), flush=True); S["identity"] = identity
     probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}; S["probe"] = probe
     try: probe["internet_dns_github.com:443"] = tcp_probe("github.com", 443)
