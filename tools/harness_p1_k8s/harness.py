@@ -1353,7 +1353,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             if e.get("jwt_svid_ttl"): args += ["-jwtSVIDTTL", str(e["jwt_svid_ttl"])]
             r = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", *args); spire_applied.append((e["spiffe_id"], r.returncode, (r.stderr or r.stdout)[-120:]))
     subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
-    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror", "mock-upstream", "governance", "mock-channels"); time.sleep(5)   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
+    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror", "mock-upstream", "governance", "mock-channels", *(["agentgateway"] if e4 else [])); time.sleep(5)   # P3-6 E4: config.tracing gateway se načítá jen při startu   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
     t0 = time.time()
     rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=600s", timeout=620).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/agentgateway", "deployment/mock-upstream", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
     for n, p in (("zakazka", 8010), ("memory", 9900), ("mock-github", 9801), ("bridge", 9802)):
