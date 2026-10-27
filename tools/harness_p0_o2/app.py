@@ -836,7 +836,10 @@ def registry_sync(zid, tenant, status, later_s=0):
     """org.zakazky řádek s aktuální útratou (budget_usage gateway) – mimo workflow (stop/resume z HTTP handleru). later_s: druhý zápis po flushi
     čítačů gateway (P1-G eventually consistent: requesty zabitého podu doběhnou do budget_usage až po stopu)."""
     for d in ((later_s,) if isinstance(later_s, (int, float)) and later_s else (later_s or ())):
-        import threading; threading.Timer(float(d), registry_sync, args=(zid, tenant, status)).start()
+        import threading; threading.Timer(float(d), registry_sync, args=(zid, tenant, None)).start()
+    if status is None:   # opožděný zápis: stav podle workflow v okamžiku zápisu (zakázka mohla být mezitím obnovena nebo dokončena)
+        st = _wf_state(zid) or {}; out = st.get("output") or {}
+        status = {"SUSPENDED": "Pozastaveno", "RUNNING": "Running"}.get(st.get("status")) or out.get("stav") or st.get("status") or "Running"
     try:
         fin, hashes = zakazka_spend(zid)
         z_start = next((e for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid), {})
@@ -911,6 +914,18 @@ async def create(req: Request):
     b = await req.json()
     z = create_zakazka(b)
     return {"id": z["id"]}
+
+
+@app.post("/zakazky/{zid}/finops/sync")
+async def finops_sync(zid: str):
+    """P3-5 (O3e): přepočet útraty zakázky z budget_usage gateway do org.zakazky (interní API; stav podle workflow)."""
+    if not thread_exists(zid): raise HTTPException(404)
+    ok = registry_sync(zid, tenant_of(zid), None)
+    return {"ok": ok, "zakazka": zid}
+
+
+def thread_exists(zid):
+    return any(e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid for e in _ledger())
 
 
 @app.get("/zakazky/{zid}")
