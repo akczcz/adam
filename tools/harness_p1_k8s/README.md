@@ -437,6 +437,23 @@ ještě SUSPENDED končí `cancelled`; řidič GUI musí thread otevřít novým
 `org.zakazky`: requesty zabitého podu doběhnou do `budget_usage` po stopu a útrata poslední role po dokončení → opožděné zápisy (20/90 s, 30/120 s)
 + `POST /zakazky/<id>/finops/sync`; stav opožděného zápisu podle workflow, ne podle události.
 
+## P3-6 E3 – strop zakázky v gateway a navýšení z GUI (2026-10-27, AKS, `--step p3-6` = p3-5 + E3a–c)
+
+- **Strop i v gateway**: `gateway_keys.issue(cap_usd)` dá každému klíči zakázky rozpočet `zakazka-30d-block` = strop zakázky (agentgateway 1.6.0 umí
+  rozpočty jen per klíč – ověřeno v kódu, `knowledge/gateway/overview.md`); součet napříč rolemi dál hlídá `budget_gate` orchestrátoru. Zakázka
+  s `budget_usd 0.01` dostane 429 z gateway už v první roli (dřív jen z gate před další rolí – P26c proto akceptuje oba zdroje).
+- **Navýšení z HITL rozpocet** (N6 s důvodem): interrupt nese roli, zdroj, útratu a strop; GUI má pole „Nový strop“; resume payload `budget_usd` →
+  `approve_zakazka(budget_usd)` (event + `org.approvals` `budget.raise` s `limits_shown` starý/nový strop) → aktivita `raise_cap`: `gateway_keys.set_cap`
+  (ConfigMap + sonda, až všechny repliky klíč pustí), `org.zakazky.budget_usd`, `BUDGET_CAP`; workflow `z.budget_usd` → role běží znovu.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E3a | zakázka 0,01 USD: klíče nesou zakazka-30d-block 0,01, první role 429 z gateway (BUDGET_EXCEEDED source=agentgateway), HITL rozpocet v GUI s útratou/stropem/zdrojem | RESULT_E3A |
+| E3b | schválení s novým stropem 5 USD: BUDGET_CAP, ConfigMap 5 na všech klíčích, sonda 200 na obou replikách, org.zakazky 5, approvals budget.raise + limits_shown, role znovu bez 429, GUI ukazuje 5 | RESULT_E3B |
+| E3c | čas, screenshoty | RESULT_E3C |
+
+Výsledek: **RESULT_TOTAL** (`measure` run RESULT_RUN, `results/RESULT_FILE`; RESULT_RUNS). RESULT_NALEZY
+
 ## Spuštění
 
 ```bash
