@@ -336,7 +336,8 @@ class Mock:
     def __init__(self, port):
         self.port = port
         with socket.socket() as s: assert s.connect_ex(("127.0.0.1", port)) != 0, f"port {port} obsazen"
-        env = {k: v for k, v in os.environ.items() if k.lower() not in ("http_proxy", "https_proxy", "all_proxy")} | {"MOCK_HOST": "127.0.0.1", "MOCK_PORT": str(port), "MOCK_EVENT_DELAY": "0.01"}
+        env = {k: v for k, v in os.environ.items() if k.lower() not in ("http_proxy", "https_proxy", "all_proxy")} | {"MOCK_HOST": "127.0.0.1", "MOCK_PORT": str(port), "MOCK_EVENT_DELAY": "0.01",
+                                                                                                                     "MOCK_ACCOUNT_DIALOG": "0"}   # P3-4 nález: eval L3 Account měří kolo Zadání (rubrika); kolo otázek (P3-3) měří harness U2b, jinak gate L3 padá (otazky.md místo zadani.md)
         LOGS.mkdir(parents=True, exist_ok=True)
         self.p = subprocess.Popen([sys.executable, str(G1 / "mock_upstream.py")], env=env, stdout=open(LOGS / "mock.log", "wb"), stderr=subprocess.STDOUT, start_new_session=True)
         t0 = time.time()

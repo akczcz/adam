@@ -103,6 +103,11 @@ allow if {
 | T3 pozastavení | 5 | workflow zakázky `Pozastaveno`: gateway klíče zakázky `Block`, sandboxy checkpoint + tombstone, A2A tasky `canceled`; zpráva zadavateli (N3 schválená v H1 jako „stavová notifikace“) | workflow |
 | resume | – | jen člověk s důvodem (T6); po resume se HITL požadavek obnoví, **neschválí** | vlastník |
 
+Implementace SLA (P3-4): lhůty procesů (procesy.md) běží jako **třetí timer uvnitř čekání HITL** (`when_any(event, timeout, sla)`):
+překročení = `SLA_BREACH` v ledgeru + řádek `org.sla_events` (bod, lhůta, eskalace na vlastníka procesu – T2) + „SLA překročeno“
+ve stavu zakázky v GUI; zakázka **čeká dál** (pozastaví ji až timeout T3). T1 připomínka a přesměrování na jiného schvalovatele
+zatím ne (jeden vlastník v dogfoodingu). Zkrácené lhůty pro měření dává poptávka (`sla: {H1: 20}`).
+
 Pravidla: timeout **nikdy** = schválení; schválení platí 24 h a jen pro artefakt se stejným hashem; eskalační řetězec
 agent → reviewer-agent → vlastník procesu → governance → člověk zákazníka (kriteria.md B3); dva zamítnutí téhož
 požadavku za sebou = X1. Durable: čekání přežije restart (změřeno v dapr-agents harnessu T2/T3; 14 dní neměřeno).
@@ -149,6 +154,16 @@ Důsledky profilu:
 | `nejasne` | H1a právník; do stanoviska se zachází jako s high-risk |
 
 Dogfooding: K1–K5 = ne → `standard`. Alokace úkolů **mezi agenty** do bodu 4 nespadá (regulace.md, výklad).
+
+**Implementace (P3-4, 2026-10-27, AKS):** dotazník K1–K6 vyplňuje zadavatel – s poptávkou (formulář nové zakázky v GUI,
+`forwardedProps.klasifikace`) nebo jako AG-UI interrupt `reason=klasifikace` (zakázka založená interním API bez odpovědí);
+vyhodnocení je **deterministická aktivita** `klasifikace` (pořadí K1 > K2 > K3 > K4/K5; K6 jen `sensitivity`), ne model.
+Výsledek: `org.zakazky.profile` + `klasifikace` (odpovědi, kdo), auditní řádek `org.approvals` (`action=zadani.classify`,
+u `odmitnout` `decision=reject`), OPA data `zakazky/<id>` (`profile`, `pass_k`). Brána běží **před prvním během role**
+(odchylka od pořadí Upřesnění → Klasifikace v procesy.md): odmítnutá zakázka nespustí žádný pod a neutratí nic.
+`nejasne` → H1a `pravnik.stanovisko` (HITL s důvodem); po stanovisku profil **zůstává** `nejasne` (high-risk zacházení) –
+změna profilu je N9, v GUI zatím není. High-risk nebo nejasný profil u běžící zakázky tenanta **zamyká posun autonomie**
+(`autonomy_check` vrací důvod „high-risk profil“). Změřeno harnessem K-1 (`tools/harness_p1_k8s --step p3-4`).
 
 ## Pravidlo rozšiřování autonomie (návrh čísel)
 
@@ -200,9 +215,11 @@ Retence ≥ 6 měsíců, per tenant výš (T4); append-only + podpis pro high-ri
 - [ ] Vazba approval na hash artefaktu u N2 (manifest digest) a N3 (hash zprávy) – praktické u AG-UI editace.
 - [ ] Čl. 50(2) a generovaný kód (regulace.md otevřené) – zda PR obsah značit.
 - [ ] Prahy pravidla pass^k po prvních 3 zakázkách; kalibrace L5.
-- [ ] Právní posouzení profilu `nejasne` – kdo je „právník“ v dogfoodingu.
+- [ ] Právní posouzení profilu `nejasne` – kdo je „právník“ v dogfoodingu (P3-4: H1a schvaluje člověk tenanta s důvodem; profil po stanovisku zůstává `nejasne`).
+- [ ] N9 změna profilu z GUI (governance + právník) a T1 připomínka / přesměrování schvalovatele u SLA.
 
 ## Changelog
+- 2026-10-27: P3-4 – klasifikační brána, SLA timery a čl. 50 kanály implementovány a změřeny (K-1); odchylka pořadí brány (před první rolí), profil `nejasne` zůstává po H1a.
 - 2026-10-24: HITL přes GitHub změřeno (bridge jako PEP před approval tokenem).
 - 2026-10-24: poznámka k L3 evalům po O-2 live (model injekci odmítl sám – obranu měří jen adversariální agent).
 - 2026-10-23: nálezy harnessu O-1 (stop neruší čekající schválení; executor s tokenem).

@@ -153,6 +153,15 @@ Deployment `governance` (obraz `zakazka-app`, `python /app/governance_mcp/govern
 `MEMORY_TENANT_STATUS_URL` (stop tenanta → deny). Role `org_reader`/`org_writer` a RLS zakládá aplikace zakázky při startu (`finops.tenants_sync`).
 Měření: `measure` s `e2e=p3-3`.
 
+## P3-4: mock kanálů k lidem, klasifikace a SLA (2026-10-27)
+
+Deployment `mock-channels` (obraz `zakazka-app`, `python /app/harness_p0_o2/mock_channels.py`, port 9804): mock e-mailu zákazníka
+(`POST /email`) a komentářů ticketu (`POST /tickets/<id>/comments`), harness čte `/_debug/messages`. `zakazka-env`: `P0_CHANNELS_URL`
+(prázdné = suchý běh, jen ledger). Disclosure čl. 50(1) a `generated_by` (T8) vkládá adaptér v aplikaci (`notify_customer`), ne model;
+ostrý provoz = SMTP relay / helpdesk API za gateway (CONNECT egress, P3-6). Schéma `org`: `zakazky.profile` + `klasifikace`, tabulka
+`org.sla_events` (RLS per tenant jako ostatní). OPA data `zakazky/<id>` zapisuje aplikace přes `PUT /v1/data` (OPA běží bez bundle –
+po restartu podu OPA data zmizí; bundle z rolegen = P3-6). Měření: `measure` s `e2e=p3-4`.
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).

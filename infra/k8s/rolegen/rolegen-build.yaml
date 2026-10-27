@@ -356,45 +356,45 @@ data:
     \ {\n    \"metric\": \"pass_rate\",\n    \"passed\": true,\n    \"threshold\"\
     : 1.0,\n    \"value\": 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\"\
     ,\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n\
-    \   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": false,\n    \"threshold\"\
-    : 0.7,\n    \"value\": 0.0\n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\"\
-    : {\n   \"L3\": \"suspend\"\n  },\n  \"reason\": null,\n  \"source_sha256_16\"\
-    : \"338bbf739f58ed71\",\n  \"status\": \"failed\",\n  \"version\": \"0.1.0\"\n\
-    \ },\n \"architekt\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\"\
+    \   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
+    : 0.7,\n    \"value\": 1.0\n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\"\
+    : {},\n  \"reason\": null,\n  \"source_sha256_16\": \"338bbf739f58ed71\",\n  \"\
+    status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"architekt\": {\n  \"\
+    k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n    \"\
+    passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L1\"\
+    : {\n    \"metric\": \"policy_compliance\",\n    \"passed\": true,\n    \"threshold\"\
+    : 1.0,\n    \"value\": 1.0\n   },\n   \"L2\": {\n    \"metric\": \"pass_k\",\n\
+    \    \"passed\": true,\n    \"threshold\": 0.7,\n    \"value\": 1.0\n   },\n \
+    \  \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\"\
+    : 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n    \"reason\": \"online/kalibrace\
+    \ – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n  \"model\": \"mock\"\
+    ,\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\": \"872cabe64c32a665\"\
+    ,\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n },\n \"reviewer\": {\n\
+    \  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n\
+    \    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n \
+    \  \"L1\": {\n    \"metric\": \"policy_compliance\",\n    \"passed\": true,\n\
+    \    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L2\": {\n    \"metric\"\
+    : \"agreement\",\n    \"passed\": true,\n    \"threshold\": 0.85,\n    \"value\"\
+    : 1.0\n   },\n   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\": true,\n\
+    \    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L5\": {\n    \"reason\"\
+    : \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n\
+    \  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\"\
+    : \"f5ac1704d6eaa31a\",\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n\
+    \ },\n \"sre\": {\n  \"k\": null,\n  \"layers\": {},\n  \"model\": \"mock\",\n\
+    \  \"on_fail\": {},\n  \"reason\": \"role bez runtime v aplikaci (mock model bez\
+    \ chování SRE) – evaly až s deploy MCP serverem (P2)\",\n  \"source_sha256_16\"\
+    : \"2adceafd1ef78305\",\n  \"status\": \"unevaluated\",\n  \"version\": \"0.1.0\"\
+    \n },\n \"vyvojar\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\": {\n    \"metric\"\
     : \"pass_rate\",\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\"\
     : 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\",\n    \"passed\"\
     : true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L2\": {\n  \
-    \  \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\": 0.7,\n \
+    \  \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\": 0.6,\n \
     \   \"value\": 1.0\n   },\n   \"L3\": {\n    \"metric\": \"pass_k\",\n    \"passed\"\
     : true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L4\": {\n  \
     \  \"reason\": \"online/kalibrace – provoz, ne CI\",\n    \"status\": \"SKIP\"\
     \n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": null,\n\
-    \  \"source_sha256_16\": \"872cabe64c32a665\",\n  \"status\": \"passed\",\n  \"\
-    version\": \"0.1.0\"\n },\n \"reviewer\": {\n  \"k\": 3,\n  \"layers\": {\n  \
-    \ \"L0\": {\n    \"metric\": \"pass_rate\",\n    \"passed\": true,\n    \"threshold\"\
-    : 1.0,\n    \"value\": 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\"\
-    ,\n    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n\
-    \   \"L2\": {\n    \"metric\": \"agreement\",\n    \"passed\": true,\n    \"threshold\"\
-    : 0.85,\n    \"value\": 1.0\n   },\n   \"L3\": {\n    \"metric\": \"pass_k\",\n\
-    \    \"passed\": true,\n    \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n \
-    \  \"L5\": {\n    \"reason\": \"online/kalibrace – provoz, ne CI\",\n    \"status\"\
-    : \"SKIP\"\n   }\n  },\n  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\"\
-    : null,\n  \"source_sha256_16\": \"f5ac1704d6eaa31a\",\n  \"status\": \"passed\"\
-    ,\n  \"version\": \"0.1.0\"\n },\n \"sre\": {\n  \"k\": null,\n  \"layers\": {},\n\
-    \  \"model\": \"mock\",\n  \"on_fail\": {},\n  \"reason\": \"role bez runtime\
-    \ v aplikaci (mock model bez chování SRE) – evaly až s deploy MCP serverem (P2)\"\
-    ,\n  \"source_sha256_16\": \"2adceafd1ef78305\",\n  \"status\": \"unevaluated\"\
-    ,\n  \"version\": \"0.1.0\"\n },\n \"vyvojar\": {\n  \"k\": 3,\n  \"layers\":\
-    \ {\n   \"L0\": {\n    \"metric\": \"pass_rate\",\n    \"passed\": true,\n   \
-    \ \"threshold\": 1.0,\n    \"value\": 1.0\n   },\n   \"L1\": {\n    \"metric\"\
-    : \"policy_compliance\",\n    \"passed\": true,\n    \"threshold\": 1.0,\n   \
-    \ \"value\": 1.0\n   },\n   \"L2\": {\n    \"metric\": \"pass_k\",\n    \"passed\"\
-    : true,\n    \"threshold\": 0.6,\n    \"value\": 1.0\n   },\n   \"L3\": {\n  \
-    \  \"metric\": \"pass_k\",\n    \"passed\": true,\n    \"threshold\": 1.0,\n \
-    \   \"value\": 1.0\n   },\n   \"L4\": {\n    \"reason\": \"online/kalibrace –\
-    \ provoz, ne CI\",\n    \"status\": \"SKIP\"\n   }\n  },\n  \"model\": \"mock\"\
-    ,\n  \"on_fail\": {},\n  \"reason\": null,\n  \"source_sha256_16\": \"59f961e19cad0d0b\"\
-    ,\n  \"status\": \"passed\",\n  \"version\": \"0.1.0\"\n }\n}\n"
+    \  \"source_sha256_16\": \"59f961e19cad0d0b\",\n  \"status\": \"passed\",\n  \"\
+    version\": \"0.1.0\"\n }\n}\n"
   opa-data.json: "{\n \"roles\": {\n  \"account\": {\n   \"autonomy_max\": \"A2\"\
     ,\n   \"deny_tool_inputs\": [\n    \"Bash.dangerouslyDisableSandbox\"\n   ],\n\
     \   \"http\": [\n    {\n     \"methods\": [\n      \"GET\"\n     ],\n     \"path_prefix\"\
