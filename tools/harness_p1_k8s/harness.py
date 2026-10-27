@@ -1304,7 +1304,9 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in ks_now}
     flux_msg = {k["metadata"]["name"]: next((c.get("message", "")[:1500] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks_now}
     print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
-    assert flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now), f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
+    if not (flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now)):   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
+        ops = {f'{o["kind"]}/{o["metadata"]["name"]}': next((f'{c["status"]} {c.get("reason", "")}: {c.get("message", "")[:300]}' for c in (o.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), "?") for kind in ("clustersecretstore", "helmreleases", "externalsecrets", "certificate") for o in kj("get", kind, "-A").get("items", [])}   # P3-6 E1: stav operátorů do zprávy
+        raise AssertionError(f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}\n  operátoři: {json.dumps(ops, ensure_ascii=False)}")
     egress_secrets = ensure_platform_secrets(wait_s=600) | {"legacy_removed": egress_secrets["legacy_removed"]}   # ns tenantů existují až po Flux → trust bundle, Certificate a ExternalSecrety
     assert egress_secrets["ok"], f"operátoři nedodali tajemství platformy (cert-manager/ESO/trust-manager): {json.dumps(egress_secrets['status'], ensure_ascii=False)}"
     if e1: e1_checks(a, rep, kj, egress_secrets)
