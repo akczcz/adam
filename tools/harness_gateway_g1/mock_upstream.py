@@ -174,6 +174,9 @@ def _p0_message(body: dict) -> dict | None:
     role = (_re.search(r"role=([a-z]+)", sys_txt) or [None, "vyvojar"])[1]
     if role == "account":
         if last is None and find("search_memory"): tu = (find("search_memory"), {"query": "zákazník ACME kontakty preference konvence"})
+        elif last and last.endswith("search_memory") and find("write_artifact") and "Odpovědi zadavatele" not in prompt and "Odpovědi zadavatele" not in sys_txt and os.environ.get("MOCK_ACCOUNT_DIALOG", "1") == "1":
+            # P3-3: upřesňující dialog – první kolo bez odpovědí zadavatele → otázky (artifacts/otazky.md), zadání až po odpovědích
+            tu = (find("write_artifact"), {"path": "artifacts/otazky.md", "content": "# Upřesňující otázky\n\n1. Kam přesně má soubor přijít (cesta v repu) a kdo ho bude číst?\n2. Má zakázka nějaké omezení rozpočtu nebo termínu nad rámec výchozích?\n"})
         elif last and last.endswith("search_memory") and find("write_artifact"):
             tu = (find("write_artifact"), {"path": "artifacts/zadani.md", "content": f"# Zadání\n\n## Cíl\n{prompt.replace('Zadání: ', '')[:400]}\n\n## Akceptační kritéria\n- testy zelené, PR mergeable\n- žádná komunikace ven bez člověka\n\n## Hranice\n- jen repo platformy, větev zakázky\n\n## Klasifikační brána\n- profil: standard (dogfooding, bez přílohy III)\n"})
         elif last and last.endswith("write_artifact"): tu = None

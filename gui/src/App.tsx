@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EventType } from "@ag-ui/core";
 import { hasToken, listThreads, login, me, runAgent, setToken, type ThreadState, type User } from "./api";
+import { AuditPage, FinopsPage, FirmaPage, GovernancePage, Nav, RegistrPage } from "./Firma";
 
 type Ev = Record<string, any>;
 type Msg = { id: string; role: string; name?: string; text: string; sub?: string };
@@ -25,6 +26,7 @@ export function App() {
   useEffect(() => { if (hasToken()) me().then(setUser).catch(() => setToken(null)); }, []);
   if (!user) return <Login onLogin={(u) => { setUser(u); setErr(null); }} />;
   const m = hash.match(/^#\/t\/([^/?]+)/);
+  const page = (hash.match(/^#\/([a-z]+)/) ?? [null, ""])[1] ?? "";
   return (
     <>
       <header>
@@ -36,7 +38,8 @@ export function App() {
       </header>
       <main>
         {err && <div className="card err">{err}</div>}
-        {m ? <Thread id={decodeURIComponent(m[1])} user={user} /> : <Threads />}
+        {!m && <Nav page={page} />}
+        {m ? <Thread id={decodeURIComponent(m[1])} user={user} /> : page === "firma" ? <FirmaPage user={user} /> : page === "registr" ? <RegistrPage /> : page === "finops" ? <FinopsPage /> : page === "governance" ? <GovernancePage /> : page === "audit" ? <AuditPage /> : <Threads />}
       </main>
     </>
   );
@@ -228,8 +231,18 @@ function Thread({ id, user }: { id: string; user: User }) {
         </div>
       </div>
 
-      {interrupt && (
-        <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id}>
+      {interrupt && interrupt.reason === "dialog" && (
+        <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id} data-kind="dialog">
+          <h3 style={{ marginTop: 0 }}>Account se ptá (kolo <span data-testid="dialog-round">{interrupt.metadata?.round}</span>)</h3>
+          <pre style={{ whiteSpace: "pre-wrap" }} data-testid="dialog-questions">{interrupt.metadata?.questions}</pre>
+          <label>Vaše odpovědi (Account je zapracuje do Zadání; max 3 kola)</label>
+          <textarea data-testid="dialog-answer" value={reason} onChange={(x) => setReason(x.target.value)} />
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="primary" disabled={reason.trim().length < 3} onClick={() => { start({ resume: [{ interruptId: interrupt.id, status: "resolved", payload: { answer: reason.trim() } }] }); setReason(""); }} data-testid="dialog-submit">Odpovědět</button>
+          </div>
+        </div>)}
+      {interrupt && interrupt.reason !== "dialog" && (
+        <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id} data-kind="approval">
           <h3 style={{ marginTop: 0 }}>Rozhodnutí člověka: <span data-testid="interrupt-bod">{interrupt.metadata?.bod}</span> <span className="muted">({interrupt.metadata?.action})</span></h3>
           <p>{interrupt.message} · artefakt <code>{interrupt.metadata?.artifact}</code> · hash <code data-testid="interrupt-hash">{interrupt.metadata?.artifact_hash}</code> · od role <b>{interrupt.metadata?.from}</b>{interrupt.expiresAt && <span className="muted"> · timeout {new Date(interrupt.expiresAt).toLocaleString("cs-CZ")} (bez rozhodnutí → Pozastaveno)</span>}</p>
           <label>Důvod rozhodnutí (povinný, ≥ 10 znaků – zapisuje se do org.approvals, podepsaný token nese vaše jméno)</label>

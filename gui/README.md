@@ -8,7 +8,9 @@ AG-UI server v aplikaci zakázky (`tools/harness_p0_o2/agui.py`), který ho tak�
 |---|---|---|
 | Přihlášení | člověk z Keycloaku (realm role `human`, tenant z claimu) | `POST /agui/login` (server → password grant) |
 | Zakázky | thready tenanta: stav, bod HITL, role, rozpočet/útrata | `GET /agui/threads`; nová zakázka = první zpráva uživatele v `POST /agui/run` |
-| Zakázka | subagenti (role), zprávy s disclosure čl. 50, aktivity (gate, pod, nástroje, předání, PDP/executor), stav, log událostí | run = SSE; HITL = interrupt → `resume` s povinným důvodem (≥ 10 znaků); stop = `forwardedProps.action=stop` s důvodem |
+| Zakázka | subagenti (role), zprávy s disclosure čl. 50, aktivity (gate, pod, nástroje, předání, PDP/executor), stav, log událostí | run = SSE; HITL = interrupt → `resume` s povinným důvodem (≥ 10 znaků); dialog Account = interrupt `reason=dialog` → `resume {answer}`; stop = `forwardedProps.action=stop` s důvodem |
+| Firma (P3-3) | role × tenant: verze, eval gate, úroveň autonomie; tenanti | `POST /agui/gov/autonomy` (nahoru jen při splněných podmínkách), `POST /agui/gov/tenant/<id>/stop|resume` |
+| Registr agentů, FinOps, Governance, Audit (P3-3) | org.* přes Governance MCP (org_reader, RLS per tenant): agenti, události, útrata vs. strop (alert ≥ 80 %), governance report T11–T15, risk register, export JSONL, approvaly | `POST /agui/gov/tools/<name>`, `GET /agui/gov/export.jsonl` |
 
 ```bash
 npm ci && npm run build                 # dist/ (tsc --noEmit + vite build)

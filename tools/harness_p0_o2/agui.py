@@ -24,7 +24,7 @@ import uuid
 import httpx
 import jwt
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from ag_ui.core import (PROTOCOL_VERSION, ActivitySnapshotEvent, CustomEvent, EventType, Interrupt, RunAgentInput, RunErrorEvent,
                         RunFinishedCancelledOutcome, RunFinishedEvent, RunFinishedInterruptOutcome, RunFinishedSuccessOutcome, RunStartedEvent,
                         StateSnapshotEvent, SubagentErrorEvent, SubagentFinishedEvent, SubagentFinishedSuccessOutcome, SubagentStartedEvent,
@@ -141,13 +141,19 @@ PLATFORM_TENANT = "platform"   # P3-2: průřezový tenant (governance) – vid�
 
 
 def pending_interrupt(entries):
-    """Poslední HITL_WAIT bez pozdějšího rozhodnutí téhož bodu → Interrupt; jinak None."""
-    waits = [(i, e) for i, e in enumerate(entries) if e.get("kind") == "NOTIFY" and e.get("event") == "HITL_WAIT"]
+    """Poslední HITL_WAIT / DIALOG_WAIT bez pozdějšího rozhodnutí (resp. odpovědi) → záznam čekání; jinak None. Dialog (P3-3): otázky Account zadavateli."""
+    waits = [(i, e) for i, e in enumerate(entries) if e.get("kind") == "NOTIFY" and e.get("event") in ("HITL_WAIT", "DIALOG_WAIT")]
     if not waits: return None
     i, w = waits[-1]
-    later = [e for e in entries[i + 1:] if e.get("kind") == "NOTIFY" and e.get("event") in ("HITL_APPROVED", "HITL_TIMEOUT", "HITL_INVALID_TOKEN", "HITL_REJECTED") and e.get("bod") == w.get("bod")]
+    if w.get("event") == "DIALOG_WAIT":
+        later = [e for e in entries[i + 1:] if e.get("kind") == "NOTIFY" and e.get("event") in ("DIALOG_ANSWER", "DIALOG_TIMEOUT", "DIALOG_LIMIT")]
+    else:
+        later = [e for e in entries[i + 1:] if e.get("kind") == "NOTIFY" and e.get("event") in ("HITL_APPROVED", "HITL_TIMEOUT", "HITL_INVALID_TOKEN", "HITL_REJECTED") and e.get("bod") == w.get("bod")]
     if later: return None
     return w
+
+
+def interrupt_id(w): return f"{'dialog' if w.get('event') == 'DIALOG_WAIT' else 'hitl'}:{w['bod']}:{w.get('artifact_hash')}"
 
 
 def state_of(zid, entries):
@@ -174,6 +180,11 @@ async def threads(req: Request):
 
 
 # --- ledger → AG-UI události --------------------------------------------------------------------------------------------
+def _artifact_text_path(zid, rel):
+    try: return open(os.path.join(CTX["root_dir"], zid, rel), encoding="utf-8", errors="replace").read()[:4000]
+    except Exception: return ""
+
+
 def _artifact_text(zid, e):
     """Obsah artefaktu k předání (čte se z adresáře zakázky v podu aplikace – AG-UI server běží tamtéž)."""
     root = f"{CTX['root_dir']}/{zid}"; frm = e.get("frm")
@@ -181,7 +192,7 @@ def _artifact_text(zid, e):
         run = next((x for x in reversed(thread_entries(zid)) if x.get("kind") == "AGENT_RUN" and x.get("role") == "vyvojar"), {})
         files = run.get("files") or []
         return "Soubory PR:\n" + "\n".join(f"- {f['path']} (sha256 {f['sha256']})" for f in files[:40]) + ("\n\n" + (run.get("result_text") or "")[:1500])
-    p = ARTIFACT_FILE.get(frm)
+    p = "artifacts/otazky.md" if str(e.get("artifact", "")).startswith("otazky://") else ARTIFACT_FILE.get(frm)
     try:
         if p: return open(os.path.join(root, p), encoding="utf-8", errors="replace").read()[:6000]
     except Exception: pass
@@ -229,10 +240,14 @@ def events_for(zid, entries, start_idx=0, subagents=None):
         elif k == "NOTIFY":
             evn = e.get("event")
             if evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "result": e.get("result"), "reason": e.get("reason")})
+            elif evn and evn.startswith("DIALOG_"):
+                act(i, "dialog", {"state": evn[7:].lower(), "round": e.get("round"), "by": e.get("by"), "answer": e.get("answer"), "result": e.get("result")})
+                if evn == "DIALOG_ANSWER": msg(i, "user", e.get("by") or "zadavatel", str(e.get("answer") or ""))
             else: act(i, "notify", {k2: v for k2, v in e.items() if k2 not in ("ts", "kind")})
         elif k in ("PDP", "EXECUTED", "EXECUTOR_REFUSED"): act(i, "executor", {"kind": k, "action": e.get("action"), "actor": e.get("actor") or e.get("by"), "decision": e.get("decision"), "applied": e.get("applied"), "reason": e.get("reason")})
         elif k in ("APPROVAL_RAISED", "APPROVAL_REJECTED"): act(i, "approval", {"decision": "approve" if k == "APPROVAL_RAISED" else "reject", "bod": e.get("bod"), "by": e.get("by"), "reason": e.get("reason"), "channel": e.get("channel")})
         elif k in ("STOP", "RESUME"): act(i, "stop", {"kind": k.lower(), "by": e.get("by"), "reason": e.get("reason"), "pods_killed": e.get("pods_killed")})
+        elif k in ("REGISTRY_AGENT", "DIALOG_RAISED"): act(i, "registry" if k == "REGISTRY_AGENT" else "dialog", {k2: v for k2, v in e.items() if k2 not in ("ts", "kind", "zakazka")})
         elif k == "REGISTRY_ZAKAZKA": act(i, "registry", {"status": e.get("status"), "spent_usd": e.get("spent_usd"), "written": e.get("written")})
     return ev
 
@@ -244,11 +259,15 @@ def _validate_resume(inp: RunAgentInput, zid, entries):
     w = pending_interrupt(entries)
     for r in inp.resume or []:
         p = r.payload if isinstance(r.payload, dict) else {}
+        if not w or r.interrupt_id != interrupt_id(w): raise HTTPException(409, "interrupt není otevřený (jiný bod nebo artefakt)")
+        if w.get("event") == "DIALOG_WAIT":   # P3-3: odpověď zadavatele na otázky Account – text, ne approval
+            answer = (p.get("answer") or "").strip()
+            if len(answer) < 3: raise HTTPException(422, "odpověď na otázky Account je povinná")
+            out.append({"kind": "dialog", "answer": answer, "interrupt_id": r.interrupt_id}); continue
         reason = (p.get("reason") or "").strip()
         if len(reason) < MIN_REASON: raise HTTPException(422, f"důvod rozhodnutí je povinný (≥ {MIN_REASON} znaků) – org.approvals.reason, T6")
-        if not w or r.interrupt_id != f"hitl:{w['bod']}:{w.get('artifact_hash')}": raise HTTPException(409, "interrupt není otevřený (jiný bod nebo artefakt)")
         decision = "reject" if r.status == "cancelled" or p.get("decision") == "reject" else "approve"
-        out.append({"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "decision": decision, "reason": reason, "interrupt_id": r.interrupt_id})
+        out.append({"kind": "hitl", "bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "decision": decision, "reason": reason, "interrupt_id": r.interrupt_id})
     return out
 
 
@@ -273,6 +292,7 @@ async def run(req: Request):
     entries = thread_entries(zid)
     decisions = _validate_resume(inp, zid, entries) if inp.resume else []
     for d in decisions:
+        if d["kind"] == "dialog": await asyncio.to_thread(CTX["answer"], zid, u, d["answer"]); continue
         await asyncio.to_thread(CTX["approve"] if d["decision"] == "approve" else CTX["reject"], zid, d["bod"], d["artifact_hash"], u, d["reason"])
     stopped = None
     if fp.get("action") == "stop":
@@ -300,11 +320,17 @@ async def run(req: Request):
                 for e in events_for(zid, ents, n, subagents): yield enc.encode(e)
                 n = len(ents); yield enc.encode(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state_of(zid, ents)))
             w = pending_interrupt(ents)
-            if w and f"hitl:{w['bod']}:{w.get('artifact_hash')}" not in resolved:
+            if w and interrupt_id(w) not in resolved:
                 art = next((e for e in reversed(ents) if e.get("kind") == "HANDOFF" and e.get("hash") == w.get("artifact_hash")), {})
-                itr = Interrupt(id=f"hitl:{w['bod']}:{w.get('artifact_hash')}", reason="approval", message=f"Schválení {w['bod']} – rozhodněte s důvodem (T6)", expires_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(w.get("ts", t0) + float(w.get("timeout_s") or 0))) if w.get("timeout_s") else None,
-                                response_schema={"type": "object", "required": ["decision", "reason"], "properties": {"decision": {"enum": ["approve", "reject"]}, "reason": {"type": "string", "minLength": MIN_REASON}}},
-                                metadata={"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": art.get("frm"), "action": BOD_ACTION.get(w["bod"], w["bod"]), "process": BOD_PROCESS.get(w["bod"])})
+                exp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(w.get("ts", t0) + float(w.get("timeout_s") or 0))) if w.get("timeout_s") else None
+                if w.get("event") == "DIALOG_WAIT":
+                    itr = Interrupt(id=interrupt_id(w), reason="dialog", message=f"Account má upřesňující otázky (kolo {w.get('round')}) – odpovězte", expires_at=exp,
+                                    response_schema={"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string", "minLength": 3}}},
+                                    metadata={"bod": "dialog", "round": w.get("round"), "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": "account", "questions": _artifact_text_path(zid, "artifacts/otazky.md")})
+                else:
+                    itr = Interrupt(id=interrupt_id(w), reason="approval", message=f"Schválení {w['bod']} – rozhodněte s důvodem (T6)", expires_at=exp,
+                                    response_schema={"type": "object", "required": ["decision", "reason"], "properties": {"decision": {"enum": ["approve", "reject"]}, "reason": {"type": "string", "minLength": MIN_REASON}}},
+                                    metadata={"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": art.get("frm"), "action": BOD_ACTION.get(w["bod"], w["bod"]), "process": BOD_PROCESS.get(w["bod"])})
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedInterruptOutcome(type="interrupt", interrupts=[itr]), result=state_of(zid, ents)))
                 return
             st = CTX["wf_state"](zid) or {}
@@ -330,6 +356,71 @@ async def thread_get(zid: str, req: Request):
     ents = thread_entries(zid)
     w = pending_interrupt(ents)
     return {"state": state_of(zid, ents), "interrupt": ({"id": f"hitl:{w['bod']}:{w.get('artifact_hash')}", "bod": w["bod"], "artifact_hash": w.get("artifact_hash")} if w else None), "entries": len(ents)}
+
+
+# --- governance (P3-3): čtení přes Governance MCP (org_reader, RLS per tenant), akce přes aplikaci (zápis org.*) -----------------------
+GOV_URL = os.environ.get("P0_GOV_URL", "")
+
+
+@router.get("/gov/resources")
+async def gov_resources(req: Request):
+    u = user_from_request(req)
+    if not GOV_URL: raise HTTPException(503, "Governance MCP není nakonfigurován (P0_GOV_URL)")
+    r = await asyncio.to_thread(httpx.get, f"{GOV_URL}/resources", headers={"Authorization": req.headers.get("Authorization", "")}, timeout=15)
+    return r.json() if r.status_code == 200 else JSONResponse(r.json() if r.headers.get("content-type", "").startswith("application/json") else {"detail": r.text[:200]}, status_code=r.status_code)
+
+
+@router.post("/gov/tools/{name}")
+async def gov_tool(name: str, req: Request):
+    """Proxy na Governance MCP s tokenem člověka (identita a tenant zůstávají jeho – AG-UI server nic nepřebarvuje)."""
+    user_from_request(req)
+    if not GOV_URL: raise HTTPException(503, "Governance MCP není nakonfigurován (P0_GOV_URL)")
+    try: args = await req.json()
+    except Exception: args = {}
+    r = await asyncio.to_thread(httpx.post, f"{GOV_URL}/tools/{name}", json=args or {}, headers={"Authorization": req.headers.get("Authorization", "")}, timeout=30)
+    body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {"detail": r.text[:300]}
+    return body if r.status_code == 200 else JSONResponse(body, status_code=r.status_code)
+
+
+@router.get("/gov/export.jsonl")
+async def gov_export(req: Request):
+    user_from_request(req)
+    r = await asyncio.to_thread(httpx.get, f"{GOV_URL}/export.jsonl", headers={"Authorization": req.headers.get("Authorization", "")}, timeout=60)
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(r.text, status_code=r.status_code, headers={"Content-Disposition": "attachment; filename=org-export.jsonl"})
+
+
+def _platform_or_owner(u, tenant):
+    if u["tenant"] != PLATFORM_TENANT and u["tenant"] != tenant: raise HTTPException(403, "jen tenant platform nebo vlastník tenanta")
+
+
+@router.post("/gov/autonomy")
+async def gov_autonomy(req: Request):
+    """Posun autonomie role × tenant (metriky.md §6): nahoru jen při splněných podmínkách (409 s důvody), vždy s důvodem člověka → org.role_autonomy + agent_events."""
+    u = user_from_request(req); b = await req.json()
+    role, tenant, level, reason = b.get("role"), b.get("tenant") or u["tenant"], b.get("level"), (b.get("reason") or "").strip()
+    _platform_or_owner(u, tenant)
+    if len(reason) < MIN_REASON: raise HTTPException(422, "důvod je povinný (≥ 10 znaků)")
+    res = await asyncio.to_thread(CTX["autonomy"], role, tenant, level, u, reason)
+    CTX["ledger"]("AUTONOMY_CHANGE", role=role, tenant=tenant, level=level, by=u["name"], ok=res.get("ok"), reasons=res.get("reasons"), channel="agui")
+    if not res.get("ok"): return JSONResponse(res, status_code=409)
+    return res
+
+
+@router.post("/gov/tenant/{tenant}/stop")
+async def gov_tenant_stop(tenant: str, req: Request):
+    u = user_from_request(req); b = await req.json(); reason = (b.get("reason") or "").strip()
+    _platform_or_owner(u, tenant)
+    if len(reason) < MIN_REASON: raise HTTPException(422, "stop tenanta vyžaduje důvod (≥ 10 znaků)")
+    return await asyncio.to_thread(CTX["stop_tenant"], tenant, u, reason)
+
+
+@router.post("/gov/tenant/{tenant}/resume")
+async def gov_tenant_resume(tenant: str, req: Request):
+    u = user_from_request(req); b = await req.json(); reason = (b.get("reason") or "").strip()
+    _platform_or_owner(u, tenant)
+    if len(reason) < MIN_REASON: raise HTTPException(422, "resume tenanta vyžaduje důvod (≥ 10 znaků)")
+    return await asyncio.to_thread(CTX["resume_tenant"], tenant, u, reason)
 
 
 @router.get("/capabilities")

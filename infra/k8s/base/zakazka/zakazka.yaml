@@ -67,6 +67,7 @@ data:
   P0_KC_ISSUER: http://keycloak:8080/realms/p0
   P0_GUI_CLIENT: platform-gui             # P3-2: veřejný klient GUI (preferred_username mapper, PKCE redirecty); login zatím password grantem (PKCE v prohlížeči = P3-6)
   P0_GUI_DIR: /app/gui
+  P0_GOV_URL: http://governance:9910        # P3-3: Governance MCP (čtení org.* jako org_reader, RLS per tenant) pro GUI
   P0_TENANT: acme                         # tenant zakázek z interního API; z AG-UI je tenant z tokenu člověka (P3-2: org.tenants)
   P0_GITHUB_MODE: "1"
   P0_GITHUB_PUBLISH: "1"
@@ -230,6 +231,7 @@ spec:
         - {name: MEMORY_ISSUER, value: http://keycloak:8080/realms/p0}
         - {name: MEMORY_AUDIENCE, value: memory}
         - {name: MEMORY_OPA_URL, value: http://opa:8181/v1/data/memory/decision}
+        - {name: MEMORY_TENANT_STATUS_URL, value: http://zakazka:8010/tenants}   # P3-3: stop tenanta → paměť deny (PEP před OPA)
         ports:
         - {containerPort: 9900, name: http}
         readinessProbe:
@@ -371,3 +373,45 @@ spec:
         resources:
           requests: {cpu: 20m, memory: 64Mi}
           limits: {memory: 256Mi}
+---
+# P3-3: Governance MCP – jen čtení schématu org (DB role org_reader, RLS per tenant z tokenu člověka); GUI ho volá přes AG-UI server.
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance
+  labels: {app: governance}
+spec:
+  selector: {app: governance}
+  ports:
+  - {name: http, port: 9910, targetPort: 9910}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: governance}
+  template:
+    metadata:
+      labels: {app: governance}
+    spec:
+      containers:
+      - name: governance
+        image: platform/zakazka-app:p1
+        command: ["python", "/app/governance_mcp/governance_mcp.py"]
+        env:
+        - {name: GOV_PORT, value: "9910"}
+        - {name: GOV_DSN, value: "postgresql://org_reader:org_reader@postgres:5432/org"}   # role org_reader (jen SELECT, RLS); heslo dev – P3-6 ESO/OpenBao
+        - {name: GOV_KC_JWKS_URL, value: http://keycloak:8080/realms/p0/protocol/openid-connect/certs}
+        - {name: GOV_KC_ISSUER, value: http://keycloak:8080/realms/p0}
+        ports:
+        - {containerPort: 9910, name: http}
+        readinessProbe:
+          httpGet: {path: /health, port: 9910}
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 512Mi}

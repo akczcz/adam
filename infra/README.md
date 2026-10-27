@@ -146,6 +146,13 @@ starý ns `platform-roles` maže harness p3-2; nový cluster ho nemá). Base `sp
 nenačte sám, harness ho restartuje podle anotace `platform.config-sha`. `zakazka-env`: `P0_ROLE_NAMESPACE_TEMPLATE=tenant-{tenant}`, `P0_GUI_CLIENT=platform-gui`.
 CA `platform-ca` pro pody rolí vydává harness do každého ns tenanta. Měření: `measure` s `e2e=p3-2`.
 
+## P3-3: Governance MCP (2026-10-26)
+
+Deployment `governance` (obraz `zakazka-app`, `python /app/governance_mcp/governance_mcp.py`, port 9910): `GOV_DSN` = DB `org` jako `org_reader`
+(jen SELECT, RLS; heslo dev – P3-6 ESO/OpenBao), `GOV_KC_JWKS_URL/ISSUER` (token člověka). `zakazka-env`: `P0_GOV_URL`; server paměti:
+`MEMORY_TENANT_STATUS_URL` (stop tenanta → deny). Role `org_reader`/`org_writer` a RLS zakládá aplikace zakázky při startu (`finops.tenants_sync`).
+Měření: `measure` s `e2e=p3-3`.
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).

@@ -335,6 +335,39 @@ se maže a zakládá znovu; (3) sonda na Postgres bez schématu URL mířila na 
 teď skutečný timeout na 20.x:5432; (4) migrace běžícího realmu admin API (role, klient, 2 uživatelé) proběhla napoprvé, SPIRE server po změně
 allow-listu restartován podle anotace. Scénář GUI (acme) 8,8 min, tenant beta + platform-admin ~2 min.
 
+## P3-3 – GUI nad celou firmou (2026-10-26, AKS, `--step p3-3` = p3-2 + U2a–h)
+
+- **Governance MCP** (`tools/governance_mcp/governance_mcp.py`, Deployment `governance`): jen čtení `org.*` DB rolí `org_reader` (RLS per tenant z tokenu
+  člověka; agentní token 403; server nemá zápisové DSN); nástroje `tenants`, `zakazky`, `roles` (+ eval gate, autonomie), `agents`, `approvals`,
+  `agent_events`, `risk_register`, `finops` (alert ≥ 80 %), `governance_report` (úplnost T11–T15 per zakázka), `export` (JSONL per tenant).
+  Tvar jako server paměti M1 (`/resources`, `/tools/<name>`); plný MCP transport za gateway = P3-6.
+- **AG-UI server**: proxy `/agui/gov/*` s tokenem člověka; akce `POST /agui/gov/autonomy` (metriky.md §6: nahoru jen při splněných podmínkách –
+  počet úkolů z `org.agents`, podíl HITL odmítnutí, eval gate L2, žádné porušení A; 409 s důvody; zápis `org.role_autonomy` + `agent_events`),
+  `POST /agui/gov/tenant/<id>/stop|resume` (pause všech zakázek tenanta, ukončení podů, klíče gateway Block = limit 0 v ConfigMapě, paměť deny přes
+  `/tenants/<id>` v serveru paměti, `org.tenants.status`); dialog Account = interrupt `reason=dialog`, resume `{answer}` → event `dialog:account`.
+- **Workflow**: ≤ 3 kola otázek Account před H1 (`artifacts/otazky.md` → HANDOFF `otazky://`, `DIALOG_WAIT/ANSWER`); `org.agents` + `agent_events created`
+  píše aktivita `registry_agent` po každém běhu role (uzavírá otevřenou položku P2 „registr plněný z workflow“). Mock model: Account se v prvním kole ptá.
+- **GUI**: stránky Firma (role × tenant, eval gate, autonomie, stop tenanta), Registr agentů, FinOps, Governance (report, risk register, export), Audit;
+  formulář odpovědi na otázky Account.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| U2a | každý pohled čte přes Governance MCP z org.*: počty API == DB, tabulky vykreslené, org.agents z workflow | ✅ API == DB: 3 tenanti, 40 zakázek, 155 agentů, 44 approvalů, 5 rolí; 5 řádků org.agents z workflow; 150 seedováno z historie |
+| U2b | dialog Account: otázky → interrupt dialog → odpověď → Zadání (dialog_rounds=1), 2 běhy account, pak H1 | ✅ otazky:// → dialog → odpověď adam → issue:// (dialog_rounds 1), 2 běhy account, pak H1 |
+| U2c | autonomie: beta/vyvojar A1 odmítnut, acme/account A1 zapsán (role_autonomy + agent_events), acme/account A2 odmítnut | ✅ beta/vyvojar odmítnut (úkolů 0 < 10), acme/account A1 zapsán (47 úkolů, 0 odmítnutí; role_autonomy + agent_events), A2 odmítnut (L2 gate chybí) |
+| U2d | stop tenanta beta: zakázky SUSPENDED, klíč beta 429, paměť beta 403 (acme 200), SPIRE entries zůstávají, status stopped; resume | ✅ beta2 RUNNING → SUSPENDED (zakázky z minulých běhů se nemění), 60 klíčů beta limit 0 → gateway 429, paměť beta 403 `tenant_stopped` (acme 200), 15 SPIRE entries beta, status stopped + suspended; resume → RUNNING |
+| U2e | governance report: T15:klasifikace chybí všude (brána = P3-4), acme zakázka má T12/T13 | ✅ 40 zakázek s mezerami: T15:klasifikace (brána = P3-4) a T11:risk_register u všech; acme zakázka bez T12/T13 mezer |
+| U2f | export JSONL: bea jen beta, platform-admin oba tenanti | ✅ bea 17 řádků jen beta; platform-admin acme+beta+platform; export z GUI 231 řádků |
+| U2g | Governance MCP: agentní token 403, bez tokenu 401, read_only/org_reader | ✅ agentní token 403, bez tokenu 401, read_only + org_reader |
+| U2h | čas, screenshoty | ℹ️ U-2 137 s (U-1 680 s vč. dialogu a scale-upu), 11 screenshotů |
+
+Výsledek: **38/38 + 4 INFO** (`measure` run 40425344754, `results/p3-3-20261027-004928.json`; 4 běhy). Nálezy: (1) nový Deployment governance
+bez `imagePullPolicy: Always` vzal starý obraz z cache uzlu (CrashLoopBackOff, Flux health check Failed); (2) po rebuildu obrazu je nutné restartovat
+i mock-upstream (dialog Account byl jen v novém mocku) a governance; (3) výsledek formuláře v GUI se musí odlišit od předchozího (`data-seq`), jinak
+Playwright čte starý; (4) Playwright sync API: v jednom vlákně jen jedna instance prohlížeče (druhou otevřít až po zavření první); (5) stop tenanta
+se měří jen na zakázkách běžících před stopem – staré pozastavené (pod zabit dřív) po resume končí FAILED. Lokálně (fixture s falešným Governance MCP): 12/12.
+Úroveň autonomie v `org.role_autonomy` přetrvává mezi běhy (idempotentní zápis: A1 → A1 = ok bez nové události).
+
 ## Spuštění
 
 ```bash

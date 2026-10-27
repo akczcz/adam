@@ -51,7 +51,120 @@ CREATE TABLE IF NOT EXISTS org.tenants (
   spent_usd numeric NOT NULL DEFAULT 0, role_pods boolean NOT NULL DEFAULT false, namespace text, status text NOT NULL DEFAULT 'active',
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 """
-RLS_TABLES = ("tenants", "zakazky", "approvals")   # org.agents/role_definitions/eval_gates zakládá tools/role_evals/registry.py (agents má tenant_id – přidá se tam)
+DDL_GOVERNANCE = """
+CREATE SCHEMA IF NOT EXISTS org;
+CREATE TABLE IF NOT EXISTS org.role_definitions (
+  role_id text NOT NULL, version text NOT NULL, yaml jsonb NOT NULL, yaml_sha256 text NOT NULL, git_commit text NOT NULL,
+  approved_by text NOT NULL, approved_at timestamptz NOT NULL DEFAULT now(),
+  status text NOT NULL CHECK (status IN ('proposed','evaluated','active','suspended','retired')), PRIMARY KEY (role_id, version));
+CREATE TABLE IF NOT EXISTS org.agents (
+  agent_id text PRIMARY KEY, tenant_id text NOT NULL, role_id text NOT NULL, role_version text NOT NULL, zakazka_id text,
+  process_id text NOT NULL, workflow_instance text NOT NULL, model text NOT NULL, model_version text, prompt_version text NOT NULL,
+  policy_bundle_rev text NOT NULL, gateway_key_id text NOT NULL, sandbox_profile text NOT NULL, image_digest text,
+  node text, runtime_class text, started_at timestamptz, finished_at timestamptz, exit_code int, cost_usd numeric, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS org.agent_events (
+  event_id bigserial PRIMARY KEY, agent_id text, role_id text, role_version text, tenant_id text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('created','suspended','resumed','autonomy_changed','retired','violation_A','violation_B')),
+  reason text NOT NULL, evidence_ref jsonb, actor text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), signature text NOT NULL DEFAULT '-');
+CREATE TABLE IF NOT EXISTS org.role_autonomy (
+  role_id text NOT NULL, tenant_id text NOT NULL, level text NOT NULL CHECK (level IN ('A0','A1','A2','A3')),
+  changed_by text NOT NULL, reason text NOT NULL, changed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (role_id, tenant_id));
+CREATE TABLE IF NOT EXISTS org.risk_register (
+  risk_id text PRIMARY KEY, tenant_id text NOT NULL, use_case_id text NOT NULL,
+  ai_act_class text NOT NULL CHECK (ai_act_class IN ('minimal','limited','annex_iii_2','annex_iii_4','other_high')),
+  category text NOT NULL, description text NOT NULL, likelihood smallint NOT NULL CHECK (likelihood BETWEEN 1 AND 5), impact smallint NOT NULL CHECK (impact BETWEEN 1 AND 5),
+  controls jsonb NOT NULL, evidence_ref jsonb, owner text NOT NULL, status text NOT NULL CHECK (status IN ('open','mitigated','accepted','closed')),
+  review_at date NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+"""
+RLS_TABLES = ("tenants", "zakazky", "approvals", "agents", "agent_events", "role_autonomy", "risk_register")   # tabulky s tenant_id (role_definitions/eval_gates jsou globální)
+AUTONOMY_ORDER = ["A0", "A1", "A2", "A3"]
+# metriky.md §6 – podmínka vstupu (per role × tenant); v0 strop A2, A3 jen po v0 (rozhodnutí v0: člověk zůstává u nevratných kroků)
+AUTONOMY_RULES = {"A1": {"min_tasks": 10, "max_reject_rate": 0.2}, "A2": {"min_tasks": 30, "max_reject_rate": 0.10, "eval_layers": ("L2",), "no_violation_A": True}, "A3": {"min_tasks": 100, "max_reject_rate": 0.10, "eval_layers": ("L2",), "no_violation_A": True, "blocked": "A3 až po v0 (autonomie.md: strop v0 = A2)"}}
+
+
+def autonomy_check(c, role: str, tenant: str, target: str) -> dict:
+    """Metriky z org.* pro posun autonomie role × tenant (metriky.md §6): počet úkolů (org.agents), podíl HITL odmítnutí (org.approvals), eval gate L2
+    (org.eval_gates poslední verze), žádné porušení třídy A (org.agent_events). Vrací {ok, current, target, metrics, reasons}; posun dolů je vždy ok."""
+    cur = (c.execute("SELECT level FROM org.role_autonomy WHERE role_id = %s AND tenant_id = %s", (role, tenant)).fetchone() or ["A0"])[0]
+    if target not in AUTONOMY_ORDER: return {"ok": False, "current": cur, "target": target, "reasons": ["neznámá úroveň"], "metrics": {}}
+    tasks = c.execute("SELECT count(*) FROM org.agents WHERE role_id = %s AND tenant_id = %s", (role, tenant)).fetchone()[0]
+    ap = c.execute("SELECT decision, count(*) FROM org.approvals WHERE tenant_id = %s GROUP BY decision", (tenant,)).fetchall(); apd = {d: n for d, n in ap}
+    rej = apd.get("reject", 0) / max(1, apd.get("approve", 0) + apd.get("reject", 0))
+    viol = c.execute("SELECT count(*) FROM org.agent_events WHERE role_id = %s AND tenant_id = %s AND kind = 'violation_A'", (role, tenant)).fetchone()[0]
+    gates = {r[0]: r[1] for r in c.execute("SELECT DISTINCT ON (layer) layer, passed FROM org.eval_gates WHERE role_id = %s ORDER BY layer, evaluated_at DESC", (role,)).fetchall()} if c.execute("SELECT to_regclass('org.eval_gates') IS NOT NULL").fetchone()[0] else {}
+    amax = (c.execute("SELECT yaml->>'autonomy_max' FROM org.role_definitions WHERE role_id = %s ORDER BY version DESC LIMIT 1", (role,)).fetchone() or [None])[0] if c.execute("SELECT to_regclass('org.role_definitions') IS NOT NULL").fetchone()[0] else None
+    metrics = {"tasks": tasks, "reject_rate": round(rej, 3), "approvals": apd, "violations_A": viol, "eval_gates": gates, "autonomy_max": amax}
+    reasons = []
+    if AUTONOMY_ORDER.index(target) <= AUTONOMY_ORDER.index(cur): return {"ok": True, "current": cur, "target": target, "metrics": metrics, "reasons": [], "direction": "down" if target != cur else "same"}
+    if AUTONOMY_ORDER.index(target) - AUTONOMY_ORDER.index(cur) > 1: reasons.append(f"posun jen o jednu úroveň ({cur} → {AUTONOMY_ORDER[AUTONOMY_ORDER.index(cur) + 1]})")
+    if amax and AUTONOMY_ORDER.index(target) > AUTONOMY_ORDER.index(amax): reasons.append(f"nad autonomy_max role ({amax})")
+    rule = AUTONOMY_RULES.get(target, {})
+    if rule.get("blocked"): reasons.append(rule["blocked"])
+    if tasks < rule.get("min_tasks", 0): reasons.append(f"úkolů {tasks} < {rule['min_tasks']}")
+    if rej > rule.get("max_reject_rate", 1): reasons.append(f"HITL odmítnutí {rej:.0%} > {rule['max_reject_rate']:.0%}")
+    for l in rule.get("eval_layers", ()):
+        if not gates.get(l): reasons.append(f"eval gate {l} neprošel nebo chybí")
+    if rule.get("no_violation_A") and viol: reasons.append(f"porušení třídy A: {viol}")
+    return {"ok": not reasons, "current": cur, "target": target, "metrics": metrics, "reasons": reasons, "direction": "up"}
+
+
+def autonomy_set(role: str, tenant: str, target: str, *, by: str, reason: str) -> dict:
+    """Posun autonomie role × tenant: nahoru jen při splněných podmínkách (autonomy_check), dolů vždy; řádek org.role_autonomy + org.agent_events autonomy_changed."""
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return {"ok": False, "reasons": ["bez DSN"]}
+    try:
+        c.execute(DDL_GOVERNANCE)
+        chk = autonomy_check(c, role, tenant, target)
+        if not chk["ok"]: return chk
+        c.execute("""INSERT INTO org.role_autonomy (role_id, tenant_id, level, changed_by, reason) VALUES (%s, %s, %s, %s, %s)
+                     ON CONFLICT (role_id, tenant_id) DO UPDATE SET level = EXCLUDED.level, changed_by = EXCLUDED.changed_by, reason = EXCLUDED.reason, changed_at = now()""", (role, tenant, target, by, reason))
+        import json
+        c.execute("INSERT INTO org.agent_events (role_id, tenant_id, kind, reason, evidence_ref, actor) VALUES (%s, %s, 'autonomy_changed', %s, %s::jsonb, %s)", (role, tenant, f"{chk['current']} → {target}: {reason}", json.dumps(chk["metrics"], default=str), by))
+        return chk | {"written": True}
+    except Exception as e:
+        return {"ok": False, "reasons": [f"{type(e).__name__}: {str(e)[:200]}"]}
+    finally: c.close()
+
+
+def agent_insert(zid: str, *, tenant: str, role: str, version: str, process: str, model: str, pod: dict, run: dict, opa_rev: str, key_id: str, sandbox_profile: str) -> bool:
+    """P3-3 (uzavírá otevřenou položku P2): řádek org.agents píše workflow po každém běhu role (dřív harness). agent_id = SPIFFE ID role per běh."""
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return False
+    try:
+        c.execute(DDL_GOVERNANCE)
+        agent_id = f"spiffe://platform/role/{role}/{tenant}/{zid}/{(pod.get('pod') or 'local').rsplit('-', 1)[-1]}"
+        c.execute("""INSERT INTO org.agents (agent_id, tenant_id, role_id, role_version, zakazka_id, process_id, workflow_instance, model, prompt_version, policy_bundle_rev,
+                                             gateway_key_id, sandbox_profile, image_digest, node, runtime_class, exit_code, cost_usd)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (agent_id) DO NOTHING""",
+                  (agent_id, tenant, role, version, zid, process, zid, model, version, opa_rev, key_id, sandbox_profile, pod.get("image"), pod.get("node"), pod.get("runtime_class"), pod.get("exit_code"), run.get("cost_usd")))
+        c.execute("INSERT INTO org.agent_events (agent_id, role_id, role_version, tenant_id, kind, reason, actor) VALUES (%s, %s, %s, %s, 'created', %s, 'workflow')", (agent_id, role, version, tenant, f"běh role v zakázce {zid}"))
+        return True
+    except Exception:
+        return False
+    finally: c.close()
+
+
+def tenant_status(tenant: str, status: str, *, by: str, reason: str) -> bool:
+    """Stop/resume tenanta (autonomie.md T5): org.tenants.status + org.agent_events suspended/resumed per tenant."""
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return False
+    try:
+        c.execute(DDL_TENANTS); c.execute(DDL_GOVERNANCE)
+        c.execute("UPDATE org.tenants SET status = %s, updated_at = now() WHERE tenant_id = %s", (status, tenant))
+        c.execute("INSERT INTO org.agent_events (tenant_id, kind, reason, actor) VALUES (%s, %s, %s, %s)", (tenant, "suspended" if status == "stopped" else "resumed", reason, by))
+        return True
+    except Exception:
+        return False
+    finally: c.close()
+
+
+def tenant_is_stopped(tenant: str) -> bool | None:
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return None
+    try:
+        r = c.execute("SELECT status FROM org.tenants WHERE tenant_id = %s", (tenant,)).fetchone(); return bool(r and r[0] == "stopped")
+    except Exception: return None
+    finally: c.close()
 RLS_SQL = """
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'org_reader') THEN CREATE ROLE org_reader LOGIN PASSWORD 'org_reader'; END IF;
@@ -76,7 +189,7 @@ def tenants_sync(tenants: list[dict]) -> dict:
     c = _conn("P0_REGISTRY_DSN")
     if c is None: return {"written": False}
     try:
-        c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY); c.execute(DDL_APPROVALS)
+        c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY); c.execute(DDL_APPROVALS); c.execute(DDL_GOVERNANCE)
         for t in tenants:
             c.execute("""INSERT INTO org.tenants (tenant_id, name, profile, budget_usd, role_pods, namespace) VALUES (%s, %s, %s, %s, %s, %s)
                          ON CONFLICT (tenant_id) DO UPDATE SET name = EXCLUDED.name, profile = EXCLUDED.profile, budget_usd = EXCLUDED.budget_usd, role_pods = EXCLUDED.role_pods, namespace = EXCLUDED.namespace, updated_at = now()""",
