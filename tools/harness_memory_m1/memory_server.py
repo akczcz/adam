@@ -49,6 +49,12 @@ OPA_URL = os.environ.get("MEMORY_OPA_URL", "http://127.0.0.1:8181/v1/data/memory
 DIM = 64
 
 provider = TracerProvider(resource=Resource.create({"service.name": "memory-server"}))
+if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):   # P3-5 (O3d): spany search/create s tenant.id a record.ids do OTEL Collectoru → ClickHouse (důkaz M-E3 ve spanech)
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"].rstrip("/") + "/v1/traces")))
+    except Exception as _e: print(f"OTLP exporter nedostupný: {_e}", flush=True)
 if os.environ.get("OTEL_CONSOLE") == "1":
     provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter(out=open(os.environ.get("OTEL_CONSOLE_FILE", "/dev/stdout"), "a"))))
 trace.set_tracer_provider(provider)
@@ -217,6 +223,7 @@ async def search_memory(req: Request, authorization: str | None = Header(None)):
                 "valid_from": r[8].isoformat() if r[8] else None, "valid_to": r[9].isoformat() if r[9] else None, "verification": r[10], "version": r[11],
                 "unverified": r[6] != "approved"} for r in rows]
         sp.set_attribute("gen_ai.memory.record.count", len(out))
+        sp.set_attribute("gen_ai.memory.record.ids", ",".join(o["id"] for o in out)); sp.set_attribute("memory.tenants_returned", ",".join(sorted({o["tenant_id"] for o in out})))   # P3-5: izolace tenantů čitelná ze spanu
         LEDGER.append({"kind": "SEARCH", "sub": tok["sub"], "tenant": tok["tenant_id"], "query": b["query"], "returned": [o["id"] for o in out], "tenants_returned": sorted({o["tenant_id"] for o in out})})
         return {"records": out, "note": "neověřené záznamy jsou označené unverified=true" if b.get("include_unverified") else None}
 

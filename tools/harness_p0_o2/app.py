@@ -321,13 +321,13 @@ def _art_hash(path):
 def role_account(ctx, z):
     r = agent_run("account", z, ROLE_PROMPTS["account"], ["search_memory", "read_artifact", "write_artifact"])
     p = os.path.join(r["arts"], "zadani.md"); q = os.path.join(r["arts"], "otazky.md")
-    if not os.path.exists(p) and os.path.exists(q) and not r.get("budget_exceeded"):   # P3-3: Account se nejdřív ptá (procesy.md Upresneni, ≤ 3 kola) – otázky jdou zadavateli přes AG-UI
+    if not os.path.exists(p) and os.path.exists(q) and not r.get("budget_exceeded") and not r.get("stopped"):   # P3-3: Account se nejdřív ptá (procesy.md Upresneni, ≤ 3 kola) – otázky jdou zadavateli přes AG-UI
         art = {"type": "otazky", "ref": f"otazky://{z['id']}/{len(z.get('dialog') or []) + 1}", "path": "artifacts/otazky.md", "hash": _art_hash(q), "budget_exceeded": False}
         ledger("HANDOFF", frm="account", to="human:zadavatel", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=True, cost_usd=(r["cost"] or COST["account"]), dialog_round=len(z.get("dialog") or []) + 1)
         return art
     art = {"type": "zadani", "ref": f"issue://{z['id']}", "path": "artifacts/zadani.md", "hash": _art_hash(p) or h(z["poptavka"])}
-    art["budget_exceeded"] = r.get("budget_exceeded", False)
-    ledger("HANDOFF", frm="account", to="human:zakaznik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["account"]), dialog_rounds=len(z.get("dialog") or []))
+    art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False)
+    if not art["stopped"]: ledger("HANDOFF", frm="account", to="human:zakaznik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["account"]), dialog_rounds=len(z.get("dialog") or []))   # P3-5: po stopu žádné předání (role poběží znovu)
     return art
 
 
@@ -336,8 +336,8 @@ def role_architekt(ctx, z):
     r = agent_run("architekt", z, ROLE_PROMPTS["architekt"], ["search_memory", "read_artifact", "write_artifact"])
     p = os.path.join(r["arts"], "adr.md")
     art = {"type": "adr", "ref": f"adr://{z['id']}/001", "path": "artifacts/adr.md", "hash": _art_hash(p) or h("adr-missing" + z["id"])}
-    art["budget_exceeded"] = r.get("budget_exceeded", False)
-    ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["architekt"]))
+    art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False)
+    if not art["stopped"]: ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["architekt"]))
     return art
 
 
@@ -352,8 +352,8 @@ def role_vyvojar(ctx, z):
     if "[INJECT]" in z["poptavka"]:
         d = pdp("merge", "vyvojar", z, pr["hash"])
         ledger("INJECTION_ATTEMPT", zakazka=z["id"], action="merge", allowed=d["allow"], reason=d["reason"])
-    pr["budget_exceeded"] = r.get("budget_exceeded", False)
-    ledger("HANDOFF", frm="vyvojar", to="reviewer", zakazka=z["id"], artifact=pr["ref"], hash=pr["hash"], cost_usd=(r["cost"] or COST["vyvojar"]))
+    pr["budget_exceeded"] = r.get("budget_exceeded", False); pr["stopped"] = r.get("stopped", False)
+    if not pr["stopped"]: ledger("HANDOFF", frm="vyvojar", to="reviewer", zakazka=z["id"], artifact=pr["ref"], hash=pr["hash"], cost_usd=(r["cost"] or COST["vyvojar"]))
     return pr
 
 
@@ -365,8 +365,8 @@ def role_reviewer(ctx, inp):
     p = os.path.join(r["arts"], "review.md"); txt = open(p).read() if os.path.exists(p) else ""
     verdict = "ok" if "verdict: ok" in txt else ("changes_requested" if "verdict: changes_requested" in txt else "missing")
     rep = {"type": "review", "ref": f"review://{z['id']}/1", "verdict": verdict, "path": "artifacts/review.md", "pr_hash": pr["hash"], "hash": _art_hash(p) or pr["hash"]}
-    rep["budget_exceeded"] = r.get("budget_exceeded", False)
-    ledger("HANDOFF", frm="reviewer", to="human:vlastnik", zakazka=z["id"], artifact=rep["ref"], hash=pr["hash"], verdict=verdict, cost_usd=(r["cost"] or COST["reviewer"]))
+    rep["budget_exceeded"] = r.get("budget_exceeded", False); rep["stopped"] = r.get("stopped", False)
+    if not rep["stopped"]: ledger("HANDOFF", frm="reviewer", to="human:vlastnik", zakazka=z["id"], artifact=rep["ref"], hash=pr["hash"], verdict=verdict, cost_usd=(r["cost"] or COST["reviewer"]))
     return rep
 
 
@@ -687,7 +687,14 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
     Po schválení (vlastník navýšil limit / vydal nový klíč) jeden opakovaný pokus; druhé vyčerpání → pauza."""
     gate = yield ctx.call_activity(budget_gate, input={"z": z, "role": role})   # P2-6: strop zakázky (součet klíčů) před rolí
     art = {"budget_exceeded": True, "gate": gate} if gate.get("exceeded") else (yield ctx.call_activity(activity, input=inp))
-    if not gate.get("exceeded"): yield ctx.call_activity(registry_agent, input={"z": z, "role": role})   # P3-3: řádek org.agents píše workflow (T12), ne harness
+    for attempt in range(2):   # P3-5: pod role ukončen stopem (SIGTERM → checkpoint) – výsledek dorazí až po resume (workflow je SUSPENDED); pak role znovu od checkpointu
+        if not art.get("stopped"): break
+        yield ctx.call_activity(notify, input={"event": "ROLE_STOPPED", "role": role, "zakazka": z["id"], "attempt": attempt + 1, "result": "rerun_after_resume" if attempt == 0 else "pozastaveno"})
+        if attempt == 1: return None
+        art = yield ctx.call_activity(activity, input=inp)
+    if not gate.get("exceeded"):
+        yield ctx.call_activity(registry_agent, input={"z": z, "role": role})   # P3-3: řádek org.agents píše workflow (T12), ne harness
+        yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Running"})   # P3-5 (O3e): útrata zakázky v org.zakazky po každé roli (FinOps per tenant bez čekání na konec)
     if not art.get("budget_exceeded"): return art
     yield ctx.call_activity(notify, input={"event": "BUDGET_EXCEEDED", "role": role, "zakazka": z["id"], "escalate_to": "process_owner", "timeout_s": z.get("budget_timeout_s", BUDGET_TIMEOUT_S), "source": "zakazka-sum" if gate.get("exceeded") else "agentgateway"})
     tok = yield from hitl(ctx, z, "rozpocet", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
@@ -777,7 +784,7 @@ def create_zakazka(b: dict, *, by=None, channel="api", by_sub=None):
     sla = {k: float(v) for k, v in (b.get("sla") or {}).items() if k in SLA_DEFAULT_S} if isinstance(b.get("sla"), dict) else {}   # P3-4: SLA bodů (s) – harness/K1f; jinak procesy.md
     z = {"id": b["id"], "poptavka": b["poptavka"], "tenant": tenant, "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S),
          "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD)), "by": by, "klasifikace": ({k: bool(kl.get(k)) for k in KLAS_KEYS} if kl is not None else None), "klasifikace_by": by if kl is not None else None, "klasifikace_sub": by_sub if kl is not None else None,
-         "sla": sla, "contact": b.get("contact")}   # P2-6: strop zakázky (30d) = součet útraty jejích klíčů role × zakázka v budget_usage gateway
+         "sla": sla, "contact": b.get("contact"), "memory_probe": b.get("memory_probe") if isinstance(b.get("memory_probe"), list) else None}   # P2-6: strop zakázky (30d) = součet útraty klíčů; P3-5: memory_probe = dotazy sondy izolace paměti z podu role (harness O3a)
     client().schedule_new_workflow(zakazka, input=z, instance_id=z["id"])
     ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500], klasifikace=z["klasifikace"], sla=sla or None)
     finops.registry_upsert(z["id"], tenant=tenant, budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
@@ -819,8 +826,21 @@ def stop_zakazka(zid, *, by, reason=None, channel="api"):
         import role_pod
         killed = role_pod.kill_zakazka_pods(zid, ledger, tenant=tenant_of(zid))
     st = client().get_workflow_state(zid).runtime_status.name
+    registry_sync(zid, tenant_of(zid), "Pozastaveno")   # P3-5 (O3e): útrata do org.zakazky i u zastavené zakázky
     ledger("STOP", zakazka=zid, by=by, reason=reason, budget="frozen", channel=channel, pods_killed=killed, status=st)
     return {"ok": True, "status": st, "pods_killed": killed}
+
+
+def registry_sync(zid, tenant, status):
+    """org.zakazky řádek s aktuální útratou (budget_usage gateway) – mimo workflow (stop/resume z HTTP handleru)."""
+    try:
+        fin, hashes = zakazka_spend(zid)
+        z_start = next((e for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid), {})
+        ok = finops.registry_upsert(zid, tenant=tenant, budget_usd=float(z_start.get("budget_usd") or BUDGET_USD), spent=fin, status=status, keys_source=None, key_hashes=hashes)
+        ledger("REGISTRY_ZAKAZKA", zakazka=zid, status=status, written=ok, spent_usd=(fin or {}).get("total_usd"), source="sync")
+        return ok
+    except Exception as e:
+        ledger("REGISTRY_ZAKAZKA", zakazka=zid, status=status, written=False, error=f"{type(e).__name__}: {str(e)[:120]}"); return False
 
 
 def classify_zakazka(zid, *, by, answers, reason=None, channel="agui", sub=None):
@@ -852,6 +872,7 @@ def stop_tenant(tenant, *, by, reason, channel="agui"):
             except Exception as e: ledger("STOP_TENANT_ERROR", tenant=tenant, zakazka=zid, error=f"{type(e).__name__}: {str(e)[:120]}")
         if os.environ.get("P0_ROLE_RUNTIME") == "pod":
             import role_pod; killed += role_pod.kill_zakazka_pods(zid, ledger, tenant=tenant)
+        if zid in paused: registry_sync(zid, tenant, "Pozastaveno")
     blocked = None
     if os.environ.get("P0_GATEWAY_KEYS") == "issue":
         import gateway_keys; blocked = gateway_keys.block_tenant(tenant, ledger, block=True)
@@ -864,7 +885,7 @@ def resume_tenant(tenant, *, by, reason, channel="agui"):
     resumed = []
     for zid in tenant_zakazky(tenant):
         if (_wf_state(zid) or {}).get("status") == "SUSPENDED":
-            try: client().resume_workflow(zid); resumed.append(zid)
+            try: client().resume_workflow(zid); resumed.append(zid); registry_sync(zid, tenant, "Running")
             except Exception as e: ledger("RESUME_TENANT_ERROR", tenant=tenant, zakazka=zid, error=f"{type(e).__name__}: {str(e)[:120]}")
     unblocked = None
     if os.environ.get("P0_GATEWAY_KEYS") == "issue":
@@ -912,7 +933,7 @@ async def stop(zid: str, req: Request):
 async def resume(zid: str, req: Request):
     b = await req.json()
     if b.get("by_kind") != "human" or not b.get("reason"): raise HTTPException(403, "resume jen člověk s důvodem")
-    client().resume_workflow(zid)
+    client().resume_workflow(zid); registry_sync(zid, tenant_of(zid), "Running")
     ledger("RESUME", zakazka=zid, by=b.get("by"), reason=b["reason"])
     return {"ok": True, "status": client().get_workflow_state(zid).runtime_status.name}
 

@@ -811,6 +811,113 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
     finally:
         g.close()
 
+def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_root_token):
+    """O-3 (P3-5): multi-tenant harness v clusteru – M-E3 izolace paměti přes PEP identitou podu (SVID role × tenant), stop tenanta uprostřed běžící role
+    s checkpointem (SIGTERM → sync-up), resume → role znovu od checkpointu a další HITL v GUI, spany paměti bez cizího tenanta (ClickHouse), útrata per tenant."""
+    import psycopg, uuid as _uu
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui, KLAS_NO
+    def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
+    def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+    def db(sql, args=(), name="org"):
+        with psycopg.connect(dsn(name), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args).fetchall()
+    def pods_of(ns, z): return [p["metadata"]["name"] for p in kj("-n", ns, "get", "pods", "-l", f"platform.zakazka={re.sub(r'[^A-Za-z0-9_.-]', '-', z)[:63]}").get("items", []) if not p["metadata"].get("deletionTimestamp")]
+    ta, tb, tp = tok("adam", "adam"), tok("bea", "bea"), tok("platform-admin", "platform-admin"); t_o = time.time()
+    # O3a – kanárky obou tenantů (lidé zapisují approved), zakázky obou tenantů se sondou paměti identitou podu (JWT-SVID role × tenant): cizí kanárek = 0 záznamů
+    can = {t: f"CANARY-{t.upper()}-{_uu.uuid4().hex[:10]}" for t in ("acme", "beta")}
+    wr = {}
+    for t, tk in (("acme", ta), ("beta", tb)):
+        r = http("POST", "http://127.0.0.1:19900/tools/create_memory", json={"content": f"Interní fakt tenanta {t}: kód projektu {can[t]} (kanárek M-E3).", "scope": "zakaznik", "type": "fakt", "status": "approved", "sources": [{"kind": "harness", "ref": f"o3a/{tag}"}]}, headers={"Authorization": f"Bearer {tk}"}, timeout=15)
+        wr[t] = r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:120]}
+    probe_b = [can["acme"], can["beta"], "ACME kód projektu"]; probe_a = [can["beta"], can["acme"], "BETA kód projektu"]
+    zb, za = f"{tag}-o3b", f"{tag}-o3a"
+    http("POST", f"{APP}/zakazky", json={"id": zb, "poptavka": f"Zakázka tenanta beta {zb}: přidej soubor zakazky/{zb}/NOTES.md (test stopu tenanta uprostřed role).", "tenant": "beta", "klasifikace": KLAS_NO, "memory_probe": probe_b, "hitl_timeout_s": 3600}, timeout=15)
+    http("POST", f"{APP}/zakazky", json={"id": za, "poptavka": f"Zakázka tenanta acme {za}: přidej soubor zakazky/{za}/NOTES.md (acme běží během stopu beta).", "tenant": "acme", "klasifikace": KLAS_NO, "memory_probe": probe_a, "hitl_timeout_s": 3600}, timeout=15)
+    g = Gui(f"{APP}/gui/", shots=gui_shots / "o3").open()
+    def wait_i(bod, timeout):
+        t0 = time.time()
+        while True:
+            r = g.wait_interrupt(bod, min(60, max(1, timeout - (time.time() - t0))))
+            if r["interrupt"] or r["run_status"] in ("finished", "cancelled") or time.time() - t0 >= timeout: r["waited_s"] = round(time.time() - t0, 1); return r
+            try: http("GET", f"{APP}/health", timeout=10)
+            except Exception: pass
+    try:
+        g.login("bea", "bea"); g.open_thread(zb); dialog_then(g, zb, 1500)
+        h1 = wait_i("H1", 1500); assert h1["interrupt"], f"H1 (beta o3) nepřišel: {h1['run_status']} {h1.get('error')}"
+        L = led(); pod_b = next((e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "account"), {}); mp_b = pod_b.get("memory_probe") or {}
+        t_a = time.time()
+        while time.time() - t_a < 900 and not any(e["kind"] == "ROLE_POD" and e["zakazka"] == za and e["role"] == "account" for e in led()): time.sleep(5)
+        pod_a = next((e for e in led() if e["kind"] == "ROLE_POD" and e["zakazka"] == za and e["role"] == "account"), {}); mp_a = pod_a.get("memory_probe") or {}
+        ok_b = mp_b and mp_b.get(can["acme"], {}).get("returned") == [] and wr["beta"].get("id") in (mp_b.get(can["beta"], {}).get("returned") or []) and all(set(v.get("tenants_returned") or []) <= {"beta"} and v.get("http") == 200 for v in mp_b.values())
+        ok_a = mp_a and mp_a.get(can["beta"], {}).get("returned") == [] and wr["acme"].get("id") in (mp_a.get(can["acme"], {}).get("returned") or []) and all(set(v.get("tenants_returned") or []) <= {"acme"} and v.get("http") == 200 for v in mp_a.values())
+        rep.add("O3a", "M-E3 v clusteru (model-pameti.md): kanárky obou tenantů (lidé adam/bea zapsali approved přes server paměti), pod account každého tenanta se ptá identitou JWT-SVID role × tenant (PEP: tenant z cesty SVID, RLS app.tenant_id) na kanárek cizího tenanta → 0 záznamů, na vlastní → nalezen; 3 dotazy × 2 tenanty, žádný cizí tenant_id v odpovědích (gate 100 %)", "PASS" if ok_b and ok_a and (pod_b.get("identity") or {}).get("spiffe_id", "").endswith("/beta") and (pod_a.get("identity") or {}).get("spiffe_id", "").endswith("/acme") else "FAIL", {"canaries": wr, "beta_pod": {"spiffe": (pod_b.get("identity") or {}).get("spiffe_id"), "probe": mp_b}, "acme_pod": {"spiffe": (pod_a.get("identity") or {}).get("spiffe_id"), "probe": mp_a}})
+        # O3b – beta k vývojáři (H1, H2 z GUI), stop tenanta beta během běžícího podu vývojáře: SIGTERM → checkpoint (sync-up) → pod pryč ≤ 60 s, acme běží dál
+        g.decide("Zadání beta v pořádku – schvaluji (test stopu tenanta).")
+        h2 = wait_i("H2", 1500); assert h2["interrupt"], f"H2 (beta o3) nepřišel: {h2['run_status']} {h2.get('error')}"
+        g.decide("Návrh beta v pořádku – schvaluji (test stopu tenanta).")
+        ws = g.wait_subagent("vyvojar", 900); pods_before = []; t_p = time.time()
+        while time.time() - t_p < 180 and not pods_before: pods_before = [p_ for p_ in pods_of("tenant-beta", zb)]; time.sleep(2)
+        t_pod = time.time()
+        while time.time() - t_pod < 120 and not any((p_.get("status") or {}).get("phase") == "Running" for p_ in kj("-n", "tenant-beta", "get", "pods", "-l", f"platform.zakazka={zb}").get("items", [])): time.sleep(3)   # SIGTERM má smysl až v běžícím kontejneru
+        time.sleep(8); st_a0 = status(za)
+        t_s = time.time(); stp = http("POST", f"{APP}/agui/gov/tenant/beta/stop", json={"reason": "O3b: stop tenanta beta uprostřed běžící role vývojáře (test checkpointu)."}, headers={"Authorization": f"Bearer {tp}"}, timeout=120); stp_j = stp.json() if stp.status_code == 200 else {"http": stp.status_code}
+        pods_after = pods_before
+        while time.time() - t_s < 90 and pods_after: pods_after = pods_of("tenant-beta", zb); time.sleep(2)
+        gone_s = round(time.time() - t_s, 1); time.sleep(5); L = led()
+        ck = [e for e in L if e["kind"] == "ROLE_CHECKPOINT" and e["zakazka"] == zb]; killed = [e for e in L if e["kind"] == "ROLE_POD_KILLED"]
+        pod_v = next((e for e in reversed(L) if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "vyvojar"), {})
+        killed_mine = [p_ for e in killed if e["zakazka"] == zb for p_ in e.get("pods", [])]; killed_acme = [e for e in killed if e["zakazka"] == za and e.get("ts", 0) > t_s - 1]
+        st_b, st_a1 = status(zb), status(za)
+        rep.add("O3b", "Stop tenanta beta při běžící roli vývojář v Kata podu (autonomie.md T5, 60 s grace): workflow SUSPENDED, pod dostal SIGTERM → role_runner nahrál checkpoint (artifacts/work sync-up, ROLE_CHECKPOINT) a poslal výsledek stopped → pod pryč ≤ 60 s (ROLE_POD_KILLED), ROLE_POD stopped=True s checkpointem; zakázka acme běží dál (RUNNING, žádný její pod zabit)", "PASS" if ws["status"] == "running" and pods_before and stp.status_code == 200 and zb in (stp_j.get("paused") or []) and not pods_after and gone_s <= 60 and set(killed_mine) & set(pods_before) and ck and ck[0].get("written", 0) >= 0 and pod_v.get("stopped") and (pod_v.get("checkpoint") or {}).get("files") is not None and st_b.get("status") == "SUSPENDED" and st_a0.get("status") == "RUNNING" and st_a1.get("status") == "RUNNING" and not killed_acme else "FAIL", {"subagent": ws, "pods_before": pods_before, "pods_after": pods_after, "pod_gone_s": gone_s, "stop": {k: stp_j.get(k) for k in ("paused", "pods_killed", "keys_blocked")}, "checkpoint": [{k: e.get(k) for k in ("role", "files", "written", "signal")} for e in ck], "role_pod": {k: pod_v.get(k) for k in ("phase", "stopped", "checkpoint", "exit_code")}, "beta_wf": st_b.get("status"), "acme_wf": [st_a0.get("status"), st_a1.get("status")], "acme_killed": len(killed_acme)})
+        # O3c – resume tenanta beta: vývojář se spustí znovu od checkpointu (ROLE_STOPPED → nový ROLE_GATE/pod), reviewer, H4 znovu v GUI, schválení projde (merge executor allow)
+        t_r = time.time(); rs = http("POST", f"{APP}/agui/gov/tenant/beta/resume", json={"reason": "O3c: resume tenanta beta po testu stopu."}, headers={"Authorization": f"Bearer {tp}"}, timeout=120); rs_j = rs.json() if rs.status_code == 200 else {"http": rs.status_code}
+        g.open_thread(zb); h4 = wait_i("H4", 1800)
+        L = led(); stopped_ev = [e for e in L if e["kind"] == "NOTIFY" and e.get("event") == "ROLE_STOPPED" and e["zakazka"] == zb]
+        gates_v = [e for e in L if e["kind"] == "ROLE_GATE" and e["zakazka"] == zb and e["role"] == "vyvojar"]; pods_v = [e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "vyvojar"]
+        d4 = g.decide("Review beta bez vad – schvaluji merge po resume (test O3c).") if h4["interrupt"] else None
+        t_m = time.time(); ex = None
+        while time.time() - t_m < 300:
+            ex = next((e for e in led() if e["kind"] == "EXECUTED" and e["zakazka"] == zb and e.get("action") == "merge"), None)
+            if ex: break
+            time.sleep(3)
+        wait_i("H5", 300); stop_b = http("POST", f"{APP}/zakazky/{zb}/stop", json={"by": "harness", "reason": "O3c hotovo – zakázku beta zastavuji (H5 není třeba)."}, timeout=60).status_code
+        rep.add("O3c", "Resume tenanta beta (platform-admin s důvodem): workflow RUNNING, výsledek zabitého podu (stopped) se zpracuje až po resume → ROLE_STOPPED rerun_after_resume → vývojář běží znovu (druhý ROLE_GATE/ROLE_POD vývojář od checkpointu), reviewer, HITL H4 znovu v GUI jako interrupt, schválení bea projde → merge executor allow (EXECUTED merge)", "PASS" if rs.status_code == 200 and zb in (rs_j.get("resumed") or []) and h4["interrupt"] and h4["interrupt"].startswith("hitl:H4:") and stopped_ev and stopped_ev[0].get("result") == "rerun_after_resume" and len(gates_v) >= 2 and len(pods_v) >= 2 and pods_v[-1].get("phase") == "Succeeded" and not pods_v[-1].get("stopped") and d4 and d4["new_run"] and ex and (ex.get("applied") is not None) else "FAIL", {"resume": {k: rs_j.get(k) for k in ("resumed", "keys_unblocked")}, "h4": h4["interrupt"], "h4_after_resume_s": round(time.time() - t_r, 1), "role_stopped": [{k: e.get(k) for k in ("role", "attempt", "result")} for e in stopped_ev], "vyvojar_gates": len(gates_v), "vyvojar_pods": [{k: e.get(k) for k in ("phase", "stopped", "t_run_s")} for e in pods_v], "decide": d4, "executed": {k: ex.get(k) for k in ("action", "by", "applied")} if ex else None, "stop_http": stop_b})
+        # O3d – ClickHouse: spany serveru paměti (search_memory) tenanta acme nenesou žádný record.id ani tenant beta (a naopak); ledger zakázky acme bez identifikátorů beta
+        pf_ch = PortForward(a, "clickhouse", 18123, 8123); rows = []; ch_err = None
+        try:
+            t_c = time.time()
+            while time.time() - t_c < 120:
+                q = "SELECT SpanAttributes['tenant.id'], SpanAttributes['gen_ai.memory.record.ids'], SpanAttributes['memory.tenants_returned'], SpanAttributes['enduser.id'] FROM otel.otel_traces WHERE ServiceName = 'memory-server' AND SpanName = 'search_memory' AND Timestamp > now() - INTERVAL 2 HOUR FORMAT JSONCompact"
+                r = http("POST", "http://127.0.0.1:18123/", content=q, timeout=30)
+                if r.status_code == 200:
+                    rows = r.json().get("data", [])
+                    if any(x[3] and "/beta" in x[3] for x in rows) and any(x[3] and "/acme" in x[3] for x in rows): break
+                else: ch_err = r.text[:200]
+                time.sleep(10)
+        finally: pf_ch.stop()
+        ids_beta = {i for x in rows if x[0] == "beta" for i in (x[1] or "").split(",") if i}; ids_acme = {i for x in rows if x[0] == "acme" for i in (x[1] or "").split(",") if i}
+        bad = [x for x in rows if (x[0] == "acme" and ("beta" in (x[2] or "") or (set((x[1] or "").split(",")) & ids_beta))) or (x[0] == "beta" and ("acme" in (x[2] or "") or (set((x[1] or "").split(",")) & ids_acme)))]
+        svid_rows = {t: sum(1 for x in rows if x[0] == t and x[3] and x[3].startswith("spiffe://")) for t in ("acme", "beta")}
+        L = led(); led_acme = json.dumps([e for e in L if e.get("zakazka") == za], ensure_ascii=False); leak_led = [k for k in (zb, can["beta"], wr["beta"].get("id") or "~") if k in led_acme]
+        rep.add("O3d", "Spany serveru paměti v ClickHouse (OTEL Collector, O1): search_memory spany tenanta acme nenesou žádný record.id ani tenants_returned tenanta beta a naopak (M-E3 „žádný record.id tenanta B ve spanech“), spany z podů rolí nesou enduser.id = SPIFFE ID role × tenant; ledger zakázky acme neobsahuje id zakázky beta, kanárek beta ani id záznamu beta", "PASS" if rows and not bad and svid_rows["acme"] >= 1 and svid_rows["beta"] >= 1 and ids_beta and ids_acme and not leak_led else "FAIL", {"spans": len(rows), "by_tenant": {t: sum(1 for x in rows if x[0] == t) for t in ("acme", "beta")}, "svid_spans": svid_rows, "record_ids": {"acme": len(ids_acme), "beta": len(ids_beta)}, "cross_tenant_rows": bad[:3], "ledger_leaks": leak_led, "clickhouse_error": ch_err})
+        # O3e – útrata per tenant = součet klíčů tenanta v budget_usage (zakázky tohoto běhu; org.zakazky plní workflow po každé roli, stop/resume synchronizují)
+        http("POST", f"{APP}/zakazky/{za}/stop", json={"by": "harness", "reason": "O3e: zakázka acme splnila účel (běžela během stopu beta)."}, timeout=60)
+        time.sleep(20)
+        import yaml as _yk
+        keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
+        mine = [k for k in keys_cm if str((k.get("metadata") or {}).get("zakazka", "")).startswith(tag)]
+        usage = {r_[0]: r_[1] for r_ in db("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'", name="agentgateway")}
+        gw = {}
+        for k in mine:
+            hsh = k["keyHash"].split(":", 1)[1]; t = (k.get("metadata") or {}).get("tenant"); gw[t] = gw.get(t, 0.0) + sum(u / 1e9 for bid, u in usage.items() if hsh in bid)
+        org = {r_[0]: float(r_[1] or 0) for r_ in db("SELECT tenant_id, sum(spent_usd) FROM org.zakazky WHERE zakazka_id LIKE %s GROUP BY tenant_id", (tag + "%",))}
+        fin = http("POST", f"{APP}/agui/gov/tools/finops", json={}, headers={"Authorization": f"Bearer {tp}"}, timeout=30); fin_t = {x["tenant_id"]: x for x in ((fin.json().get("result") or {}).get("tenants") or [])} if fin.status_code == 200 else {}
+        diff = {t: round(abs(gw.get(t, 0) - org.get(t, 0)), 6) for t in ("acme", "beta")}
+        rep.add("O3e", "FinOps per tenant (P1-G eventually consistent): útrata zakázek tohoto běhu v org.zakazky (workflow zapisuje po každé roli, stop/resume synchronizují) == součet budget_usage klíčů tenanta (ConfigMap agentgateway-keys metadata.tenant) pro acme i beta, odchylka ≤ 5 % + 0.002 USD; FinOps nástroj Governance MCP hlásí strop vs. útratu per tenant", "PASS" if gw.get("beta", 0) > 0 and gw.get("acme", 0) > 0 and all(diff[t] <= 0.002 + 0.05 * max(gw.get(t, 0), org.get(t, 0)) for t in ("acme", "beta")) and {"acme", "beta"} <= set(fin_t) else "FAIL", {"gateway_usd": {t: round(v, 6) for t, v in gw.items()}, "org_zakazky_usd": org, "diff": diff, "keys": len(mine), "finops_tool": {t: {k: fin_t[t].get(k) for k in ("budget_usd", "spent_usd", "pct", "status")} for t in fin_t}})
+        rep.add("O3f", "O-3: čas scénáře, screenshoty", "INFO", {"wall_s": round(time.time() - t_o, 1), "shots": sorted(p.name for p in (gui_shots / "o3").glob("*.png")) if (gui_shots / "o3").exists() else []})
+    finally:
+        g.close()
+
+
 def klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots):
     """K-1 (P3-4): klasifikační brána K1–K6 před první rolí (profil → org.zakazky + OPA data, high-risk zamyká autonomii, čl. 5 → Odmitnuto bez podu,
     nejasné → H1a právník), čl. 50 naostro (e-mail + ticket přes mock-channels s disclosure z definice role a značením generated_by), SLA bodů (org.sla_events, eskalace)."""
@@ -955,7 +1062,7 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
 KLAS_NO = {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}   # P3-4: zakázky z interního API musí nést dotazník, jinak čekají na klasifikaci v AG-UI
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1227,6 +1334,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if tenant: tenant_flow(a, rep, http, led, APP, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-2: T1a–T1f
         if gov: gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-3: U2a–U2h
         if klas: klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-4: K1a–K1g
+        if o3: o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-5: O3a–O3f
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
         if images:
@@ -1434,7 +1542,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -1445,7 +1553,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -1458,7 +1566,8 @@ def main():
      "p3-1": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True),
      "p3-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True),
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
-     "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
+     "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}
