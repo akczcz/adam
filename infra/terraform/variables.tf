@@ -76,3 +76,14 @@ variable "tags" {
   type    = map(string)
   default = { projekt = "adam-platform", faze = "P1", vlastnik = "adam", sprava = "terraform" }
 }
+variable "anthropic_api_key" {
+  type        = string
+  default     = "sk-ant-harness-mock"
+  sensitive   = true
+  description = "Výchozí (mock) hodnota tajemství anthropic-api-key v Key Vaultu; ostrý klíč se nastaví v Key Vaultu, Terraform ho pak nepřepisuje (P3-6 E1)"
+}
+variable "role_clients" {
+  type        = list(string)
+  default     = ["account", "architekt", "vyvojar", "reviewer", "sre"]
+  description = "Service-account klienti rolí v realmu p0 (client secret p0-<role>-secret, dev) → Key Vault role-client-secrets (P3-6 E1)"
+}

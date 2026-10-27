@@ -9,12 +9,4 @@ spec:
   externalName: "${PG_HOST}"
   ports:
   - {name: pg, port: 5432}
----
-# heslo admin účtu Flexible Serveru (dosazuje Flux); na kind ho má base/postgres, který overlay aks nepoužívá
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-auth
-type: Opaque
-stringData:
-  POSTGRES_PASSWORD: "${PG_PASSWORD}"
+# heslo admin účtu Flexible Serveru: Secret postgres-auth dává ESO z Key Vaultu (secrets-eso.yaml, P3-6 E1); na kind ho má base/postgres

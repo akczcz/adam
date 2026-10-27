@@ -1,0 +1,8 @@
+# P3-6 E1: kustomizace `trust` (Flux, závisí na `operators` – CRD cert-manager/trust-manager/ESO musí existovat): interní CA platformy
+# (ClusterIssuer platform-ca), trust bundle (ConfigMap platform-ca do namespaců s labelem platform.ca-bundle) a ClusterSecretStore Key Vaultu.
+# Proměnné ${KV_NAME}, ${ESO_CLIENT_ID} dosazuje Flux postBuild substitute (infra/terraform/flux.tf).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- pki.yaml
+- keyvault-store.yaml

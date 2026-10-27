@@ -38,6 +38,11 @@ jobs:
           imp docker.io/daprio/daprd:1.18.9                            daprd:1.18.9
           imp docker.io/daprio/placement:1.18.9                        placement:1.18.9
           imp docker.io/daprio/scheduler:1.18.9                        scheduler:1.18.9
+          imp quay.io/jetstack/cert-manager-controller:v1.21.3         cert-manager-controller:v1.21.3   # P3-6 E1: charty operátorů (infra/k8s/operators)
+          imp quay.io/jetstack/cert-manager-webhook:v1.21.3            cert-manager-webhook:v1.21.3
+          imp quay.io/jetstack/cert-manager-cainjector:v1.21.3         cert-manager-cainjector:v1.21.3
+          imp quay.io/jetstack/trust-manager:v0.26.0                   trust-manager:v0.26.0
+          imp ghcr.io/external-secrets/external-secrets:v2.14.0        external-secrets:v2.14.0
       - name: build aplikace zakázky (az acr build)
         run: |
           B=$(mktemp -d); mkdir -p "$B/src/harness_p0_o2" "$B/src/harness_memory_m1" "$B/src/harness_gateway_g1"

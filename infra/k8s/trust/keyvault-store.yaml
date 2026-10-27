@@ -1,0 +1,20 @@
+# ESO ClusterSecretStore azure-kv: Key Vault ${KV_NAME} přes Workload Identity (referenced SA – controller sám žádná práva na Azure nemá;
+# token SA eso-keyvault vymění za token UAMI id-eso s rolí Key Vault Secrets User – infra/terraform/secrets.tf). remoteRef.key bez prefixu = secret/<name>.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eso-keyvault
+  namespace: external-secrets
+  annotations:
+    azure.workload.identity/client-id: "${ESO_CLIENT_ID}"
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: azure-kv
+spec:
+  provider:
+    azurekv:
+      authType: WorkloadIdentity
+      vaultUrl: "https://${KV_NAME}.vault.azure.net"
+      serviceAccountRef: {name: eso-keyvault, namespace: external-secrets}

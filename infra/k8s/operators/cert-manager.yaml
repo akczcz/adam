@@ -1,0 +1,67 @@
+# cert-manager v1.21.3 (Apache-2.0, CNCF graduated; ověřeno 2026-10-27) – vydavatel TLS certifikátů infrastruktury (egress listenery gateway,
+# později OpenBao/Keycloak/otel-collector). Chart OCI quay.io/jetstack/charts; CRD spravuje chart (crds.enabled) – Flux je aplikuje server-side.
+# HelmRepository ve stejném namespace jako HelmRelease (Flux extension AKS: multi-tenancy, bez cross-namespace refs).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: jetstack
+  namespace: cert-manager
+spec:
+  type: oci
+  url: oci://quay.io/jetstack/charts
+  interval: 12h
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  interval: 30m
+  timeout: 10m
+  chart:
+    spec:
+      chart: cert-manager
+      version: "v1.21.3"
+      sourceRef: {kind: HelmRepository, name: jetstack}
+  install: {crds: CreateReplace, remediation: {retries: 3}}
+  upgrade: {crds: CreateReplace, remediation: {retries: 3}}
+  values:
+    crds: {enabled: true, keep: true}
+    image: {repository: "${ACR_LOGIN_SERVER}/cert-manager-controller", tag: v1.21.3}
+    webhook:
+      image: {repository: "${ACR_LOGIN_SERVER}/cert-manager-webhook", tag: v1.21.3}
+      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}
+    cainjector:
+      image: {repository: "${ACR_LOGIN_SERVER}/cert-manager-cainjector", tag: v1.21.3}
+      resources: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 256Mi}}
+    startupapicheck: {enabled: false}   # Job navíc (další obraz); Flux health check HelmRelease stačí
+    resources: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 256Mi}}
+    prometheus: {enabled: false}
+---
+# trust-manager v0.26.0 (Apache-2.0, sub-projekt cert-manager; ověřeno 2026-10-27): Bundle platform-ca → ConfigMap `platform-ca` (ca.crt)
+# v každém namespace s labelem platform.ca-bundle=true (platform-data, tenant-<id> z rolegen) – nahrazuje CA ConfigMapy, které kopíroval harness.
+# Bez výchozího balíku veřejných CA (defaultPackage) – bundle je jen interní CA.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: trust-manager
+  namespace: cert-manager
+spec:
+  interval: 30m
+  timeout: 10m
+  dependsOn: [{name: cert-manager}]
+  chart:
+    spec:
+      chart: trust-manager
+      version: "v0.26.0"
+      sourceRef: {kind: HelmRepository, name: jetstack}
+  install: {crds: CreateReplace, remediation: {retries: 3}}
+  upgrade: {crds: CreateReplace, remediation: {retries: 3}}
+  values:
+    crds: {enabled: true, keep: true}
+    image: {repository: "${ACR_LOGIN_SERVER}/trust-manager", tag: v0.26.0}
+    defaultPackage: {enabled: false}
+    app:
+      trust: {namespace: cert-manager}   # zdrojové Secrety bundlu jen z tohoto namespace
+    resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}

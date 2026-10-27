@@ -72,7 +72,7 @@ def tenant_k8s(tenants, agent_conf: str):
         ns = tenant_ns(t["id"]); lab = {"platform.tenant": t["id"]}
         def to(app, ports): return {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "platform-data"}}, "podSelector": {"matchLabels": {"app": app}}}], "ports": [{"protocol": "TCP", "port": p} for p in ports]}
         docs += [
-            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": ns, "labels": lab | {"pod-security.kubernetes.io/enforce": "restricted", "pod-security.kubernetes.io/warn": "restricted"}}},
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": ns, "labels": lab | {"pod-security.kubernetes.io/enforce": "restricted", "pod-security.kubernetes.io/warn": "restricted", "platform.ca-bundle": "true"}}},   # platform.ca-bundle: trust-manager sem dá ConfigMap platform-ca (P3-6 E1)
             {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "default-deny", "namespace": ns}, "spec": {"podSelector": {}, "policyTypes": ["Ingress", "Egress"]}},
             {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "role-egress", "namespace": ns},
              "spec": {"podSelector": {"matchLabels": {"app": "role"}}, "policyTypes": ["Egress"], "egress": [
