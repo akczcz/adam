@@ -188,7 +188,6 @@ def role_gate(role):
 def agent_run(role, z, prompt, tool_names):
     """Role: P0_ROLE_RUNTIME=pod → Kata pod v ns rolí (role_pod.py, P1-6), jinak v procesu aplikace (agent_run_local).
     Před během eval gate (P2-5): role bez prošlých evalů se nespustí (ledger ROLE_GATE blocked, výsledek AGENT_ERROR)."""
-    if z.get("_rerun_delay_s"): ledger("ROLE_RERUN_DELAY", zakazka=z["id"], role=role, delay_s=z["_rerun_delay_s"]); time.sleep(float(z["_rerun_delay_s"]))   # P3-5: nový běh po resume až po odblokování klíčů
     ok, gate = role_gate(role)
     ledger("ROLE_GATE", zakazka=z["id"], role=role, passed=ok, **gate)
     if not ok:
@@ -533,6 +532,7 @@ def registry_zakazka(ctx, inp):
     except Exception: src = None
     ok = finops.registry_upsert(z["id"], tenant=z.get("tenant") or os.environ.get("P0_TENANT", "acme"), budget_usd=float(z.get("budget_usd") or BUDGET_USD), spent=fin, status=status, keys_source=src, key_hashes=hashes)   # P3-4: tenant zakázky, ne env
     ledger("REGISTRY_ZAKAZKA", zakazka=z["id"], status=status, written=ok, spent_usd=(fin or {}).get("total_usd"), keys_source=src)
+    if status in ("Dokonceno", "Zamitnuto", "BudgetExceeded"): registry_sync(z["id"], z.get("tenant") or os.environ.get("P0_TENANT", "acme"), status, later_s=(30, 120))   # P3-5 (O3e): útrata poslední role doběhne do gateway po konci
     return ok
 
 
@@ -692,9 +692,7 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
         if not art.get("stopped"): break
         yield ctx.call_activity(notify, input={"event": "ROLE_STOPPED", "role": role, "zakazka": z["id"], "attempt": attempt + 1, "result": "rerun_after_resume" if attempt == 0 else "pozastaveno"})
         if attempt == 1: return None
-        # prodleva před novým podem (klíče tenanta po resume odblokuje ConfigMap, propagace ~1 min) – uvnitř aktivity, ne timer workflow (P3-5 nález: timer po resume workflow ukončil)
-        inp2 = {**inp, "_rerun_delay_s": float(z.get("rerun_delay_s", 60))} if "poptavka" in inp else {**inp, "z": {**inp["z"], "_rerun_delay_s": float(z.get("rerun_delay_s", 60))}}
-        art = yield ctx.call_activity(activity, input=inp2)
+        art = yield ctx.call_activity(activity, input=inp)   # bez prodlevy (P3-5 nález: timer/sleep po resume znovuspuštění rozbil); klíče tenanta odblokuje resume_tenant PŘED resume workflow
     if not gate.get("exceeded"):
         yield ctx.call_activity(registry_agent, input={"z": z, "role": role})   # P3-3: řádek org.agents píše workflow (T12), ne harness
         yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Running"})   # P3-5 (O3e): útrata zakázky v org.zakazky po každé roli (FinOps per tenant bez čekání na konec)
@@ -888,14 +886,14 @@ def stop_tenant(tenant, *, by, reason, channel="agui"):
 
 
 def resume_tenant(tenant, *, by, reason, channel="agui"):
+    unblocked = None
+    if os.environ.get("P0_GATEWAY_KEYS") == "issue":   # P3-5: klíče odblokovat PŘED resume workflow (propagace ConfigMapy ~1 min; nový pod role dělá první request za ~2 min)
+        import gateway_keys; unblocked = gateway_keys.block_tenant(tenant, ledger, block=False)
     resumed = []
     for zid in tenant_zakazky(tenant):
         if (_wf_state(zid) or {}).get("status") == "SUSPENDED":
             try: client().resume_workflow(zid); resumed.append(zid); registry_sync(zid, tenant, "Running")
             except Exception as e: ledger("RESUME_TENANT_ERROR", tenant=tenant, zakazka=zid, error=f"{type(e).__name__}: {str(e)[:120]}")
-    unblocked = None
-    if os.environ.get("P0_GATEWAY_KEYS") == "issue":
-        import gateway_keys; unblocked = gateway_keys.block_tenant(tenant, ledger, block=False)
     reg = finops.tenant_status(tenant, "active", by=by, reason=reason)
     ledger("RESUME_TENANT", tenant=tenant, by=by, reason=reason, channel=channel, resumed=resumed, keys_unblocked=unblocked, registry=reg)
     return {"ok": True, "tenant": tenant, "resumed": resumed, "keys_unblocked": unblocked, "registry": reg}
