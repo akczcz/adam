@@ -19,6 +19,7 @@ metadata:
 spec:
   interval: 30m
   timeout: 10m
+  serviceAccountName: flux-helm
   chart:
     spec:
       chart: cert-manager
@@ -50,6 +51,7 @@ metadata:
 spec:
   interval: 30m
   timeout: 10m
+  serviceAccountName: flux-helm
   dependsOn: [{name: cert-manager}]
   chart:
     spec:
