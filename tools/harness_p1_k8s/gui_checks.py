@@ -85,6 +85,9 @@ class Gui:
         return {"protocol": self.t("run-protocol").inner_text(), "run_id": self.t("run-id").inner_text(), "url": self.page.url}
 
     def open_thread(self, zid):
+        """Otevře thread s NOVÝM runem: navigace jen změnou hashe na tutéž URL stránku nereloaduje (React komponenta zůstane se starým stavem – po resume
+        tenanta GUI ukazovalo run „cancelled“ ze stopu; nález P3-5 O3c) → nejdřív seznam, pak thread."""
+        if self.page.url.endswith(f"#/t/{zid}"): self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
         self.page.goto(self.base + f"#/t/{zid}")
         self.page.wait_for_function("document.querySelector('[data-testid=run-status]') && !['idle','connecting'].includes(document.querySelector('[data-testid=run-status]').textContent)", timeout=60_000)
         return {"status": self.t("run-status").inner_text(), "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
