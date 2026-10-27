@@ -46,7 +46,7 @@ def memory_probe(queries):
         try:
             r = httpx.post(f"{mem}/tools/search_memory", json={"query": q, "limit": 10}, headers={"Authorization": f"Bearer {tok}"}, timeout=10)
             j = r.json() if r.status_code == 200 else {}
-            rows = j.get("results") if isinstance(j, dict) else (j if isinstance(j, list) else [])
+            rows = (j.get("records") or j.get("results")) if isinstance(j, dict) else (j if isinstance(j, list) else [])   # server paměti vrací {records: [...]}
             rows = rows or []
             out[q] = {"http": r.status_code, "returned": [x.get("id") for x in rows][:20], "tenants_returned": sorted({x.get("tenant_id") for x in rows if x.get("tenant_id")}), "contents": [str(x.get("content", ""))[:80] for x in rows][:5]}
         except Exception as e: out[q] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}

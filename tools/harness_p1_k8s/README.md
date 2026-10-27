@@ -402,6 +402,33 @@ v JSON detailu checku (K1f spadl, cast na float); (4) approver klasifikačního 
 (5) beta tenant má od P3-4 vlastní řádek approvals (zadani.classify) → T1c už nečeká 0. Lokálně (fixture + mock kanálů): 17/17. Odchylka od
 procesy.md: brána běží před Upřesněním (zamítnutá zakázka nespustí žádný pod); profil `nejasne` po H1a zůstává (změna profilu = N9, zatím bez GUI).
 
+## P3-5 – O-3 multi-tenant harness (2026-10-27, AKS, `--step p3-5` = p3-4 + O3a–f)
+
+- **M-E3 v clusteru** (O3a/O3d): lidé obou tenantů zapíší kanárek (`requested_status=approved`), zakázky obou tenantů nesou `memory_probe`
+  (dotazy) – `role_runner` se identitou JWT-SVID role × tenant ptá serveru paměti (PEP: tenant z cesty SVID, RLS); výsledky v `ROLE_POD.memory_probe`.
+  Server paměti exportuje spany OTLP do Collectoru (`gen_ai.memory.record.ids`, `memory.tenants_returned`, `enduser.id` = SPIFFE ID) → ClickHouse.
+- **Stop s checkpointem** (O3b): `role_runner` má handler SIGTERM (instalovaný před sondami – pod je PID 1, bez handleru SIGTERM ignoruje a kubelet
+  pošle SIGKILL): sync-up `artifacts/`+`work/` do aplikace + výsledek `stopped` + `ROLE_CHECKPOINT`; `pod_run` vrací `stopped`, role aktivita bez HANDOFF.
+- **Resume** (O3c): výsledek `stopped` se zpracuje až po resume (workflow SUSPENDED) → `ROLE_STOPPED rerun_after_resume` → role znovu od checkpointu
+  (druhý ROLE_GATE/pod), reviewer, H4 jako interrupt v GUI, merge executor.
+- **FinOps per tenant** (O3e): `org.zakazky.spent_usd` plní workflow po každé roli (`registry_zakazka` v `run_role`) a aplikace při stop/resume
+  (`registry_sync`); součet per tenant == součet `budget_usage` klíčů tenanta (ConfigMap `metadata.tenant`), zakázky tohoto běhu.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| O3a | kanárky obou tenantů; pod account každého tenanta (SVID) → cizí kanárek 0 záznamů, vlastní nalezen, 3 dotazy × 2 tenanty bez cizího tenant_id | RESULT_O3A |
+| O3b | stop tenanta beta při běžícím vývojáři: SIGTERM → checkpoint (ROLE_CHECKPOINT, ROLE_POD stopped) → pod pryč ≤ 60 s, beta SUSPENDED, acme RUNNING a bez zabitého podu | RESULT_O3B |
+| O3c | resume: ROLE_STOPPED → vývojář znovu od checkpointu, reviewer, H4 v GUI, schválení → EXECUTED merge | RESULT_O3C |
+| O3d | ClickHouse: search_memory spany acme bez record.id/tenant beta a naopak, enduser.id = SPIFFE ID; ledger acme bez id zakázky/záznamu beta | RESULT_O3D |
+| O3e | útrata per tenant: org.zakazky (zakázky běhu) == budget_usage klíčů tenanta ± 5 % + 0.002 USD; FinOps nástroj per tenant | RESULT_O3E |
+| O3f | čas, screenshoty | RESULT_O3F |
+
+Výsledek: **RESULT_TOTAL** (`measure` run RESULT_RUN, `results/RESULT_FILE`; RESULT_RUNS běhy). Nálezy: (1) handler SIGTERM instalovaný až po sondách →
+pod zabit bez checkpointu (PID 1 bez handleru SIGTERM ignoruje, kubelet pošle SIGKILL, exit 137) – handler musí být první věc v `main`; (2) server
+paměti čte `requested_status` (ne `status`) – kanárek člověka jinak skončí `proposed` a sonda ho nenajde; (3) **instance workflow ze starého obrazu po
+pause/resume končí FAILED** (nedeterministický replay po změně kódu workflow – Dapr/durabletask) → U2d a O3 měří jen zakázky běhu; verzování
+workflow/drain před nasazením = P3-6; (4) psycopg parsuje `%` v SQL jen s parametry (`args or None`).
+
 ## Spuštění
 
 ```bash

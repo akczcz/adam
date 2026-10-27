@@ -862,15 +862,17 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         t_s = time.time(); stp = http("POST", f"{APP}/agui/gov/tenant/beta/stop", json={"reason": "O3b: stop tenanta beta uprostřed běžící role vývojáře (test checkpointu)."}, headers={"Authorization": f"Bearer {tp}"}, timeout=120); stp_j = stp.json() if stp.status_code == 200 else {"http": stp.status_code}
         pods_after = pods_before
         while time.time() - t_s < 90 and pods_after: pods_after = pods_of("tenant-beta", zb); time.sleep(2)
-        gone_s = round(time.time() - t_s, 1); time.sleep(5); L = led()
-        ck = [e for e in L if e["kind"] == "ROLE_CHECKPOINT" and e["zakazka"] == zb]; killed = [e for e in L if e["kind"] == "ROLE_POD_KILLED"]
-        pod_v = next((e for e in reversed(L) if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "vyvojar"), {})
+        gone_s = round(time.time() - t_s, 1); t_w = time.time(); pod_v = {}
+        while time.time() - t_w < 120 and not pod_v:   # ROLE_POD zabitého podu zapíše pod_run až po 404 a pokusu o logy (řádově desítky s)
+            L = led(); pod_v = next((e for e in reversed(L) if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "vyvojar" and e.get("ts", 0) > t_s - 1), {})
+            if not pod_v: time.sleep(5)
+        L = led(); ck = [e for e in L if e["kind"] == "ROLE_CHECKPOINT" and e["zakazka"] == zb]; killed = [e for e in L if e["kind"] == "ROLE_POD_KILLED"]
         killed_mine = [p_ for e in killed if e["zakazka"] == zb for p_ in e.get("pods", [])]; killed_acme = [e for e in killed if e["zakazka"] == za and e.get("ts", 0) > t_s - 1]
         st_b, st_a1 = status(zb), status(za)
         rep.add("O3b", "Stop tenanta beta při běžící roli vývojář v Kata podu (autonomie.md T5, 60 s grace): workflow SUSPENDED, pod dostal SIGTERM → role_runner nahrál checkpoint (artifacts/work sync-up, ROLE_CHECKPOINT) a poslal výsledek stopped → pod pryč ≤ 60 s (ROLE_POD_KILLED), ROLE_POD stopped=True s checkpointem; zakázka acme běží dál (RUNNING, žádný její pod zabit)", "PASS" if ws["status"] == "running" and pods_before and stp.status_code == 200 and zb in (stp_j.get("paused") or []) and not pods_after and gone_s <= 60 and set(killed_mine) & set(pods_before) and ck and ck[0].get("written", 0) >= 0 and pod_v.get("stopped") and (pod_v.get("checkpoint") or {}).get("files") is not None and st_b.get("status") == "SUSPENDED" and st_a0.get("status") == "RUNNING" and st_a1.get("status") == "RUNNING" and not killed_acme else "FAIL", {"subagent": ws, "pods_before": pods_before, "pods_after": pods_after, "pod_gone_s": gone_s, "stop": {k: stp_j.get(k) for k in ("paused", "pods_killed", "keys_blocked")}, "checkpoint": [{k: e.get(k) for k in ("role", "files", "written", "signal")} for e in ck], "role_pod": {k: pod_v.get(k) for k in ("phase", "stopped", "checkpoint", "exit_code")}, "beta_wf": st_b.get("status"), "acme_wf": [st_a0.get("status"), st_a1.get("status")], "acme_killed": len(killed_acme)})
         # O3c – resume tenanta beta: vývojář se spustí znovu od checkpointu (ROLE_STOPPED → nový ROLE_GATE/pod), reviewer, H4 znovu v GUI, schválení projde (merge executor allow)
         t_r = time.time(); rs = http("POST", f"{APP}/agui/gov/tenant/beta/resume", json={"reason": "O3c: resume tenanta beta po testu stopu."}, headers={"Authorization": f"Bearer {tp}"}, timeout=120); rs_j = rs.json() if rs.status_code == 200 else {"http": rs.status_code}
-        g.open_thread(zb); h4 = wait_i("H4", 1800)
+        g.open_thread(zb); h4 = wait_i("H4", 2400)   # po resume: 60 s prodleva (klíče), nový Kata pod vývojáře (sondy ~2–4 min), reviewer
         L = led(); stopped_ev = [e for e in L if e["kind"] == "NOTIFY" and e.get("event") == "ROLE_STOPPED" and e["zakazka"] == zb]
         gates_v = [e for e in L if e["kind"] == "ROLE_GATE" and e["zakazka"] == zb and e["role"] == "vyvojar"]; pods_v = [e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "vyvojar"]
         d4 = g.decide("Review beta bez vad – schvaluji merge po resume (test O3c).") if h4["interrupt"] else None
@@ -903,7 +905,7 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         rep.add("O3d", "Spany serveru paměti v ClickHouse (OTEL Collector, O1): search_memory spany tenanta acme nenesou žádný record.id ani tenants_returned tenanta beta a naopak (M-E3 „žádný record.id tenanta B ve spanech“), spany z podů rolí nesou enduser.id = SPIFFE ID role × tenant; ledger zakázky acme neobsahuje id zakázky beta, kanárek beta ani id záznamu beta", "PASS" if rows and not bad and svid_rows["acme"] >= 1 and svid_rows["beta"] >= 1 and ids_beta and ids_acme and not leak_led else "FAIL", {"spans": len(rows), "by_tenant": {t: sum(1 for x in rows if x[0] == t) for t in ("acme", "beta")}, "svid_spans": svid_rows, "record_ids": {"acme": len(ids_acme), "beta": len(ids_beta)}, "cross_tenant_rows": bad[:3], "ledger_leaks": leak_led, "clickhouse_error": ch_err})
         # O3e – útrata per tenant = součet klíčů tenanta v budget_usage (zakázky tohoto běhu; org.zakazky plní workflow po každé roli, stop/resume synchronizují)
         http("POST", f"{APP}/zakazky/{za}/stop", json={"by": "harness", "reason": "O3e: zakázka acme splnila účel (běžela během stopu beta)."}, timeout=60)
-        time.sleep(20)
+        time.sleep(45)   # flush čítačů gateway + druhý zápis registry_sync (20 s po stopu)
         import yaml as _yk
         keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
         mine = [k for k in keys_cm if str((k.get("metadata") or {}).get("zakazka", "")).startswith(tag)]
