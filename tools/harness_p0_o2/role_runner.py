@@ -11,12 +11,46 @@ from __future__ import annotations
 import base64
 import json
 import os
+import signal
 import socket
 import sys
 import time
 from urllib.parse import urlparse
 
 import httpx
+
+STOP = {"flag": False}
+
+
+def collect_files(WORK, root):
+    up = []
+    for rootname in ("artifacts", "work"):
+        base = WORK if rootname == "work" else os.path.join(root, rootname)
+        for d, dirs, names in os.walk(base):
+            dirs[:] = [x for x in dirs if not x.startswith(".")]
+            for n in names:
+                fp = os.path.join(d, n); rel = os.path.relpath(fp, base)
+                if rel.startswith("."): continue
+                try: data = open(fp, "rb").read()
+                except Exception: continue
+                if len(data) > 2_000_000: continue
+                up.append({"root": rootname, "path": rel, "content_b64": base64.b64encode(data).decode()})
+    return up
+
+
+def memory_probe(queries):
+    """P3-5 (O3a, M-E3 v clusteru): dotazy na server paměti identitou tohoto podu (JWT-SVID role × tenant) – PEP + RLS musí vrátit jen vlastní tenant."""
+    out = {}
+    mem = os.environ.get("P0_MEMORY_URL", ""); tok = os.environ.get("P0_ROLE_TOKEN", "")
+    for q in queries or []:
+        try:
+            r = httpx.post(f"{mem}/tools/search_memory", json={"query": q, "limit": 10}, headers={"Authorization": f"Bearer {tok}"}, timeout=10)
+            j = r.json() if r.status_code == 200 else {}
+            rows = (j.get("records") or j.get("results")) if isinstance(j, dict) else (j if isinstance(j, list) else [])   # server paměti vrací {records: [...]}
+            rows = rows or []
+            out[q] = {"http": r.status_code, "returned": [x.get("id") for x in rows][:20], "tenants_returned": sorted({x.get("tenant_id") for x in rows if x.get("tenant_id")}), "contents": [str(x.get("content", ""))[:80] for x in rows][:5]}
+        except Exception as e: out[q] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+    return out
 
 
 def tcp_probe(host, port, timeout=3.0):
@@ -111,12 +145,31 @@ def main():
     os.environ.setdefault("O1_LEDGER", "/tmp/role-ledger.jsonl")
     for k in ("P0_ROLE_RUNTIME",): os.environ[k] = "local"
 
+    S = {"identity": None, "probe": None, "mprobe": None}   # stav pro checkpoint (SIGTERM může přijít kdykoli – i během sond; P3-5 nález: handler až po sondách = pod zabit bez checkpointu)
+
+    def on_sigterm(signum, frame):
+        """P3-5 (autonomie.md stop: 60 s grace na checkpoint): SIGTERM od kubeletu (stop zakázky/tenanta) → nahrát rozpracované artifacts/ a work/
+        do aplikace (checkpoint) a poslat výsledek stopped=True; po resume workflow roli spustí znovu od checkpointu. Pak exit 143.
+        Proces je PID 1 kontejneru – bez handleru by SIGTERM ignoroval a kubelet by po grace poslal SIGKILL (exit 137, bez checkpointu)."""
+        if STOP["flag"]: return
+        STOP["flag"] = True; t_s = time.time()
+        up = collect_files(WORK, root); n = 0
+        try: n = httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up}, headers=H, timeout=15).json().get("written", 0)
+        except Exception as e: print(f"checkpoint upload error: {e}", flush=True)
+        out = {"text": "AGENT_STOPPED (SIGTERM)", "cost": None, "files": [], "error": "stopped: pod ukončen stopem (SIGTERM), checkpoint nahrán", "stopped": True,
+               "checkpoint": {"files": len(up), "written": n, "s": round(time.time() - t_s, 1)}, "identity": S["identity"], "egress_probe": S["probe"], "memory_probe": S["mprobe"], "pod": os.environ.get("HOSTNAME"), "uid": os.getuid()}
+        try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": [{"kind": "ROLE_CHECKPOINT", "zakazka": z["id"], "role": role, "files": len(up), "written": n, "signal": "SIGTERM"}]}, headers=H, timeout=15)
+        except Exception as e: print(f"checkpoint result error: {e}", flush=True)
+        print("RESULT::" + json.dumps(out, ensure_ascii=False)[:3000], flush=True)
+        os._exit(143)
+    signal.signal(signal.SIGTERM, on_sigterm)
+
     identity = {"kind": "keycloak-token"}
     if os.environ.get("P0_ROLE_IDENTITY") == "svid":
         # P2-3: identita role = JWT-SVID (aud memory) z Workload API sidecaru spire-agent; Keycloak token ze Secretu zůstává záloha
         t_id = time.time(); err = None; stale = []
         want_id = f"spiffe://platform/role/{role}/{os.environ.get('P0_TENANT', 'acme')}"
-        for _ in range(60):
+        for _ in range(90):   # P3-5: až 180 s – paralelní pody dvou tenantů na jednom uzlu Kata sdílejí agent ID (k8s_psat) a SVID se střídá
             try:
                 from spiffe import WorkloadApiClient
                 with WorkloadApiClient() as c:
@@ -130,9 +183,11 @@ def main():
                     os.environ["P0_ROLE_TOKEN"] = j.token; err = None; break
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:120]}"; time.sleep(2)
-        if identity["kind"] != "svid": identity = {"kind": "keycloak-token", "svid_error": err, "wait_s": round(time.time() - t_id, 1)}
-    print("identity=" + json.dumps(identity), flush=True)
-    probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}
+        if identity["kind"] != "svid":
+            # fail-closed (P3-5 nález): záložní Keycloak token role nese tenant service accountu (acme) – pod cizího tenanta by paměť četl jako acme → žádný token
+            os.environ["P0_ROLE_TOKEN"] = ""; identity = {"kind": "none", "svid_error": err, "wait_s": round(time.time() - t_id, 1), "stale_svids": stale[-5:], "fail_closed": True}
+    print("identity=" + json.dumps(identity), flush=True); S["identity"] = identity
+    probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}; S["probe"] = probe
     try: probe["internet_dns_github.com:443"] = tcp_probe("github.com", 443)
     except Exception as e: probe["internet_dns_github.com:443"] = {"result": f"dns:{type(e).__name__}"}
     for name, url, dp in (("memory", os.environ.get("P0_MEMORY_URL", ""), 9900), ("gateway", os.environ.get("P0_LLM_URL", ""), 4100), ("app", api, 8010), ("postgres", os.environ.get("P0_PROBE_POSTGRES", "tcp://postgres.platform-data.svc:5432"), 5432)):   # P3-2: DB platformy z podu role nedosažitelná (NetworkPolicy tenanta)
@@ -148,6 +203,10 @@ def main():
         git_host = _hp(os.environ["P0_GIT_URL"], 443)[0]
         git_probe = git_mirror_probe() if git_host in allowed or os.environ.get("P0_GIT_PROBE_ALL") else {"skipped": f"{git_host} není v srt allowedDomains role"}
     if git_probe is not None: print("git_probe=" + json.dumps(git_probe)[:3000], flush=True)
+
+    mprobe = memory_probe(z.get("memory_probe")) if z.get("memory_probe") else None   # P3-5: sonda izolace paměti identitou podu
+    if mprobe is not None: print("memory_probe=" + json.dumps(mprobe, ensure_ascii=False)[:3000], flush=True)
+    S["mprobe"] = mprobe
 
     for d in (WORK, f"{root}/artifacts"): os.makedirs(d, exist_ok=True)
     try:
@@ -168,18 +227,7 @@ def main():
     res = app_mod.agent_run_local(role, z, prompt, tools)
     agent_s = round(time.time() - t0, 1)
 
-    up = []
-    for rootname in ("artifacts", "work"):
-        base = WORK if rootname == "work" else os.path.join(root, rootname)
-        for d, dirs, names in os.walk(base):
-            dirs[:] = [x for x in dirs if not x.startswith(".")]
-            for n in names:
-                fp = os.path.join(d, n); rel = os.path.relpath(fp, base)
-                if rel.startswith("."): continue
-                try: data = open(fp, "rb").read()
-                except Exception: continue
-                if len(data) > 2_000_000: continue
-                up.append({"root": rootname, "path": rel, "content_b64": base64.b64encode(data).decode()})
+    up = collect_files(WORK, root)
     try: httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up}, headers=H, timeout=120)
     except Exception as e: print(f"sync-up error: {e}", flush=True)
     led = []
@@ -194,7 +242,7 @@ def main():
     try: image_role = json.loads(open("/etc/platform/role.json").read()); image_role = {"role": image_role.get("role"), "version": image_role.get("version"), "managed_settings": os.path.exists("/etc/claude/managed-settings.json")}
     except Exception: image_role = None
     out |= {"egress_probe": probe, "pod": os.environ.get("HOSTNAME"), "srt": os.environ.get("P0_SRT"), "uid": os.getuid(), "agent_s": agent_s, "uploaded": len(up), "kernel": os.uname().release,
-            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity, "git_probe": git_probe, "work_info": work_info}
+            "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity, "git_probe": git_probe, "work_info": work_info, "memory_probe": mprobe}
     try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": led}, headers=H, timeout=120)
     except Exception as e: print(f"result post error: {e}", flush=True)
     print("RESULT::" + json.dumps(out, ensure_ascii=False)[:30000], flush=True)

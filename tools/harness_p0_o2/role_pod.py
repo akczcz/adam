@@ -204,7 +204,7 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
             if phase in ("Succeeded", "Failed"): break
             time.sleep(3)
     except Exception as e:
-        ledger("ROLE_POD_ERROR", zakazka=z["id"], role=role, pod=name, error=f"{type(e).__name__}: {str(e)[:300]}")
+        ledger("ROLE_POD_ERROR", zakazka=z["id"], role=role, pod=name, error=f"{type(e).__name__}: {str(e)[:300]}", stopped=bool((RUNS.get(rid) or {}).get("result") and RUNS[rid]["result"].get("stopped")))   # P3-5: 404 po stopu = pod smazán kill_zakazka_pods
     logs = ""
     try: logs = k8s("GET", f"/api/v1/namespaces/{ns}/pods/{name}/log?tailLines=60", raw=True)
     except Exception as e: logs = f"(log nedostupný: {str(e)[:120]})"
@@ -230,7 +230,8 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
            t_run_s=round(finished - started, 1) if finished and started else None, t_total_s=round(time.time() - t0, 1),
            egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:],
            image=info["image"], template=info["template"], overrides=info["overrides"], image_tools=(res or {}).get("image_tools"), image_role=(res or {}).get("image_role"),
-           resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar, git_probe=(res or {}).get("git_probe"), work_info=(res or {}).get("work_info"))   # P2-4: sonda egressu (git/mirror/cizí SNI), pracovní adresář (srt allowWrite)
+           resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar, git_probe=(res or {}).get("git_probe"), work_info=(res or {}).get("work_info"),
+           stopped=bool((res or {}).get("stopped")), checkpoint=(res or {}).get("checkpoint"), memory_probe=(res or {}).get("memory_probe"))   # P2-4: sonda egressu; P3-5: checkpoint při stopu, sonda paměti
     if not os.environ.get("P0_ROLE_KEEP_PODS"):
         for kind in ("pods", "secrets"):
             try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")
@@ -240,4 +241,4 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
     if res is None:
         return {"text": f"AGENT_ERROR pod {phase}", "cost": None, "files": [], "work": work, "arts": arts,
                 "error": f"PodFailed: phase={phase} exit={term.get('exitCode')} reason={term.get('reason')}", "budget_exceeded": False}
-    return {"text": res.get("text", ""), "cost": res.get("cost"), "files": res.get("files") or [], "work": work, "arts": arts, "error": res.get("error"), "budget_exceeded": bool(res.get("budget_exceeded"))}
+    return {"text": res.get("text", ""), "cost": res.get("cost"), "files": res.get("files") or [], "work": work, "arts": arts, "error": res.get("error"), "budget_exceeded": bool(res.get("budget_exceeded")), "stopped": bool(res.get("stopped"))}

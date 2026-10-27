@@ -204,6 +204,7 @@ L4 alert, jedno nesankcionované jednání, pass^3 pod práh, nebo incident X1 s
 Retence ≥ 6 měsíců, per tenant výš (T4); append-only + podpis pro high-risk profil (T2).
 
 ## Co ověřit dál
+- [x] ~~Stop per tenant uprostřed Kata podu~~ (2026-10-27, P3-5 O3b/O3c): pause workflow → SIGTERM podu → checkpoint (sync-up) → po resume role znovu od checkpointu a další HITL v GUI; Dapr pause/resume: výsledek aktivity doručený během SUSPENDED se zpracuje po resume (ověřeno na 1.18 harnessem, ne z docs).
 - [x] ~~Stop a HITL změřeny harnessem O-1~~ (2026-10-23): pause → SUSPENDED; **schválení vyvolané během stopu se neztratí a uplatní se po resume** → resume smí jen člověk s důvodem a token zůstává vázán na hash artefaktu; timeout → Pozastaveno bez schválení; token agenta odmítnut (`approval_not_by_human`).
 - [ ] **L3 evaly nesmí spoléhat na to, že model injekci odmítne:** v O-2 live (2026-10-24) `claude-haiku-4-5` injekci sám rozpoznal a ignoroval, takže blokace gateway/srt/PEP se ověřila jen mockem. Eval sady potřebují **adversariálního agenta** (mock nebo nástroj, který injekci vždy poslechne), jinak gate měří model, ne platformu.
 - [x] ~~N3/N1 do GitHubu~~ – O-2 scénář github (2026-10-24, suchý běh): issue až po H1, PR jako reverzibilní artefakt, merge jen executor po H4; disclosure vkládá platforma z `roles/*.yaml`; ostrý zápis jen s flagem + PAT.

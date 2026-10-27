@@ -196,5 +196,6 @@ schvalování dávkově.
 - [x] ~~Harness M1~~ – 2026-10-23, 11/11 PASS ([overview.md](overview.md#harness-m1--pep-a-datový-model-2026-10-23)). Poučení: `as_of` dotaz musí zahrnout `superseded` záznamy (platnost drží `valid_from/to`, ne `status`); `CHECK` na `sources[]` musí povolit `tombstoned` řádky; RLS bez `WHERE tenant_id` v aplikaci je ověřitelná druhá obrana.
 
 ## Changelog
+- 2026-10-27: P3-5 – M-E3 změřeno **v clusteru** (harness O3a/O3d): pody rolí obou tenantů se ptají identitou JWT-SVID role × tenant (PEP: tenant z cesty SVID, RLS), cizí kanárek 0 záznamů; spany `search_memory` v ClickHouse nesou `gen_ai.memory.record.ids` a `memory.tenants_returned` – žádný record.id cizího tenanta; server paměti exportuje OTLP do Collectoru.
 - 2026-10-23: harness M1 potvrdil schéma (B), obrany (C: tenant filter, karanténa, původ), životní cyklus (D: supersede, tombstone) a evaly M-E3/M-E4 (E).
 - 2026-10-23: první verze z rešerše.

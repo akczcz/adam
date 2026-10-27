@@ -233,6 +233,7 @@ spec:
         - {name: MEMORY_AUDIENCE, value: memory}
         - {name: MEMORY_OPA_URL, value: http://opa:8181/v1/data/memory/decision}
         - {name: MEMORY_TENANT_STATUS_URL, value: http://zakazka:8010/tenants}   # P3-3: stop tenanta → paměť deny (PEP před OPA)
+        - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector:4318}   # P3-5: spany paměti (tenant.id, record.ids) → ClickHouse (O3d)
         ports:
         - {containerPort: 9900, name: http}
         readinessProbe:

@@ -21,7 +21,7 @@ KLAS_NO = {k: False for k in KLAS_KEYS}   # P3-4: dogfooding = vše „ne“ →
 class Gui:
     def __init__(self, base_url: str, *, headless=True, chromium: str | None = None, shots: Path | None = None, slow_ms=0):
         self.base, self.headless, self.chromium, self.shots, self.slow = base_url.rstrip("/") + "/", headless, chromium or os.environ.get("PW_CHROMIUM"), shots, slow_ms
-        self.pw = self.browser = self.page = None; self.log = []
+        self.pw = self.browser = self.page = None; self.log = []; self.keepalive = None   # harness dodá obnovu port-forwardu (fetch z prohlížeče nemá retry)
 
     def open(self):
         from playwright.sync_api import sync_playwright
@@ -85,6 +85,9 @@ class Gui:
         return {"protocol": self.t("run-protocol").inner_text(), "run_id": self.t("run-id").inner_text(), "url": self.page.url}
 
     def open_thread(self, zid):
+        """Otevře thread s NOVÝM runem: navigace jen změnou hashe na tutéž URL stránku nereloaduje (React komponenta zůstane se starým stavem – po resume
+        tenanta GUI ukazovalo run „cancelled“ ze stopu; nález P3-5 O3c) → nejdřív seznam, pak thread."""
+        if self.page.url.endswith(f"#/t/{zid}"): self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
         self.page.goto(self.base + f"#/t/{zid}")
         self.page.wait_for_function("document.querySelector('[data-testid=run-status]') && !['idle','connecting'].includes(document.querySelector('[data-testid=run-status]').textContent)", timeout=60_000)
         return {"status": self.t("run-status").inner_text(), "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
@@ -204,7 +207,12 @@ class Gui:
         self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
         seq0 = self.t("auto-result").get_attribute("data-seq") if self.t("auto-result").count() else None
         self.t("auto-submit").click()
-        self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=auto-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=60_000)   # nový výsledek, ne starý z předchozího odeslání
+        try: self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=auto-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=60_000)   # nový výsledek, ne starý z předchozího odeslání
+        except Exception:   # P3-5 nález: spadlý port-forward → fetch z GUI bez odpovědi; obnovit tunel (keepalive harnessu), znovu odeslat
+            if self.keepalive: self.keepalive()
+            self.page.reload(); self.t("auto-role").wait_for(); self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
+            seq0 = self.t("auto-result").get_attribute("data-seq") if self.t("auto-result").count() else None; self.t("auto-submit").click()
+            self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=auto-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=90_000)
         self.shot(f"autonomy-{role}-{tenant}-{level}")
         return {"ok": self.t("auto-result").get_attribute("data-ok") == "true", "text": self.t("auto-result").inner_text()[:400]}
 
@@ -213,7 +221,12 @@ class Gui:
         self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(""); d0 = self.t("tstop-submit").is_disabled(); self.t("tstop-reason").fill(reason)
         seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None
         self.t("tresume-submit" if resume else "tstop-submit").click()
-        self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
+        try: self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
+        except Exception:
+            if self.keepalive: self.keepalive()
+            self.page.reload(); self.t("tstop-tenant").wait_for(); self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(reason)
+            seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None; self.t("tresume-submit" if resume else "tstop-submit").click()
+            self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")
         return {"disabled_empty": d0, "ok": self.t("tstop-result").get_attribute("data-ok") == "true", "text": self.t("tstop-result").inner_text()[:400]}
 

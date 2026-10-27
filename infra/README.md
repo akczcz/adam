@@ -162,6 +162,15 @@ ostrý provoz = SMTP relay / helpdesk API za gateway (CONNECT egress, P3-6). Sch
 `org.sla_events` (RLS per tenant jako ostatní). OPA data `zakazky/<id>` zapisuje aplikace přes `PUT /v1/data` (OPA běží bez bundle –
 po restartu podu OPA data zmizí; bundle z rolegen = P3-6). Měření: `measure` s `e2e=p3-4`.
 
+## P3-5: stop s checkpointem, spany paměti, útrata per tenant (2026-10-27)
+
+Server paměti: `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318` → spany `search_memory`/`create_memory` (`tenant.id`, `enduser.id`
+= SPIFFE ID podu role, `gen_ai.memory.record.ids`, `memory.tenants_returned`) do ClickHouse `otel.otel_traces` (obraz: `opentelemetry-exporter-otlp-proto-http`).
+Pod role: `role_runner` má handler SIGTERM – stop zakázky/tenanta (DELETE podu s grace 20 s) → sync-up `artifacts/` a `work/` do aplikace
+(checkpoint) + výsledek `stopped`; workflow po resume roli spustí znovu od checkpointu (`ROLE_STOPPED`). `org.zakazky.spent_usd` plní workflow
+po každé roli a aplikace při stop/resume. Harness čte ClickHouse přes `kubectl port-forward svc/clickhouse 8123` (uživatel default bez hesla –
+dev). Měření: `measure` s `e2e=p3-5`.
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).

@@ -113,7 +113,21 @@ def block_tenant(tenant, ledger=None, block=True):
         except RuntimeError as e:
             if "409" not in str(e) or attempt == 5: raise
             time.sleep(0.5)
-    if ledger: ledger("GATEWAY_KEYS_BLOCK" if block else "GATEWAY_KEYS_UNBLOCK", tenant=tenant, keys=n)
+    prop = None
+    if not block:   # P3-5 nález: ConfigMap se do replik gateway propaguje nezávisle (~40–70 s) – role spuštěná hned po resume dostala z jedné repliky ještě 429 → počkat, než všechny repliky klíč tenanta pustí
+        probe = next(((md["zakazka"], md["role"]) for k in cur for md in [k.get("metadata") or {}] if md.get("tenant") == tenant and md.get("zakazka") in _CACHE and md.get("role") in _CACHE[md["zakazka"]]), None)
+        if probe:
+            val = _CACHE[probe[0]][probe[1]]; t1 = time.time(); targets = _probe_targets(); status = {}
+            body = {"model": os.environ.get("P0_MODEL", "claude-haiku-4-5"), "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]}
+            while time.time() - t1 < float(os.environ.get("P0_GATEWAY_KEYS_WAIT_S", "240")):
+                for t in targets:
+                    try: status[t] = httpx.post(f"{t}/v1/messages", json=body, headers={"x-api-key": val, "anthropic-version": "2023-06-01"}, timeout=20).status_code
+                    except Exception as e: status[t] = type(e).__name__
+                if targets and all(v == 200 for v in status.values()): break
+                time.sleep(3)
+            prop = {"s": round(time.time() - t1, 1), "status": status, "key": f"{probe[0]}/{probe[1]}", "replicas": len(targets)}
+        else: prop = {"skipped": "žádný klíč tenanta v cache procesu"}
+    if ledger: ledger("GATEWAY_KEYS_BLOCK" if block else "GATEWAY_KEYS_UNBLOCK", tenant=tenant, keys=n, propagation=prop)
     return n
 
 
