@@ -781,7 +781,7 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); g.login("platform-admin", "platform-admin")
         beta_z = [z_ for z_ in sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})]
         def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json().get("status") if r.status_code == 200 else f"http{r.status_code}"
-        before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING"]
+        before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING" and z_.startswith(tag)]   # jen zakázky tohoto běhu: instance ze starého obrazu po pause/resume končí FAILED (změna kódu workflow = nedeterministický replay)
         st = g.tenant_stop("beta", "Zákazník beta pozastavil spolupráci do vyjasnění smlouvy – stop celého tenanta.")
         after = {z_: status(z_) for z_ in beta_z}
         import yaml as _yk
@@ -818,15 +818,15 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
     sys.path.insert(0, str(HERE)); from gui_checks import Gui, KLAS_NO
     def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
     def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
-    def db(sql, args=(), name="org"):
-        with psycopg.connect(dsn(name), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args).fetchall()
+    def db(sql, args=None, name="org"):
+        with psycopg.connect(dsn(name), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args or None).fetchall()   # args None: literál % v SQL (LIKE '%-30d-block') se neparsuje
     def pods_of(ns, z): return [p["metadata"]["name"] for p in kj("-n", ns, "get", "pods", "-l", f"platform.zakazka={re.sub(r'[^A-Za-z0-9_.-]', '-', z)[:63]}").get("items", []) if not p["metadata"].get("deletionTimestamp")]
     ta, tb, tp = tok("adam", "adam"), tok("bea", "bea"), tok("platform-admin", "platform-admin"); t_o = time.time()
     # O3a – kanárky obou tenantů (lidé zapisují approved), zakázky obou tenantů se sondou paměti identitou podu (JWT-SVID role × tenant): cizí kanárek = 0 záznamů
     can = {t: f"CANARY-{t.upper()}-{_uu.uuid4().hex[:10]}" for t in ("acme", "beta")}
     wr = {}
     for t, tk in (("acme", ta), ("beta", tb)):
-        r = http("POST", "http://127.0.0.1:19900/tools/create_memory", json={"content": f"Interní fakt tenanta {t}: kód projektu {can[t]} (kanárek M-E3).", "scope": "zakaznik", "type": "fakt", "status": "approved", "sources": [{"kind": "harness", "ref": f"o3a/{tag}"}]}, headers={"Authorization": f"Bearer {tk}"}, timeout=15)
+        r = http("POST", "http://127.0.0.1:19900/tools/create_memory", json={"content": f"Interní fakt tenanta {t}: kód projektu {can[t]} (kanárek M-E3).", "scope": "zakaznik", "type": "fakt", "requested_status": "approved", "sources": [{"kind": "harness", "ref": f"o3a/{tag}"}]}, headers={"Authorization": f"Bearer {tk}"}, timeout=15)
         wr[t] = r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:120]}
     probe_b = [can["acme"], can["beta"], "ACME kód projektu"]; probe_a = [can["beta"], can["acme"], "BETA kód projektu"]
     zb, za = f"{tag}-o3b", f"{tag}-o3a"
@@ -897,7 +897,9 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         ids_beta = {i for x in rows if x[0] == "beta" for i in (x[1] or "").split(",") if i}; ids_acme = {i for x in rows if x[0] == "acme" for i in (x[1] or "").split(",") if i}
         bad = [x for x in rows if (x[0] == "acme" and ("beta" in (x[2] or "") or (set((x[1] or "").split(",")) & ids_beta))) or (x[0] == "beta" and ("acme" in (x[2] or "") or (set((x[1] or "").split(",")) & ids_acme)))]
         svid_rows = {t: sum(1 for x in rows if x[0] == t and x[3] and x[3].startswith("spiffe://")) for t in ("acme", "beta")}
-        L = led(); led_acme = json.dumps([e for e in L if e.get("zakazka") == za], ensure_ascii=False); leak_led = [k for k in (zb, can["beta"], wr["beta"].get("id") or "~") if k in led_acme]
+        L = led(); led_acme = json.dumps([e for e in L if e.get("zakazka") == za and e.get("kind") != "ROLE_POD"], ensure_ascii=False); leak_led = [k for k in (zb, wr["beta"].get("id") or "~") if k in led_acme]   # ROLE_POD nese dotazy sondy (kanárek beta je dotaz, ne únik)
+        probe_a_ret = [i for v in (next((e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == za and e["role"] == "account"), {}).get("memory_probe") or {}).values() for i in (v.get("returned") or [])]
+        if wr["beta"].get("id") in probe_a_ret: leak_led.append("memory_probe:" + wr["beta"]["id"])
         rep.add("O3d", "Spany serveru paměti v ClickHouse (OTEL Collector, O1): search_memory spany tenanta acme nenesou žádný record.id ani tenants_returned tenanta beta a naopak (M-E3 „žádný record.id tenanta B ve spanech“), spany z podů rolí nesou enduser.id = SPIFFE ID role × tenant; ledger zakázky acme neobsahuje id zakázky beta, kanárek beta ani id záznamu beta", "PASS" if rows and not bad and svid_rows["acme"] >= 1 and svid_rows["beta"] >= 1 and ids_beta and ids_acme and not leak_led else "FAIL", {"spans": len(rows), "by_tenant": {t: sum(1 for x in rows if x[0] == t) for t in ("acme", "beta")}, "svid_spans": svid_rows, "record_ids": {"acme": len(ids_acme), "beta": len(ids_beta)}, "cross_tenant_rows": bad[:3], "ledger_leaks": leak_led, "clickhouse_error": ch_err})
         # O3e – útrata per tenant = součet klíčů tenanta v budget_usage (zakázky tohoto běhu; org.zakazky plní workflow po každé roli, stop/resume synchronizují)
         http("POST", f"{APP}/zakazky/{za}/stop", json={"by": "harness", "reason": "O3e: zakázka acme splnila účel (běžela během stopu beta)."}, timeout=60)

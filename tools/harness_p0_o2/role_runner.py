@@ -145,6 +145,25 @@ def main():
     os.environ.setdefault("O1_LEDGER", "/tmp/role-ledger.jsonl")
     for k in ("P0_ROLE_RUNTIME",): os.environ[k] = "local"
 
+    S = {"identity": None, "probe": None, "mprobe": None}   # stav pro checkpoint (SIGTERM může přijít kdykoli – i během sond; P3-5 nález: handler až po sondách = pod zabit bez checkpointu)
+
+    def on_sigterm(signum, frame):
+        """P3-5 (autonomie.md stop: 60 s grace na checkpoint): SIGTERM od kubeletu (stop zakázky/tenanta) → nahrát rozpracované artifacts/ a work/
+        do aplikace (checkpoint) a poslat výsledek stopped=True; po resume workflow roli spustí znovu od checkpointu. Pak exit 143.
+        Proces je PID 1 kontejneru – bez handleru by SIGTERM ignoroval a kubelet by po grace poslal SIGKILL (exit 137, bez checkpointu)."""
+        if STOP["flag"]: return
+        STOP["flag"] = True; t_s = time.time()
+        up = collect_files(WORK, root); n = 0
+        try: n = httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up}, headers=H, timeout=15).json().get("written", 0)
+        except Exception as e: print(f"checkpoint upload error: {e}", flush=True)
+        out = {"text": "AGENT_STOPPED (SIGTERM)", "cost": None, "files": [], "error": "stopped: pod ukončen stopem (SIGTERM), checkpoint nahrán", "stopped": True,
+               "checkpoint": {"files": len(up), "written": n, "s": round(time.time() - t_s, 1)}, "identity": S["identity"], "egress_probe": S["probe"], "memory_probe": S["mprobe"], "pod": os.environ.get("HOSTNAME"), "uid": os.getuid()}
+        try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": [{"kind": "ROLE_CHECKPOINT", "zakazka": z["id"], "role": role, "files": len(up), "written": n, "signal": "SIGTERM"}]}, headers=H, timeout=15)
+        except Exception as e: print(f"checkpoint result error: {e}", flush=True)
+        print("RESULT::" + json.dumps(out, ensure_ascii=False)[:3000], flush=True)
+        os._exit(143)
+    signal.signal(signal.SIGTERM, on_sigterm)
+
     identity = {"kind": "keycloak-token"}
     if os.environ.get("P0_ROLE_IDENTITY") == "svid":
         # P2-3: identita role = JWT-SVID (aud memory) z Workload API sidecaru spire-agent; Keycloak token ze Secretu zůstává záloha
@@ -165,8 +184,8 @@ def main():
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:120]}"; time.sleep(2)
         if identity["kind"] != "svid": identity = {"kind": "keycloak-token", "svid_error": err, "wait_s": round(time.time() - t_id, 1)}
-    print("identity=" + json.dumps(identity), flush=True)
-    probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}
+    print("identity=" + json.dumps(identity), flush=True); S["identity"] = identity
+    probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}; S["probe"] = probe
     try: probe["internet_dns_github.com:443"] = tcp_probe("github.com", 443)
     except Exception as e: probe["internet_dns_github.com:443"] = {"result": f"dns:{type(e).__name__}"}
     for name, url, dp in (("memory", os.environ.get("P0_MEMORY_URL", ""), 9900), ("gateway", os.environ.get("P0_LLM_URL", ""), 4100), ("app", api, 8010), ("postgres", os.environ.get("P0_PROBE_POSTGRES", "tcp://postgres.platform-data.svc:5432"), 5432)):   # P3-2: DB platformy z podu role nedosažitelná (NetworkPolicy tenanta)
@@ -185,24 +204,9 @@ def main():
 
     mprobe = memory_probe(z.get("memory_probe")) if z.get("memory_probe") else None   # P3-5: sonda izolace paměti identitou podu
     if mprobe is not None: print("memory_probe=" + json.dumps(mprobe, ensure_ascii=False)[:3000], flush=True)
+    S["mprobe"] = mprobe
 
     for d in (WORK, f"{root}/artifacts"): os.makedirs(d, exist_ok=True)
-
-    def on_sigterm(signum, frame):
-        """P3-5 (autonomie.md stop: 60 s grace na checkpoint): SIGTERM od kubeletu (stop zakázky/tenanta) → nahrát rozpracované artifacts/ a work/
-        do aplikace (checkpoint) a poslat výsledek stopped=True; po resume workflow roli spustí znovu od checkpointu. Pak exit 143."""
-        if STOP["flag"]: return
-        STOP["flag"] = True; t_s = time.time()
-        up = collect_files(WORK, root); n = 0
-        try: n = httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up}, headers=H, timeout=15).json().get("written", 0)
-        except Exception as e: print(f"checkpoint upload error: {e}", flush=True)
-        out = {"text": "AGENT_STOPPED (SIGTERM)", "cost": None, "files": [], "error": "stopped: pod ukončen stopem (SIGTERM), checkpoint nahrán", "stopped": True,
-               "checkpoint": {"files": len(up), "written": n, "s": round(time.time() - t_s, 1)}, "identity": identity, "egress_probe": probe, "memory_probe": mprobe, "pod": os.environ.get("HOSTNAME"), "uid": os.getuid()}
-        try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": [{"kind": "ROLE_CHECKPOINT", "zakazka": z["id"], "role": role, "files": len(up), "written": n, "signal": "SIGTERM"}]}, headers=H, timeout=15)
-        except Exception as e: print(f"checkpoint result error: {e}", flush=True)
-        print("RESULT::" + json.dumps(out, ensure_ascii=False)[:3000], flush=True)
-        os._exit(143)
-    signal.signal(signal.SIGTERM, on_sigterm)
     try:
         r = httpx.get(f"{api}/zakazky/{z['id']}/files", headers=H, timeout=60)
         files = r.json().get("files", []) if r.status_code == 200 else []

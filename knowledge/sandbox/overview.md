@@ -188,6 +188,7 @@ Zdroje: `LICENSE` (raw, větev/tag), PyPI/npm metadata, zdrojové repozitáře d
 - [ ] Export srt violations a verdictů gateway do OTEL/ClickHouse (adaptér, formát spanů); SPIRE k8s attestor v Kata podu.
 
 ## Changelog
+- 2026-10-27 (P3-5 na AKS): stop zakázky/tenanta uprostřed běžící role = DELETE podu s grace 20 s → `role_runner` na SIGTERM nahraje checkpoint (artifacts/work sync-up do aplikace) a vrátí `stopped`; po resume workflow roli spustí znovu od checkpointu (autonomie.md stop: „nové sandboxy z posledního commitu“ – zde z posledního sync-upu, git push větve při stopu zatím ne). Viz `tools/harness_p1_k8s/README.md` O3b/O3c.
 - 2026-10-26 (P2-4 na AKS): egress podu role přes agentgateway CONNECT změřen 21/21 (git terminace + backendAuth, mirror, cizí SNI/HTTP:80 neprojdou, NetworkPolicy egressu gateway). **srt 0.0.81 bez `ripgrep` nestartuje** (`Sandbox dependencies not available`) – v podech rolí od P1-6 tiše padal; po opravě vynucuje `filesystem.allowWrite` i ve weaker nested módu na Katě, emptyDir `/work` v Kata guestu pro uid 1000 nezapisovatelný (otevřeno). Viz `knowledge/platforma/p2-role.md`, `infra/README.md`.
 - 2026-10-23: **rozhodnuto (Adam)** podle návrhu – zapsáno v `platforma/cilova-architektura.md`.
 - 2026-10-23: kolo 2 (Azure/Kata/gVisor, srt/Agent SDK, agentgateway egress/Inspect) + harness S1 11/11 PASS; návrh zpřesněn.
