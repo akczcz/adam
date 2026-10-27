@@ -170,8 +170,9 @@ def state_of(zid, entries):
     w = pending_interrupt(entries)
     out = st.get("output") or {}
     kl = next((e for e in reversed(entries) if e.get("kind") == "KLASIFIKACE"), {}); sla = [e for e in entries if e.get("kind") == "SLA_BREACH"]
+    cap = next((e for e in reversed(entries) if e.get("kind") == "BUDGET_CAP"), None)   # P3-6 E3: navýšený strop
     return {"id": zid, "tenant": start.get("tenant") or os.environ.get("P0_TENANT", "acme"), "status": st.get("status"), "stav": out.get("stav") or ("čeká na " + w["bod"] if w else ("běží" if st.get("status") == "RUNNING" else st.get("status"))),
-            "bod": w.get("bod") if w else out.get("bod"), "budget_usd": start.get("budget_usd"), "spent_usd": bud.get("spent_usd"), "roles": roles, "started": start.get("ts"), "poptavka": start.get("poptavka"),
+            "bod": w.get("bod") if w else out.get("bod"), "budget_usd": (cap or start).get("budget_usd"), "spent_usd": bud.get("spent_usd"), "roles": roles, "started": start.get("ts"), "poptavka": start.get("poptavka"),
             "profile": kl.get("profile"), "sensitivity": kl.get("sensitivity"), "sla_breaches": [e.get("bod") for e in sla]}
 
 
@@ -244,7 +245,8 @@ def events_for(zid, entries, start_idx=0, subagents=None):
         elif k == "PUBLISHED": act(i, "published", {"kind": e.get("publish_kind"), "number": e.get("number"), "url": e.get("url"), "mode": e.get("mode")})
         elif k == "NOTIFY":
             evn = e.get("event")
-            if evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result"), "reason": e.get("reason")})
+            if evn == "BUDGET_RAISED": act(i, "budget", {"state": "raised", "role": e.get("role"), "budget_usd": e.get("budget_usd"), "by": e.get("by"), "gateway_keys": (e.get("gateway") or {}).get("keys"), "propagation_s": ((e.get("gateway") or {}).get("propagation") or {}).get("s")})   # P3-6 E3
+            elif evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result"), "reason": e.get("reason")})
             elif evn and evn.startswith("KLASIFIKACE_"): act(i, "klasifikace", {"state": evn[12:].lower(), "bod": "klasifikace", "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result")})
             elif evn and evn.startswith("DIALOG_"):
                 act(i, "dialog", {"state": evn[7:].lower(), "round": e.get("round"), "by": e.get("by"), "answer": e.get("answer"), "result": e.get("result")})
@@ -282,7 +284,12 @@ def _validate_resume(inp: RunAgentInput, zid, entries):
         reason = (p.get("reason") or "").strip()
         if len(reason) < MIN_REASON: raise HTTPException(422, f"důvod rozhodnutí je povinný (≥ {MIN_REASON} znaků) – org.approvals.reason, T6")
         decision = "reject" if r.status == "cancelled" or p.get("decision") == "reject" else "approve"
-        out.append({"kind": "hitl", "bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "decision": decision, "reason": reason, "interrupt_id": r.interrupt_id})
+        budget = None
+        if w["bod"] == "rozpocet" and p.get("budget_usd") not in (None, ""):   # P3-6 (E3): nový strop zakázky s schválením
+            try: budget = float(p["budget_usd"])
+            except (TypeError, ValueError): raise HTTPException(422, "budget_usd musí být číslo (USD)")
+            if budget <= 0: raise HTTPException(422, "budget_usd musí být > 0")
+        out.append({"kind": "hitl", "bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "decision": decision, "reason": reason, "interrupt_id": r.interrupt_id, "budget_usd": budget})
     return out
 
 
@@ -310,7 +317,8 @@ async def run(req: Request):
     for d in decisions:
         if d["kind"] == "dialog": await asyncio.to_thread(CTX["answer"], zid, u, d["answer"]); continue
         if d["kind"] == "klasifikace": await asyncio.to_thread(CTX["classify"], zid, u, d["answers"], d["reason"]); continue
-        await asyncio.to_thread(CTX["approve"] if d["decision"] == "approve" else CTX["reject"], zid, d["bod"], d["artifact_hash"], u, d["reason"])
+        if d["decision"] == "approve": await asyncio.to_thread(CTX["approve"], zid, d["bod"], d["artifact_hash"], u, d["reason"], d.get("budget_usd"))
+        else: await asyncio.to_thread(CTX["reject"], zid, d["bod"], d["artifact_hash"], u, d["reason"])
     stopped = None
     if fp.get("action") == "stop":
         if len((fp.get("reason") or "").strip()) < MIN_REASON: raise HTTPException(422, "stop vyžaduje důvod (≥ 10 znaků)")
@@ -350,9 +358,12 @@ async def run(req: Request):
                                     response_schema={"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string", "minLength": 3}}},
                                     metadata={"bod": "dialog", "round": w.get("round"), "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": "account", "questions": _artifact_text_path(zid, "artifacts/otazky.md")})
                 else:
+                    exc = next((e for e in reversed(ents) if e.get("kind") == "NOTIFY" and e.get("event") == "BUDGET_EXCEEDED"), {}) if w["bod"] == "rozpocet" else {}
+                    bud = next((e for e in reversed(ents) if e.get("kind") in ("BUDGET_GATE", "BUDGET_EXCEEDED", "BUDGET")), {}) if w["bod"] == "rozpocet" else {}
                     itr = Interrupt(id=interrupt_id(w), reason="approval", message=f"Schválení {w['bod']} – rozhodněte s důvodem (T6)", expires_at=exp,
-                                    response_schema={"type": "object", "required": ["decision", "reason"], "properties": {"decision": {"enum": ["approve", "reject"]}, "reason": {"type": "string", "minLength": MIN_REASON}}},
-                                    metadata={"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": art.get("frm"), "action": BOD_ACTION.get(w["bod"], w["bod"]), "process": BOD_PROCESS.get(w["bod"])})
+                                    response_schema={"type": "object", "required": ["decision", "reason"], "properties": {"decision": {"enum": ["approve", "reject"]}, "reason": {"type": "string", "minLength": MIN_REASON}, **({"budget_usd": {"type": "number", "exclusiveMinimum": 0}} if w["bod"] == "rozpocet" else {})}},
+                                    metadata={"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": art.get("frm"), "action": BOD_ACTION.get(w["bod"], w["bod"]), "process": BOD_PROCESS.get(w["bod"]),
+                                              **({"role": exc.get("role") or w.get("artifact_hash"), "source": exc.get("source"), "limit_usd": bud.get("limit_usd"), "spent_usd": bud.get("spent_usd")} if w["bod"] == "rozpocet" else {})})
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedInterruptOutcome(type="interrupt", interrupts=[itr]), result=state_of(zid, ents)))
                 return
             st = CTX["wf_state"](zid) or {}

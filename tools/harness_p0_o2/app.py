@@ -142,7 +142,7 @@ def role_token(role):
     return toks.get(role) or os.environ["P0_AGENT_TOKEN"]
 
 
-def role_key(role, zakazka_id, tenant=None):
+def role_key(role, zakazka_id, tenant=None, cap_usd=None):
     """Klíč gateway per role × zakázka (P0_ROLE_KEYS = {zakazka: {role: key}}, "*" = výchozí); bez něj společný P0_API_KEY.
     Hodnotu klíče vydává v cíli OpenBao, gateway zná jen sha256 (rolegen apikeys-<tenant>-<zakazka>.yaml; P3-2: tenant ze zakázky)."""
     keys = json.loads(os.environ.get("P0_ROLE_KEYS", "{}"))
@@ -150,7 +150,7 @@ def role_key(role, zakazka_id, tenant=None):
     if k: return k
     if os.environ.get("P0_GATEWAY_KEYS") == "issue":   # P2-1: klíče vydá aplikace (ConfigMap agentgateway-keys + Secret zakazka-keys-<id>)
         import gateway_keys
-        k = gateway_keys.issue(zakazka_id, ledger, tenant=tenant).get(role)
+        k = gateway_keys.issue(zakazka_id, ledger, tenant=tenant, cap_usd=cap_usd).get(role)
         if k: return k
     return os.environ.get("P0_API_KEY", "sk-ant-harness-mock")
 
@@ -196,7 +196,7 @@ def agent_run(role, z, prompt, tool_names):
     if os.environ.get("P0_ROLE_RUNTIME") == "pod":
         import role_pod
         root = f"/tmp/p0-o2/{z['id']}"; os.makedirs(f"{root}/work", exist_ok=True); os.makedirs(f"{root}/artifacts", exist_ok=True)
-        return role_pod.pod_run(role, z, prompt, tool_names, token=role_token(role), key=role_key(role, z["id"], z.get("tenant")), ledger=ledger, root_dir=root)
+        return role_pod.pod_run(role, z, prompt, tool_names, token=role_token(role), key=role_key(role, z["id"], z.get("tenant"), cap_usd=z.get("budget_usd")), ledger=ledger, root_dir=root)
     return agent_run_local(role, z, prompt, tool_names)
 
 
@@ -268,7 +268,7 @@ def agent_run_local(role, z, prompt, tool_names):
 
     all_tools = {"search_memory": search_memory, "create_memory": create_memory, "sandboxed_bash": sandboxed_bash, "read_artifact": read_artifact, "write_artifact": write_artifact, "run_evals": run_evals}
     server = create_sdk_mcp_server("harness", "1.0.0", [all_tools[n] for n in tool_names])
-    cli_env = {"ANTHROPIC_BASE_URL": os.environ["P0_LLM_URL"], "ANTHROPIC_API_KEY": role_key(role, z["id"], z.get("tenant")),
+    cli_env = {"ANTHROPIC_BASE_URL": os.environ["P0_LLM_URL"], "ANTHROPIC_API_KEY": role_key(role, z["id"], z.get("tenant"), cap_usd=z.get("budget_usd")),
                "ANTHROPIC_CUSTOM_HEADERS": f"x-zakazka: {z['id']}\nx-role: {role}",   # zakázka do logu gateway (CEL pole `zakazka`); role nese klíč (apiKey.metadata.role)
                "CLAUDE_CODE_MAX_RETRIES": os.environ.get("P0_CLI_MAX_RETRIES", "2"),  # 429 z rozpočtu gateway není přechodná chyba – neopakovat do konce okna
                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
@@ -662,7 +662,13 @@ def wait_with_sla(ctx: wf.DaprWorkflowContext, z, event_name, bod, t_out):
 
 # --- workflow zakázky --------------------------------------------------------------------------------------------------
 def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
-    """HITL bod: čeká na event `hitl:<bod>` NEBO timer. Timeout nikdy neschvaluje → stav Pozastaveno.
+    tok, _ = yield from hitl_full(ctx, z, bod, artifact_hash, timeout_s)
+    return tok
+
+
+def hitl_full(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
+    """HITL bod: čeká na event `hitl:<bod>` NEBO timer. Timeout nikdy neschvaluje → stav Pozastaveno. Vrací (token, data eventu) – data nesou
+    u bodu `rozpocet` nový strop (P3-6 E3).
     HITL_WAIT v ledgeru = otevřený rozhodovací bod pro AG-UI (interrupt `hitl:<bod>:<hash>`); zamítnutí člověkem (event {rejected}) = HITL_REJECTED → Pozastaveno.
     P3-4: SLA bodu (procesy.md) běží uvnitř čekání – překročení eskaluje, nerozhoduje."""
     t_out = float(timeout_s if timeout_s is not None else z.get("hitl_timeout_s", HITL_TIMEOUT_S))
@@ -670,16 +676,16 @@ def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
     data = yield from wait_with_sla(ctx, z, f"hitl:{bod}", bod, t_out)
     if data is None:
         yield ctx.call_activity(notify, input={"event": "HITL_TIMEOUT", "bod": bod, "zakazka": z["id"], "result": "pozastaveno"})
-        return None
+        return None, None
     if isinstance(data, dict) and data.get("rejected"):
         yield ctx.call_activity(notify, input={"event": "HITL_REJECTED", "bod": bod, "zakazka": z["id"], "by": data.get("by"), "reason": data.get("reason"), "result": "pozastaveno"})
-        return None
+        return None, data
     tok = yield ctx.call_activity(verify_approval, input={"token": (data.get("token") if isinstance(data, dict) else "") or "", "zakazka": z["id"], "bod": bod})
     if not tok or tok.get("artifact_hash") != artifact_hash or tok.get("bod") != bod:
         yield ctx.call_activity(notify, input={"event": "HITL_INVALID_TOKEN", "bod": bod, "zakazka": z["id"]})
-        return None
+        return None, data
     yield ctx.call_activity(notify, input={"event": "HITL_APPROVED", "bod": bod, "zakazka": z["id"], "by": tok.get("by"), "artifact_hash": artifact_hash})
-    return data["token"]
+    return data["token"], data
 
 
 def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
@@ -698,10 +704,30 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
         yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Running"})   # P3-5 (O3e): útrata zakázky v org.zakazky po každé roli (FinOps per tenant bez čekání na konec)
     if not art.get("budget_exceeded"): return art
     yield ctx.call_activity(notify, input={"event": "BUDGET_EXCEEDED", "role": role, "zakazka": z["id"], "escalate_to": "process_owner", "timeout_s": z.get("budget_timeout_s", BUDGET_TIMEOUT_S), "source": "zakazka-sum" if gate.get("exceeded") else "agentgateway"})
-    tok = yield from hitl(ctx, z, "rozpocet", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
+    tok, data = yield from hitl_full(ctx, z, "rozpocet", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
     if not tok: return None
+    new_cap = (data or {}).get("budget_usd")
+    if new_cap and float(new_cap) > float(z.get("budget_usd") or BUDGET_USD):   # P3-6 (E3): schválení s novým stropem → gateway klíče (ConfigMap + sonda), registr, workflow
+        res = yield ctx.call_activity(raise_cap, input={"z": z, "budget_usd": float(new_cap), "by": data.get("by")})
+        z["budget_usd"] = float(new_cap)   # tentýž objekt dostávají další role (deterministické: v replayi se provede stejně)
+        if isinstance(inp, dict) and "z" in inp and inp["z"] is not z: inp["z"]["budget_usd"] = float(new_cap)
+        yield ctx.call_activity(notify, input={"event": "BUDGET_RAISED", "role": role, "zakazka": z["id"], "budget_usd": float(new_cap), "by": data.get("by"), "gateway": res})
     art = yield ctx.call_activity(activity, input=inp)
     return None if art.get("budget_exceeded") else art
+
+
+@rt.activity(name="raise_cap")
+def raise_cap(ctx, inp):
+    """P3-6 (E3): nový strop zakázky z HITL rozpocet – rozpočet zakazka-30d-block všech klíčů zakázky v gateway (hot reload, sonda na repliky) + org.zakazky.budget_usd."""
+    z, cap = inp["z"], float(inp["budget_usd"]); out = {}
+    if os.environ.get("P0_GATEWAY_KEYS") == "issue":
+        try:
+            import gateway_keys; out = gateway_keys.set_cap(z["id"], cap, ledger)
+        except Exception as e: out = {"error": f"{type(e).__name__}: {str(e)[:160]}"}
+    fin, hashes = zakazka_spend(z["id"])
+    ok = finops.registry_upsert(z["id"], tenant=z.get("tenant") or os.environ.get("P0_TENANT", "acme"), budget_usd=cap, spent=fin, status="Running", keys_source=None, key_hashes=hashes)
+    ledger("BUDGET_CAP", zakazka=z["id"], budget_usd=cap, by=inp.get("by"), registry=ok, **{k: v for k, v in out.items() if k != "propagation"}, propagation=out.get("propagation"))
+    return {**out, "registry": ok}
 
 
 @rt.workflow(name="zakazka")
@@ -792,16 +818,28 @@ def create_zakazka(b: dict, *, by=None, channel="api", by_sub=None):
     return z
 
 
-def approve_zakazka(zid, bod, *, by, artifact_hash, reason=None, channel="api", by_kind="human", exp_s=86400, tenant=None, approver_sub=None):
-    """Podepsaný approval token (transit) + event do workflow; s důvodem i řádek org.approvals (AG-UI: důvod povinný – T6)."""
+def current_budget(zid):
+    """Aktuální strop zakázky: ZAKAZKA_START, přepsaný posledním BUDGET_CAP (P3-6 E3 navýšení z HITL rozpocet)."""
+    cap = None
+    for e in _ledger():
+        if e.get("zakazka") != zid: continue
+        if e.get("kind") == "ZAKAZKA_START" and cap is None: cap = e.get("budget_usd")
+        if e.get("kind") == "BUDGET_CAP": cap = e.get("budget_usd")
+    return float(cap) if cap is not None else BUDGET_USD
+
+
+def approve_zakazka(zid, bod, *, by, artifact_hash, reason=None, channel="api", by_kind="human", exp_s=86400, tenant=None, approver_sub=None, budget_usd=None):
+    """Podepsaný approval token (transit) + event do workflow; s důvodem i řádek org.approvals (AG-UI: důvod povinný – T6). budget_usd (P3-6 E3): nový strop u bodu rozpocet."""
     action = {"H4": "merge", "H5": "deploy"}.get(bod, bod)
     payload = {"bod": bod, "action": action, "zakazka_id": zid, "artifact_hash": artifact_hash, "by": by, "by_kind": by_kind, "exp": time.time() + exp_s}
     if reason: payload["reason"] = reason
+    if budget_usd: payload["budget_usd"] = float(budget_usd)
     token = sign(payload)
-    client().raise_workflow_event(zid, f"hitl:{bod}", data={"token": token, "by": by})
-    ledger("APPROVAL_RAISED", zakazka=zid, bod=bod, by=by, artifact_hash=artifact_hash, reason=reason, channel=channel)
+    client().raise_workflow_event(zid, f"hitl:{bod}", data={"token": token, "by": by, **({"budget_usd": float(budget_usd)} if budget_usd else {})})
+    ledger("APPROVAL_RAISED", zakazka=zid, bod=bod, by=by, artifact_hash=artifact_hash, reason=reason, channel=channel, budget_usd=budget_usd)
     if reason:
-        ok = finops.approval_insert(zid, tenant=tenant or os.environ.get("P0_TENANT", "acme"), bod=bod, action=action, artifact_sha=artifact_hash, approver=approver_sub or by, decision="approve", reason=reason, expires_at=payload["exp"], signature=token.split(".", 1)[-1][:120], channel=channel)
+        limits = {"budget_usd_old": current_budget(zid), "budget_usd_new": float(budget_usd)} if budget_usd else None
+        ok = finops.approval_insert(zid, tenant=tenant or os.environ.get("P0_TENANT", "acme"), bod=bod, action=action, artifact_sha=artifact_hash, approver=approver_sub or by, decision="approve", reason=reason, expires_at=payload["exp"], signature=token.split(".", 1)[-1][:120], channel=channel, limits_shown=limits)
         ledger("APPROVAL_REGISTRY", zakazka=zid, bod=bod, decision="approve", written=ok)
     return token
 
@@ -842,8 +880,7 @@ def registry_sync(zid, tenant, status, later_s=0):
         status = {"SUSPENDED": "Pozastaveno", "RUNNING": "Running"}.get(st.get("status")) or out.get("stav") or st.get("status") or "Running"
     try:
         fin, hashes = zakazka_spend(zid)
-        z_start = next((e for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid), {})
-        ok = finops.registry_upsert(zid, tenant=tenant, budget_usd=float(z_start.get("budget_usd") or BUDGET_USD), spent=fin, status=status, keys_source=None, key_hashes=hashes)
+        ok = finops.registry_upsert(zid, tenant=tenant, budget_usd=current_budget(zid), spent=fin, status=status, keys_source=None, key_hashes=hashes)
         ledger("REGISTRY_ZAKAZKA", zakazka=zid, status=status, written=ok, spent_usd=(fin or {}).get("total_usd"), source="sync")
         return ok
     except Exception as e:
@@ -1040,7 +1077,7 @@ agui.CTX.update({
     "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s", "klasifikace", "sla", "contact") if k in fp}}, by=u["name"], channel="agui", by_sub=u["sub"]),
     "classify": lambda zid, u, answers, reason: classify_zakazka(zid, by=u["name"], answers=answers, reason=reason, channel="agui", sub=u["sub"]),
     "klas_questions": KLAS_QUESTIONS,
-    "approve": lambda zid, bod, hh, u, reason: approve_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
+    "approve": lambda zid, bod, hh, u, reason, budget=None: approve_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"], budget_usd=budget),
     "reject": lambda zid, bod, hh, u, reason: reject_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
     "stop": lambda zid, u, reason: stop_zakazka(zid, by=u["name"], reason=reason, channel="agui"),
     "answer": lambda zid, u, answer: answer_dialog(zid, by=u["name"], answer=answer),

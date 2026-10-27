@@ -134,6 +134,7 @@ function Thread({ id, user }: { id: string; user: User }) {
   const [stopReason, setStopReason] = useState("");
   const [stopOpen, setStopOpen] = useState(false);
   const [kl, setKl] = useState<Record<string, boolean>>({});
+  const [budget, setBudget] = useState("");
   const abort = useRef<AbortController | null>(null);
 
   const reset = () => { setEvents([]); setMsgs([]); setActs([]); setSubs([]); setInterrupt(null); setErr(null); };
@@ -190,8 +191,9 @@ function Thread({ id, user }: { id: string; user: User }) {
 
   const decide = (decision: "approve" | "reject") => {
     if (!interrupt) return;
-    start({ resume: [{ interruptId: interrupt.id, status: decision === "approve" ? "resolved" : "cancelled", payload: { decision, reason: reason.trim() } }] });
-    setReason("");
+    const extra = interrupt.metadata?.bod === "rozpocet" && decision === "approve" && budget.trim() ? { budget_usd: Number(budget) } : {};
+    start({ resume: [{ interruptId: interrupt.id, status: decision === "approve" ? "resolved" : "cancelled", payload: { decision, reason: reason.trim(), ...extra } }] });
+    setReason(""); setBudget("");
   };
   const stop = () => { start({ forwardedProps: { action: "stop", reason: stopReason.trim() } }); setStopOpen(false); setStopReason(""); };
 
@@ -242,7 +244,7 @@ function Thread({ id, user }: { id: string; user: User }) {
             {state.bod && <span>bod <code data-testid="state-bod">{state.bod}</code></span>}
             {state.profile && <span>profil <b data-testid="state-profile" className={`badge ${state.profile === "standard" ? "done" : "error"}`}>{state.profile}</b></span>}
             {!!state.sla_breaches?.length && <span className="err" data-testid="state-sla">SLA překročeno: {state.sla_breaches.join(", ")}</span>}
-            <span>rozpočet <code>{state.budget_usd ?? "?"}</code> USD</span>
+            <span>rozpočet <code data-testid="state-budget">{state.budget_usd ?? "?"}</code> USD</span>
             <span>útrata <code data-testid="state-spent">{state.spent_usd != null ? state.spent_usd.toFixed(4) : "-"}</code> USD</span>
             <span className="muted">tenant {state.tenant}</span>
           </div>)}
@@ -281,6 +283,12 @@ function Thread({ id, user }: { id: string; user: User }) {
         <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id} data-kind="approval">
           <h3 style={{ marginTop: 0 }}>Rozhodnutí člověka: <span data-testid="interrupt-bod">{interrupt.metadata?.bod}</span> <span className="muted">({interrupt.metadata?.action})</span></h3>
           <p>{interrupt.message} · artefakt <code>{interrupt.metadata?.artifact}</code> · hash <code data-testid="interrupt-hash">{interrupt.metadata?.artifact_hash}</code> · od role <b>{interrupt.metadata?.from}</b>{interrupt.expiresAt && <span className="muted"> · timeout {new Date(interrupt.expiresAt).toLocaleString("cs-CZ")} (bez rozhodnutí → Pozastaveno)</span>}</p>
+          {interrupt.metadata?.bod === "rozpocet" && (
+            <div className="card" style={{ marginBottom: 8 }} data-testid="budget-box">
+              <b>Rozpočet vyčerpán</b> – role <code>{interrupt.metadata?.role}</code>, zdroj <code data-testid="budget-source">{interrupt.metadata?.source}</code>, útrata <code data-testid="budget-spent">{interrupt.metadata?.spent_usd ?? "?"}</code> / strop <code data-testid="budget-limit">{interrupt.metadata?.limit_usd ?? state?.budget_usd ?? "?"}</code> USD.
+              <label>Nový strop zakázky (USD, 30 d) – navýšení = N6, zapisuje se do gateway (rozpočty klíčů), registru a schválení</label>
+              <input data-testid="budget-new" type="number" min="0" step="0.01" value={budget} onChange={(x) => setBudget(x.target.value)} placeholder="ponechat = jen opakovat pokus" />
+            </div>)}
           <label>Důvod rozhodnutí (povinný, ≥ 10 znaků – zapisuje se do org.approvals, podepsaný token nese vaše jméno)</label>
           <textarea data-testid="approve-reason" value={reason} onChange={(x) => setReason(x.target.value)} />
           <div className="row" style={{ marginTop: 8 }}>

@@ -935,6 +935,51 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         g.close()
 
 
+def e3_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
+    """E3 (P3-6): strop zakázky i v gateway (rozpočet `zakazka-30d-block` per klíč = strop) → 429 z gateway, ne jen z budget_gate; navýšení stropu
+    z HITL `rozpocet` v GUI → gateway (ConfigMap + sonda na repliky), registr org.zakazky, org.approvals (budget.raise, limits_shown), role běží znovu."""
+    import psycopg, yaml as _yk
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui, KLAS_NO
+    def db(sql, args=None):
+        with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args or None).fetchall()
+    def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+    def cap_budgets(z):
+        keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
+        return {(k.get("metadata") or {}).get("role"): next((b["limit"]["amount"] for b in k.get("budgets", []) if b.get("name") == "zakazka-30d-block"), None) for k in keys_cm if (k.get("metadata") or {}).get("zakazka") == z}
+    zc = f"{tag}-cap"; t_e = time.time()
+    http("POST", f"{APP}/zakazky", json={"id": zc, "poptavka": f"Zakázka {zc}: přidej soubor zakazky/{zc}/NOTES.md (test stropu v gateway).", "tenant": "acme", "klasifikace": KLAS_NO, "budget_usd": 0.01, "hitl_timeout_s": 1800, "budget_timeout_s": 1800}, timeout=15)
+    t0 = time.time(); exc = None
+    while time.time() - t0 < 900 and not exc:
+        exc = next((e for e in led() if e["kind"] == "NOTIFY" and e.get("event") == "BUDGET_EXCEEDED" and e["zakazka"] == zc), None)
+        if not exc: time.sleep(5)
+    L = led(); gate0 = next((e for e in L if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zc), {}); run0 = next((e for e in L if e["kind"] == "AGENT_RUN" and e["zakazka"] == zc and e["role"] == "account"), {})
+    caps0 = cap_budgets(zc)
+    g = Gui(f"{APP}/gui/", shots=gui_shots / "e3").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
+    try:
+        g.login("adam", "adam"); g.open_thread(zc); w = g.wait_interrupt("rozpocet", 300)
+        box = {k: (g.t(f"budget-{k}").inner_text() if g.t(f"budget-{k}").count() else None) for k in ("source", "spent", "limit")}
+        rep.add("E3a", "Strop zakázky i v gateway: klíče role × zakázka nesou rozpočet zakazka-30d-block = strop zakázky (0,01 USD) → první role dostane 429 z gateway (BUDGET_EXCEEDED source=agentgateway, ne zakazka-sum z orchestrátoru); eskalace = HITL rozpocet jako interrupt v GUI s útratou, stropem a zdrojem", "PASS" if exc and exc.get("source") == "agentgateway" and run0.get("budget_exceeded") and gate0.get("limit_usd") == 0.01 and not gate0.get("exceeded") and caps0 and all(v == 0.01 for v in caps0.values()) and w["interrupt"] and w["interrupt"].startswith("hitl:rozpocet:") and box.get("source") == "agentgateway" and box.get("limit") not in (None, "?") else "FAIL", {"exceeded": {k: exc.get(k) for k in ("role", "source", "escalate_to")} if exc else None, "agent_run": {k: run0.get(k) for k in ("budget_exceeded", "error")}, "gate_before": {k: gate0.get(k) for k in ("limit_usd", "spent_usd", "exceeded")}, "configmap_caps": caps0, "interrupt": w["interrupt"], "gui_box": box, "waited_s": round(time.time() - t0, 1)})
+        d = g.decide("Strop zakázky byl pro pilot nízký – navyšuji na 5 USD, útrata zatím odpovídá odhadu.", budget=5)
+        t1 = time.time(); raised = None
+        while time.time() - t1 < 420 and not raised:
+            raised = next((e for e in led() if e["kind"] == "NOTIFY" and e.get("event") == "BUDGET_RAISED" and e["zakazka"] == zc), None)
+            if not raised: time.sleep(5)
+        t2 = time.time(); run1 = None
+        while time.time() - t2 < 900 and not run1:
+            runs = [e for e in led() if e["kind"] == "AGENT_RUN" and e["zakazka"] == zc and e["role"] == "account"]
+            run1 = runs[1] if len(runs) >= 2 else None
+            if not run1: time.sleep(5)
+        L = led(); capl = next((e for e in L if e["kind"] == "BUDGET_CAP" and e["zakazka"] == zc), {}); gwc = next((e for e in L if e["kind"] == "GATEWAY_KEYS_CAP" and e["zakazka"] == zc), {})
+        caps1 = cap_budgets(zc)
+        row = db("SELECT budget_usd, status FROM org.zakazky WHERE zakazka_id = %s", (zc,)); apr = db("SELECT action, decision, limits_shown, channel FROM org.approvals WHERE workflow_instance = %s AND action = 'budget.raise'", (zc,))
+        gui_budget = g.t("state-budget").inner_text() if g.t("state-budget").count() else None
+        st = status(zc); stop = http("POST", f"{APP}/zakazky/{zc}/stop", json={"by": "harness", "reason": "E3 hotovo – zakázku zastavuji."}, timeout=60).status_code
+        rep.add("E3b", "Navýšení stropu z HITL rozpocet v GUI (N6 s důvodem): schválení s novým stropem 5 USD → BUDGET_CAP: rozpočet zakazka-30d-block všech klíčů zakázky v ConfigMapě = 5, sonda potvrdila přijetí na všech replikách gateway (hot reload), org.zakazky.budget_usd = 5, org.approvals řádek budget.raise s limits_shown (starý/nový strop); role běží znovu a tentokrát doběhne (druhý AGENT_RUN bez 429), stav zakázky v GUI ukazuje nový strop", "PASS" if d["new_run"] and raised and raised.get("budget_usd") == 5 and capl.get("registry") and (gwc.get("propagation") or {}).get("status") and all(v == 200 for v in gwc["propagation"]["status"].values()) and caps1 and all(v == 5 for v in caps1.values()) and row and float(row[0][0]) == 5 and apr and apr[0][1] == "approve" and (apr[0][2] or {}).get("budget_usd_new") == 5 and run1 and not run1.get("budget_exceeded") and not run1.get("error") and gui_budget in ("5", "5.0") else "FAIL", {"decide": d, "raised": {k: raised.get(k) for k in ("budget_usd", "by")} if raised else None, "cap_ledger": {k: capl.get(k) for k in ("budget_usd", "keys", "registry")}, "gateway_propagation": gwc.get("propagation"), "configmap_caps": caps1, "db": {"zakazky": [str(x) for x in row[0]] if row else None, "approvals": [[r_[0], r_[1], r_[2], r_[3]] for r_ in apr]}, "second_run": {k: run1.get(k) for k in ("budget_exceeded", "error", "cost_usd")} if run1 else None, "gui_budget": gui_budget, "wf": st.get("status"), "stop_http": stop})
+        rep.add("E3c", "E3: čas, screenshoty", "INFO", {"wall_s": round(time.time() - t_e, 1), "shots": sorted(p.name for p in (gui_shots / "e3").glob("*.png")) if (gui_shots / "e3").exists() else []})
+    finally:
+        g.close()
+
+
 def klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots):
     """K-1 (P3-4): klasifikační brána K1–K6 před první rolí (profil → org.zakazky + OPA data, high-risk zamyká autonomii, čl. 5 → Odmitnuto bez podu,
     nejasné → H1a právník), čl. 50 naostro (e-mail + ticket přes mock-channels s disclosure z definice role a značením generated_by), SLA bodů (org.sla_events, eskalace)."""
@@ -1079,7 +1124,7 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
 KLAS_NO = {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}   # P3-4: zakázky z interního API musí nést dotazník, jinak čekají na klasifikaci v AG-UI
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1352,6 +1397,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if gov: gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-3: U2a–U2h
         if klas: klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-4: K1a–K1g
         if o3: o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-5: O3a–O3f
+        if e3: e3_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E3: strop v gateway + navýšení z GUI
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
         if images:
@@ -1469,7 +1515,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             http("POST", f"{APP}/zakazky", json={"id": zid2, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid2}/NOTES.md (test stropu zakázky).", "hitl_timeout_s": 600, "budget_timeout_s": 25, "budget_usd": 0.01, "klasifikace": KLAS_NO}, timeout=15)
             approved = set(); exc = None; issue2 = None
             while time.time() - t26 < 480:
-                L2 = led(); exc = next((e for e in L2 if e["kind"] == "BUDGET_EXCEEDED" and e["zakazka"] == zid2 and e.get("source") == "zakazka-sum"), None)
+                L2 = led(); exc = next((e for e in L2 if e["kind"] == "BUDGET_EXCEEDED" and e["zakazka"] == zid2 and e.get("source") in ("zakazka-sum", "agentgateway")), None)   # P3-6 E3: strop zakázky = i rozpočet klíče v gateway → 429 už v první roli
                 if exc: break
                 if "H1" not in approved:
                     issue2 = next((e for e in L2 if e["kind"] == "PUBLISHED" and e["zakazka"] == zid2 and e.get("publish_kind") == "issue"), None)
@@ -1559,7 +1605,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -1570,7 +1616,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -1584,7 +1630,8 @@ def main():
      "p3-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True),
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
-     "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}
