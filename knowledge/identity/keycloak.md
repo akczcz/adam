@@ -37,6 +37,23 @@ provádí **token exchange** pro gateway (user token → token pro konkrétní M
 | Audit | `TOKEN_EXCHANGE_ERROR` události s `client_policy_error_detail`; úspěšné exchange jen s zapnutým event logem | zapnout `eventsEnabled` pro realm |
 | Latence | exchange p50 58 ms (dev mode, H2) | cache v gateway nutná |
 
+## Federated client authentication a exchange v podu role (P3-6 E2, změřeno na AKS 2026-10-28)
+
+Ověřeno z tagu `keycloak/keycloak@26.8.1` (docs + zdroje; identity-scout 2026-10-28) a měřením `tools/harness_p1_k8s` E2a–c (run 40667386140):
+
+| Fakt | Stav 26.8.1 | Zdroj |
+|---|---|---|
+| `client-auth-federated`, `kubernetes-service-accounts` | **DEFAULT** (GA od 26.5): client authenticator `federated-jwt` („Signed JWT - Federated“), atributy `jwt.credential.issuer` (alias IdP) a `jwt.credential.sub`; klient se hledá podle `sub` assertion + alias IdP (`DefaultClientAssertionStrategy`), **ne podle `client_id`** → jeden SA = jeden klient | `Profile.java`, `authenticators/client/*.java`, `identity-broker/kubernetes.adoc` |
+| IdP `kubernetes` | config `issuerDiscoveryUrl` (discovery při uložení → `issuer`, `jwksUrl`); assertion = projektovaný SA token s `aud` = issuer realmu, max 3600 s; `iss` nepovinné u SPIFFE varianty | `KubernetesIdentityProviderConfig.java`, `kubernetes.adoc` |
+| `spiffe` (JWT-SVID jako client assertion, `jwt-spiffe`) | **PREVIEW** – „specification is still a draft“; bundle endpoint může být JWKS spire-oidc | `spiffe.adoc`, `SpiffeIdentityProvider.java` |
+| Standard exchange V2 + federated klient | funguje: žadatel = klient role autentizovaný SA tokenem → `azp` = role, `sub` = člověk; subject token musí nést klienta role v `aud` (audience mapper na `platform-gui`) | měřeno E2a: exchange 94 ms, lifespan 1800 s |
+| Delegace (`act`) | PREVIEW `token-exchange-delegation` + `parameterized-scopes`; souhlas při každé login session; 27.0 notes beze změny | `26_8_0.adoc`, `27_0_0.adoc` |
+| Legacy exchange (external-to-internal) | PREVIEW + deprecated, vyžaduje FGAP V1 (DEPRECATED); náhrada = JWT Authorization Grant (DEFAULT, ale mapuje na **uživatele**) | `token-exchange.adoc`, `jwt-authorization-grant.adoc` |
+| Admin API past | `PUT /clients/{id}` s `protocolMappers` v reprezentaci mappery přepíše | měřeno E2 (2. běh) |
+
+Důsledek: mandát „jménem“ = `sub + azp` podepsané Keycloakem + vazba na SVID v PEP (paměť ověří `azp == agent-<role>-<tenant>` ze SPIFFE ID);
+`act` přijde jako nadmnožina po GA. Omezení: subject token (člověk) žije 30 min – role bez HITL před sebou exchange nestihne (degradace).
+
 ## Místo v architektuře
 AS pro platformu, federovaný na Entra ID / IdP zákazníka. Exchange volá **agentgateway** (`backendAuth.oauthTokenExchange`),
 ne agentní kód. Viz [agentgateway-identity.md](agentgateway-identity.md) a diagram v [standardy.md](standardy.md).
@@ -54,10 +71,11 @@ ne agentní kód. Viz [agentgateway-identity.md](agentgateway-identity.md) a dia
 3. Realm jako kód: `configs/realm-platform.json` v harnessu je referenční import (scopes `basic`, `profile`, audience mappery, client policy).
 
 ## Otevřené otázky
-- [ ] V kterém releasu je `actor_token` delegace a zda vznikne cesta bez interaktivního souhlasu (client credentials actor).
-- [ ] Chování `actor_token` s JWT-SVID cizího issueru (SPIFFE IdP federace realm ↔ SPIRE OIDC).
+- [ ] V kterém releasu je `actor_token` delegace a zda vznikne cesta bez interaktivního souhlasu (client credentials actor) – 27.0 notes beze změny (2026-10-28).
+- [x] ~~Chování `actor_token` s JWT-SVID cizího issueru~~ – SVID se v Keycloaku nepoužívá jako actor, ale jako **client assertion** (`jwt-spiffe`, preview); K8s SA token totéž GA (E2, 2026-10-28).
 - [ ] Support policy 26.x / LTS – neověřeno.
 - [ ] Cache exchange v agentgateway: změřeno p50 71–81 ms přes gateway vs. 58 ms exchange → cache pravděpodobně neúčinná; ověřit.
 
 ## Changelog
+- 2026-10-28: P3-6 E2 – federated client authentication (K8s SA token podu role) + standard exchange V2 změřeno na AKS; SPIFFE client auth a delegace `act` preview; past PUT klienta.
 - 2026-10-22: první verze; vše z harnessu I2 proti 26.8.1.

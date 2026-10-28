@@ -101,7 +101,9 @@ server + agentgateway 1.6.0 + OPA-Envoy 1.21.2, lokálně bez Dockeru.
 
 Jediné selhání všude: **`act` claim** – Keycloak 26.8 má delegaci jako preview s interaktivním souhlasem a FGAP V2,
 pro autonomní agenty nepoužitelnou. Identita agenta tedy dnes putuje jako **druhý credential** (SVID v hlavičce),
-který gateway loguje a OPA vyhodnocuje – ne uvnitř uživatelova tokenu.
+který gateway loguje a OPA vyhodnocuje – ne uvnitř uživatelova tokenu. **Doplněk (P3-6 E2, 2026-10-28):** bez `act` jde v 26.8.1
+doložit mandát jako `sub` = člověk + `azp` = klient role, když se klient role autentizuje workload credentialem podu (*federated client
+authentication*, GA od 26.5: Kubernetes SA token; SPIFFE JWT-SVID jako client assertion je preview) – změřeno na AKS, paměť token váže na SVID.
 
 Pasti z harnessu: Keycloak realm import s `clientScopes` nevytvoří `basic` (token bez `sub`); OPA-Envoy input je camelCase;
 agentgateway `jwtAuth` default `optional` a odstraní token z hlavičky. Vše v README harnessu.
@@ -149,6 +151,7 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
 - [x] ~~Aktuální harmonogram EU AI Act a technické požadavky na audit a lidský dohled~~ → [regulace.md](regulace.md), 2026-10-22; text OJ zbývá ověřit.
 
 ## Changelog
+- 2026-10-28: P3-6 E2 změřeno na AKS (59/59, `measure` run 40667386140) – standard token exchange V2 s federated client auth (IdP kubernetes, SA token podu role) dává token `sub = schvalovatel, azp = agent-<role>-<tenant>`; `act` delegace a SPIFFE client auth v 26.8.1 preview (identity-scout 2026-10-28, zdroje v keycloak.md).
 - 2026-10-28: P3-6 E1 změřeno na AKS (56/56, `measure` run 40603229736) – ESO v2.14.0 (Key Vault, Workload Identity: tenant jen z anotace SA), cert-manager v1.21.3 + trust-manager v0.26.0 (interní CA, bundle do ns tenantů); harness ani Flux substitute nenesou tajemství. Zdroje: ESO releases/docs, cncf/toc#1486, #1819, cert-manager releases, azurerm docs (identity-scout 2026-10-27).
 - 2026-10-27: P3-4 – čl. 50(1) T7 naostro: disclosure vkládá adaptér kanálu (e-mail, ticket) z definice role, T8 `generated_by` jen na kanálech k lidem (mezikroky ne); T9/T15 klasifikační brána per zakázka (`org.zakazky.profile`, auditní řádek `org.approvals`, OPA data); změřeno harnessem K-1.
 - 2026-10-26: P3-2 tenant model změřen na AKS: SVID role nese tenant z atestovaného namespace (alias uzlu per role × tenant, `k8s_psat:agent_ns:tenant-<id>`), Keycloak: lidé tenantů jako atribut `tenant_id` v jednom realmu, běžící realm migruje admin API (import realmu existující realm nemění), access token 15 min → GUI obnovuje refresh tokenem; RLS `org.*` per tenant_id. Nález: SPIRE entry se stejným SPIFFE ID a jiným rodičem je nutné nahradit, jinak „no identity issued“.

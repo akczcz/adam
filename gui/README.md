@@ -12,6 +12,7 @@ AG-UI server v aplikaci zakázky (`tools/harness_p0_o2/agui.py`), který ho tak�
 | Firma (P3-3) | role × tenant: verze, eval gate, úroveň autonomie; tenanti | `POST /agui/gov/autonomy` (nahoru jen při splněných podmínkách), `POST /agui/gov/tenant/<id>/stop|resume` |
 | Registr agentů, FinOps, Governance, Audit (P3-3) | org.* přes Governance MCP (org_reader, RLS per tenant): agenti, události, útrata vs. strop (alert ≥ 80 %), governance report T11–T15, risk register, export JSONL, approvaly | `POST /agui/gov/tools/<name>`, `GET /agui/gov/export.jsonl` |
 | FinOps – ledger | per zakázka a per tenant × zakázka × role z ClickHouse (spany gateway, P3-6 E4), delta vs. registr | Governance MCP nástroj `ledger` (`POST /agui/gov/tools/ledger`) |
+| Registr agentů – `on_behalf_of` | sub schvalovatele, jehož jménem role běžela (token exchange v podu, P3-6 E2) | nástroj `agents` |
 
 ```bash
 npm ci && npm run build                 # dist/ (tsc --noEmit + vite build)
