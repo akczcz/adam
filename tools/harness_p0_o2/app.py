@@ -50,6 +50,22 @@ def ledger(kind, **kw):
         f.write(json.dumps({"ts": time.time(), "kind": kind, **kw}, ensure_ascii=False) + "\n")
 
 
+def _ledger_repair():
+    """P3-6 E1 nález: pod zabitý uprostřed zápisu (rollout Deploymentu při změně volume) nechá v ledgeru utržený řádek bez konce; další záznam by se
+    na něj nalepil a oba by byly nečitelné → při startu doplnit konec řádku. Nečitelné řádky _ledger() přeskakuje (ztráta = jeden záznam, ne celé API)."""
+    try:
+        if os.path.exists(LEDGER) and os.path.getsize(LEDGER):
+            with open(LEDGER, "rb+") as f:
+                f.seek(-1, os.SEEK_END); torn = f.read(1) != b"\n"
+                if torn: f.write(b"\n")
+            if torn: ledger("LEDGER_REPAIRED", reason="utržený poslední řádek (pod ukončen uprostřed zápisu)")   # až po zavření souboru (pořadí zápisů)
+    except OSError: pass
+
+
+_ledger_repair()
+_LEDGER_BAD = {"lines": 0}
+
+
 _BAO_LOGIN: dict = {}
 
 
@@ -570,7 +586,13 @@ def verify_approval(ctx, inp):
 
 def _ledger():
     if not os.path.exists(LEDGER): return []
-    return [json.loads(l) for l in open(LEDGER) if l.strip()]
+    out, bad = [], 0
+    for l in open(LEDGER):
+        if not l.strip(): continue
+        try: out.append(json.loads(l))
+        except ValueError: bad += 1   # utržený/slepený řádek (viz _ledger_repair) – přeskočit, API ledgeru musí fungovat dál
+    _LEDGER_BAD["lines"] = bad
+    return out
 
 
 # --- P3-4: klasifikační brána (P1a, T9/T15), SLA bodů (procesy.md), kanály k lidem (čl. 50(1) T7, T8) --------------------------------

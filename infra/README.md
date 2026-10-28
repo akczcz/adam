@@ -73,8 +73,8 @@ Podrobnosti, postup a bezpečnostní model: [`infra/bootstrap/README.md`](bootst
 `infra/k8s/roles/` (vlastní Flux kustomization `roles`, bez namespace transformeru overlay): ns `platform-roles` (PSS restricted), NetworkPolicy
 default-deny + egress jen DNS/agentgateway/paměť/aplikace, Role + RoleBinding pro SA `zakazka` (pods, pods/log, secrets). Overlay `aks`: `zakazka-env`
 `P0_ROLE_RUNTIME=pod`, `P0_ROLE_IMAGE`, `P0_ARTIFACT_API` (FQDN služeb pro pod z jiného ns), `infra/k8s/base/mock-upstream` (mock Anthropic API v clusteru
-jako upstream gateway pro měření), `zakazka-secrets` a `agentgateway-keys` s `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` (Flux založí, harness/aplikace
-přepisuje), `imagePullPolicy: Always` pro pohyblivý tag `zakazka-app:p1`, `fsGroup: 1000` na podu aplikace. Obraz `zakazka-app` má bubblewrap +
+jako upstream gateway pro měření), `agentgateway-keys` s `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` (Flux založí, aplikace
+přepisuje; `zakazka-secrets` od P3-6 E1 z ESO), `imagePullPolicy: Always` pro pohyblivý tag `zakazka-app:p1`, `fsGroup: 1000` na podu aplikace. Obraz `zakazka-app` má bubblewrap +
 `@anthropic-ai/sandbox-runtime` (srt weaker režim v Kata podu). Měření: workflow `measure` s `p21=true` → `tools/harness_p1_k8s --step p2-1` (p1-6 = alias)
 (výsledek a pasti v jeho README).
 
@@ -117,9 +117,9 @@ overlay aks), `infra/k8s/roles`: SA `role` (bez automountu), ConfigMap `spire-ag
 Pody rolí (Kata, `platform-roles`) ven jen přes agentgateway `:3128` (CONNECT; srt `parentProxy`). rolegen generuje do `agentgateway-config`
 bind 3128, HTTPS listenery `git.platform.internal` a `mirror.platform.internal` (terminace certem ze Secretu `agentgateway-tls`), routu `git-acme`
 (metody z `authz.http` rolí, `backendAuth` Bearer ze Secretu `agentgateway-git-token`) a `mirror-acme` (GET); backendy z env Deploymentu
-(`GIT_BACKEND_HOST=mock-github:9801`, `MIRROR_BACKEND_HOST=mock-mirror:9803`). Secrety a ConfigMapu `platform-ca` (CA pro pody rolí) vydává
-harness (dev CA; P3 cert-manager + ESO) – Deployment gateway na ně čeká (`ContainerCreating`), Flux kustomizace `platform` je do té doby
-`HealthCheckFailed`. Mock GitHub nově mluví git smart HTTP (`git http-backend`, bare repo `acme/platform.git`, pre-receive hook = branch protection:
+(`GIT_BACKEND_HOST=mock-github:9801`, `MIRROR_BACKEND_HOST=mock-mirror:9803`). Secrety a ConfigMapu `platform-ca` (CA pro pody rolí) vydával
+harness (dev CA) – od P3-6 E1 je vydávají cert-manager, ESO a trust-manager (sekce P3-6 E1); Deployment gateway na ně čeká (`ContainerCreating`),
+Flux kustomizace `platform` je do té doby `HealthCheckFailed`. Mock GitHub nově mluví git smart HTTP (`git http-backend`, bare repo `acme/platform.git`, pre-receive hook = branch protection:
 jen `agent/*`, `zakazka/*`); mock mirror (`tools/harness_p0_o2/mock_mirror.py`) = pypi simple + npm registry s balíčkem `platform-hello`.
 NetworkPolicy `agentgateway-egress` (overlay aks) brání gateway v přístupu na IMDS, wireserver a privátní sítě. Měření: `measure` s `e2e=p2-4`.
 
@@ -144,12 +144,12 @@ Měření: `measure` s `e2e=p3-1` (runner si instaluje Playwright + Chromium; sc
 NetworkPolicy, SA `role`, RBAC pro SA zakazka, ConfigMap spire-agent-pod ze `spire-agent.conf`); Flux kustomization `roles` ho aplikuje (prune není zapnuté →
 starý ns `platform-roles` maže harness p3-2; nový cluster ho nemá). Base `spire.yaml` má generovaný řádek `service_account_allow_list` (ns tenantů) – StatefulSet pod SPIRE serveru nový config
 nenačte sám, harness ho restartuje podle anotace `platform.config-sha`. `zakazka-env`: `P0_ROLE_NAMESPACE_TEMPLATE=tenant-{tenant}`, `P0_GUI_CLIENT=platform-gui`.
-CA `platform-ca` pro pody rolí vydává harness do každého ns tenanta. Měření: `measure` s `e2e=p3-2`.
+CA `platform-ca` pro pody rolí dává do každého ns tenanta trust-manager (label `platform.ca-bundle`, P3-6 E1; dřív harness). Měření: `measure` s `e2e=p3-2`.
 
 ## P3-3: Governance MCP (2026-10-26)
 
 Deployment `governance` (obraz `zakazka-app`, `python /app/governance_mcp/governance_mcp.py`, port 9910): `GOV_DSN` = DB `org` jako `org_reader`
-(jen SELECT, RLS; heslo dev – P3-6 ESO/OpenBao), `GOV_KC_JWKS_URL/ISSUER` (token člověka). `zakazka-env`: `P0_GOV_URL`; server paměti:
+(jen SELECT, RLS; heslo dev – literál v DSN, zbývá i po E1), `GOV_KC_JWKS_URL/ISSUER` (token člověka). `zakazka-env`: `P0_GOV_URL`; server paměti:
 `MEMORY_TENANT_STATUS_URL` (stop tenanta → deny). Role `org_reader`/`org_writer` a RLS zakládá aplikace zakázky při startu (`finops.tenants_sync`).
 Měření: `measure` s `e2e=p3-3`.
 
@@ -185,6 +185,18 @@ gateway (klíče a rozpočty hot reload) – změna = restart podů (smazáním;
 `GOV_CLICKHOUSE_URL=http://clickhouse:8123` (nástroj `ledger`, hranice tenanta jako RLS). Nález: od E3 má každý klíč dva rozpočty
 `*-30d-block` – útrata zakázky se počítá jen z rozpočtu role, jinak dvojnásobek (viz `tools/harness_p1_k8s/README.md`).
 
+## P3-6 E1: cert-manager, trust-manager a ESO místo tajemství z harnessu (2026-10-28)
+
+Flux kustomizace `operators` (`infra/k8s/operators`: HelmRelease cert-manager v1.21.3, trust-manager v0.26.0, external-secrets v2.14.0; chart repo OCI
+ve stejném ns, SA `flux-helm` s cluster-admin – Flux extension vynucuje multi-tenancy; obrazy chartů z ACR přes `images.yml`) → `trust`
+(`infra/k8s/trust`: self-signed root `platform-root-ca` → `ClusterIssuer platform-ca`, `Bundle platform-ca` → ConfigMap do ns s labelem
+`platform.ca-bundle=true`, `ClusterSecretStore azure-kv` s Workload Identity SA `external-secrets/eso-keyvault` – anotace client-id **i tenant-id**)
+→ `platform` (`overlays/aks/secrets-eso.yaml`: `Certificate agentgateway-tls`, ExternalSecrety `postgres-auth`, `agentgateway-secrets`,
+`zakazka-finops`, `zakazka-secrets`, `agentgateway-git-token`, `dapr-components`; base Secrety a ConfigMap Dapr komponent z overlaye smazány
+`$patch: delete`, daprd čte komponenty ze Secretu). Terraform `secrets.tf`: Key Vault secrets (Terraform identita Key Vault Secrets Officer +
+`time_sleep` 90 s na propagaci RBAC), UAMI `id-eso` + federated credential + Key Vault Secrets User; `flux.tf` bez `PG_PASSWORD`, substitute
+`ESO_CLIENT_ID`, `AZURE_TENANT_ID`. Harness nic nevydává (`ensure_platform_secrets` jen čeká a uklízí legacy ConfigMapy). Měření: `measure` s `e2e=p3-6` (E1a–c).
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).
@@ -197,6 +209,12 @@ gateway (klíče a rozpočty hot reload) – změna = restart podů (smazáním;
 - Pohyblivý tag (`p1`) bez `imagePullPolicy: Always` → uzel drží starý obraz po `az acr build`.
 - Objekty, které za běhu přepisuje harness/rolegen, musí mít `kustomize.toolkit.fluxcd.io/ssa: IfNotPresent` (ne `reconcile: disabled` – ten by je na
   čerstvém clusteru vůbec nezaložil).
+- Flux extension AKS vynucuje multi-tenancy: HelmRelease bez `serviceAccountName` běží jako SA `default` svého ns (chart s CRD neprojde), sourceRef jen
+  ve vlastním ns; kustomizace se v clusteru jmenují `<konfigurace>-<název>` (`platform-trust`) – i v `dependsOn`.
+- ESO Workload Identity: tenant jen z anotace SA `azure.workload.identity/tenant-id`; bez ní „unable to create client“, s ní a zároveň `tenantId` ve
+  store „multiple tenantID found“ (E1, 2026-10-27).
+- Změna volume Deploymentu (`dapr-components` ConfigMap → Secret) zabije starý pod uprostřed zápisu do ledgeru na PVC → utržený řádek; aplikace ho od E1
+  opraví při startu (`LEDGER_REPAIRED`).
 - Smazání Kata podu je asynchronní (VM se vypíná, desítky sekund); pod zabité aplikace zůstane jako sirotek → GC v `role_pod.py`.
 - Flexible Server je z runneru GitHub Actions dosažitelný přímo (pravidlo „Allow Azure services“ 0.0.0.0) – pro schéma paměti a FinOps dotazy; záloha socat pod.
 - **OpenBao 2.7 nemá cloud sealy zabudované** (`Error configuring seal "azurekeyvault": unknown wrapper`; changelog 2.7.0, P2-3 2026-10-25) →

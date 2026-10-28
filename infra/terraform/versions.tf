@@ -3,6 +3,7 @@ terraform {
   required_providers {
     azurerm = { source = "hashicorp/azurerm", version = "~> 5.11" }
     random  = { source = "hashicorp/random", version = "~> 3.7" }
+    time    = { source = "hashicorp/time", version = "~> 0.13" } # P3-6 E1: čekání na propagaci RBAC Key Vaultu
   }
   # State v Azure Storage (účet z infra/bootstrap/azure-oidc.sh); parametry přes -backend-config v GitHub Actions, auth OIDC.
   backend "azurerm" {

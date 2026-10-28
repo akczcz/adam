@@ -1,6 +1,7 @@
 # Overlay pro AKS dev cluster (Terraform infra/terraform, nasazuje Flux): oficiální obrazy z ACR, Postgres = Azure Database for PostgreSQL
 # Flexible Server (ExternalName), bez NodePortů (přístup přes kubectl port-forward / interní LB později). Proměnné ${ACR_LOGIN_SERVER},
-# ${PG_HOST}, ${PG_PASSWORD} dosazuje Flux postBuild substitute (infra/terraform/flux.tf); kustomize je nechává beze změny.
+# ${PG_HOST}, ${KV_NAME}, ${OPENBAO_CLIENT_ID} dosazuje Flux postBuild substitute (infra/terraform/flux.tf); kustomize je nechává beze změny.
+# Tajemství (heslo PG, tokeny, API klíč) od P3-6 E1 nese ESO z Key Vaultu a certifikáty cert-manager (secrets-eso.yaml) – ne substitute, ne harness.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: platform-data
@@ -19,6 +20,7 @@ resources:
 - ../../base/zakazka
 - ../../base/mock-upstream
 - postgres-external.yaml
+- secrets-eso.yaml   # P3-6 E1: Certificate agentgateway-tls + ExternalSecrety (postgres-auth, agentgateway-secrets, zakazka-secrets, zakazka-finops, agentgateway-git-token, dapr-components)
 images:
 - {name: platform/keycloak, newName: "${ACR_LOGIN_SERVER}/keycloak", newTag: "26.8.1"}
 - {name: platform/openbao, newName: "${ACR_LOGIN_SERVER}/openbao", newTag: "2.7.1"}
@@ -64,20 +66,34 @@ patches:
 - target: {kind: StatefulSet, name: spire-server}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/command/0, value: /opt/spire/bin/spire-server}
-# Postgres jako Azure služba: heslo admin účtu Flexible Serveru (dev), SSL vyžadováno
-- target: {kind: Secret, name: agentgateway-secrets}
+# Postgres jako Azure služba (SSL vyžadováno): Secrety s heslem admin účtu (agentgateway-secrets, zakazka-finops, dapr-components) dává ESO
+# z Key Vaultu (secrets-eso.yaml) – base verze pro kind se z overlaye odstraní, aby je Flux nezakládal s dev hodnotami
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata: {name: agentgateway-secrets}
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata: {name: zakazka-finops}
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata: {name: zakazka-secrets}
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: dapr-components}
+- target: {kind: Deployment, name: zakazka}   # Dapr komponenty ze Secretu dapr-components (connection string nese heslo)
   patch: |
-    - {op: replace, path: /stringData/AGW_DATABASE_URL, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/agentgateway?sslmode=require"}
-- target: {kind: Secret, name: zakazka-finops}   # P2-6: tatáž DB jako gateway (budget_usage) + registr org
-  patch: |
-    - {op: replace, path: /stringData/P0_FINOPS_DSN, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/agentgateway?sslmode=require"}
-    - {op: replace, path: /stringData/P0_REGISTRY_DSN, value: "postgresql://platform:${PG_PASSWORD}@postgres:5432/org?sslmode=require"}
+    - {op: replace, path: /spec/template/spec/volumes/0, value: {name: components, secret: {secretName: dapr-components}}}
 - target: {kind: Deployment, name: governance}   # P3-3: Flexible Server vyžaduje TLS
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: "postgresql://org_reader:org_reader@postgres:5432/org?sslmode=require"}
-- target: {kind: ConfigMap, name: dapr-components}
-  patch: |
-    - {op: replace, path: /data/statestore.yaml, value: "apiVersion: dapr.io/v1alpha1\nkind: Component\nmetadata:\n  name: statestore\nspec:\n  type: state.postgresql\n  version: v1\n  metadata:\n  - name: connectionString\n    value: \"host=postgres user=platform password=${PG_PASSWORD} port=5432 dbname=dapr_state sslmode=require\"\n  - name: actorStateStore\n    value: \"true\"\n"}
 - target: {kind: Deployment, name: keycloak}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: platform}
@@ -115,12 +131,8 @@ patches:
     - {op: add, path: /data/P0_ARTIFACT_API, value: http://zakazka.platform-data.svc:8010}
     - {op: replace, path: /data/P0_LLM_URL, value: http://agentgateway.platform-data.svc:4100}
     - {op: replace, path: /data/P0_MEMORY_URL, value: http://memory.platform-data.svc:9900}
-# Tajemství aplikace vydává harness za běhu: Flux objekt založí s placeholdery (čerstvý cluster), ale už ho nikdy nepřepíše (ssa: IfNotPresent).
 # Konfigurace gateway je od P2-1 z Gitu (infra/k8s/rolegen); klíče per zakázka zapisuje aplikace do ConfigMapy agentgateway-keys, kterou Flux
-# po založení nepřepisuje a sidecar config-merge ji slévá do configu
-- target: {kind: Secret, name: zakazka-secrets}
-  patch: |
-    - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/ssa: IfNotPresent}}
+# po založení nepřepisuje (ssa: IfNotPresent) a sidecar config-merge ji slévá do configu. Tajemství aplikace (zakazka-secrets) od P3-6 E1 z ESO.
 - target: {kind: ConfigMap, name: agentgateway-keys}
   patch: |
     - {op: add, path: /metadata/annotations, value: {kustomize.toolkit.fluxcd.io/ssa: IfNotPresent}}
@@ -205,7 +217,7 @@ patches:
     - {op: add, path: /data/P0_BAO_K8S_ROLE, value: zakazka}
     - {op: add, path: /data/P0_ROLE_IDENTITY, value: svid}
     - {op: add, path: /data/P0_ROLE_SPIRE_AGENT_IMAGE, value: "${ACR_LOGIN_SERVER}/spire-agent:1.14.2"}
-# P2-4: egress podu role přes gateway CONNECT – CA gateway z ConfigMapy platform-ca (ns tenant-<id>, vydává harness), git a mirror přes
+# P2-4: egress podu role přes gateway CONNECT – CA gateway z ConfigMapy platform-ca (ns tenant-<id>; od P3-6 E1 ji plní trust-manager), git a mirror přes
 # terminované listenery; sonda role_runner (clone/push větve/push main/pip/npm/cizí SNI) měří P24b–d
 - target: {kind: ConfigMap, name: zakazka-env}
   patch: |

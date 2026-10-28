@@ -42,7 +42,7 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 | NodePorty | žádné – přístup `kubectl port-forward`, později interní LB / AG-UI |
 | runc | role pody na node poolu `kata` (`runtimeClassName: kata-vm-isolation`, toleration `sandbox=kata`) – P1-6 |
 | Dapr placement/scheduler z binárek | totéž (oficiální `daprio/*` obrazy); Dapr Helm chart jako Flux HelmRelease = další krok |
-| `kubectl apply -k` z harnessu | Flux z `main`; tajemství zatím `post_build.substitute` (heslo PG v konfiguraci Flux a tf state) – P2: External Secrets nad Key Vault/OpenBao |
+| `kubectl apply -k` z harnessu | Flux z `main`; tajemství od P3-6 E1 přes External Secrets Operator z Key Vaultu (`infra/terraform/secrets.tf`), substitute jen identifikátory |
 
 ## Bezpečnostní model
 - OIDC: GitHub vydá krátkodobý token, Entra ho vymění za Azure token jen pro subjekty `repo:akczcz/adam:*` výše; žádný client secret neexistuje.

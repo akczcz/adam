@@ -7,6 +7,7 @@ metadata:
     platform.tenant: acme
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/warn: restricted
+    platform.ca-bundle: 'true'
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -169,6 +170,7 @@ metadata:
     platform.tenant: beta
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/warn: restricted
+    platform.ca-bundle: 'true'
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -70,8 +70,9 @@ tcpRoutes:
 | GET absolute-form na CONNECT bind | 405 |
 | `dynamic.target` CEL | `destination.hostname + ":8443"` přepíše cíl (S1 používá pro mock; air-gap mirror) |
 
-CA do sandboxu: gateway bundle negeneruje → CA v obrazu role (devcontainer build) + `SSL_CERT_FILE`, `GIT_SSL_CAINFO`,
-`NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`. Smazání env agentem jen rozbije TLS.
+CA do sandboxu: gateway bundle negeneruje → CA jako ConfigMap `platform-ca` v ns tenanta (od P3-6 E1 ji rozdává trust-manager z interní CA
+cert-manageru; 2026-10-28) připojená do podu role + `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`.
+Smazání env agentem jen rozbije TLS.
 
 ## Git přes gateway
 

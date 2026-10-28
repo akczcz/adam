@@ -1191,7 +1191,52 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
 KLAS_NO = {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}   # P3-4: zakázky z interního API musí nést dotazník, jinak čekají na klasifikaci v AG-UI
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False):
+def e1_checks(a, rep, kj, pre):
+    """E1 (P3-6): tajemství a certifikáty platformy vydávají operátoři z Gitu – cert-manager (interní CA → agentgateway-tls), trust-manager
+    (ConfigMap platform-ca v platform-data a ns tenantů), ESO (Key Vault přes workload identitu → postgres-auth, agentgateway-secrets, zakazka-secrets,
+    zakazka-finops, agentgateway-git-token, dapr-components); harness ani Flux substitute žádné tajemství nenesou."""
+    import base64 as _b64, hashlib as _h
+    from cryptography import x509; from cryptography.hazmat.primitives.asymmetric import ec
+    def get(ns, kind, name):
+        r = kubectl(a, *(["-n", ns] if ns else []), "get", kind, name, "-o", "json"); return json.loads(r.stdout) if r.returncode == 0 else {}
+    def ready(obj): return next((c["status"] for c in (obj.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), None)
+    def managers(obj): return sorted({m.get("manager", "") for m in (obj.get("metadata") or {}).get("managedFields", [])})
+    tenants = [n["metadata"]["name"] for n in kj("get", "ns", "-l", "platform.tenant").get("items", [])]
+    hr = {f'{h["metadata"]["namespace"]}/{h["metadata"]["name"]}': {"ready": ready(h), "version": (h.get("status") or {}).get("lastAttemptedRevision") or h["spec"]["chart"]["spec"].get("version")} for h in kj("get", "helmreleases", "-A").get("items", [])}
+    ks = {k["metadata"]["name"].removeprefix("platform-"): {"ready": ready(k), "substitute": sorted((((k.get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).keys()), "dependsOn": [d["name"].removeprefix("platform-") for d in (k.get("spec") or {}).get("dependsOn", [])]} for k in kj("-n", "flux-system", "get", "kustomizations").get("items", [])}   # Flux extension AKS: kustomizace <konfigurace>-<název> (platform-trust)
+    # E1a – cert-manager + trust-manager
+    cert = get(NS, "certificate", "agentgateway-tls"); tls = get(NS, "secret", "agentgateway-tls"); ann = (tls.get("metadata") or {}).get("annotations") or {}
+    root = _b64.b64decode((get("cert-manager", "secret", "platform-root-ca").get("data") or {}).get("ca.crt", "")).decode()
+    crt = _b64.b64decode((tls.get("data") or {}).get("tls.crt", "")).decode(); ca_in_tls = _b64.b64decode((tls.get("data") or {}).get("ca.crt", "")).decode()
+    leaf = x509.load_pem_x509_certificate(crt.split("-----END CERTIFICATE-----")[0].encode() + b"-----END CERTIFICATE-----\n") if crt else None
+    rootc = x509.load_pem_x509_certificate(root.encode()) if root else None
+    sans = sorted(leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)) if leaf else []
+    try: rootc.public_key().verify(leaf.signature, leaf.tbs_certificate_bytes, ec.ECDSA(leaf.signature_hash_algorithm)); chain_ok = True
+    except Exception as e: chain_ok = f"{type(e).__name__}"
+    cms = {ns: get(ns, "configmap", "platform-ca") for ns in [NS] + tenants}
+    cm_ok = {ns: ((c.get("metadata") or {}).get("labels") or {}).get("trust.cert-manager.io/bundle") == "platform-ca" and (c.get("data") or {}).get("ca.crt", "").strip() == root.strip() for ns, c in cms.items()}
+    days = round((leaf.not_valid_after_utc - leaf.not_valid_before_utc).days, 0) if leaf else None
+    rep.add("E1a", "TLS egressu gateway z cert-manageru (interní CA: self-signed root platform-root-ca → ClusterIssuer platform-ca): Certificate agentgateway-tls Ready, Secret s anotacemi cert-manageru, SAN git/mirror.platform.internal, podpis ověřen proti root CA, ca.crt v Secretu == root; trust-manager rozdal CA jako ConfigMap platform-ca (label bundle) do platform-data i všech ns tenantů; HelmReleasy cert-manager/trust-manager Ready; Secret bez stopy kubectl", "PASS" if ready(cert) == "True" and ann.get("cert-manager.io/issuer-name") == "platform-ca" and ann.get("cert-manager.io/issuer-kind") == "ClusterIssuer" and sans == ["git.platform.internal", "mirror.platform.internal"] and chain_ok is True and ca_in_tls.strip() == root.strip() and root and cm_ok and all(cm_ok.values()) and all(hr.get(k, {}).get("ready") == "True" for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")) and not any(m.startswith("kubectl") for m in managers(tls)) else "FAIL", {"certificate_ready": ready(cert), "issuer": [ann.get("cert-manager.io/issuer-kind"), ann.get("cert-manager.io/issuer-name")], "sans": sans, "issuer_cn": leaf.issuer.rfc4514_string() if leaf else None, "validity_days": days, "chain_ok": chain_ok, "ca_matches_root": ca_in_tls.strip() == root.strip(), "platform_ca_configmaps": cm_ok, "secret_managers": managers(tls), "helm": {k: hr.get(k) for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")}, "legacy_removed": pre.get("legacy_removed")})
+    # E1b – ESO z Key Vaultu přes workload identitu
+    css = get(None, "clustersecretstore", "azure-kv"); ess = {x["metadata"]["name"]: x for x in kj("-n", NS, "get", "externalsecrets").get("items", [])}
+    want = ["postgres-auth", "agentgateway-secrets", "zakazka-secrets", "zakazka-finops", "agentgateway-git-token", "dapr-components"]
+    secs = {n: get(NS, "secret", n) for n in want}
+    owned = {n: any(o.get("kind") == "ExternalSecret" and o.get("name") == n for o in ((s_.get("metadata") or {}).get("ownerReferences") or [])) for n, s_ in secs.items()}
+    kv_name = ((((get("flux-system", "kustomization", "platform-trust").get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME"))
+    def kv(name):
+        r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name or "", "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120); return r.stdout.strip() if r.returncode == 0 else None
+    kv_tok, kv_pg = kv("git-backend-token"), kv("pg-platform-password")
+    tok = _b64.b64decode((secs["agentgateway-git-token"].get("data") or {}).get("token", "")).decode(); pg = _b64.b64decode((secs["postgres-auth"].get("data") or {}).get("POSTGRES_PASSWORD", "")).decode()
+    agw_url = _b64.b64decode((secs["agentgateway-secrets"].get("data") or {}).get("AGW_DATABASE_URL", "")).decode(); dapr = _b64.b64decode((secs["dapr-components"].get("data") or {}).get("statestore.yaml", "")).decode()
+    zs = {k: _b64.b64decode(v).decode() for k, v in (secs["zakazka-secrets"].get("data") or {}).items()}
+    kv_ok = bool(kv_tok) and kv_tok == tok and bool(kv_pg) and kv_pg == pg and pg and f":{pg}@postgres" in agw_url and f"password={pg} " in dapr
+    rep.add("E1b", "Tajemství z Key Vaultu přes ESO (ClusterSecretStore azure-kv, Workload Identity UAMI id-eso + federated credential SA external-secrets/eso-keyvault, role Key Vault Secrets User): ExternalSecrety Ready/SecretSynced, Secrety vlastní ExternalSecret (ownerReference), hodnoty == Key Vault (git token, heslo PG i v DSN gateway/FinOps/Dapr), zakazka-secrets nese client secrety rolí/API klíč/webhook; Flux substitute kustomizace platform už PG_PASSWORD nenese; HelmRelease external-secrets Ready", "PASS" if ready(css) == "True" and set(want) <= set(ess) and all(ready(ess[n]) == "True" for n in want) and all(owned.values()) and kv_ok and set(zs) >= {"P0_ROLE_CLIENT_SECRETS", "P0_API_KEY", "BRIDGE_WEBHOOK_SECRET", "P0_ROLE_KEYS"} and "PG_PASSWORD" not in ks.get("platform", {}).get("substitute", []) and hr.get("external-secrets/external-secrets", {}).get("ready") == "True" else "FAIL", {"store_ready": ready(css), "store_message": next((c.get("message") for c in (css.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), None), "externalsecrets": {n: ready(ess[n]) if n in ess else None for n in want}, "owned_by_eso": owned, "keyvault": {"name": kv_name, "git_token_match": bool(kv_tok) and kv_tok == tok, "pg_match": bool(kv_pg) and kv_pg == pg, "pg_in_dsn": bool(pg) and f":{pg}@postgres" in agw_url, "pg_in_dapr": bool(pg) and f"password={pg} " in dapr}, "zakazka_secrets_keys": sorted(zs), "flux": ks, "helm": hr.get("external-secrets/external-secrets")})
+    # E1c – harness nic nevydává: žádný Secret platformy se stopou kubectl kromě openbao-init (bootstrap OpenBao – zbývá PushSecret do Key Vaultu)
+    by_kubectl = sorted(s_["metadata"]["name"] for s_ in kj("-n", NS, "get", "secrets").get("items", []) if any(m.get("manager", "").startswith("kubectl") for m in s_["metadata"].get("managedFields", [])))
+    rep.add("E1c", "Harness nic nevydává: žádný Secret v platform-data se stopou kubectl (managedFields) kromě openbao-init (init OpenBao – bootstrap, zbývá), ensure_platform_secrets nic nezaložil (jen čekal na operátory), Flux kustomizace operators → trust → platform v závislostech", "PASS" if set(by_kubectl) <= {"openbao-init"} and pre.get("created") == [] and ks.get("trust", {}).get("dependsOn") == ["operators"] and ks.get("platform", {}).get("dependsOn") == ["trust"] else "FAIL", {"secrets_by_kubectl": by_kubectl, "created_by_harness": pre.get("created"), "waited_s": pre.get("wait_s"), "flux_depends": {k: v.get("dependsOn") for k, v in ks.items()}})
+
+
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1212,40 +1257,30 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     head_now = (sh(["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{os.environ.get('GITHUB_REF_NAME', '')}"]).stdout.split() or [""])[0] if os.environ.get("GITHUB_REF_NAME") else ""
     want_shas = {want_sha} | ({head_now} if head_now else set())
     def rev_ok(r): return any(r.endswith(w) for w in want_shas)
-    # P2-4: tajemství egressu gateway mimo Git – CA + cert *.platform.internal (Secret agentgateway-tls), token git backendu (Secret
-    # agentgateway-git-token), CA pro pody rolí (ConfigMap platform-ca). Gateway bez Secretů nenastartuje (Flux health check) → před čekáním na Flux.
-    # Idempotentní (existující nechá); dev CA harnessu – P3: cert-manager + ESO/OpenBao.
-    def ensure_egress_secrets():
-        import secrets as _sec, datetime as _dt
+    # P3-6 E1: tajemství egressu gateway (Secret agentgateway-tls, agentgateway-git-token) a CA pro pody rolí (ConfigMap platform-ca) vydávají z Gitu
+    # cert-manager, ESO (Key Vault) a trust-manager (infra/k8s/operators, trust, overlays/aks/secrets-eso.yaml) – harness nic nevydává. Jen uklidí
+    # ConfigMapy platform-ca z dřívějších běhů, které vydal sám (bez labelu trust-manageru – SSA konflikt by bundle nepřepsal; Secrety bez vlastníka
+    # ESO/cert-manager převezmou), a po Fluxu počká, až operátoři objekty dodají.
+    def ensure_platform_secrets(wait_s=0):
         def get(ns, kind, name): r = kubectl(a, "-n", ns, "get", kind, name, "-o", "json"); return json.loads(r.stdout) if r.returncode == 0 else None
-        created = []
-        if not get(NS, "secret", "agentgateway-tls"):
-            from cryptography import x509; from cryptography.x509.oid import NameOID; from cryptography.hazmat.primitives import hashes, serialization; from cryptography.hazmat.primitives.asymmetric import ec
-            def cert(cn, key, issuer=None, ikey=None, ca=False, sans=()):
-                now = _dt.datetime.now(_dt.timezone.utc); sub_ = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
-                b = x509.CertificateBuilder().subject_name(sub_).issuer_name(issuer.subject if issuer else sub_).public_key(key.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now - _dt.timedelta(minutes=5)).not_valid_after(now + _dt.timedelta(days=90)).add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
-                if sans: b = b.add_extension(x509.SubjectAlternativeName([x509.DNSName(x) for x in sans]), critical=False)
-                return b.sign(ikey or key, hashes.SHA256())
-            hosts = ["git.platform.internal", "mirror.platform.internal"]
-            ca_key = ec.generate_private_key(ec.SECP256R1()); ca_c = cert("platform-dev-ca", ca_key, ca=True)
-            lk = ec.generate_private_key(ec.SECP256R1()); leaf = cert(hosts[0], lk, ca_c, ca_key, sans=hosts)
-            pem = lambda c: c.public_bytes(serialization.Encoding.PEM).decode()
-            with tempfile.TemporaryDirectory() as td:
-                (Path(td) / "tls.crt").write_text(pem(leaf) + pem(ca_c)); (Path(td) / "ca.crt").write_text(pem(ca_c))
-                (Path(td) / "tls.key").write_text(lk.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode())
-                kubectl(a, "-n", NS, "create", "secret", "tls", "agentgateway-tls", f"--cert={td}/tls.crt", f"--key={td}/tls.key")
-                kubectl(a, "-n", NS, "delete", "configmap", "platform-ca", "--ignore-not-found"); kubectl(a, "-n", NS, "create", "configmap", "platform-ca", f"--from-file=ca.crt={td}/ca.crt")
-            created.append("tls")
-        if not get(NS, "secret", "agentgateway-git-token"):
-            kubectl(a, "-n", NS, "create", "secret", "generic", "agentgateway-git-token", f"--from-literal=token=git-{_sec.token_urlsafe(24)}"); created.append("token")
-        ca_pem = ((get(NS, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt", "")
-        for tns in (tenant_namespaces() if ca_pem else []):   # P3-2: CA pro pody rolí do každého ns tenanta
-            if ((get(tns, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt") != ca_pem:
-                with tempfile.TemporaryDirectory() as td:
-                    (Path(td) / "ca.crt").write_text(ca_pem); kubectl(a, "-n", tns, "delete", "configmap", "platform-ca", "--ignore-not-found"); kubectl(a, "-n", tns, "create", "configmap", "platform-ca", f"--from-file=ca.crt={td}/ca.crt"); created.append(f"ca-{tns}")
+        removed = []
+        for tns in [NS] + tenant_namespaces():
+            cm = get(tns, "configmap", "platform-ca")
+            if cm and "trust.cert-manager.io/bundle" not in (cm["metadata"].get("labels") or {}):
+                kubectl(a, "-n", tns, "delete", "configmap", "platform-ca", "--ignore-not-found"); removed.append(f"configmap/platform-ca@{tns}")
+        t0 = time.time(); status = {}; ok = False
+        while True:
+            cert = get(NS, "certificate", "agentgateway-tls") or {}
+            status["certificate"] = next((c["status"] for c in cert.get("status", {}).get("conditions", []) if c["type"] == "Ready"), None)
+            ess = kj("-n", NS, "get", "externalsecrets").get("items", [])
+            status["externalsecrets"] = {x["metadata"]["name"]: next((c["status"] for c in x.get("status", {}).get("conditions", []) if c["type"] == "Ready"), None) for x in ess}
+            status["platform_ca"] = {tns: bool(((get(tns, "configmap", "platform-ca") or {}).get("data") or {}).get("ca.crt")) for tns in [NS] + tenant_namespaces()}
+            ok = status["certificate"] == "True" and bool(ess) and all(v == "True" for v in status["externalsecrets"].values()) and bool(status["platform_ca"]) and all(status["platform_ca"].values())
+            if ok or time.time() - t0 >= wait_s: break
+            time.sleep(10)
         tok = _b.b64decode(((get(NS, "secret", "agentgateway-git-token") or {}).get("data") or {}).get("token", "")).decode()
-        return {"created": created, "token_sha12": _h.sha256(tok.encode()).hexdigest()[:12] if tok else None, "ca_present": bool(ca_pem)}
-    egress_secrets = ensure_egress_secrets()
+        return {"created": [], "legacy_removed": removed, "status": status, "ok": ok, "wait_s": round(time.time() - t0, 1), "token_sha12": _h.sha256(tok.encode()).hexdigest()[:12] if tok else None, "ca_present": status["platform_ca"].get(NS, False)}
+    egress_secrets = ensure_platform_secrets()
     # StatefulSet s podem v CrashLoopBackOff rolling update nenahradí (kubernetes/kubernetes#67250): po Flux applyi smazat pody, které nejsou na updateRevision
     # (ne jen currentRevision – pod může stát na mezilehlé revizi, když se nedokončil ani předchozí rollout; měřeno 2026-10-25). Flux health check
     # (wait) kustomizace platform projde až s novým podem → mazání musí běžet uvnitř čekání na Flux.
@@ -1269,8 +1304,12 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     flux_rev = {k["metadata"]["name"]: (k.get("status", {}).get("lastAppliedRevision") or "")[:60] for k in ks_now}
     flux_msg = {k["metadata"]["name"]: next((c.get("message", "")[:1500] for c in k.get("status", {}).get("conditions", []) if c["type"] == "Ready"), "?") for k in ks_now}
     print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
-    assert flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now), f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}"   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
-    egress_secrets["created"] += ensure_egress_secrets()["created"]   # ns platform-roles existuje až po Flux → CA pro pody rolí
+    if not (flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now)):   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
+        ops = {f'{o["kind"]}/{o["metadata"]["name"]}': next((f'{c["status"]} {c.get("reason", "")}: {c.get("message", "")[:300]}' for c in (o.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), "?") for kind in ("clustersecretstore", "helmreleases", "externalsecrets", "certificate") for o in kj("get", kind, "-A").get("items", [])}   # P3-6 E1: stav operátorů do zprávy
+        raise AssertionError(f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}\n  operátoři: {json.dumps(ops, ensure_ascii=False)}")
+    egress_secrets = ensure_platform_secrets(wait_s=600) | {"legacy_removed": egress_secrets["legacy_removed"]}   # ns tenantů existují až po Flux → trust bundle, Certificate a ExternalSecrety
+    assert egress_secrets["ok"], f"operátoři nedodali tajemství platformy (cert-manager/ESO/trust-manager): {json.dumps(egress_secrets['status'], ensure_ascii=False)}"
+    if e1: e1_checks(a, rep, kj, egress_secrets)
     # OpenBao: init (klíče do Secretu openbao-init – runner CI nemá trvalé logs/) + unseal + transit/policy/token aplikace
     if kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620).returncode != 0:   # P2-3: nový config (seal plugin) → pod se restartuje
         st_ = kubectl(a, "-n", NS, "get", "pod", "openbao-0", "-o", "jsonpath={range .status.initContainerStatuses[*]}{.name}={.state}{'\\n'}{end}{range .status.containerStatuses[*]}{.name}={.state}{'\\n'}{end}").stdout
@@ -1345,10 +1384,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
                 config_diff[f"{n}/{k}"] = d[:6] if d else "jen whitespace/konec řádku"
     gw_cfg = _y.safe_load((cfg_cluster["agentgateway-config"] or {}).get("config.yaml") or "{}")
     gw_env = {e["name"]: e.get("value") for e in (kj("-n", NS, "get", "deploy", "agentgateway").get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("env", [])}
-    sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "zakazka-secrets",
-                          "--from-literal=P0_ROLE_CLIENT_SECRETS=" + json.dumps({r: f"p0-{r}-secret" for r in ROLE_CLIENTS}), *([] if identity else [f"--from-literal=P0_BAO_TOKEN={bao_app}"]),   # P2-3: token OpenBao si aplikace bere auth kubernetes
-                          "--from-literal=P0_API_KEY=sk-ant-harness-mock", "--from-literal=BRIDGE_WEBHOOK_SECRET=bridge-webhook-secret",   # bez P0_ROLE_KEYS – klíče vydá aplikace (gateway_keys.py)
-                          "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
+    assert identity, "kroky bez identity (p2-1/p2-2/p2-5) od P3-6 E1 nejsou podporované: zakazka-secrets (vč. P0_BAO_TOKEN) vydává ESO z Key Vaultu, aplikace má auth kubernetes"   # P3-6 E1: zakazka-secrets z ESO (secrets-eso.yaml), harness nic nevydává
     # P2-3: registrace SPIRE z rolegen (ConfigMap rolegen-build/spire-entries.json): alias uzlu per role (sidecar agent podu) + workload entry
     spire_applied = []
     if identity:
@@ -1371,8 +1407,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             if e.get("x509_svid_ttl"): args += ["-x509SVIDTTL", str(e["x509_svid_ttl"])]
             if e.get("jwt_svid_ttl"): args += ["-jwtSVIDTTL", str(e["jwt_svid_ttl"])]
             r = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", *args); spire_applied.append((e["spiffe_id"], r.returncode, (r.stderr or r.stdout)[-120:]))
-    subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
-    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror", "mock-upstream", "governance", "mock-channels", *(["agentgateway"] if e4 else [])); time.sleep(5)   # P3-6 E4: config.tracing gateway se načítá jen při startu   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
+    restart_pods(a, "zakazka", "memory", "bridge", "mock-github", "mock-mirror", "mock-upstream", "governance", "mock-channels", *(["agentgateway"] if e4 or e1 else [])); time.sleep(5)   # P3-6 E4: config.tracing gateway se načítá jen při startu   # vše z obrazu zakazka-app:p1 – po rebuildu obrazu musí nový kód dostat i mocky (P3-1: mirror zahlcený /health)
     t0 = time.time()
     rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=600s", timeout=620).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/agentgateway", "deployment/mock-upstream", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
     for n, p in (("zakazka", 8010), ("memory", 9900), ("mock-github", 9801), ("bridge", 9802)):
@@ -1531,7 +1566,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             np_ok = kubectl(a, "-n", NS, "get", "networkpolicy", "agentgateway-egress").returncode == 0
             ok_cfg = any(b.get("port") == 3128 and b.get("tunnelProtocol") == "connect" for b in binds) and all(lst.get(n, {}).get("protocol") == "HTTPS" and (lst[n].get("tls") or {}).get("cert") for n in ("git", "mirror")) and lst.get("public-egress", {}).get("protocol") == "TLS" \
                      and ((git_rt.get("policies") or {}).get("backendAuth") or {}).get("key", {}).get("value", {}).get("file") and "POST" in allow and "GET" in allow and ("mirror-shared" in rts or "mirror-acme" in rts) and 3128 in svc_ports and gw_dep.get("readyReplicas") == gw_dep.get("replicas") and np_ok
-            rep.add("P24a", "Gateway egress z Gitu (rolegen → agentgateway-config): CONNECT bind 3128, HTTPS listenery git/mirror.platform.internal s certem (Secret mimo Git, vydává harness), passthrough jen allow-list; routa git-acme = metody z authz.http rolí + backendAuth (token jen v gateway); Service 3128; NetworkPolicy egressu gateway (ne IMDS/link-local/privátní sítě); obě repliky Ready", "PASS" if ok_cfg else "FAIL", {"binds": binds, "listeners": {k: v.get("protocol") for k, v in lst.items()}, "git_route_allow": allow, "git_backend_auth": bool((git_rt.get("policies") or {}).get("backendAuth")), "routes": sorted(rts), "svc_ports": sorted(svc_ports), "networkpolicy": np_ok, "gw_ready": [gw_dep.get("readyReplicas"), gw_dep.get("replicas")], "secrets": egress_secrets})
+            rep.add("P24a", "Gateway egress z Gitu (rolegen → agentgateway-config): CONNECT bind 3128, HTTPS listenery git/mirror.platform.internal s certem (Secret mimo Git; od P3-6 E1 vydává cert-manager), passthrough jen allow-list; routa git-acme = metody z authz.http rolí + backendAuth (token jen v gateway); Service 3128; NetworkPolicy egressu gateway (ne IMDS/link-local/privátní sítě); obě repliky Ready", "PASS" if ok_cfg else "FAIL", {"binds": binds, "listeners": {k: v.get("protocol") for k, v in lst.items()}, "git_route_allow": allow, "git_backend_auth": bool((git_rt.get("policies") or {}).get("backendAuth")), "routes": sorted(rts), "svc_ports": sorted(svc_ports), "networkpolicy": np_ok, "gw_ready": [gw_dep.get("readyReplicas"), gw_dep.get("replicas")], "secrets": egress_secrets})
             gp = (pods_led.get("vyvojar") or {}).get("git_probe") or {}
             pf_gh = PortForward(a, "mock-github", 19811, 9801); pf_mi = PortForward(a, "mock-mirror", 19812, 9803)
             try:
@@ -1699,7 +1734,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

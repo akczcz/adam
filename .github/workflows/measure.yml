@@ -81,6 +81,11 @@ jobs:
             kubectl -n flux-system get kustomizations -o jsonpath='{range .items[*]}{.metadata.name}{" applied="}{.status.lastAppliedRevision}{" attempted="}{.status.lastAttemptedRevision}{"\n"}{range .status.conditions[*]}{"  "}{.type}{"="}{.status}{" "}{.reason}{": "}{.message}{"\n"}{end}{end}' 2>&1 | cut -c1-1500
             kubectl -n platform-data get sts -o jsonpath='{range .items[*]}{.metadata.name}{" current="}{.status.currentRevision}{" update="}{.status.updateRevision}{" ready="}{.status.readyReplicas}{"\n"}{end}' 2>&1
             echo '```'
+            echo '### operátoři (P3-6 E1): HelmReleasy, ClusterSecretStore, ExternalSecrety, Certificate'; echo '```'
+            kubectl get helmreleases -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{" "}{.status.lastAttemptedRevision}{range .status.conditions[?(@.type=="Ready")]}{" Ready="}{.status}{": "}{.message}{end}{"\n"}{end}' 2>&1 | cut -c1-400
+            kubectl get clustersecretstore,externalsecrets,certificate -A -o jsonpath='{range .items[*]}{.kind}{" "}{.metadata.namespace}/{.metadata.name}{range .status.conditions[?(@.type=="Ready")]}{" Ready="}{.status}{" "}{.reason}{": "}{.message}{end}{"\n"}{end}' 2>&1 | cut -c1-600
+            kubectl -n external-secrets logs deploy/external-secrets --tail=15 2>&1 | cut -c1-400
+            echo '```'
             for p in $(kubectl -n platform-data get pods --no-headers | awk '{split($2,a,"/")} a[1]!=a[2] || $3!="Running" {print $1}'); do
               echo "### pod $p"; echo '```'
               kubectl -n platform-data get pod "$p" -o jsonpath='{range .status.containerStatuses[*]}{.name}{" ready="}{.ready}{" restarts="}{.restartCount}{" state="}{.state}{" last="}{.lastState}{"\n"}{end}'

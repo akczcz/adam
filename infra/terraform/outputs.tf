@@ -6,3 +6,4 @@ output "pg_fqdn" { value = azurerm_postgresql_flexible_server.pg.fqdn }
 output "kubeconfig_cmd" { value = "az aks get-credentials -g ${var.resource_group_name} -n ${var.cluster_name} --admin" }
 output "key_vault_name" { value = azurerm_key_vault.kv.name }
 output "openbao_client_id" { value = azurerm_user_assigned_identity.openbao.client_id }
+output "eso_client_id" { value = azurerm_user_assigned_identity.eso.client_id }

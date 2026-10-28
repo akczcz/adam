@@ -227,8 +227,8 @@ Co měření P23c ukázalo (běhy 8–10, 2026-10-25):
   listenery pro `*.platform.internal` z `egress_allow` rolí (terminace TLS certem gateway) a passthrough `public-egress` jen pro SNI v allow-listu;
   routa `git-acme` = sjednocení metod z `authz.http` rolí (GET/POST na `/acme/`) + `backendAuth` (Bearer token ze souboru – pod ho nemá),
   `mirror-acme` jen GET. Backendy přes env gateway (`GIT_BACKEND_HOST` = mock GitHub, `MIRROR_BACKEND_HOST` = mock mirror; ostrý provoz GitHub/Nexus).
-- **Tajemství mimo Git:** harness vydá dev CA + cert (Secret `agentgateway-tls`), token git backendu (Secret `agentgateway-git-token`) a CA pro
-  pody rolí (ConfigMap `platform-ca` v `platform-data` i `platform-roles`) – před čekáním na Flux, protože gateway bez certu nenastartuje. P3: cert-manager + ESO.
+- **Tajemství mimo Git:** do P3-6 E1 vydával harness dev CA + cert (Secret `agentgateway-tls`), token git backendu (Secret `agentgateway-git-token`)
+  a CA pro pody rolí (ConfigMap `platform-ca`); od E1 (2026-10-28) je vydávají cert-manager, ESO (Key Vault) a trust-manager – viz sekce P3-6 E1.
 - **Pod role:** CA z ConfigMapy (`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `PIP_CERT`, `NODE_EXTRA_CA_CERTS`, `npm_config_cafile`), srt `parentProxy`
   = `agentgateway.platform-data.svc:3128` (oprava ns v `roles/*.yaml`). Sonda `role_runner.git_mirror_probe` (přes srt jako `sandboxed_bash`,
   záloha přímo přes proxy): clone, commit, push `agent/<wf>/ukol-1`, push `main`, pip download + npm pack z mirroru, cizí SNI, HTTP :80, cizí repo.
@@ -489,6 +489,44 @@ Výsledek: **53/53 + 8 INFO** (`measure` run 40581766759, `results/p3-6-20261027
    návratu stopu (81 s > 60 s). Zánik podu se teď sleduje souběžně od odeslání stopu (6,8 s; stop 44,9 s).
 4. **Historie v `org.*` roste přes měření** (stejná DB, 200+ zakázek): U2c – beta/vývojář má ≥ 10 úkolů, posun A0→A1 je legitimní → harness bere roli
    beta s nejmenší historií a očekávání odvozuje z pravidla (úkolů < 10 ⇒ odmítnut); U2a – nástroj `zakazky` vrací max 200 řádků.
+
+## P3-6 E1 – cert-manager, trust-manager a External Secrets Operator (2026-10-28, AKS, `--step p3-6` = p3-5 + E3 + E4 + **E1a–c**)
+
+- **Cíl**: žádné tajemství ani certifikát v produkční cestě nevydává harness ani Flux `postBuild.substitute`. Vydávají je operátoři z Gitu:
+  **cert-manager v1.21.3** (CNCF graduated) – self-signed root `platform-root-ca` (10 let, ns `cert-manager`) → `ClusterIssuer platform-ca` →
+  `Certificate agentgateway-tls` (SAN git/mirror.platform.internal, 90 d, ECDSA P-256); **trust-manager v0.26.0** – `Bundle platform-ca` → ConfigMap
+  `platform-ca` (`ca.crt`) do každého namespace s labelem `platform.ca-bundle=true` (platform-data z overlaye, `tenant-<id>` z rolegen) – stejné jméno
+  a klíč, jaké pody rolí čekaly od P2-4; **External Secrets Operator v2.14.0** (CNCF sandbox, releasy obnoveny 2025-09) – `ClusterSecretStore azure-kv`
+  (Key Vault, Workload Identity: UAMI `id-eso` + federated credential na SA `external-secrets/eso-keyvault`, role Key Vault Secrets User) →
+  ExternalSecrety `postgres-auth`, `agentgateway-secrets`, `zakazka-finops`, `zakazka-secrets`, `agentgateway-git-token`, `dapr-components`
+  (Dapr komponenty jako Secret, protože connection string nese heslo). Hodnoty v Key Vaultu zapisuje Terraform (`infra/terraform/secrets.tf`:
+  `pg-platform-password`, `git-backend-token`, `bridge-webhook-secret`, `anthropic-api-key` a `role-client-secrets` s `ignore_changes` – ostrý klíč
+  nastaví Adam v Key Vaultu). `PG_PASSWORD` zmizel z Flux substitute i tf konfigurace extension.
+- **Flux**: čtyři kustomizace `operators` (HelmRelease × 3, obrazy z ACR) → `trust` (CA, bundle, store) → `platform`; `roles` nezávisle. Chart repozitáře
+  OCI (`quay.io/jetstack/charts`, `ghcr.io/external-secrets/charts`) ve stejném namespace jako HelmRelease, HelmRelease s vlastní SA `flux-helm`
+  (Flux extension AKS vynucuje multi-tenancy).
+- **Harness**: `ensure_platform_secrets()` nic nezakládá – uklidí ConfigMapy `platform-ca` z dřívějších běhů (bez labelu trust-manageru) a po Fluxu
+  počká na Certificate/ExternalSecrety/bundle; Secrety z harnessu převzal ESO (orphan → ownerReference) a cert-manager (přepsal obsah). Kroky bez
+  identity (p2-1/p2-2/p2-5) nejsou od E1 podporované (`zakazka-secrets` z ESO, bez `P0_BAO_TOKEN`).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E1a | Certificate Ready, Secret s anotacemi cert-manageru, SAN git/mirror, podpis ověřen proti root, ca.crt == root, ConfigMap platform-ca od trust-manageru v platform-data + tenant-acme + tenant-beta, HelmReleasy Ready, Secret bez stopy kubectl | ✅ issuer ClusterIssuer/platform-ca, CN=platform-root-ca, 90 d, chain ok, bundle ve 3 ns, managers [] (žádný kubectl) |
+| E1b | ClusterSecretStore Ready (Workload Identity), 6 ExternalSecretů Ready + ownerReference, hodnoty == Key Vault (git token, heslo PG i v DSN gateway/FinOps/Dapr), zakazka-secrets 4 klíče, substitute bez PG_PASSWORD | ✅ store „store validated“; git token a heslo PG shodné s `az keyvault secret show`; substitute platform = ACR_LOGIN_SERVER, KV_NAME, OPENBAO_CLIENT_ID, PG_HOST |
+| E1c | žádný Secret v platform-data se stopou kubectl kromě `openbao-init`, harness nic nezaložil, závislosti operators → trust → platform | ✅ secrets_by_kubectl [] (ani `openbao-init` dnes stopu kubectl nenese – založen při dřívějším initu; přesun do Key Vaultu přesto zbývá), harness nic nezaložil, čekání na operátory 4,4 s |
+
+Výsledek: **56/56 + 8 INFO** (`measure` run 40603229736, `results/p3-6-20261028-002404.json`; 4 běhy). Nálezy:
+1. **ESO Workload Identity bere tenant jen z anotace SA** `azure.workload.identity/tenant-id`; bez ní „unable to create client“, s ní **a zároveň**
+   `spec.provider.azurekv.tenantId` → „multiple tenantID found“. Správně: jen anotace SA (client-id + tenant-id), store bez tenantId.
+2. **Flux extension AKS**: kustomizace se v clusteru jmenují `<konfigurace>-<název>` (`platform-trust`), `dependsOn` také; HelmRelease bez
+   `serviceAccountName` by pod multi-tenancy běžel jako SA `default` → vlastní SA `flux-helm` s cluster-admin per namespace operátora.
+3. **Utržený řádek ledgeru**: změna volume Deploymentu `zakazka` (ConfigMap → Secret `dapr-components`) zabila starý pod uprostřed zápisu
+   `/data/ledger.jsonl`; `_ledger()` pak padal na JSONDecodeError a s ním GUI (`/agui/threads`). Oprava: při startu doplnit konec řádku
+   (`LEDGER_REPAIRED`), nečitelné řádky přeskočit.
+4. **Migrace bez výpadku**: ESO převezme existující Secret bez vlastníka (ownerReference), cert-manager přepíše Secret vydaný dřív jinak
+   („Issuing certificate as Secret was previously issued by Issuer.cert-manager.io/“); jen ConfigMap `platform-ca` z `kubectl create` musel
+   harness smazat (SSA konflikt s trust-managerem). Zbývá: `openbao-init` (bootstrap OpenBao – PushSecret do Key Vaultu), `keycloak-admin`
+   (literál; změna = rotace přes admin API), hesla `memory_app`/`org_reader` v DSN, TLS OpenBao/Keycloak z `platform-ca`, reload certu v gateway po rotaci.
 
 ## Spuštění
 

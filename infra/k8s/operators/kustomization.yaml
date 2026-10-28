@@ -1,0 +1,10 @@
+# P3-6 E1: operátoři platformy jako Flux HelmRelease (kustomizace `operators`, infra/terraform/flux.tf): cert-manager (TLS infrastruktury),
+# trust-manager (distribuce CA bundlu), External Secrets Operator (tajemství z Key Vaultu). CA, bundle a ClusterSecretStore jsou v kustomizaci
+# `trust` (infra/k8s/trust, závisí na CRD odsud), Secrety a certifikáty platformy v overlays/aks. Obrazy chartů z ACR (images.yml je importuje),
+# ${ACR_LOGIN_SERVER} dosazuje Flux postBuild substitute.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- namespaces.yaml
+- cert-manager.yaml
+- external-secrets.yaml
