@@ -513,7 +513,7 @@ Výsledek: **53/53 + 8 INFO** (`measure` run 40581766759, `results/p3-6-20261027
 |---|---|---|
 | E1a | Certificate Ready, Secret s anotacemi cert-manageru, SAN git/mirror, podpis ověřen proti root, ca.crt == root, ConfigMap platform-ca od trust-manageru v platform-data + tenant-acme + tenant-beta, HelmReleasy Ready, Secret bez stopy kubectl | ✅ issuer ClusterIssuer/platform-ca, CN=platform-root-ca, 90 d, chain ok, bundle ve 3 ns, managers [] (žádný kubectl) |
 | E1b | ClusterSecretStore Ready (Workload Identity), 6 ExternalSecretů Ready + ownerReference, hodnoty == Key Vault (git token, heslo PG i v DSN gateway/FinOps/Dapr), zakazka-secrets 4 klíče, substitute bez PG_PASSWORD | ✅ store „store validated“; git token a heslo PG shodné s `az keyvault secret show`; substitute platform = ACR_LOGIN_SERVER, KV_NAME, OPENBAO_CLIENT_ID, PG_HOST |
-| E1c | žádný Secret v platform-data se stopou kubectl kromě `openbao-init`, harness nic nezaložil, závislosti operators → trust → platform | ✅ secrets_by_kubectl [] (ani openbao-init – init přes `kubectl apply` ze stdin nese manager `kubectl-client-side-apply`? ne: Secret už existoval z dřívějška), čekání 4,4 s |
+| E1c | žádný Secret v platform-data se stopou kubectl kromě `openbao-init`, harness nic nezaložil, závislosti operators → trust → platform | ✅ secrets_by_kubectl [] (ani `openbao-init` dnes stopu kubectl nenese – založen při dřívějším initu; přesun do Key Vaultu přesto zbývá), harness nic nezaložil, čekání na operátory 4,4 s |
 
 Výsledek: **56/56 + 8 INFO** (`measure` run 40603229736, `results/p3-6-20261028-002404.json`; 4 běhy). Nálezy:
 1. **ESO Workload Identity bere tenant jen z anotace SA** `azure.workload.identity/tenant-id`; bez ní „unable to create client“, s ní **a zároveň**
