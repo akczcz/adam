@@ -233,3 +233,4 @@ patches:
 - target: {kind: ConfigMap, name: zakazka-env}
   patch: |
     - {op: add, path: /data/P0_K8S_OIDC_ISSUER, value: "${AKS_OIDC_ISSUER}"}
+    - {op: add, path: /data/P0_KC_EXCHANGE_URL, value: http://keycloak.platform-data.svc:8080/realms/p0/protocol/openid-connect/token}   # pod role v ns tenanta: FQDN (2. běh E2: „Name or service not known“)
