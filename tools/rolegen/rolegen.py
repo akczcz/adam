@@ -62,10 +62,14 @@ def load_tenants(p: Path | None) -> list[dict]:
 def tenant_ns(tid): return f"tenant-{tid}"
 
 
-def tenant_k8s(tenants, agent_conf: str):
+KC_IDP_ALIAS = "aks"   # P3-6 E2: Keycloak identity provider typu kubernetes (projektovaný SA token podu role = client assertion klienta agent-<role>-<tenant>)
+
+
+def tenant_k8s(tenants, agent_conf: str, roles=()):
     """Per tenant s pody rolí (P3-2): Namespace tenant-<id> (PSS restricted), NetworkPolicy default-deny + egress jen DNS/gateway/paměť/aplikace/SPIRE
-    (žádný jiný tenant, žádný Postgres, žádný internet), SA `role` (sidecar spire-agent; k8s_psat agent_ns = hranice tenanta), RBAC pro SA zakazka
-    (pody a Secrety běhů jen v tomto ns), ConfigMap spire-agent-pod (agent.conf z infra/k8s/roles/spire-agent.conf)."""
+    (žádný jiný tenant, žádný Postgres, žádný internet), SA `role-<role>` per role (P3-6 E2: projektovaný token SA = client assertion klienta
+    Keycloaku agent-<role>-<tenant> – klient se hledá podle subjektu SA, proto SA per role; sidecar spire-agent; k8s_psat agent_ns = hranice tenanta),
+    RBAC pro SA zakazka (pody a Secrety běhů jen v tomto ns), ConfigMap spire-agent-pod (agent.conf z infra/k8s/roles/spire-agent.conf)."""
     docs = []
     for t in tenants:
         if not t.get("role_pods"): continue
@@ -77,8 +81,8 @@ def tenant_k8s(tenants, agent_conf: str):
             {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "role-egress", "namespace": ns},
              "spec": {"podSelector": {"matchLabels": {"app": "role"}}, "policyTypes": ["Egress"], "egress": [
                  {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}], "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-                 to("agentgateway", [4100, 3128]), to("memory", [9900]), to("zakazka", [8010]), to("spire-server", [8081])]}},
-            {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "role", "namespace": ns, "labels": lab}, "automountServiceAccountToken": False},
+                 to("agentgateway", [4100, 3128]), to("memory", [9900]), to("zakazka", [8010]), to("spire-server", [8081]), to("keycloak", [8080])]}},   # keycloak: token exchange z podu (P3-6 E2)
+            *[{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": role_sa(r["role"]), "namespace": ns, "labels": lab | {"platform.role": r["role"]}}, "automountServiceAccountToken": False} for r in roles if r["sandbox"].get("pod")],
             {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": {"name": "role-pods", "namespace": ns}, "rules": [
                 {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get", "list", "watch", "delete"]},
                 {"apiGroups": [""], "resources": ["pods/log"], "verbs": ["get"]},
@@ -173,6 +177,30 @@ def pod(r, tenant):
                      "restartPolicy": "Never"}}
 
 
+def role_sa(role): return f"role-{role}"
+
+
+def keycloak_clients(roles, tenants=("acme",)):
+    """P3-6 E2: klienti Keycloaku agent-<role>-<tenant> – autentizace `federated-jwt` (Signed JWT - Federated) projektovaným tokenem SA role-<role>
+    v ns tenanta (IdP `aks` typu kubernetes), zapnutý standard token exchange V2: pod role vymění access token schvalovatele (člověk z platform-gui)
+    za token sub=člověk, azp=agent-<role>-<tenant>, aud=memory → „jedná jménem“ doložené podpisem Keycloaku, ne claimem aplikace. Bez service
+    accountu (client_credentials nejsou potřeba). Aplikuje harness/operátor admin API (jako SPIRE entries); platform-gui dostane audience mappery."""
+    clients, mappers = [], []
+    for tenant in tenants:
+        for r in roles:
+            if not r["sandbox"].get("pod"): continue
+            cid = f"agent-{r['role']}-{tenant}"
+            clients.append({"clientId": cid, "name": f"role {r['role']} × tenant {tenant} (token exchange, SA {tenant_ns(tenant)}/{role_sa(r['role'])})", "enabled": True, "protocol": "openid-connect",
+                            "publicClient": False, "standardFlowEnabled": False, "directAccessGrantsEnabled": False, "serviceAccountsEnabled": False, "implicitFlowEnabled": False,
+                            "clientAuthenticatorType": "federated-jwt",
+                            "attributes": {"jwt.credential.issuer": KC_IDP_ALIAS, "jwt.credential.sub": f"system:serviceaccount:{tenant_ns(tenant)}:{role_sa(r['role'])}",
+                                           "standard.token.exchange.enabled": "true", "access.token.lifespan": "1800"},
+                            "defaultClientScopes": ["basic", "roles-flat", "tenant", "aud-memory"], "optionalClientScopes": []})
+            mappers.append({"name": f"aud-{cid}", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+                            "config": {"included.client.audience": cid, "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true"}})
+    return {"identity_provider": {"alias": KC_IDP_ALIAS, "providerId": "kubernetes"}, "clients": clients, "gui_mappers": mappers}
+
+
 def spire_entries(roles, tenants=("acme",)):
     """Registrace SPIRE (P2-3, P3-2 per tenant): alias uzlu per role × tenant = sidecar agent podu role (k8s_psat selektory agent_ns tenant-<id>/SA/pod-label
     platform.role – namespace tenanta je atestovaná hranice, ne label od aplikace) a workload entry spiffe://platform/role/<role>/<tenant> přes
@@ -182,7 +210,7 @@ def spire_entries(roles, tenants=("acme",)):
         for r in roles:
             if not r["sandbox"].get("pod"): continue
             alias = f"spiffe://platform/agent-pod/role/{r['role']}/{tenant}"
-            out.append({"spiffe_id": alias, "node": True, "selectors": ["k8s_psat:cluster:platform", f"k8s_psat:agent_ns:{tenant_ns(tenant)}", "k8s_psat:agent_sa:role", f"k8s_psat:agent_pod_label:platform.role:{r['role']}"]})
+            out.append({"spiffe_id": alias, "node": True, "selectors": ["k8s_psat:cluster:platform", f"k8s_psat:agent_ns:{tenant_ns(tenant)}", f"k8s_psat:agent_sa:{role_sa(r['role'])}", f"k8s_psat:agent_pod_label:platform.role:{r['role']}"]})
             out.append({"spiffe_id": f"spiffe://platform/role/{r['role']}/{tenant}", "parent_id": alias, "selectors": [f"unix:uid:{r['sandbox']['pod'].get('run_as_user', 1000)}"], "x509_svid_ttl": 3600, "jwt_svid_ttl": 1800})
     return out
 
@@ -232,7 +260,8 @@ def main():
     (out / "agentgateway/egress.yaml").write_text(yaml.safe_dump(egress(roles, pod_tenants), sort_keys=False))
     (out / "spire").mkdir(exist_ok=True); (out / "spire/entries.json").write_text(json.dumps(spire_entries(roles, pod_tenants), ensure_ascii=False, indent=1))
     agent_conf = Path(a.spire_agent_conf).read_text() if Path(a.spire_agent_conf).exists() else ""
-    (out / "k8s/tenants.yaml").write_text(yaml.safe_dump_all(tenant_k8s(tenants, agent_conf), sort_keys=False))
+    (out / "k8s/tenants.yaml").write_text(yaml.safe_dump_all(tenant_k8s(tenants, agent_conf, roles), sort_keys=False))
+    (out / "keycloak").mkdir(exist_ok=True); (out / "keycloak/clients.json").write_text(json.dumps(keycloak_clients(roles, pod_tenants), ensure_ascii=False, indent=1))   # P3-6 E2
     (out / "registry/tenants.json").write_text(json.dumps([{k: t[k] for k in ("id", "name", "profile", "budget_usd", "role_pods")} | {"namespace": tenant_ns(t["id"]) if t.get("role_pods") else None, "humans": [h["username"] for h in t.get("humans", [])]} for t in tenants], ensure_ascii=False, indent=1))
     registry = []
     for r in roles:

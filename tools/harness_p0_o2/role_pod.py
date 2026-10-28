@@ -63,19 +63,21 @@ def _template(role):
     return None
 
 
-def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json, srt_json):
+def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json, srt_json, subject=None):
     """Secret + Pod běhu role. Vrací (ns, name, secret, pod, info); info = {template, overrides, image} pro ledger a check P22b."""
     tenant = z.get("tenant") or os.environ.get("P0_TENANT", "acme"); ns = role_namespace(tenant); name = f"role-{role}-{run_id}"
     rc = os.environ.get("P0_ROLE_RUNTIME_CLASS", "kata-vm-isolation")
     env = {k: os.environ[k] for k in ("P0_LLM_URL", "P0_MEMORY_URL", "P0_MODEL", "P0_MAX_TURNS", "P0_CLI_MAX_RETRIES", "P0_GITHUB_REPO",
                                       "ANTHROPIC_WORKSPACE_ID", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST") if os.environ.get(k)}
-    env |= {"P0_ROLE_RUNTIME": "local", "P0_ROLE": role, "P0_ZAKAZKA": json.dumps(z, ensure_ascii=False), "P0_PROMPT": prompt, "P0_TOOLS": ",".join(tool_names),
+    z_env = {k: v for k, v in z.items() if k != "subject"} | ({"subject": {k: v for k, v in (z.get("subject") or {}).items() if k != "token"}} if z.get("subject") else {})   # P3-6 E2: token subjektu jen v Secretu
+    env |= {"P0_ROLE_RUNTIME": "local", "P0_ROLE": role, "P0_ZAKAZKA": json.dumps(z_env, ensure_ascii=False), "P0_PROMPT": prompt, "P0_TOOLS": ",".join(tool_names),
             "P0_RUN_ID": run_id, "P0_ARTIFACT_API": os.environ.get("P0_ARTIFACT_API", "http://zakazka:8010"),
             "P0_ROLE_OPTIONS_JSON": role_opts_json or "", "P0_SRT_SETTINGS_JSON": srt_json or "", "P0_SRT": os.environ.get("P0_ROLE_SRT", "/opt/node/bin/srt"),
             "HOME": "/tmp/home", "O1_LEDGER": "/tmp/role-ledger.jsonl", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
     labels = {"app": "role", "platform.role": role, "role": role, "platform.zakazka": re.sub(r"[^A-Za-z0-9_.-]", "-", z["id"])[:63], "platform.run": run_id}
     secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": ns, "labels": labels}, "type": "Opaque",
-              "stringData": {"P0_ROLE_TOKEN": token, "P0_ROLE_KEYS": json.dumps({"*": {role: key}}), "P0_RUN_TOKEN": RUNS[run_id]["token"]}}
+              "stringData": {"P0_ROLE_TOKEN": token, "P0_ROLE_KEYS": json.dumps({"*": {role: key}}), "P0_RUN_TOKEN": RUNS[run_id]["token"],
+                             **({"P0_SUBJECT_TOKEN": subject["token"]} if subject and subject.get("token") else {})}}   # P3-6 E2: access token schvalovatele → exchange v podu
     runtime_c = {"command": ["python", "/app/harness_p0_o2/role_runner.py"], "envFrom": [{"secretRef": {"name": name}}], "imagePullPolicy": os.environ.get("P0_ROLE_IMAGE_PULL", "Always"),
                  "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]}
     runtime_spec = {"nodeSelector": json.loads(os.environ.get("P0_ROLE_NODE_SELECTOR", '{"pool": "kata"}')),
@@ -88,7 +90,7 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
     if svid:
         env |= {"P0_ROLE_IDENTITY": "svid", "SPIFFE_ENDPOINT_SOCKET": "unix:///run/spire/sockets/agent.sock", "P0_TENANT": tenant}
         runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "spire-sockets", "mountPath": "/run/spire/sockets"}]
-        runtime_spec |= {"serviceAccountName": os.environ.get("P0_ROLE_SA", "role"), "shareProcessNamespace": True,
+        runtime_spec |= {"serviceAccountName": os.environ.get("P0_ROLE_SA_TEMPLATE", "role-{role}").format(role=role), "shareProcessNamespace": True,   # P3-6 E2: SA per role (client assertion klienta agent-<role>-<tenant>)
                          "initContainers": [{"name": "spire-agent", "image": os.environ.get("P0_ROLE_SPIRE_AGENT_IMAGE", "ghcr.io/spiffe/spire-agent:1.14.2"), "restartPolicy": "Always",
                                              "args": ["-config", "/run/spire/config/agent.conf"],
                                              "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}, "runAsUser": 1000, "runAsGroup": 1000},
@@ -100,6 +102,11 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
         runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "spire-sockets", "emptyDir": {"medium": "Memory", "sizeLimit": "4Mi"}}, {"name": "spire-data", "emptyDir": {"medium": "Memory", "sizeLimit": "16Mi"}},
                                                              {"name": "spire-agent-config", "configMap": {"name": os.environ.get("P0_ROLE_SPIRE_AGENT_CONFIG", "spire-agent-pod")}},
                                                              {"name": "spire-token", "projected": {"sources": [{"serviceAccountToken": {"path": "spire-agent", "expirationSeconds": 7200, "audience": "spire-server"}}]}}]
+    # P3-6 E2: token exchange z podu – projektovaný token SA role (aud = issuer realmu) jako client assertion klienta agent-<role>-<tenant> (IdP kubernetes)
+    if svid and os.environ.get("P0_KC_ISSUER") and os.environ.get("P0_KC_TOKEN_URL"):
+        env |= {"P0_KC_TOKEN_URL": os.environ["P0_KC_TOKEN_URL"], "P0_KC_CLIENT_ID": f"agent-{role}-{tenant}", "P0_KC_ASSERTION_FILE": "/var/run/secrets/kc/token", "P0_SUBJECT_SUB": (subject or {}).get("sub") or ""}
+        runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "kc-token", "mountPath": "/var/run/secrets/kc", "readOnly": True}]
+        runtime_spec["volumes"] = runtime_spec["volumes"] + [{"name": "kc-token", "projected": {"sources": [{"serviceAccountToken": {"path": "token", "expirationSeconds": 600, "audience": os.environ["P0_KC_ISSUER"]}}]}}]
     # P2-4: egress přes gateway CONNECT – CA gateway z ConfigMapy (terminace git/mirror), cíle sondy role_runner; token git má jen gateway
     if os.environ.get("P0_ROLE_CA_CONFIGMAP"):
         env |= {"P0_CA": "/etc/platform/ca/ca.crt", "SSL_CERT_FILE": "/etc/platform/ca/ca.crt", "CURL_CA_BUNDLE": "/etc/platform/ca/ca.crt", "GIT_SSL_CAINFO": "/etc/platform/ca/ca.crt",
@@ -184,14 +191,14 @@ def kill_zakazka_pods(zid, ledger, grace_s=20, tenant=None):
     return killed
 
 
-def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir):
+def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir, subject=None):
     """Spustí roli jako pod a vrátí výsledek ve tvaru agent_run (text, cost, files, work, arts, error, budget_exceeded)."""
     gc_orphans(role_namespace(z.get("tenant") or os.environ.get("P0_TENANT", "acme")), ledger)
     rid = new_run(role, z["id"])
     od = os.environ.get("P0_ROLE_OPTIONS_DIR")
     ro = open(f"{od}/{role}.json").read() if od and os.path.exists(f"{od}/{role}.json") else ""
     srt = open(f"{od}/srt-{role}.json").read() if od and os.path.exists(f"{od}/srt-{role}.json") else ""
-    ns, name, secret, pod, info = manifests(rid, role, z, prompt, tool_names, token=token, key=key, role_opts_json=ro, srt_json=srt)
+    ns, name, secret, pod, info = manifests(rid, role, z, prompt, tool_names, token=token, key=key, role_opts_json=ro, srt_json=srt, subject=subject)
     timeout = int(os.environ.get("P0_ROLE_TIMEOUT_S", "900")) + 300   # + čas na alokaci Kata uzlu autoscalerem z 0
     t0 = time.time(); p = {}; phase = "Pending"
     try:

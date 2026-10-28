@@ -636,6 +636,35 @@ def kc_ensure(a, http, KC, realm="p0"):
         reps = [http("GET", f"{A}/roles/{rn}", headers=H, timeout=20).json() for rn in u.get("realmRoles", [])]
         y = http("POST", f"{A}/users/{uid}/role-mappings/realm", headers=H, json=[{"id": r["id"], "name": r["name"]} for r in reps if "id" in r], timeout=20)
         if y.status_code >= 300: created["errors"].append(f"roles {u['username']}: {y.text[:200]}")
+    # P3-6 E2: IdP `aks` typu kubernetes (client assertion = projektovaný SA token podu role; issuer clusteru z Terraformu → zakazka-env), klienti
+    # agent-<role>-<tenant> z rolegen-build (federated-jwt + standard token exchange), audience mappery platform-gui (žadatel exchange musí být v aud
+    # tokenu člověka), lifespan tokenu GUI 30 min (subject token musí přežít do startu role bez HITL – reviewer po vývojáři)
+    def cm(name): r = kubectl(a, "-n", NS, "get", "configmap", name, "-o", "json"); return (json.loads(r.stdout).get("data") or {}) if r.returncode == 0 else {}
+    kcc = json.loads(cm("rolegen-build").get("keycloak-clients.json") or "{}"); issuer = (cm("zakazka-env").get("P0_K8S_OIDC_ISSUER") or "").strip(); e2 = {}
+    if kcc.get("clients") and issuer:
+        idp = kcc["identity_provider"]; r = http("GET", f"{A}/identity-provider/instances/{idp['alias']}", headers=H, timeout=20)
+        if r.status_code == 404:
+            x = http("POST", f"{A}/identity-provider/instances", headers=H, json={"alias": idp["alias"], "providerId": idp["providerId"], "enabled": True, "config": {"issuerDiscoveryUrl": issuer.rstrip("/")}}, timeout=90)
+            e2["idp"] = x.status_code
+            if x.status_code >= 300: created["errors"].append(f"idp {idp['alias']}: {x.text[:300]}")
+        else: e2["idp"] = "exists"
+        for c in kcc["clients"]:
+            if not http("GET", f"{A}/clients", headers=H, params={"clientId": c["clientId"]}, timeout=20).json():
+                x = http("POST", f"{A}/clients", headers=H, json=c, timeout=20); created["clients"].append((c["clientId"], x.status_code))
+                if x.status_code >= 300: created["errors"].append(f"client {c['clientId']}: {x.text[:200]}")
+        gui = http("GET", f"{A}/clients", headers=H, params={"clientId": "platform-gui"}, timeout=20).json()
+        if gui:
+            gid = gui[0]["id"]; have = {m["name"] for m in http("GET", f"{A}/clients/{gid}/protocol-mappers/models", headers=H, timeout=20).json()}
+            for m in kcc["gui_mappers"]:
+                if m["name"] in have: continue
+                x = http("POST", f"{A}/clients/{gid}/protocol-mappers/models", headers=H, json=m, timeout=20); e2.setdefault("gui_mappers", []).append((m["name"], x.status_code))
+            if (gui[0].get("attributes") or {}).get("access.token.lifespan") != "1800":
+                rep_ = dict(gui[0]); rep_["attributes"] = {**(rep_.get("attributes") or {}), "access.token.lifespan": "1800"}
+                x = http("PUT", f"{A}/clients/{gid}", headers=H, json=rep_, timeout=20); e2["gui_lifespan"] = x.status_code
+        ex = http("GET", f"{A}/authentication/flows/clients/executions", headers=H, timeout=20)
+        e2["federated_jwt_execution"] = next((x_.get("requirement") for x_ in (ex.json() if ex.status_code == 200 else []) if x_.get("providerId") == "federated-jwt"), None)   # realm z 26.8 ji má; starší realm = kopie flow
+    else: e2 = {"skipped": "bez keycloak-clients.json (rolegen-build) nebo P0_K8S_OIDC_ISSUER (zakazka-env)"}
+    created["e2"] = e2
     return created
 
 
@@ -1236,7 +1265,45 @@ def e1_checks(a, rep, kj, pre):
     rep.add("E1c", "Harness nic nevydává: žádný Secret v platform-data se stopou kubectl (managedFields) kromě openbao-init (init OpenBao – bootstrap, zbývá), ensure_platform_secrets nic nezaložil (jen čekal na operátory), Flux kustomizace operators → trust → platform v závislostech", "PASS" if set(by_kubectl) <= {"openbao-init"} and pre.get("created") == [] and ks.get("trust", {}).get("dependsOn") == ["operators"] and ks.get("platform", {}).get("dependsOn") == ["trust"] else "FAIL", {"secrets_by_kubectl": by_kubectl, "created_by_harness": pre.get("created"), "waited_s": pre.get("wait_s"), "flux_depends": {k: v.get("dependsOn") for k, v in ks.items()}})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False):
+def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
+    """E2 (P3-6): „jedná jménem“ doložené token exchange v podu role – subject = access token schvalovatele (člověk z platform-gui), client assertion =
+    projektovaný token SA role-<role> (IdP kubernetes) → Keycloak token sub=člověk, azp=agent-<role>-<tenant>; paměť ho ověřuje (X-Delegation),
+    zapisuje on_behalf_of do záznamů a registr org.agents.on_behalf_of. Keycloak 26.8.1 bez preview (delegace `act` i SPIFFE client auth jsou preview)."""
+    import base64 as _b64, psycopg
+    def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
+    def claims(t): return json.loads(_b64.urlsafe_b64decode(t.split(".")[1] + "==").decode())
+    ta, tb = tok("adam", "adam"), tok("bea", "bea"); adam_sub = claims(ta)["sub"]; aud_gui = claims(ta).get("aud"); aud_gui = aud_gui if isinstance(aud_gui, list) else [aud_gui]
+    # admin pohled na Keycloak (IdP + klient role)
+    import base64 as _b
+    pw = _b.b64decode(kubectl(a, "-n", NS, "get", "secret", "keycloak-admin", "-o", "jsonpath={.data.KC_BOOTSTRAP_ADMIN_PASSWORD}").stdout.strip()).decode()
+    adm = http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": "admin", "password": pw}, timeout=20).json().get("access_token")
+    H = {"Authorization": f"Bearer {adm}"}; A = f"{KC}/admin/realms/p0"
+    idp = http("GET", f"{A}/identity-provider/instances/aks", headers=H, timeout=20); idp_j = idp.json() if idp.status_code == 200 else {}
+    cl = http("GET", f"{A}/clients", headers=H, params={"clientId": "agent-architekt-acme"}, timeout=20).json(); cl0 = cl[0] if cl else {}
+    L = led(); pods = {e["role"]: e for e in L if e.get("kind") == "ROLE_POD" and e.get("zakazka") == zid}
+    deleg = {r: ((e.get("identity") or {}).get("delegation") or {}) for r, e in pods.items()}
+    def db(name, sql, args=()):
+        with psycopg.connect(dsn(name), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args or None).fetchall()
+    apr = {r_[0]: r_[1] for r_ in db("org", "SELECT action, approver FROM org.approvals WHERE workflow_instance = %s", (zid,))}
+    want_roles = [r for r in ("account", "architekt", "vyvojar", "reviewer", "sre") if r in pods]
+    ok_roles = {r: deleg.get(r, {}).get("sub") == adam_sub and deleg[r].get("azp") == f"agent-{r}-acme" and "memory" in (deleg[r].get("aud") if isinstance(deleg[r].get("aud"), list) else [deleg[r].get("aud")]) and deleg[r].get("client_assertion_sub") == f"system:serviceaccount:tenant-acme:role-{r}" and deleg[r].get("tenant_id") == "acme" and not deleg[r].get("act") for r in want_roles}
+    rep.add("E2a", "Token exchange v podu role (Keycloak 26.8.1 standard V2, bez preview): subject = access token schvalovatele H1/H2/H4 (člověk z platform-gui, v aud klient role), client assertion = projektovaný token SA role-<role> ns tenanta (IdP `aks` typu kubernetes, issuer clusteru z Terraformu, klient agent-<role>-<tenant> s autentizátorem federated-jwt) → token sub = Keycloak sub schvalovatele, azp = agent-<role>-acme, aud memory, tenant_id acme, bez `act` (delegace je preview); platí pro každou roli zakázky (account = zadavatel)", "PASS" if want_roles and all(ok_roles.values()) and idp_j.get("providerId") == "kubernetes" and (idp_j.get("config") or {}).get("jwksUrl") and cl0.get("clientAuthenticatorType") == "federated-jwt" and (cl0.get("attributes") or {}).get("standard.token.exchange.enabled") == "true" and "agent-architekt-acme" in aud_gui and all(v == adam_sub for v in apr.values()) else "FAIL", {"roles": {r: {k: deleg[r].get(k) for k in ("sub", "azp", "aud", "tenant_id", "client_assertion_sub", "client_assertion_iss", "exp_in_s", "exchange_ms", "act", "error")} for r in want_roles}, "ok_roles": ok_roles, "approver_sub": adam_sub, "approvals": apr, "idp": {"providerId": idp_j.get("providerId"), "issuer": (idp_j.get("config") or {}).get("issuer"), "jwks": bool((idp_j.get("config") or {}).get("jwksUrl"))}, "client": {"authenticator": cl0.get("clientAuthenticatorType"), "attributes": {k: (cl0.get("attributes") or {}).get(k) for k in ("jwt.credential.issuer", "jwt.credential.sub", "standard.token.exchange.enabled", "access.token.lifespan")}}, "gui_aud": aud_gui})
+    # E2b – paměť: záznamy rolí zakázky nesou on_behalf_of = sub schvalovatele; cizí/padělaná delegace odmítnuta
+    rows = db("memory", "SELECT created_by FROM memory_records WHERE created_by->>'agent_id' LIKE 'spiffe://platform/role/%%/acme' AND created_at > to_timestamp(%s)", (t_run,))
+    obo = [(r_[0] if isinstance(r_[0], dict) else json.loads(r_[0])).get("on_behalf_of") for r_ in rows]
+    agent_tok = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "client_credentials"}, auth=("agent-account", "p0-account-secret"), timeout=15).json().get("access_token", "")
+    def mem(deleg_tok): r = http("POST", f"{MEM}/tools/search_memory", json={"query": "kontakt", "limit": 1}, headers={"Authorization": f"Bearer {agent_tok}", "X-Delegation": deleg_tok}, timeout=15); return r.status_code
+    forged = ".".join(_b64.urlsafe_b64encode(json.dumps(x).encode()).decode().rstrip("=") for x in ({"alg": "HS256", "typ": "JWT"}, {"sub": adam_sub, "azp": "agent-account-acme", "aud": "memory", "iss": "http://keycloak:8080/realms/p0", "tenant_id": "acme", "exp": int(time.time()) + 600})) + ".x"
+    neg = {"gui_token_adam": mem(ta), "gui_token_bea": mem(tb), "forged_hs256": mem(forged), "none": http("POST", f"{MEM}/tools/search_memory", json={"query": "kontakt", "limit": 1}, headers={"Authorization": f"Bearer {agent_tok}"}, timeout=15).status_code}
+    rep.add("E2b", "Paměť čte delegaci z hlavičky X-Delegation: ověření JWKS realmu (RS256, aud memory), azp = klient role odpovídající SVID volajícího, tenant subjektu = tenant role → on_behalf_of = sub schvalovatele v created_by všech záznamů rolí tohoto běhu; token člověka z GUI (azp platform-gui) 403, token cizího tenanta 403, padělaný HS256 401, bez hlavičky beze změny (200)", "PASS" if rows and all(v == adam_sub for v in obo) and neg["gui_token_adam"] == 403 and neg["gui_token_bea"] == 403 and neg["forged_hs256"] == 401 and neg["none"] == 200 else "FAIL", {"records": len(rows), "on_behalf_of": sorted({str(v) for v in obo}), "negative": neg})
+    # E2c – registr: org.agents.on_behalf_of (metriky.md T1) + Governance MCP
+    ag = db("org", "SELECT role_id, on_behalf_of FROM org.agents WHERE zakazka_id = %s", (zid,))
+    tp = tok("platform-admin", "platform-admin"); g = http("POST", f"{APP}/agui/gov/tools/agents", json={"zakazka_id": zid}, headers={"Authorization": f"Bearer {tp}"}, timeout=30)
+    gj = (g.json().get("result") or []) if g.status_code == 200 else []
+    rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
+
+
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1463,6 +1530,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         run_tag = time.strftime("%H%M%S"); zid = f"{'P31' if gui else 'P23' if identity else 'P25' if registry else 'P22' if images else 'P21'}-{run_tag}-1"; t1 = time.time()
         if gui:
             zid, issue, pr, merged, st, adr_early = gui_flow(a, rep, http, led, zid, APP, GHS, dsn)
+            if e2: e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t1)   # P3-6 E2: mandát z token exchange v podu
         else:
             http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS s konfigurací rolí z Gitu.", "hitl_timeout_s": 7200, "klasifikace": KLAS_NO}, timeout=15)
             issue = pub(zid, "issue"); assert issue, f"issue nebylo publikováno; ledger: {[(e['kind'], e.get('role'), e.get('error') or e.get('phase')) for e in led() if e.get('zakazka') == zid][-8:]}"
@@ -1734,7 +1802,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

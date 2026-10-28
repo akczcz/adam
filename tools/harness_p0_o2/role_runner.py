@@ -44,7 +44,7 @@ def memory_probe(queries):
     mem = os.environ.get("P0_MEMORY_URL", ""); tok = os.environ.get("P0_ROLE_TOKEN", "")
     for q in queries or []:
         try:
-            r = httpx.post(f"{mem}/tools/search_memory", json={"query": q, "limit": 10}, headers={"Authorization": f"Bearer {tok}"}, timeout=10)
+            r = httpx.post(f"{mem}/tools/search_memory", json={"query": q, "limit": 10}, headers={"Authorization": f"Bearer {tok}", **({"X-Delegation": os.environ["P0_DELEGATION_TOKEN"]} if os.environ.get("P0_DELEGATION_TOKEN") else {})}, timeout=10)
             j = r.json() if r.status_code == 200 else {}
             rows = (j.get("records") or j.get("results")) if isinstance(j, dict) else (j if isinstance(j, list) else [])   # server paměti vrací {records: [...]}
             rows = rows or []
@@ -186,6 +186,24 @@ def main():
         if identity["kind"] != "svid":
             # fail-closed (P3-5 nález): záložní Keycloak token role nese tenant service accountu (acme) – pod cizího tenanta by paměť četl jako acme → žádný token
             os.environ["P0_ROLE_TOKEN"] = ""; identity = {"kind": "none", "svid_error": err, "wait_s": round(time.time() - t_id, 1), "stale_svids": stale[-5:], "fail_closed": True}
+    # P3-6 E2: token exchange – access token schvalovatele (subject, Secret) + projektovaný token SA role-<role> jako client assertion (IdP kubernetes)
+    # → Keycloak token sub=člověk, azp=agent-<role>-<tenant>: „jedná jménem“ doložené podpisem Keycloaku; paměť ho čte z hlavičky X-Delegation.
+    subj = os.environ.pop("P0_SUBJECT_TOKEN", None); af = os.environ.get("P0_KC_ASSERTION_FILE"); kc = os.environ.get("P0_KC_TOKEN_URL")
+    if subj and af and kc and os.path.exists(af):
+        try:
+            assertion = open(af).read().strip(); t_x = time.time()
+            r = httpx.post(kc, data={"grant_type": "urn:ietf:params:oauth:grant-type:token-exchange", "subject_token": subj, "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                                     "requested_token_type": "urn:ietf:params:oauth:token-type:access_token", "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                                     "client_assertion": assertion}, timeout=20)
+            if r.status_code == 200:
+                tok = r.json()["access_token"]; pl = json.loads(base64.urlsafe_b64decode(tok.split(".")[1] + "==").decode()); ap = json.loads(base64.urlsafe_b64decode(assertion.split(".")[1] + "==").decode())
+                os.environ["P0_DELEGATION_TOKEN"] = tok
+                identity["delegation"] = {"sub": pl.get("sub"), "azp": pl.get("azp"), "aud": pl.get("aud"), "tenant_id": pl.get("tenant_id"), "iss": pl.get("iss"), "exp_in_s": int(pl.get("exp", 0) - time.time()),
+                                          "client_assertion_sub": ap.get("sub"), "client_assertion_iss": ap.get("iss"), "exchange_ms": round((time.time() - t_x) * 1000), "act": pl.get("act")}
+            else: identity["delegation"] = {"error": f"http {r.status_code}: {r.text[:200]}", "client_id": os.environ.get("P0_KC_CLIENT_ID")}
+        except Exception as e: identity["delegation"] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+    elif subj: identity["delegation"] = {"error": "bez client assertion (P0_KC_ASSERTION_FILE/P0_KC_TOKEN_URL)"}
+    else: identity["delegation"] = None   # bez subjektu (interní API bez člověka) – role jedná bez mandátu, paměť zapíše on_behalf_of null
     print("identity=" + json.dumps(identity), flush=True); S["identity"] = identity
     probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}; S["probe"] = probe
     try: probe["internet_dns_github.com:443"] = tcp_probe("github.com", 443)

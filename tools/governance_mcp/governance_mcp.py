@@ -62,6 +62,7 @@ def rows(c, sql, args=()):
 
 
 def table_exists(c, t): return c.execute("SELECT to_regclass(%s) IS NOT NULL", (f"org.{t}",)).fetchone()[0]
+def column_exists(c, t, col): return bool(c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'org' AND table_name = %s AND column_name = %s", (t, col)).fetchone())
 
 
 TOOLS = {}
@@ -100,7 +101,8 @@ def t_roles(c, u, a):
 @tool("agents", "org.agents: instance rolí (SPIFFE ID per běh, klíč, obraz, uzel, cena); args {zakazka_id?, role_id?, limit?}")
 def t_agents(c, u, a):
     if not table_exists(c, "agents"): return []
-    q = "SELECT agent_id, tenant_id, role_id, role_version, zakazka_id, process_id, model, gateway_key_id, sandbox_profile, image_digest, node, runtime_class, exit_code, cost_usd, created_at FROM org.agents WHERE true"; args = []
+    obo = ", on_behalf_of" if column_exists(c, "agents", "on_behalf_of") else ""   # P3-6 E2
+    q = f"SELECT agent_id, tenant_id, role_id, role_version, zakazka_id, process_id, model, gateway_key_id, sandbox_profile, image_digest, node, runtime_class, exit_code, cost_usd, created_at{obo} FROM org.agents WHERE true"; args = []
     if a.get("zakazka_id"): q += " AND zakazka_id = %s"; args.append(a["zakazka_id"])
     if a.get("role_id"): q += " AND role_id = %s"; args.append(a["role_id"])
     return rows(c, q + " ORDER BY created_at DESC LIMIT %s", (*args, int(a.get("limit", 200))))
