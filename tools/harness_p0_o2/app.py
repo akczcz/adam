@@ -146,16 +146,18 @@ def role_token(role):
     """Token role pro server paměti. V clusteru (P1-5) si ho aplikace bere sama z Keycloaku (client_credentials klienta agent-<role>,
     tajemství z P0_ROLE_CLIENT_SECRETS – v cíli z OpenBao) s cache do expirace; v harnessu P0 dostává hotové tokeny v P0_ROLE_TOKENS."""
     if os.environ.get("P0_ROLE_TOKEN"): return os.environ["P0_ROLE_TOKEN"]   # pod role (P1-6): hotový token od aplikace, pod nemá client secret
+    if os.environ.get("P0_ROLE_RUNTIME") == "local" and "P0_RUN_ID" in os.environ: return ""   # pod role bez SVID = fail-closed (prázdný token), ne pád (P3-6 E2 nález)
     kc = os.environ.get("P0_KC_TOKEN_URL")
     if kc:
         secrets = json.loads(os.environ.get("P0_ROLE_CLIENT_SECRETS", "{}"))
+        if role not in secrets: return ""
         c = _KC_CACHE.get(role)
         if c and c["exp"] - 30 > time.time(): return c["token"]
         r = httpx.post(kc, data={"grant_type": "client_credentials"}, auth=(f"agent-{role}", secrets[role]), timeout=10); r.raise_for_status()
         j = r.json(); _KC_CACHE[role] = {"token": j["access_token"], "exp": time.time() + float(j.get("expires_in", 300))}
         return j["access_token"]
     toks = json.loads(os.environ.get("P0_ROLE_TOKENS", "{}"))
-    return toks.get(role) or os.environ["P0_AGENT_TOKEN"]
+    return toks.get(role) or os.environ.get("P0_AGENT_TOKEN", "")
 
 
 def role_key(role, zakazka_id, tenant=None, cap_usd=None):

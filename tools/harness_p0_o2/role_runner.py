@@ -188,7 +188,7 @@ def main():
             os.environ["P0_ROLE_TOKEN"] = ""; identity = {"kind": "none", "svid_error": err, "wait_s": round(time.time() - t_id, 1), "stale_svids": stale[-5:], "fail_closed": True}
     # P3-6 E2: token exchange – access token schvalovatele (subject, Secret) + projektovaný token SA role-<role> jako client assertion (IdP kubernetes)
     # → Keycloak token sub=člověk, azp=agent-<role>-<tenant>: „jedná jménem“ doložené podpisem Keycloaku; paměť ho čte z hlavičky X-Delegation.
-    subj = os.environ.pop("P0_SUBJECT_TOKEN", None); af = os.environ.get("P0_KC_ASSERTION_FILE"); kc = os.environ.get("P0_KC_TOKEN_URL")
+    subj = os.environ.pop("P0_SUBJECT_TOKEN", None); af = os.environ.get("P0_KC_ASSERTION_FILE"); kc = os.environ.get("P0_KC_EXCHANGE_URL")
     if subj and af and kc and os.path.exists(af):
         try:
             assertion = open(af).read().strip(); t_x = time.time()
@@ -202,7 +202,7 @@ def main():
                                           "client_assertion_sub": ap.get("sub"), "client_assertion_iss": ap.get("iss"), "exchange_ms": round((time.time() - t_x) * 1000), "act": pl.get("act")}
             else: identity["delegation"] = {"error": f"http {r.status_code}: {r.text[:200]}", "client_id": os.environ.get("P0_KC_CLIENT_ID")}
         except Exception as e: identity["delegation"] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
-    elif subj: identity["delegation"] = {"error": "bez client assertion (P0_KC_ASSERTION_FILE/P0_KC_TOKEN_URL)"}
+    elif subj: identity["delegation"] = {"error": "bez client assertion (P0_KC_ASSERTION_FILE/P0_KC_EXCHANGE_URL)"}
     else: identity["delegation"] = None   # bez subjektu (interní API bez člověka) – role jedná bez mandátu, paměť zapíše on_behalf_of null
     print("identity=" + json.dumps(identity), flush=True); S["identity"] = identity
     probe = {"internet_1.1.1.1:443": tcp_probe("1.1.1.1", 443), "internet_dns_github.com:443": None}; S["probe"] = probe

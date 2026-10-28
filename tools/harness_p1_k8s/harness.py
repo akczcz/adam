@@ -654,13 +654,15 @@ def kc_ensure(a, http, KC, realm="p0"):
                 if x.status_code >= 300: created["errors"].append(f"client {c['clientId']}: {x.text[:200]}")
         gui = http("GET", f"{A}/clients", headers=H, params={"clientId": "platform-gui"}, timeout=20).json()
         if gui:
-            gid = gui[0]["id"]; have = {m["name"] for m in http("GET", f"{A}/clients/{gid}/protocol-mappers/models", headers=H, timeout=20).json()}
+            gid = gui[0]["id"]
+            if (gui[0].get("attributes") or {}).get("access.token.lifespan") != "1800":   # PUT bez protocolMappers (reprezentace by je přepsala) a PŘED přidáním mapperů (nález E2, 1. běh)
+                rep_ = {k: v for k, v in gui[0].items() if k not in ("protocolMappers", "defaultClientScopes", "optionalClientScopes")}; rep_["attributes"] = {**(rep_.get("attributes") or {}), "access.token.lifespan": "1800"}
+                x = http("PUT", f"{A}/clients/{gid}", headers=H, json=rep_, timeout=20); e2["gui_lifespan"] = x.status_code
+            have = {m["name"] for m in http("GET", f"{A}/clients/{gid}/protocol-mappers/models", headers=H, timeout=20).json()}
             for m in kcc["gui_mappers"]:
                 if m["name"] in have: continue
                 x = http("POST", f"{A}/clients/{gid}/protocol-mappers/models", headers=H, json=m, timeout=20); e2.setdefault("gui_mappers", []).append((m["name"], x.status_code))
-            if (gui[0].get("attributes") or {}).get("access.token.lifespan") != "1800":
-                rep_ = dict(gui[0]); rep_["attributes"] = {**(rep_.get("attributes") or {}), "access.token.lifespan": "1800"}
-                x = http("PUT", f"{A}/clients/{gid}", headers=H, json=rep_, timeout=20); e2["gui_lifespan"] = x.status_code
+            e2["gui_mappers_now"] = len(http("GET", f"{A}/clients/{gid}/protocol-mappers/models", headers=H, timeout=20).json())
         ex = http("GET", f"{A}/authentication/flows/clients/executions", headers=H, timeout=20)
         e2["federated_jwt_execution"] = next((x_.get("requirement") for x_ in (ex.json() if ex.status_code == 200 else []) if x_.get("providerId") == "federated-jwt"), None)   # realm z 26.8 ji má; starší realm = kopie flow
     else: e2 = {"skipped": "bez keycloak-clients.json (rolegen-build) nebo P0_K8S_OIDC_ISSUER (zakazka-env)"}
@@ -1280,6 +1282,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     H = {"Authorization": f"Bearer {adm}"}; A = f"{KC}/admin/realms/p0"
     idp = http("GET", f"{A}/identity-provider/instances/aks", headers=H, timeout=20); idp_j = idp.json() if idp.status_code == 200 else {}
     cl = http("GET", f"{A}/clients", headers=H, params={"clientId": "agent-architekt-acme"}, timeout=20).json(); cl0 = cl[0] if cl else {}
+    gui = http("GET", f"{A}/clients", headers=H, params={"clientId": "platform-gui"}, timeout=20).json(); gui_m = sorted(m["name"] for m in http("GET", f"{A}/clients/{gui[0]['id']}/protocol-mappers/models", headers=H, timeout=20).json()) if gui else []
     L = led(); pods = {e["role"]: e for e in L if e.get("kind") == "ROLE_POD" and e.get("zakazka") == zid}
     deleg = {r: ((e.get("identity") or {}).get("delegation") or {}) for r, e in pods.items()}
     def db(name, sql, args=()):
@@ -1287,7 +1290,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     apr = {r_[0]: r_[1] for r_ in db("org", "SELECT action, approver FROM org.approvals WHERE workflow_instance = %s", (zid,))}
     want_roles = [r for r in ("account", "architekt", "vyvojar", "reviewer", "sre") if r in pods]
     ok_roles = {r: deleg.get(r, {}).get("sub") == adam_sub and deleg[r].get("azp") == f"agent-{r}-acme" and "memory" in (deleg[r].get("aud") if isinstance(deleg[r].get("aud"), list) else [deleg[r].get("aud")]) and deleg[r].get("client_assertion_sub") == f"system:serviceaccount:tenant-acme:role-{r}" and deleg[r].get("tenant_id") == "acme" and not deleg[r].get("act") for r in want_roles}
-    rep.add("E2a", "Token exchange v podu role (Keycloak 26.8.1 standard V2, bez preview): subject = access token schvalovatele H1/H2/H4 (člověk z platform-gui, v aud klient role), client assertion = projektovaný token SA role-<role> ns tenanta (IdP `aks` typu kubernetes, issuer clusteru z Terraformu, klient agent-<role>-<tenant> s autentizátorem federated-jwt) → token sub = Keycloak sub schvalovatele, azp = agent-<role>-acme, aud memory, tenant_id acme, bez `act` (delegace je preview); platí pro každou roli zakázky (account = zadavatel)", "PASS" if want_roles and all(ok_roles.values()) and idp_j.get("providerId") == "kubernetes" and (idp_j.get("config") or {}).get("jwksUrl") and cl0.get("clientAuthenticatorType") == "federated-jwt" and (cl0.get("attributes") or {}).get("standard.token.exchange.enabled") == "true" and "agent-architekt-acme" in aud_gui and all(v == adam_sub for v in apr.values()) else "FAIL", {"roles": {r: {k: deleg[r].get(k) for k in ("sub", "azp", "aud", "tenant_id", "client_assertion_sub", "client_assertion_iss", "exp_in_s", "exchange_ms", "act", "error")} for r in want_roles}, "ok_roles": ok_roles, "approver_sub": adam_sub, "approvals": apr, "idp": {"providerId": idp_j.get("providerId"), "issuer": (idp_j.get("config") or {}).get("issuer"), "jwks": bool((idp_j.get("config") or {}).get("jwksUrl"))}, "client": {"authenticator": cl0.get("clientAuthenticatorType"), "attributes": {k: (cl0.get("attributes") or {}).get(k) for k in ("jwt.credential.issuer", "jwt.credential.sub", "standard.token.exchange.enabled", "access.token.lifespan")}}, "gui_aud": aud_gui})
+    rep.add("E2a", "Token exchange v podu role (Keycloak 26.8.1 standard V2, bez preview): subject = access token schvalovatele H1/H2/H4 (člověk z platform-gui, v aud klient role), client assertion = projektovaný token SA role-<role> ns tenanta (IdP `aks` typu kubernetes, issuer clusteru z Terraformu, klient agent-<role>-<tenant> s autentizátorem federated-jwt) → token sub = Keycloak sub schvalovatele, azp = agent-<role>-acme, aud memory, tenant_id acme, bez `act` (delegace je preview); platí pro každou roli zakázky (account = zadavatel)", "PASS" if want_roles and all(ok_roles.values()) and idp_j.get("providerId") == "kubernetes" and (idp_j.get("config") or {}).get("jwksUrl") and cl0.get("clientAuthenticatorType") == "federated-jwt" and (cl0.get("attributes") or {}).get("standard.token.exchange.enabled") == "true" and "agent-architekt-acme" in aud_gui and all(v == adam_sub for v in apr.values()) else "FAIL", {"roles": {r: {k: deleg[r].get(k) for k in ("sub", "azp", "aud", "tenant_id", "client_assertion_sub", "client_assertion_iss", "exp_in_s", "exchange_ms", "act", "error")} for r in want_roles}, "ok_roles": ok_roles, "approver_sub": adam_sub, "approvals": apr, "idp": {"providerId": idp_j.get("providerId"), "issuer": (idp_j.get("config") or {}).get("issuer"), "jwks": bool((idp_j.get("config") or {}).get("jwksUrl"))}, "client": {"authenticator": cl0.get("clientAuthenticatorType"), "attributes": {k: (cl0.get("attributes") or {}).get(k) for k in ("jwt.credential.issuer", "jwt.credential.sub", "standard.token.exchange.enabled", "access.token.lifespan")}}, "gui_aud": aud_gui, "gui_mappers": gui_m, "gui_lifespan": (gui[0].get("attributes") or {}).get("access.token.lifespan") if gui else None})
     # E2b – paměť: záznamy rolí zakázky nesou on_behalf_of = sub schvalovatele; cizí/padělaná delegace odmítnuta
     rows = db("memory", "SELECT created_by FROM memory_records WHERE created_by->>'agent_id' LIKE 'spiffe://platform/role/%%/acme' AND created_at > to_timestamp(%s)", (t_run,))
     obo = [(r_[0] if isinstance(r_[0], dict) else json.loads(r_[0])).get("on_behalf_of") for r_ in rows]
@@ -1461,13 +1464,14 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             out = []
             for blk in show.split("\n\n"):
                 f = dict(l.split(":", 1) for l in blk.splitlines() if ":" in l); f = {k.strip(): v.strip() for k, v in f.items()}
+                f["selectors"] = sorted(l.split(":", 1)[1].strip() for l in blk.splitlines() if l.strip().startswith("Selector"))   # P3-6 E2: SA per role → selektor alias uzlu se mění
                 if f.get("Entry ID"): out.append(f)
             return out
         for e in ents:
             show = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-spiffeID", e["spiffe_id"], "-socketPath", "/tmp/spire-server/private/api.sock").stdout
             have = entry_fields(show) if e["spiffe_id"] in show else []
-            if have and (e.get("node") or any(h.get("Parent ID") == e.get("parent_id") for h in have)): continue
-            for h in have:   # P3-2: stejné SPIFFE ID s jiným rodičem (alias uzlu per tenant) → smazat a založit znovu, jinak agent tenanta „no identity issued“
+            if have and ((e.get("node") and any(h["selectors"] == sorted(e["selectors"]) for h in have)) or (not e.get("node") and any(h.get("Parent ID") == e.get("parent_id") for h in have))): continue
+            for h in have:   # P3-2: stejné SPIFFE ID s jiným rodičem (alias uzlu per tenant) nebo jinými selektory (P3-6 E2: agent_sa:role-<role>) → smazat a založit znovu
                 kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "delete", "-socketPath", "/tmp/spire-server/private/api.sock", "-entryID", h["Entry ID"]); spire_applied.append((e["spiffe_id"], "deleted", h.get("Parent ID")))
             args = [SPIRE_SERVER_BIN, "entry", "create", "-socketPath", "/tmp/spire-server/private/api.sock", "-spiffeID", e["spiffe_id"]] + (["-node"] if e.get("node") else ["-parentID", e["parent_id"]])
             for sel in e["selectors"]: args += ["-selector", sel]
