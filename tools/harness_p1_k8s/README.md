@@ -587,6 +587,39 @@ account obou zakázek – nepřekryly se (druhý workflow čeká ~60 s na vydán
 1.14.2 → 1.15.5 proběhl in-place (sqlite datastore, migrace automaticky), agenti 1.14.2 by směli zůstat (politika: agent ≤ server, max −1 minor);
 (3) `StaleSvid` je název harnessu, v SPIRE logu odpovídá `AGENT_NOT_ACTIVE` → reattest.
 
+## P3-6 E6 – verzování workflow (2026-10-29, AKS, `--step p3-6` = … + **E6a–c**)
+
+- **Problém (nález P3-5)**: Dapr Workflow přehrává historii instance proti kódu orchestrátoru; každý PR měnil orchestrátor `zakazka` v `app.py`,
+  takže instance ze starého obrazu (čekající dny na HITL, nebo SUSPENDED po stopu tenanta) po restartu podu a prvním eventu skončily **FAILED**
+  (`NonDeterminismError`; v suspendu Dapr eventy jen bufferuje, nesoulad se ukáže až po resume). U2d a O3 proto měřily jen zakázky běhu.
+- **Řešení**: nativní **named versioning** Dapru (runtime 1.17+, `dapr-ext-workflow` 1.18.3 `register_versioned_workflow`, ověřeno 2026-10-29):
+  orchestrátor žije v soběstačném modulu `tools/harness_p0_o2/zakazka_wf.py` (aktivity volá **jménem**, konstanty z env, nic z `app.py`),
+  verze = sha256 obsahu (12 hex), snímek každé verze v `wf_versions/zakazka_<verze>.py` (`python wf_versions.py freeze`; `check` v `images.yml`
+  odmítne obraz bez snímku aktuální verze). Aplikace registruje všechny snímky pod jménem `zakazka` (`is_latest=False`) a aktuální soubor jako
+  `is_latest`; runtime zapíše vybranou verzi do historie instance (`OrchestratorStarted.version`, durabletask-go v0.12.6 v daprd 1.18.9) a při
+  každém replayi volá právě ji. Neregistrovaná verze = instance **STALLED** (ne FAILED), dokud se verze nevrátí. Aktivity se mění volně (replay
+  jejich tělo neběží), jen jména a kontrakty vstupů/výstupů musí zůstat zpětně kompatibilní se všemi registrovanými verzemi; `z` jen přidává pole.
+  Interní API: `GET /_wf/versions` (instance per verze z ledgeru + stav v Dapru, `drained` = snímek lze smazat, `legacy` = instance bez verze
+  z doby před E6 – Dapr je přehrává na latest), `POST /_wf/latest` (přepnutí verze pro nové instance za běhu – rollback/kanárek bez obrazu,
+  do restartu podu; privátní registr SDK, pinned 1.18.3), `POST /zakazky/<id>/classify` (dotazník z interního API), `wf_version` v
+  `ZAKAZKA_START`, `KLASIFIKACE_WAIT`/`HITL_WAIT`, `WF_VERSIONS` při startu a v `GET /zakazky/<id>`.
+- **Kandidát**: snímek `zakazka_<B>.py` s jiným pořadím úloh (`notify WORKFLOW_VERSION` na startu, `KLASIFIKACE_DONE` po klasifikaci) je
+  registrovaný, ale není latest – přesně změna, která bez verzování končí FAILED; harness ho používá jako „starší verzi“. Povýšení = kopie přes
+  `zakazka_wf.py`, až budou instance `legacy` terminální (ty se přehrávají na latest, kompatibilní jen při stejném pořadí úloh – proto je
+  první latest verze logicky identická s orchestrátorem před E6).
+- **Měření** (`e6_flow`, až po všech tocích s pody rolí – restart podu aplikace zahodí běhy rolí v paměti): `wf_versions.py check` v runneru;
+  `POST /_wf/latest` → kandidát, zakázka X bez dotazníku čeká na klasifikaci (stejné čekání jako HITL: external event + timery), latest zpět,
+  zakázka Y na latest; pod aplikace smazán (nový proces = replay z Postgresu) → `POST …/classify` K1 → obě Odmitnuto, X dojela na kandidátovi
+  (po restartu zapsal `KLASIFIKACE_DONE` se svou verzí), Y na latest; report verzí.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E6a | snímek aktuální verze existuje a odpovídá názvu (`check`), `GET /_wf/versions`: current == verze z HEAD, latest == current, ≥ 2 registrované verze, `WF_VERSIONS` při startu | ⏳ |
+| E6b | zakázka na ne-latest verzi + zakázka na latest čekají na klasifikaci → restart podu aplikace → event → obě COMPLETED/Odmitnuto na své verzi, žádná FAILED; latest po restartu zpět na verzi obrazu | ⏳ |
+| E6c | report verzí: starší verze po dokončení `drained`, latest má instance běhu; `legacy` jen informativně | ⏳ |
+
+Výsledek: ⏳ (doplním po měření).
+
 ## Spuštění
 
 ```bash

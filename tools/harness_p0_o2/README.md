@@ -252,6 +252,10 @@ O2_PLACEMENT_PORT=50105 O2_SCHEDULER_PORT=50106 O2_ETCD_CLIENT_PORT=12379 .venv/
 - OpenBao 2.7: `sys/audit` přes API je zakázán (CVE-2025-6000) – audit device jen deklarativně v HCL (`audit "file" { type, path, options }`;
   `path` je povinné), i v `-dev` režimu přes `-config=`.
 - Ověření podpisu v orchestrátoru Dapr Workflow nesmí volat síť (replay) → aktivita `verify_approval`.
+- Orchestrátor `zakazka` je od P3-6 E6 v `zakazka_wf.py` (verzovaný modul: aktivity jménem, konstanty z env) + snímky `wf_versions/`; `app.py`
+  nese aktivity a HTTP API, registraci verzí dělá `wf_versions.register(rt)`. Změna orchestrátoru = `python wf_versions.py freeze` před commitem;
+  změna aktivity = nic (jen kontrakt zpětně kompatibilní). `dapr-ext-workflow` 1.18.3 má vendored durabletask (`dapr/ext/workflow/_durabletask`),
+  balíček `durabletask-dapr` v instalaci je zbytečný (ponechán).
 - Claude CLI v hostovaném prostředí (`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`) posílá klíč jako `Authorization: Bearer`, jinak `x-api-key` –
   `apiKey.location` v gateway musí odpovídat (harness volí podle env). 429 z rozpočtu nese `Retry-After` do konce okna → `CLAUDE_CODE_MAX_RETRIES=0`.
 - `budget_usage`: `used_amount` v nanodolarech, `window_start/end` v ms; flush z paměti do DB každých 5 s (`FLUSH_INTERVAL`), test musí počkat.

@@ -1,6 +1,6 @@
 ---
 tema: Durable execution jako samostatná vrstva pod agenty
-naposledy_overeno: 2026-10-21
+naposledy_overeno: 2026-10-29
 zralost: stable (Temporal, Dapr, DBOS) / mixed (licence ostatních)
 primarni_zdroje:
   - https://github.com/temporalio/temporal/blob/main/LICENSE
@@ -10,6 +10,8 @@ primarni_zdroje:
   - https://github.com/aaif/project-proposals/issues/34
   - https://docs.dapr.io/concepts/dapr-services/scheduler/
   - https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler
+  - https://github.com/dapr/docs/blob/v1.18/daprdocs/content/en/developing-applications/building-blocks/workflow/workflow-versioning.md
+  - https://github.com/dapr/durabletask-go/blob/v0.12.6/backend/orchestration.go
   - https://github.com/microsoft/durabletask-mssql
   - https://raw.githubusercontent.com/google/adk-python/main/src/google/adk/apps/_configs.py
   - https://raw.githubusercontent.com/temporalio/temporal/main/CONTRIBUTING.md
@@ -166,6 +168,29 @@ Pro produkt dodávaný zákazníkovi zvážit **externí etcd** (`--etcd-embed=f
 a zálohování podle stanoveného RPO. Věta o ztrátě dat při škálování v docs trvá; Dapr 1.19
 (rc.4 2026-10-16) mění jen retenci etcd revizí (10 000 místo 1 000 000).
 
+### Verzování workflow v Dapru (1.17+) – ověřeno 2026-10-29
+
+Replay historie proti změněnému kódu orchestrátoru = `NonDeterminismError` → instance FAILED (Python worker porovnává i jméno úlohy;
+v SUSPENDED se eventy bufferují, nesoulad vyplave až po resume – přesně nález P3-5 na AKS). Dapr 1.17 (2026-02-27) přinesl
+**named versioning + patches** (Python, Java, .NET, Go):
+
+| Mechanismus | Co dělá | API (dapr-ext-workflow 1.18.3) | Zdroj |
+|---|---|---|---|
+| Pojmenované verze | více verzí pod jedním jménem workflow; verze, pod kterou instance začala, je v historii (`OrchestratorStarted.version`, backend ji tam zapíše z odpovědi workeru – durabletask-go `orchestration.go` v0.12.6 = daprd 1.18.9) a replay volá vždy ji; nové instance = `is_latest` | `@wfr.versioned_workflow(name=, version_name=, is_latest=)` / `register_versioned_workflow` | docs v1.18 `workflow-versioning.md`, `workflow-protocol-versioning.md`, release notes 1.17 |
+| Chybějící verze | instance **STALLED** (`ExecutionStalled reason=VERSION_NAME_MISMATCH`), pokračuje, až se replika s verzí připojí | – | tamtéž (STALLED na AKS neměřeno) |
+| Patch | `if ctx.is_patched("p1"): …` – při prvním průchodu se patch zapíše do historie, replay drží původní větev | `ctx.is_patched(name)` | tamtéž |
+| Resolver | neverzovaná registrace téhož jména má **přednost** před verzovanými; historie bez verze → latest; chybějící verze → `VersionNotRegisteredException` | `_Registry.get_orchestrator` (vendored durabletask) | kód SDK v1.18.3 |
+| Co verzování **neřeší** | změna typů vstupu/výstupu workflow a aktivit (docs: „doesn't address changing the types of inputs and outputs“); výběr verze při startu instance (Python 1.18.3 nemá parametr, protokol to umožňuje) | – | docs v1.18 |
+| Rerun (1.16+), `continue_as_new` | rerun = nová instance ze stejné historie a **stejného kódu** (ne nástroj na změnu kódu; v SDK až `dapr` 1.19.0); `continue_as_new` zahodí nevyřízené čekání (eventy/timery) a volá ho jen orchestrátor | `rerun_workflow_from_event` (1.19 SDK), `ctx.continue_as_new(new_input, save_events=)` | docs 1.17 howto-manage-workflow, `task.py` |
+
+Důsledek pro návrh (změřeno P3-6 E6, `tools/harness_p1_k8s`): orchestrátor jako **vzácně měněný verzovaný modul** (aktivity jménem,
+verze = hash obsahu, snímky starých verzí v repu do dojetí instancí), změny do **aktivit** (replay jejich tělo neběží; mění se jen kontrakt),
+vstupy jako dlouho žijící kontrakt (jen přidávat volitelná pole). Temporal má stejný problém a stejný tvar řešení (`patched`/worker versioning).
+SDK: `dapr-ext-workflow` končí na 1.18.3 (2026-07-15), od `dapr` 1.19.0 (2026-10-22) jsou ext balíčky součástí jádra (`pip install dapr[workflow]`,
+kompatibilita s daprd 1.18.9 neověřena); durabletask je vendored v `dapr/ext/workflow/_durabletask` (MIT kód Microsoftu uvnitř Apache balíčku – jen SBOM).
+Dapr 1.18 navíc: start s ID aktivní instance = conflict (uvolnění purge/retention), purge od 1.17 maže i reminder Scheduleru, tagged timer pro nekonečný
+`wait_for_external_event`, `WorkflowAccessPolicy` (cross-app operace; lokální start nepokryje → „drain“ přes policy nejde).
+
 ### Google ADK: store konverzace ≠ durable execution
 
 Rozdíl, který se snadno přehlédne. ADK `DatabaseSessionService` (extra `[db]`, dialekty
@@ -204,11 +229,15 @@ pro ADK; rozdíl je jen v tom, že u Dapru je to dokumentovaná vlastnost aktivi
 - [ ] ADK resume: chová se kagentí `KAgentSessionService` při at-least-once obnovení
       stejně jako `DatabaseSessionService`? Netestováno.
 - [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
+- [ ] `continue_as_new` a verze: drží nová inkarnace instance `version.name`, nebo se resolvuje znovu na latest? V docs ani kódu nenalezeno.
+- [ ] `dapr` 1.19.0 SDK (rerun, `get_workflow_history`, `list_workflow_instance_ids`) proti daprd 1.18.9 – podporovaná kombinace? Do té doby list/history jen CLI.
+- [ ] STALLED při odebrání verze změřit (E6 měří jen běh dvou registrovaných verzí); jak ho zobrazit v GUI (dnes Running/Pozastaveno/FAILED).
 - [~] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
       po 14 dnech. Ani jeden kandidát nemá dokumentovaný maximální horizont čekání.
       → 2026-10-21: Dapr Agents změřeno pro krátkou pauzu (viz dapr-agents.md), 14 dní zbývá.
 
 ## Changelog
+- 2026-10-29: verzování workflow v Dapru 1.17+ (named versions v historii instance, STALLED místo FAILED, patches, limity) – ověřeno z docs v1.18, SDK 1.18.3 a durabletask-go v0.12.6; změřeno P3-6 E6 na AKS; otevřené otázky k `continue_as_new`, SDK 1.19 a STALLED.
 - 2026-10-24: P1-5 kind – Dapr Workflow 1.18.9 v clusteru s `state.postgresql`: pod aplikace smazán uprostřed zakázky (čekání na HITL), nový pod obnovil instanci ze stavu v Postgresu a zakázka doběhla (`tools/harness_p1_k8s` P15c). Bez operátoru a sentry (daprd jako sidecar, komponenty z ConfigMapy).
 - 2026-09-27: první verze.
 - 2026-10-21: harness na Dapr Agents potvrdil at-least-once při restartu během nástroje.
