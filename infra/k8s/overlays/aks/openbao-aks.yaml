@@ -11,7 +11,9 @@ data:
     listener "tcp" {
       address         = "0.0.0.0:8200"
       cluster_address = "0.0.0.0:8201"
-      tls_disable     = true          # uvnitř clusteru (dev); TLS až P3
+      tls_cert_file   = "/openbao/tls/tls.crt"   # P3-6 E7: cert z cert-manageru (Certificate openbao-tls, ClusterIssuer platform-ca); reload jen SIGHUP/restart
+      tls_key_file    = "/openbao/tls/tls.key"
+      tls_min_version = "tls12"
     }
     storage "raft" {
       path    = "/openbao/data"

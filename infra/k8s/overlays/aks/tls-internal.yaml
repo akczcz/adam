@@ -1,0 +1,31 @@
+# P3-6 E7: TLS OpenBao a Keycloaku z interní CA (ClusterIssuer platform-ca, infra/k8s/trust/pki.yaml). Listenery obou služeb jsou jen HTTPS
+# (OpenBao 8200, Keycloak 8443; issuer tokenů https://keycloak:8443/realms/p0), klienti ověřují proti ConfigMapě platform-ca (trust-manager Bundle:
+# systémové CA + root platformy → SSL_CERT_FILE v podech aplikace, paměti, governance; pody rolí ji mají od P2-4).
+# SAN: jméno Service (krátké i FQDN) + localhost/127.0.0.1 pro `kubectl port-forward` harnessu a operátora (bez ingressu; jiný přístup zvenčí není).
+# Rotace: cert-manager obnoví leaf 30 dní před koncem (duration 90 d); Keycloak soubory znovu načte sám (https-certificates-reload-period, 1 h),
+# OpenBao až po SIGHUP/restartu podu (harness měří E7c) – restart = `kubectl -n platform-data delete pod openbao-0` (auto-unseal z Key Vaultu).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-tls
+spec:
+  secretName: openbao-tls
+  duration: 2160h
+  renewBeforePercentage: 33
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
+  dnsNames: [openbao, openbao.platform-data, openbao.platform-data.svc, openbao.platform-data.svc.cluster.local, localhost]
+  ipAddresses: ["127.0.0.1"]
+  issuerRef: {name: platform-ca, kind: ClusterIssuer, group: cert-manager.io}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keycloak-tls
+spec:
+  secretName: keycloak-tls
+  duration: 2160h
+  renewBeforePercentage: 33
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Always}
+  dnsNames: [keycloak, keycloak.platform-data, keycloak.platform-data.svc, keycloak.platform-data.svc.cluster.local, localhost]
+  ipAddresses: ["127.0.0.1"]
+  issuerRef: {name: platform-ca, kind: ClusterIssuer, group: cert-manager.io}

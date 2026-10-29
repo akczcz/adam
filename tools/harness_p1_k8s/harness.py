@@ -833,7 +833,7 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         blocked_cm = bool(beta_keys) and all((k.get("metadata") or {}).get("blocked") == "tenant-stop" and all(b["limit"]["amount"] == 0 for b in k.get("budgets", [])) for k in beta_keys)
         safe = re.sub(r"[^a-z0-9-]", "-", zb2.lower()).strip("-")[:40]; pf_b = PortForward(a, "openbao", 18204, 8200); pf_gw = PortForward(a, "agentgateway", 14100, 4100); gw_http = None
         try:
-            kv = http("GET", f"http://127.0.0.1:18204/v1/secret/data/zakazky/{safe}/gateway-keys", headers={"X-Vault-Token": init_root_token}, timeout=10)
+            kv = http("GET", f"https://127.0.0.1:18204/v1/secret/data/zakazky/{safe}/gateway-keys", headers={"X-Vault-Token": init_root_token}, timeout=10)
             key = (((kv.json().get("data") or {}).get("data") or {}) if kv.status_code == 200 else {}).get("account")
             t_k = time.time()
             while key and time.time() - t_k < 120:   # propagace ConfigMapy → sidecar merge → hot reload (řádově 10–60 s)
@@ -1340,6 +1340,73 @@ def e6_flow(a, rep, http, led, APP, kj, tag):
     rep.add("E6c", "Report verzí pro drain (GET /_wf/versions): instance per verze podle ledgeru + stavu v Dapru; starší verze má po dokončení E6b jen terminální instance (drained = snímek lze smazat), latest má instance běhu; `legacy` = instance z doby před verzováním (Dapr je přehrává na latest – kompatibilní, dokud se nezmění pořadí úloh); chybějící verze by instance nechala STALLED, ne FAILED (Dapr 1.17+, neměřeno)", "PASS" if vo.get("registered") and vo.get("instances", {}).get("COMPLETED", 0) >= 1 and vo.get("drained") is True and vc.get("registered") and sum(vc.get("instances", {}).values()) >= 1 else "FAIL", {"old": vo, "current": vc, "legacy": v_end.get("legacy"), "latest": v_end.get("latest"), "wall_s": round(time.time() - t_e, 1)})
 
 
+def platform_ca_bundle(a, kj):
+    """P3-6 E7: root interní CA (Secret cert-manager/platform-root-ca) → logs/platform-ca.crt a bundle certifi + root → SSL_CERT_FILE procesu harnessu
+    (httpx trust_env, urllib/PyJWKClient, Playwright ne – GUI jde přes aplikaci). Vrací cestu k rootu."""
+    import base64 as _b, certifi
+    sec = kj("-n", "cert-manager", "get", "secret", "platform-root-ca"); root = _b.b64decode((sec.get("data") or {}).get("ca.crt", "")).decode()
+    assert root.strip(), "Secret cert-manager/platform-root-ca bez ca.crt (kustomizace trust není Ready?)"
+    (LOGS / "platform-ca.crt").write_text(root); (LOGS / "ca-bundle.pem").write_text(open(certifi.where()).read().rstrip("\n") + "\n" + root)
+    os.environ["SSL_CERT_FILE"] = str(LOGS / "ca-bundle.pem")
+    return str(LOGS / "platform-ca.crt")
+
+
+def e7_checks(a, rep, http, kj, KC, BAO, ca_file):
+    """E7 (P3-6): OpenBao (8200) a Keycloak (8443) jen HTTPS s certifikáty z interní CA (cert-manager ClusterIssuer platform-ca), klienti ověřují
+    proti ConfigMapě platform-ca (SSL_CERT_FILE v podech); issuer tokenů https://keycloak:8443/realms/p0; plaintext odmítnut."""
+    import ssl, base64 as _b
+    from cryptography import x509; from cryptography.hazmat.primitives.asymmetric import ec
+    def get(ns, kind, name):
+        r = kj("-n", ns, "get", kind, name); return r if isinstance(r, dict) else {}
+    def ready(o): return next((c.get("status") for c in ((o.get("status") or {}).get("conditions") or []) if c.get("type") == "Ready"), None)
+    root = open(ca_file).read(); rootc = x509.load_pem_x509_certificate(root.encode())
+    ctx_root = ssl.create_default_context(cafile=ca_file); ctx_public = ssl.create_default_context()   # jen veřejné CA (systém) – interní cert musí odmítnout
+    certs = {}
+    for name in ("openbao-tls", "keycloak-tls"):
+        c = get(NS, "certificate", name); sec = get(NS, "secret", name); crt = _b.b64decode((sec.get("data") or {}).get("tls.crt", "")).decode()
+        leaf = x509.load_pem_x509_certificate(crt.split("-----END CERTIFICATE-----")[0].encode() + b"-----END CERTIFICATE-----\n") if crt else None
+        try: rootc.public_key().verify(leaf.signature, leaf.tbs_certificate_bytes, ec.ECDSA(leaf.signature_hash_algorithm)); chain = True
+        except Exception as e: chain = type(e).__name__
+        san = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value if leaf else None
+        certs[name] = {"ready": ready(c), "issuer": ((sec.get("metadata") or {}).get("annotations") or {}).get("cert-manager.io/issuer-name"), "dns": sorted(san.get_values_for_type(x509.DNSName)) if san else [], "ip": [str(i) for i in san.get_values_for_type(x509.IPAddress)] if san else [], "chain_ok": chain, "not_after": leaf.not_valid_after_utc.isoformat() if leaf else None, "days_left": (leaf.not_valid_after_utc - __import__("datetime").datetime.now(__import__("datetime").timezone.utc)).days if leaf else None}
+    def probe(url, ctx, **kw):
+        try: r = httpx.get(url, verify=ctx, timeout=15, **kw); return {"http": r.status_code, "body": r.text[:120]}
+        except Exception as e: return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+    bao_ok = probe(f"{BAO}/v1/sys/health?standbyok=true", ctx_root); bao_pub = probe(f"{BAO}/v1/sys/health?standbyok=true", ctx_public)
+    kc_disc = probe(f"{KC}/realms/p0/.well-known/openid-configuration", ctx_root); kc_pub = probe(f"{KC}/realms/p0/.well-known/openid-configuration", ctx_public)
+    iss = None
+    try: iss = httpx.get(f"{KC}/realms/p0/.well-known/openid-configuration", verify=ctx_root, timeout=15).json().get("issuer")
+    except Exception: pass
+    # plaintext zevnitř clusteru (pod aplikace): OpenBao TLS listener odpoví 400 „HTTPS server“, Keycloak port 8080 Service nemá (connect error)
+    code = "import httpx\nfor u in ('http://openbao:8200/v1/sys/health', 'http://keycloak:8080/realms/p0', 'http://keycloak:8443/realms/p0'):\n    try: r = httpx.get(u, timeout=5); print(u, r.status_code, r.text[:60].replace('\\n', ' '))\n    except Exception as e: print(u, 'ERR', type(e).__name__)\n"
+    plain = kubectl(a, "-n", NS, "exec", "deploy/zakazka", "-c", "app", "--", "python", "-c", code, timeout=90).stdout.strip().splitlines()
+    plain_ok = len(plain) == 3 and (" 400 " in plain[0] or " ERR " in plain[0]) and " ERR " in plain[1] and (" 400 " in plain[2] or " ERR " in plain[2])
+    svc = {n: [p_["port"] for p_ in (get(NS, "service", n).get("spec") or {}).get("ports", [])] for n in ("openbao", "keycloak")}
+    env = get(NS, "configmap", "zakazka-env").get("data") or {}
+    cm_ca = (get(NS, "configmap", "platform-ca").get("data") or {}).get("ca.crt", "")
+    want_sans = {"openbao-tls": ["localhost", "openbao", "openbao.platform-data", "openbao.platform-data.svc", "openbao.platform-data.svc.cluster.local"], "keycloak-tls": ["keycloak", "keycloak.platform-data", "keycloak.platform-data.svc", "keycloak.platform-data.svc.cluster.local", "localhost"]}
+    ok_certs = all(v["ready"] == "True" and v["issuer"] == "platform-ca" and v["chain_ok"] is True and v["dns"] == want_sans[k] and v["ip"] == ["127.0.0.1"] and (v["days_left"] or 0) > 30 for k, v in certs.items())
+    rep.add("E7a", "TLS OpenBao a Keycloaku z interní CA (cert-manager Certificate openbao-tls/keycloak-tls, ClusterIssuer platform-ca): Secrety vydané, leaf podepsán rootem platformy, SAN = jméno Service (krátké i FQDN) + localhost/127.0.0.1 (port-forward), > 30 dní platnosti; OpenBao /sys/health i Keycloak discovery přes HTTPS ověřené proti root CA (proti veřejným CA odmítnuto), issuer tokenů https://keycloak:8443/realms/p0; plaintext zevnitř clusteru odmítnut (OpenBao 400 HTTPS server, Keycloak 8080 bez Service); Service jen 8200/8443(+9000 mgmt); zakazka-env P0_BAO_ADDR/P0_KC_* https + SSL_CERT_FILE = ConfigMap platform-ca (root)", "PASS" if ok_certs and bao_ok.get("http") in (200, 429, 472, 473, 501, 503) and "error" in bao_pub and kc_disc.get("http") == 200 and "error" in kc_pub and iss == "https://keycloak:8443/realms/p0" and plain_ok and svc.get("openbao") == [8200, 8201] and svc.get("keycloak") == [8443, 9000] and env.get("P0_BAO_ADDR", "").startswith("https://") and all(env.get(k, "").startswith("https://keycloak:8443/") for k in ("P0_KC_TOKEN_URL", "P0_KC_JWKS_URL", "P0_KC_ISSUER")) and env.get("P0_KC_EXCHANGE_URL", "").startswith("https://keycloak.platform-data.svc:8443/") and env.get("SSL_CERT_FILE") == "/etc/platform/ca/ca.crt" and cm_ca.strip() == root.strip() else "FAIL", {"certs": certs, "openbao": {"root_ca": bao_ok, "public_ca": bao_pub}, "keycloak": {"root_ca": kc_disc, "public_ca": kc_pub, "issuer": iss}, "plaintext_from_pod": plain, "services": svc, "env": {k: env.get(k) for k in ("P0_BAO_ADDR", "P0_KC_TOKEN_URL", "P0_KC_ISSUER", "P0_KC_EXCHANGE_URL", "SSL_CERT_FILE")}, "platform_ca_is_root": cm_ca.strip() == root.strip()})
+
+
+def e7_app_checks(rep, http, led, APP, zid, t_run):
+    """E7b: klienti přes TLS v provozu – aplikace (password grant z GUI, BAO_LOGIN auth kubernetes, SIGN transit), server paměti (JWKS → volání rolí 200),
+    Governance MCP (token člověka), pod role (token exchange na https URL, iss https); žádná chyba TLS v ledgeru."""
+    L = [e for e in led() if e.get("ts", 0) > t_run]
+    me = http("POST", f"{APP}/agui/login", json={"username": "adam", "password": "adam"}, timeout=20); tok = (me.json() if me.status_code == 200 else {}).get("token") or (me.json() if me.status_code == 200 else {}).get("access_token")
+    iss = None
+    if tok:
+        import jwt as _j
+        try: iss = _j.decode(tok, options={"verify_signature": False}).get("iss")
+        except Exception: pass
+    bao = [e for e in L if e["kind"] == "BAO_LOGIN"]; signs = [e for e in L if e["kind"] == "SIGN" and e.get("zakazka") == zid]
+    mem = [e for e in L if e["kind"] == "TOOL" and e.get("zakazka") == zid and e.get("tool") in ("search_memory", "create_memory")]
+    pods = [e for e in L if e["kind"] == "ROLE_POD" and e.get("zakazka") == zid]; dele = [d for d in (((p.get("identity") or {}).get("delegation")) for p in pods) if d]
+    gov = http("POST", f"{APP}/agui/gov/tools/zakazky", json={}, headers={"Authorization": f"Bearer {tok}"}, timeout=30).status_code if tok else None
+    tls_err = [e for e in L if any("SSL" in str(v) or "CERTIFICATE_VERIFY" in str(v) or "certificate verify" in str(v).lower() for v in e.values())]
+    rep.add("E7b", "Klienti přes TLS v provozu: přihlášení člověka z GUI = password grant aplikace na https Keycloak (token iss https://keycloak:8443/realms/p0), aplikace do OpenBao přes https (BAO_LOGIN auth kubernetes, SIGN transit u zakázky), server paměti ověřil tokeny rolí z JWKS přes https (volání paměti z podů 200), Governance MCP ověřil token člověka (200), pody rolí vyměnily token na https URL (delegace s iss https); v ledgeru žádná chyba ověření certifikátu", "PASS" if me.status_code == 200 and iss == "https://keycloak:8443/realms/p0" and bao and all(b.get("method") == "kubernetes" for b in bao) and signs and all(s_.get("backend") == "openbao-transit" for s_ in signs) and mem and all(m.get("http") == 200 for m in mem) and gov == 200 and dele and all(d.get("iss") == "https://keycloak:8443/realms/p0" and d.get("exchange_ms") for d in dele) and not tls_err else "FAIL", {"login": me.status_code, "iss": iss, "bao_login": len(bao), "signs": len(signs), "memory_200": sum(1 for m in mem if m.get("http") == 200), "memory_total": len(mem), "gov": gov, "delegations": [{k: d.get(k) for k in ("iss", "azp", "exchange_ms", "error")} for d in dele], "tls_errors": [{"kind": e["kind"], "error": str(e.get("error"))[:100]} for e in tls_err][:3]})
+
+
 def e1_checks(a, rep, kj, pre):
     """E1 (P3-6): tajemství a certifikáty platformy vydávají operátoři z Gitu – cert-manager (interní CA → agentgateway-tls), trust-manager
     (ConfigMap platform-ca v platform-data a ns tenantů), ESO (Key Vault přes workload identitu → postgres-auth, agentgateway-secrets, zakazka-secrets,
@@ -1413,8 +1480,9 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rows = db("memory", "SELECT created_by FROM memory_records WHERE created_by->>'agent_id' LIKE 'spiffe://platform/role/%%/acme' AND created_at > to_timestamp(%s)", (t_run,))
     obo = [(r_[0] if isinstance(r_[0], dict) else json.loads(r_[0])).get("on_behalf_of") for r_ in rows]
     agent_tok = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "client_credentials"}, auth=("agent-account", "p0-account-secret"), timeout=15).json().get("access_token", "")
+    kc_iss = http("GET", f"{KC}/realms/p0/.well-known/openid-configuration", timeout=15).json().get("issuer")   # P3-6 E7: issuer https://keycloak:8443/realms/p0
     def mem(deleg_tok): r = http("POST", f"{MEM}/tools/search_memory", json={"query": "kontakt", "limit": 1}, headers={"Authorization": f"Bearer {agent_tok}", "X-Delegation": deleg_tok}, timeout=15); return r.status_code
-    forged = ".".join(_b64.urlsafe_b64encode(json.dumps(x).encode()).decode().rstrip("=") for x in ({"alg": "HS256", "typ": "JWT"}, {"sub": adam_sub, "azp": "agent-account-acme", "aud": "memory", "iss": "http://keycloak:8080/realms/p0", "tenant_id": "acme", "exp": int(time.time()) + 600})) + ".x"
+    forged = ".".join(_b64.urlsafe_b64encode(json.dumps(x).encode()).decode().rstrip("=") for x in ({"alg": "HS256", "typ": "JWT"}, {"sub": adam_sub, "azp": "agent-account-acme", "aud": "memory", "iss": kc_iss, "tenant_id": "acme", "exp": int(time.time()) + 600})) + ".x"
     neg = {"gui_token_adam": mem(ta), "gui_token_bea": mem(tb), "forged_hs256": mem(forged), "none": http("POST", f"{MEM}/tools/search_memory", json={"query": "kontakt", "limit": 1}, headers={"Authorization": f"Bearer {agent_tok}"}, timeout=15).status_code}
     rep.add("E2b", "Paměť čte delegaci z hlavičky X-Delegation: ověření JWKS realmu (RS256, aud memory), azp = klient role odpovídající SVID volajícího, tenant subjektu = tenant role → on_behalf_of = sub schvalovatele v created_by všech záznamů rolí tohoto běhu; token člověka z GUI (azp platform-gui) 403, token cizího tenanta 403, padělaný HS256 401, bez hlavičky beze změny (200)", "PASS" if rows and all(v == adam_sub for v in obo) and neg["gui_token_adam"] == 403 and neg["gui_token_bea"] == 403 and neg["forged_hs256"] == 401 and neg["none"] == 200 else "FAIL", {"records": len(rows), "on_behalf_of": sorted({str(v) for v in obo}), "negative": neg})
     # E2c – registr: org.agents.on_behalf_of (metriky.md T1) + Governance MCP
@@ -1424,7 +1492,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1502,7 +1570,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     if kubectl(a, "-n", NS, "rollout", "status", "statefulset/openbao", "--timeout=600s", timeout=620).returncode != 0:   # P2-3: nový config (seal plugin) → pod se restartuje
         st_ = kubectl(a, "-n", NS, "get", "pod", "openbao-0", "-o", "jsonpath={range .status.initContainerStatuses[*]}{.name}={.state}{'\\n'}{end}{range .status.containerStatuses[*]}{.name}={.state}{'\\n'}{end}").stdout
         raise AssertionError(f"openbao-0 nenaběhl:\n{st_}\n{kubectl(a, '-n', NS, 'logs', 'openbao-0', '--all-containers', '--tail=40', '--prefix').stdout[-3000:]}")
-    pf_bao = PortForward(a, "openbao", 18200, 8200); BAO = "http://127.0.0.1:18200"
+    ca_file = platform_ca_bundle(a, kj)   # P3-6 E7: OpenBao i Keycloak jen HTTPS z interní CA – httpx (trust_env) i urllib ověřují přes SSL_CERT_FILE (certifi + root platformy)
+    pf_bao = PortForward(a, "openbao", 18200, 8200); BAO = "https://127.0.0.1:18200"
     seal0 = None
     for _ in range(40):
         try: seal0 = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json(); break
@@ -1601,8 +1670,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     rolls = {k: kubectl(a, "-n", NS, "rollout", "status", k, "--timeout=600s", timeout=620).returncode == 0 for k in ("deployment/keycloak", "deployment/opa", "statefulset/placement", "statefulset/scheduler", "deployment/agentgateway", "deployment/mock-upstream", "deployment/memory", "deployment/mock-github", "deployment/bridge", "deployment/zakazka")}
     for n, p in (("zakazka", 8010), ("memory", 9900), ("mock-github", 9801), ("bridge", 9802)):
         kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", f"app={n}", "--timeout=300s", timeout=320)
-    pfs = {n: PortForward(a, n, lp, rp) for n, lp, rp in (("zakazka", 18010, 8010), ("memory", 19900, 9900), ("mock-github", 19801, 9801), ("bridge", 19802, 9802), ("keycloak", 18080, 8080))}
-    APP, MEM, GHM, GHS, KC = "http://127.0.0.1:18010", "http://127.0.0.1:19900", "http://127.0.0.1:19801/repos/akczcz/adam", "http://127.0.0.1:19801/_debug/state", "http://127.0.0.1:18080"
+    pfs = {n: PortForward(a, n, lp, rp) for n, lp, rp in (("zakazka", 18010, 8010), ("memory", 19900, 9900), ("mock-github", 19801, 9801), ("bridge", 19802, 9802), ("keycloak", 18443, 8443))}   # P3-6 E7: Keycloak jen HTTPS 8443
+    APP, MEM, GHM, GHS, KC = "http://127.0.0.1:18010", "http://127.0.0.1:19900", "http://127.0.0.1:19801/repos/akczcz/adam", "http://127.0.0.1:19801/_debug/state", "https://127.0.0.1:18443"
     def http(method, url, **kw):
         for i in range(12):
             try: return httpx.request(method, url, **kw)
@@ -1620,6 +1689,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         gw_ok = all(config_from_git.values()) and gw_cfg.get("llm", {}).get("models", [{}])[0].get("params", {}).get("baseUrl") == "$LLM_UPSTREAM_URL" and "apiKey" in (gw_cfg.get("llm", {}).get("policies") or {}) and "apikeys-template.yaml" in (cfg_cluster["rolegen-build"] or {}) and any(k.startswith("srt-") for k in (cfg_cluster["rolegen-build"] or {}))
         rep.add("P21a", "AKS: Flux kustomizations platform + roles Ready na HEAD; ConfigMapy agentgateway-config a rolegen-build v clusteru == render infra/k8s/overlays/aks z HEAD (konfigurace z Gitu, harness nic nerenderuje); gateway má apiKey policy a upstream z env LLM_UPSTREAM_URL; rolegen-build nese apikeys-template a srt; platforma vč. mock-upstream Ready; OpenBao init/unseal/transit; schéma paměti M1 na Flexible Serveru; harness dodal jen tajemství", "PASS" if all(v == "True" for v in flux.values()) and gw_ok and all(rolls.values()) and all(v == 200 for v in health.values()) and dapr_tables else "FAIL", {"flux": flux, "flux_rev": flux_rev, "config_from_git": config_from_git, "config_diff": config_diff, "gateway_upstream_env": gw_env.get("LLM_UPSTREAM_URL"), "rolegen_build_keys": sorted(cfg_cluster["rolegen-build"] or {}), "rollouts": rolls, "health": health, "pg": {"host": pg_host, "version": pg_ver, "via": pg_via}, "dapr_state_tables": dapr_tables, "rollout_s": round(time.time() - t0, 1)})
 
+        if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
         def led(): return http("GET", f"{APP}/_debug/ledger", timeout=20).json()
         def hash_of(zid, typ):
             for e in reversed(led()):
@@ -1653,6 +1723,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if gui:
             zid, issue, pr, merged, st, adr_early = gui_flow(a, rep, http, led, zid, APP, GHS, dsn)
             if e2: e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t1)   # P3-6 E2: mandát z token exchange v podu
+            if e7: e7_app_checks(rep, http, led, APP, zid, t1)   # P3-6 E7: klienti OpenBao/Keycloaku přes TLS v provozu
         else:
             http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS s konfigurací rolí z Gitu.", "hitl_timeout_s": 7200, "klasifikace": KLAS_NO}, timeout=15)
             issue = pub(zid, "issue"); assert issue, f"issue nebylo publikováno; ledger: {[(e['kind'], e.get('role'), e.get('error') or e.get('phase')) for e in led() if e.get('zakazka') == zid][-8:]}"
@@ -1719,7 +1790,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
         if identity:
             # P2-3 – OpenBao auto-unseal + auth kubernetes, SVID podů rolí
-            pf_bao2 = PortForward(a, "openbao", 18201, 8200); B2 = "http://127.0.0.1:18201"
+            pf_bao2 = PortForward(a, "openbao", 18201, 8200); B2 = "https://127.0.0.1:18201"
             kubectl(a, "-n", NS, "delete", "pod", "openbao-0", "--wait=true", timeout=180)   # restart: musí naběhnout unsealed bez operátora
             t_un = time.time(); unsealed_after = None
             for _ in range(60):
@@ -1785,7 +1856,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             # P2-6 – FinOps naostro: klíče role × zakázka z OpenBao (KV), cena zakázky = součet klíčů z budget_usage, strop zakázky vynucuje orchestrátor, registr org.zakazky
             safe_zid = re.sub(r"[^a-z0-9-]", "-", zid.lower()).strip("-")[:40]
             pf_bao3 = PortForward(a, "openbao", 18203, 8200); Hb3 = {"X-Vault-Token": init["root_token"]}
-            try: kv = http("GET", f"http://127.0.0.1:18203/v1/secret/data/zakazky/{safe_zid}/gateway-keys", headers=Hb3, timeout=10)
+            try: kv = http("GET", f"https://127.0.0.1:18203/v1/secret/data/zakazky/{safe_zid}/gateway-keys", headers=Hb3, timeout=10)
             finally: pf_bao3.stop()
             kv_keys = ((kv.json().get("data") or {}).get("data") or {}) if kv.status_code == 200 else {}
             kv_hashes = {r_: _h.sha256(v.encode()).hexdigest() for r_, v in kv_keys.items()}
@@ -1925,7 +1996,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

@@ -221,7 +221,23 @@ na své verzi; chybějící verze = STALLED, ne FAILED. **Postup při změně or
 (nový snímek; `images.yml` build padá bez něj) → commit obojího. **Úklid**: `GET /_wf/versions` (port-forward `zakazka` 8010) → verze s `drained: true`
 = snímek smazat v Gitu. Aktivity (`app.py`) se mění volně, kontrakty vstupů/výstupů jen rozšiřovat. Měření: `measure` s `e2e=p3-6` (E6a–c).
 
+## P3-6 E7: TLS OpenBao a Keycloaku z interní CA (2026-10-29)
+
+`overlays/aks/tls-internal.yaml`: Certificate `openbao-tls` a `keycloak-tls` (ClusterIssuer `platform-ca`, 90 d, obnova 30 d před koncem,
+SAN = jméno Service krátké i FQDN + `localhost`/`127.0.0.1` pro `kubectl port-forward`). OpenBao: listener `tls_cert_file/tls_key_file`
+(`tls_min_version = tls12`), `BAO_API_ADDR/CLUSTER_ADDR` https, readiness `scheme: HTTPS`; **reload certifikátu jen SIGHUP/restart podu**
+(`kubectl -n platform-data delete pod openbao-0`, auto-unseal z Key Vaultu). Keycloak: `--http-enabled=false`, `KC_HTTPS_PORT=8443`,
+`KC_HTTPS_CERTIFICATE_FILE/KEY_FILE` ze Secretu, `KC_HOSTNAME=https://keycloak:8443` → **issuer `https://keycloak:8443/realms/p0`**
+(tokeny všech klientů – paměť, aplikace, Governance MCP, pody rolí – ověřují nový iss), management 9000 zůstává HTTP (probe);
+Keycloak soubory certifikátu znovu načítá sám. Klienti: `zakazka-env` `P0_BAO_ADDR`/`P0_KC_*` https, `P0_KC_EXCHANGE_URL` https FQDN,
+`SSL_CERT_FILE=/etc/platform/ca/ca.crt` (ConfigMap `platform-ca` z trust-manageru, mount do app/memory/governance; pody rolí ji mají od P2-4) –
+httpx (trust_env) i urllib/PyJWKClient ji ctí. Harness: port-forward Keycloak 18443→8443, OpenBao https, `SSL_CERT_FILE` = certifi + root platformy
+(`logs/ca-bundle.pem`). Služby: `openbao` 8200/8201, `keycloak` 8443/9000 – port 8080 už Service nemá. kind (`base/`) zůstává HTTP.
+Měření: `measure` s `e2e=p3-6` (E7a–b).
+
 ## Pasti (AKS + Flux)
+- Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);
+  realm sám issuer nenese (`KC_HOSTNAME`).
 - Změna orchestrátoru Dapr Workflow bez nové verze = instance ze starého obrazu po prvním eventu FAILED (nedeterministický replay; v SUSPENDED
   se to ukáže až po resume). Od E6: každá změna `zakazka_wf.py` = nová verze + snímek; instance bez verze (před E6) jedou na latest.
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
