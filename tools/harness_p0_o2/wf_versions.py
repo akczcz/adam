@@ -116,10 +116,12 @@ def report(rt, starts: list, state_of) -> dict:
     per = {v: {"registered": True, "instances": {}, "drained": True} for v in have}; legacy = {"instances": {}, "drained": True}
     for e in starts:
         zid, v = e.get("zakazka"), e.get("wf_version")
-        st = (state_of(zid) or {}).get("status") or "UNKNOWN"
+        so = state_of(zid) or {}; st = so.get("status") or "UNKNOWN"
         slot = per.setdefault(v, {"registered": False, "instances": {}, "drained": True}) if v else legacy
         slot["instances"][st] = slot["instances"].get(st, 0) + 1
         if st in NON_TERMINAL or st == "UNKNOWN": slot["drained"] = False
+        if st == "FAILED" and so.get("failure") and len(slot.setdefault("failures", [])) < 3:   # proč (Dapr failureDetails) – vzorek pro diagnostiku replaye
+            slot["failures"].append({"zakazka": zid, "type": so["failure"].get("type"), "message": (so["failure"].get("message") or "")[:240]})
     return {"name": NAME, "current": current_version(), "latest": latest(rt), "versions": per, "legacy": legacy, "snapshots": {k: s["ok"] for k, s in snapshots().items()}}
 
 

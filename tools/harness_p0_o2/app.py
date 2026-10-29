@@ -860,7 +860,14 @@ async def get(zid: str):
     st = client().get_workflow_state(zid, fetch_payloads=True)
     if not st: raise HTTPException(404)
     start = next((e for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid), {})
-    return {"id": zid, "status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None, "wf_version": start.get("wf_version")}
+    return {"id": zid, "status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None, "wf_version": start.get("wf_version"), "failure": _failure(st)}
+
+
+def _failure(st):
+    """P3-6 E6: proč je instance FAILED (Dapr failureDetails: typ, zpráva, stack) – jinak jen stav bez příčiny (nález měření E6)."""
+    fd = getattr(st, "failure_details", None)
+    if not fd: return None
+    return {"type": getattr(fd, "error_type", None), "message": (getattr(fd, "message", None) or "")[:600], "stack": (getattr(fd, "stack_trace", None) or "")[-1200:]}
 
 
 @app.get("/_wf/versions")
@@ -985,7 +992,7 @@ def _wf_state(zid):
     except Exception:
         return None
     if not st: return None
-    return {"status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None}
+    return {"status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None, "failure": _failure(st)}
 
 
 agui.CTX.update({
