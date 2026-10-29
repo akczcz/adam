@@ -212,7 +212,18 @@ SPIRE 1.15.5 (obrazy `spire-server`, `spire-agent`, `oidc-discovery-provider` z 
 `agent_ttl = "1h"`, `prune_attested_nodes_expired_for = "1h"`. Selektory a alias entries z rolegen beze změny. Upgrade serveru in-place (sqlite); politika
 kompatibility: agent ≤ server, max o jednu minor starší. Měření: `measure` s `e2e=p3-6` (E5a sonda dvou podů).
 
+## P3-6 E6: verzování workflow (2026-10-29)
+
+Orchestrátor zakázky je verzovaný modul `tools/harness_p0_o2/zakazka_wf.py` + snímky `wf_versions/zakazka_<verze>.py` (verze = sha256 obsahu);
+obraz `zakazka-app` nese všechny snímky a aplikace je registruje jako verze workflow `zakazka` (Dapr named versioning, 1.17+), aktuální soubor
+jako latest. Instance si verzi nese v historii → nasazení nového obrazu (`images.yml` → Flux/`restart_pods`) běžící instance nerozbije: dojedou
+na své verzi; chybějící verze = STALLED, ne FAILED. **Postup při změně orchestrátoru**: upravit `zakazka_wf.py` → `python tools/harness_p0_o2/wf_versions.py freeze`
+(nový snímek; `images.yml` build padá bez něj) → commit obojího. **Úklid**: `GET /_wf/versions` (port-forward `zakazka` 8010) → verze s `drained: true`
+= snímek smazat v Gitu. Aktivity (`app.py`) se mění volně, kontrakty vstupů/výstupů jen rozšiřovat. Měření: `measure` s `e2e=p3-6` (E6a–c).
+
 ## Pasti (AKS + Flux)
+- Změna orchestrátoru Dapr Workflow bez nové verze = instance ze starého obrazu po prvním eventu FAILED (nedeterministický replay; v SUSPENDED
+  se to ukáže až po resume). Od E6: každá změna `zakazka_wf.py` = nová verze + snímek; instance bez verze (před E6) jedou na latest.
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).
 - ConfigMap volume se do replik propaguje nezávisle (kubelet sync per pod): po zápisu klíčů do `agentgateway-keys` ověřovat každou repliku

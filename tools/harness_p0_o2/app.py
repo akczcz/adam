@@ -25,7 +25,6 @@ import json
 import os
 import re
 import time
-from datetime import timedelta
 
 import httpx
 
@@ -671,77 +670,6 @@ def notify_customer_run(inp):
 def notify_customer(ctx, inp): return notify_customer_run(inp)
 
 
-def wait_with_sla(ctx: wf.DaprWorkflowContext, z, event_name, bod, t_out):
-    """when_any(event, timeout, SLA): SLA bodu = z['sla'][bod] nebo SLA_DEFAULT_S; překročení → sla_breach (eskalace, org.sla_events), čeká se dál;
-    timeout → None (pozastavení řeší volající). Úlohy ev/tm se po SLA timeru použijí znovu (durabletask je přeparentuje do nového when_any)."""
-    ev = ctx.wait_for_external_event(event_name); tm = ctx.create_timer(timedelta(seconds=t_out))
-    sla_s = float((z.get("sla") or {}).get(bod, SLA_DEFAULT_S.get(bod, 0)) or 0)
-    sla = ctx.create_timer(timedelta(seconds=sla_s)) if 0 < sla_s < t_out else None
-    winner = yield wf.when_any([ev, tm, sla] if sla is not None else [ev, tm])
-    if sla is not None and winner == sla:
-        yield ctx.call_activity(sla_breach, input={"z": z, "bod": bod, "sla_s": sla_s})
-        winner = yield wf.when_any([ev, tm])
-    if winner == tm: return None
-    return ev.get_result() or {}
-
-
-# --- workflow zakázky --------------------------------------------------------------------------------------------------
-def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
-    tok, _ = yield from hitl_full(ctx, z, bod, artifact_hash, timeout_s)
-    return tok
-
-
-def hitl_full(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
-    """HITL bod: čeká na event `hitl:<bod>` NEBO timer. Timeout nikdy neschvaluje → stav Pozastaveno. Vrací (token, data eventu) – data nesou
-    u bodu `rozpocet` nový strop (P3-6 E3).
-    HITL_WAIT v ledgeru = otevřený rozhodovací bod pro AG-UI (interrupt `hitl:<bod>:<hash>`); zamítnutí člověkem (event {rejected}) = HITL_REJECTED → Pozastaveno.
-    P3-4: SLA bodu (procesy.md) běží uvnitř čekání – překročení eskaluje, nerozhoduje."""
-    t_out = float(timeout_s if timeout_s is not None else z.get("hitl_timeout_s", HITL_TIMEOUT_S))
-    yield ctx.call_activity(notify, input={"event": "HITL_WAIT", "bod": bod, "zakazka": z["id"], "artifact_hash": artifact_hash, "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get(bod, SLA_DEFAULT_S.get(bod, 0)) or 0)})
-    data = yield from wait_with_sla(ctx, z, f"hitl:{bod}", bod, t_out)
-    if data is None:
-        yield ctx.call_activity(notify, input={"event": "HITL_TIMEOUT", "bod": bod, "zakazka": z["id"], "result": "pozastaveno"})
-        return None, None
-    if isinstance(data, dict) and data.get("rejected"):
-        yield ctx.call_activity(notify, input={"event": "HITL_REJECTED", "bod": bod, "zakazka": z["id"], "by": data.get("by"), "reason": data.get("reason"), "result": "pozastaveno"})
-        return None, data
-    tok = yield ctx.call_activity(verify_approval, input={"token": (data.get("token") if isinstance(data, dict) else "") or "", "zakazka": z["id"], "bod": bod})
-    if not tok or tok.get("artifact_hash") != artifact_hash or tok.get("bod") != bod:
-        yield ctx.call_activity(notify, input={"event": "HITL_INVALID_TOKEN", "bod": bod, "zakazka": z["id"]})
-        return None, data
-    if isinstance(data.get("subject"), dict) and data["subject"].get("token"): z["subject"] = data["subject"]   # P3-6 E2: další role jedná jménem tohoto schvalovatele (Q6: obnova při každém HITL)
-    yield ctx.call_activity(notify, input={"event": "HITL_APPROVED", "bod": bod, "zakazka": z["id"], "by": tok.get("by"), "artifact_hash": artifact_hash, "subject_sub": (data.get("subject") or {}).get("sub")})
-    return data["token"], data
-
-
-def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
-    """Role jako aktivita + `on_exceeded` z roles/<role>.yaml: rozpočet klíče role × zakázka vyčerpán (429 z gateway) →
-    BUDGET_EXCEEDED, eskalace vlastníkovi procesu jako HITL bod `rozpocet` (token vázaný na roli), timeout → pauza (fail-closed).
-    Po schválení (vlastník navýšil limit / vydal nový klíč) jeden opakovaný pokus; druhé vyčerpání → pauza."""
-    gate = yield ctx.call_activity(budget_gate, input={"z": z, "role": role})   # P2-6: strop zakázky (součet klíčů) před rolí
-    art = {"budget_exceeded": True, "gate": gate} if gate.get("exceeded") else (yield ctx.call_activity(activity, input=inp))
-    for attempt in range(2):   # P3-5: pod role ukončen stopem (SIGTERM → checkpoint) – výsledek dorazí až po resume (workflow je SUSPENDED); pak role znovu od checkpointu
-        if not art.get("stopped"): break
-        yield ctx.call_activity(notify, input={"event": "ROLE_STOPPED", "role": role, "zakazka": z["id"], "attempt": attempt + 1, "result": "rerun_after_resume" if attempt == 0 else "pozastaveno"})
-        if attempt == 1: return None
-        art = yield ctx.call_activity(activity, input=inp)   # bez prodlevy (P3-5 nález: timer/sleep po resume znovuspuštění rozbil); klíče tenanta odblokuje resume_tenant PŘED resume workflow
-    if not gate.get("exceeded"):
-        yield ctx.call_activity(registry_agent, input={"z": z, "role": role})   # P3-3: řádek org.agents píše workflow (T12), ne harness
-        yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Running"})   # P3-5 (O3e): útrata zakázky v org.zakazky po každé roli (FinOps per tenant bez čekání na konec)
-    if not art.get("budget_exceeded"): return art
-    yield ctx.call_activity(notify, input={"event": "BUDGET_EXCEEDED", "role": role, "zakazka": z["id"], "escalate_to": "process_owner", "timeout_s": z.get("budget_timeout_s", BUDGET_TIMEOUT_S), "source": "zakazka-sum" if gate.get("exceeded") else "agentgateway"})
-    tok, data = yield from hitl_full(ctx, z, "rozpocet", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
-    if not tok: return None
-    new_cap = (data or {}).get("budget_usd")
-    if new_cap and float(new_cap) > float(z.get("budget_usd") or BUDGET_USD):   # P3-6 (E3): schválení s novým stropem → gateway klíče (ConfigMap + sonda), registr, workflow
-        res = yield ctx.call_activity(raise_cap, input={"z": z, "budget_usd": float(new_cap), "by": data.get("by")})
-        z["budget_usd"] = float(new_cap)   # tentýž objekt dostávají další role (deterministické: v replayi se provede stejně)
-        if isinstance(inp, dict) and "z" in inp and inp["z"] is not z: inp["z"]["budget_usd"] = float(new_cap)
-        yield ctx.call_activity(notify, input={"event": "BUDGET_RAISED", "role": role, "zakazka": z["id"], "budget_usd": float(new_cap), "by": data.get("by"), "gateway": res})
-    art = yield ctx.call_activity(activity, input=inp)
-    return None if art.get("budget_exceeded") else art
-
-
 @rt.activity(name="raise_cap")
 def raise_cap(ctx, inp):
     """P3-6 (E3): nový strop zakázky z HITL rozpocet – rozpočet zakazka-30d-block všech klíčů zakázky v gateway (hot reload, sonda na repliky) + org.zakazky.budget_usd."""
@@ -756,67 +684,10 @@ def raise_cap(ctx, inp):
     return {**out, "registry": ok}
 
 
-@rt.workflow(name="zakazka")
-def zakazka(ctx: wf.DaprWorkflowContext, z):
-    state = {"id": z["id"], "stav": "P1"}
-    # P3-4 P1a klasifikační brána (T9/T15) PŘED prvním během role (odchylka od procesy.md Upresneni → Klasifikace: odmítnutá zakázka nespustí žádný pod ani neutratí nic);
-    # odpovědi K1–K6 buď v poptávce (GUI formulář / API), jinak interrupt `klasifikace` v AG-UI; timeout → Pozastaveno
-    if not z.get("klasifikace"):
-        t_out = float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))
-        yield ctx.call_activity(notify, input={"event": "KLASIFIKACE_WAIT", "bod": "klasifikace", "zakazka": z["id"], "artifact_hash": h(z["poptavka"]), "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get("klasifikace", SLA_DEFAULT_S["klasifikace"]) or 0)})
-        data = yield from wait_with_sla(ctx, z, "klasifikace", "klasifikace", t_out)
-        if data is None: yield ctx.call_activity(notify, input={"event": "KLASIFIKACE_TIMEOUT", "bod": "klasifikace", "zakazka": z["id"], "result": "pozastaveno"}); return {**state, "stav": "Pozastaveno", "bod": "klasifikace"}
-        z = {**z, "klasifikace": data.get("answers") or {}, "klasifikace_by": data.get("by"), "klasifikace_sub": data.get("sub"), "klasifikace_reason": data.get("reason")}
-    kl = yield ctx.call_activity(klasifikace, input={"z": z})
-    z = {**z, "profile": kl["profile"], "sensitivity": kl["sensitivity"]}
-    if kl["profile"] == "odmitnout":                                              # čl. 5 → zakázka končí v P1 s auditním záznamem (org.approvals decision=reject)
-        yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Odmitnuto"}); return {**state, "stav": "Odmitnuto", "bod": "klasifikace", "reason": "čl. 5 (K1 = ano)", "profile": kl["profile"]}
-    if kl["profile"] == "nejasne":                                                # H1a stanovisko právníka; do stanoviska high-risk zacházení (autonomie zamčena)
-        t1a = yield from hitl(ctx, z, "H1a", kl["hash"])
-        if not t1a: return {**state, "stav": "Pozastaveno", "bod": "H1a", "profile": kl["profile"]}
-    for rnd in range(int(z.get("dialog_max", 3)) + 1):                            # P1 Přijetí zadání – P3-3: ≤ 3 kola upřesňujících otázek Account ↔ zadavatel (AG-UI)
-        zad = yield from run_role(ctx, z, "account", role_account, z)
-        if not zad: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
-        if zad.get("type") != "otazky": break
-        if rnd >= int(z.get("dialog_max", 3)): yield ctx.call_activity(notify, input={"event": "DIALOG_LIMIT", "zakazka": z["id"], "rounds": rnd}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
-        yield ctx.call_activity(notify, input={"event": "DIALOG_WAIT", "bod": "dialog", "zakazka": z["id"], "artifact_hash": zad["hash"], "round": rnd + 1, "timeout_s": float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))})
-        data = yield from wait_with_sla(ctx, z, "dialog:account", "dialog", float(z.get("hitl_timeout_s", HITL_TIMEOUT_S)))
-        if data is None:
-            yield ctx.call_activity(notify, input={"event": "DIALOG_TIMEOUT", "bod": "dialog", "zakazka": z["id"], "result": "pozastaveno"}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
-        yield ctx.call_activity(notify, input={"event": "DIALOG_ANSWER", "bod": "dialog", "zakazka": z["id"], "by": data.get("by"), "round": rnd + 1, "answer": str(data.get("answer", ""))[:500]})
-        z = {**z, "dialog": (z.get("dialog") or []) + [str(data.get("answer", ""))[:2000]]}
-    gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
-    if os.environ.get("P0_GITHUB_MODE") == "1" and gh_hitl:
-        yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # issue = nosič H1 (dogfooding, vlastní repo; cizí zákazník → AG-UI)
-    t1 = yield from hitl(ctx, z, "H1", zad["hash"])                           # vstup zakázky – člověk zákazníka (/schvaluji na issue nebo AG-UI)
-    if not t1: return {**state, "stav": "Pozastaveno", "bod": "H1"}
-    if os.environ.get("P0_GITHUB_MODE") == "1" and not gh_hitl:
-        yield ctx.call_activity(publish_issue, input={"z": z, "zad": zad})     # bez GitHub HITL: issue až po schválení (N3)
-    yield ctx.call_activity(notify_customer, input={"z": z, "channel": "email", "role": "account", "subject": f"Zakázka {z['id']}: zadání přijato (H1)",   # P3-4 N3 stavová zpráva (čl. 50 naostro)
-                                                     "body": f"Zadání zakázky {z['id']} bylo schváleno člověkem (H1); profil rizika {kl['profile']}. Artefakt {zad['ref']} · hash {zad['hash']}."})
-    adr = yield from run_role(ctx, z, "architekt", role_architekt, z)          # P2 Návrh
-    if not adr: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "architekt"}
-    t2 = yield from hitl(ctx, z, "H2", adr["hash"])
-    if not t2: return {**state, "stav": "Pozastaveno", "bod": "H2"}
-    pr = yield from run_role(ctx, z, "vyvojar", role_vyvojar, z)               # P3 Implementace (sandbox)
-    if not pr: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "vyvojar"}
-    pr_pub = {}
-    if os.environ.get("P0_GITHUB_MODE") == "1":
-        pr_pub = yield ctx.call_activity(publish_pr, input={"z": z, "pr": pr})  # větev + PR = artefakt pro review (reverzibilní)
-    rev = yield from run_role(ctx, z, "reviewer", role_reviewer, {"z": z, "pr": pr})   # P4 Review
-    if not rev: yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "reviewer"}
-    yield ctx.call_activity(budget_check, input=z)
-    t4 = yield from hitl(ctx, z, "H4", pr["hash"])                            # merge = N1 – člověk vlastník
-    if not t4: return {**state, "stav": "Pozastaveno", "bod": "H4"}
-    m = yield ctx.call_activity(executor, input={"z": z, "action": "merge", "artifact_hash": pr["hash"], "token": t4, "pr": pr, "pr_publish": pr_pub})
-    if not m["allow"]: return {**state, "stav": "Zamitnuto", "bod": "H4", "reason": m["reason"]}
-    t5 = yield from hitl(ctx, z, "H5", pr["hash"])                            # deploy = N2
-    if not t5: return {**state, "stav": "Pozastaveno", "bod": "H5"}
-    d = yield ctx.call_activity(executor, input={"z": z, "action": "deploy", "artifact_hash": pr["hash"], "token": t5})
-    yield ctx.call_activity(notify_customer, input={"z": z, "channel": "ticket", "role": "sre", "body": f"Nasazení zakázky {z['id']} {'provedeno' if d['allow'] else 'zamítnuto'} (H5 schválil člověk; PR {pr['ref']} · hash {pr['hash']})."})   # P3-4 N3 ticket
-    spent = yield ctx.call_activity(budget_check, input=z)
-    yield ctx.call_activity(registry_zakazka, input={"z": z, "status": "Dokonceno" if d["allow"] else "Zamitnuto"})   # P2-6: cena zakázky v registru org.zakazky
-    return {**state, "stav": "Dokonceno" if d["allow"] else "Zamitnuto", "artefakty": [zad["ref"], adr["ref"], pr["ref"], rev["ref"]], "cost_usd": spent}
+# --- workflow zakázky: orchestrátor je ve verzovaném modulu zakazka_wf.py (P3-6 E6), aktivity volá jménem; všechny verze (snímky wf_versions/ +
+# aktuální jako latest) registruje wf_versions.register(rt) – aktivity výše musí být zaregistrované dřív (jména), tělo se mění volně, kontrakt ne
+import wf_versions   # noqa: E402
+WF = wf_versions.register(rt)
 
 
 # --- HTTP API ---------------------------------------------------------------------------------------------------------
@@ -845,8 +716,8 @@ def create_zakazka(b: dict, *, by=None, channel="api", by_sub=None, subject=None
     z = {"id": b["id"], "poptavka": b["poptavka"], "tenant": tenant, "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S),
          "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD)), "by": by, "klasifikace": ({k: bool(kl.get(k)) for k in KLAS_KEYS} if kl is not None else None), "klasifikace_by": by if kl is not None else None, "klasifikace_sub": by_sub if kl is not None else None,
          "sla": sla, "contact": b.get("contact"), "memory_probe": b.get("memory_probe") if isinstance(b.get("memory_probe"), list) else None, "subject": subject}   # P2-6: strop zakázky (30d) = součet útraty klíčů; P3-5: memory_probe = dotazy sondy izolace paměti z podu role (harness O3a)
-    client().schedule_new_workflow(zakazka, input=z, instance_id=z["id"])
-    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500], klasifikace=z["klasifikace"], sla=sla or None)
+    client().schedule_new_workflow(wf_versions.NAME, input=z, instance_id=z["id"])   # P3-6 E6: podle jména; verzi (latest) vybere runtime při prvním běhu a zapíše do historie instance
+    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500], klasifikace=z["klasifikace"], sla=sla or None, wf_version=wf_versions.latest(rt))
     finops.registry_upsert(z["id"], tenant=tenant, budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
     return z
 
@@ -1002,7 +873,33 @@ def thread_exists(zid):
 async def get(zid: str):
     st = client().get_workflow_state(zid, fetch_payloads=True)
     if not st: raise HTTPException(404)
-    return {"id": zid, "status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None}
+    start = next((e for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid), {})
+    return {"id": zid, "status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None, "wf_version": start.get("wf_version"), "failure": _failure(st)}
+
+
+def _failure(st):
+    """P3-6 E6: proč je instance FAILED (Dapr failureDetails: typ, zpráva, stack) – jinak jen stav bez příčiny (nález měření E6)."""
+    fd = getattr(st, "failure_details", None)
+    if not fd: return None
+    return {"type": getattr(fd, "error_type", None), "message": (getattr(fd, "message", None) or "")[:600], "stack": (getattr(fd, "stack_trace", None) or "")[-1200:]}
+
+
+@app.get("/_wf/versions")
+async def wf_versions_get():
+    """P3-6 E6: registrované verze orchestrátoru (snímky wf_versions/ + aktuální), latest pro nové instance, instance per verze podle ledgeru
+    a stavu v Dapru; `drained` = snímek verze lze smazat; `legacy` = instance z doby před verzováním (Dapr je přehrává na latest)."""
+    starts = [e for e in _ledger() if e.get("kind") == "ZAKAZKA_START"]
+    return {**wf_versions.report(rt, starts, _wf_state), "registered": WF}
+
+
+@app.post("/_wf/latest")
+async def wf_latest_set(req: Request):
+    """P3-6 E6: přepnutí verze pro nové instance za běhu (rollback/kanárek bez nového obrazu; do restartu podu). Interní API (jako /zakazky)."""
+    b = await req.json()
+    try: r = wf_versions.set_latest(rt, b["version"])
+    except KeyError as e: raise HTTPException(404, str(e))
+    ledger("WF_LATEST", by=b.get("by"), reason=b.get("reason"), **r)
+    return r
 
 
 @app.post("/zakazky/{zid}/approve/{bod}")
@@ -1010,6 +907,14 @@ async def approve(zid: str, bod: str, req: Request):
     b = await req.json()  # {by, by_kind, artifact_hash, action?, exp_s?, reason?}
     approve_zakazka(zid, bod, by=b["by"], artifact_hash=b["artifact_hash"], reason=b.get("reason"), channel=b.get("channel", "api"), by_kind=b.get("by_kind", "human"), exp_s=b.get("exp_s", 86400))
     return {"ok": True}
+
+
+@app.post("/zakazky/{zid}/classify")
+async def classify(zid: str, req: Request):
+    """P3-6 E6: odpovědi K1–K6 z interního API (harness) – stejný event jako interrupt `klasifikace` v AG-UI."""
+    b = await req.json()  # {answers: {K1..K6: bool}, by, reason?}
+    a = classify_zakazka(zid, by=b.get("by", "api"), answers=b.get("answers") or {}, reason=b.get("reason"), channel="api")
+    return {"ok": True, "answers": a}
 
 
 @app.post("/zakazky/{zid}/stop")
@@ -1101,7 +1006,7 @@ def _wf_state(zid):
     except Exception:
         return None
     if not st: return None
-    return {"status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None}
+    return {"status": st.runtime_status.name, "output": json.loads(st.serialized_output) if st.serialized_output else None, "failure": _failure(st)}
 
 
 agui.CTX.update({
@@ -1141,5 +1046,6 @@ agui.CTX["tenants"] = TENANTS
 if __name__ == "__main__":
     import uvicorn
     ledger("TENANTS_SYNC", **finops.tenants_sync(TENANTS), source="rolegen-build/tenants.json")   # P3-2: org.tenants + RLS org.* (idempotentní při startu)
+    ledger("WF_VERSIONS", **WF)   # P3-6 E6: které verze orchestrátoru tento obraz nese a která je latest
     rt.start()
     uvicorn.run(app, host=os.environ.get("APP_HOST", "127.0.0.1"), port=int(os.environ.get("APP_PORT", "8010")), log_level="warning")
