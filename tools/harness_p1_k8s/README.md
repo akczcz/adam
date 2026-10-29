@@ -614,11 +614,17 @@ account obou zakázek – nepřekryly se (druhý workflow čeká ~60 s na vydán
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E6a | snímek aktuální verze existuje a odpovídá názvu (`check`), `GET /_wf/versions`: current == verze z HEAD, latest == current, ≥ 2 registrované verze, `WF_VERSIONS` při startu | ⏳ |
-| E6b | zakázka na ne-latest verzi + zakázka na latest čekají na klasifikaci → restart podu aplikace → event → obě COMPLETED/Odmitnuto na své verzi, žádná FAILED; latest po restartu zpět na verzi obrazu | ⏳ |
-| E6c | report verzí: starší verze po dokončení `drained`, latest má instance běhu; `legacy` jen informativně | ⏳ |
+| E6a | snímek aktuální verze existuje a odpovídá názvu (`check`), `GET /_wf/versions`: current == verze z HEAD, latest == current, ≥ 2 registrované verze, aktivity všech verzí registrované, `WF_VERSIONS` při startu | ✅ current `572659d3b0d2` (= hash `zakazka_wf.py` v HEAD), kandidát `e8468f768abe`, oba snímky ok, `activities_checked`, latest == current |
+| E6b | zakázka na ne-latest verzi + zakázka na latest čekají na klasifikaci → restart podu aplikace → event → obě COMPLETED/Odmitnuto na své verzi, žádná FAILED; latest po restartu zpět na verzi obrazu | ✅ přepnutí latest → kandidát a zpět (`WF_LATEST`), obě RUNNING před restartem, nový pod za 18 s (`WF_VERSIONS` latest = verze obrazu), po eventu K1 obě COMPLETED/Odmitnuto: `e6old` na `e8468f768abe` (WORKFLOW_VERSION před restartem, KLASIFIKACE_DONE po něm), `e6new` na `572659d3b0d2` bez těchto událostí |
+| E6c | report verzí: starší verze po dokončení `drained`, latest má instance běhu; `legacy` jen informativně | ✅ kandidát `{COMPLETED: 3, drained: true}`, latest `{COMPLETED 18, SUSPENDED 17, RUNNING 2, FAILED 3}` (FAILED = instance z 1.–3. běhu před opravami, s příčinou z Dapr `failureDetails`), legacy ~316 instancí z doby před E6 (COMPLETED 179 / SUSPENDED 123 / FAILED 14, 3. běh) |
 
-Výsledek: ⏳ (doplním po měření).
+Výsledek: **63/63 + 9 INFO** (`measure` run 40923834561, `results/p3-6-20261029-184051.json`; 4 běhy). Nálezy: (1) `import app` v aktivitě role
+(gateway_keys/role_runner vedle `__main__`) registruje orchestrátor podruhé – SDK odmítá tutéž funkci (`already registered`) → registrace přes
+čerstvý wrapper per volání; (2) při vyjmutí orchestrátoru z `app.py` zmizela i aktivita `raise_cap` (ležela mezi `run_role` a `zakazka`) a Dapr to
+ohlásil až při navýšení stropu (`Activity function named 'raise_cap' was not registered` → instance FAILED) → aplikace při startu ověřuje, že
+všechny aktivity volané kteroukoli registrovanou verzí existují, a `GET /zakazky/<id>` nese `failure` (Dapr `failureDetails`) – bez něj byla příčina
+FAILED po restartu podu nedohledatelná; (3) E6 nechá pool kata bez podů ≥ 10 min → autoscaler uzel odstraní a P21c pak nenajde label poolu
+(jméno uzlu `aks-kata-…` ho nese); (4) `dapr-ext-workflow` 1.18.3 má durabletask vendored, balíček `durabletask-dapr` v obrazu je zbytečný.
 
 ## Spuštění
 
