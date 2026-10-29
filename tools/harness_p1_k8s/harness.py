@@ -1360,7 +1360,8 @@ def e7_checks(a, rep, http, kj, KC, BAO, ca_file):
         r = kj("-n", ns, "get", kind, name); return r if isinstance(r, dict) else {}
     def ready(o): return next((c.get("status") for c in ((o.get("status") or {}).get("conditions") or []) if c.get("type") == "Ready"), None)
     root = open(ca_file).read(); rootc = x509.load_pem_x509_certificate(root.encode())
-    ctx_root = ssl.create_default_context(cafile=ca_file); ctx_public = ssl.create_default_context()   # jen veřejné CA (systém) – interní cert musí odmítnout
+    import certifi
+    ctx_root = ssl.create_default_context(cafile=ca_file); ctx_public = ssl.create_default_context(cafile=certifi.where())   # jen veřejné CA (certifi; výchozí kontext by vzal SSL_CERT_FILE harnessu s rootem) – interní cert musí odmítnout
     certs = {}
     for name in ("openbao-tls", "keycloak-tls"):
         c = get(NS, "certificate", name); sec = get(NS, "secret", name); crt = _b.b64decode((sec.get("data") or {}).get("tls.crt", "")).decode()
@@ -1403,7 +1404,7 @@ def e7_app_checks(rep, http, led, APP, zid, t_run):
     mem = [e for e in L if e["kind"] == "TOOL" and e.get("zakazka") == zid and e.get("tool") in ("search_memory", "create_memory")]
     pods = [e for e in L if e["kind"] == "ROLE_POD" and e.get("zakazka") == zid]; dele = [d for d in (((p.get("identity") or {}).get("delegation")) for p in pods) if d]
     gov = http("POST", f"{APP}/agui/gov/tools/zakazky", json={}, headers={"Authorization": f"Bearer {tok}"}, timeout=30).status_code if tok else None
-    tls_err = [e for e in L if any("SSL" in str(v) or "CERTIFICATE_VERIFY" in str(v) or "certificate verify" in str(v).lower() for v in e.values())]
+    tls_err = [e for e in L if any(x in str(e.get("error") or "") for x in ("SSLError", "SSLCertVerification", "CERTIFICATE_VERIFY", "certificate verify"))]   # jen pole error (ROLE_POD nese env SSL_CERT_FILE)
     rep.add("E7b", "Klienti přes TLS v provozu: přihlášení člověka z GUI = password grant aplikace na https Keycloak (token iss https://keycloak:8443/realms/p0), aplikace do OpenBao přes https (BAO_LOGIN auth kubernetes, SIGN transit u zakázky), server paměti ověřil tokeny rolí z JWKS přes https (volání paměti z podů 200), Governance MCP ověřil token člověka (200), pody rolí vyměnily token na https URL (delegace s iss https); v ledgeru žádná chyba ověření certifikátu", "PASS" if me.status_code == 200 and iss == "https://keycloak:8443/realms/p0" and bao and all(b.get("method") == "kubernetes" for b in bao) and signs and all(s_.get("backend") == "openbao-transit" for s_ in signs) and mem and all(m.get("http") == 200 for m in mem) and gov == 200 and dele and all(d.get("iss") == "https://keycloak:8443/realms/p0" and d.get("exchange_ms") for d in dele) and not tls_err else "FAIL", {"login": me.status_code, "iss": iss, "bao_login": len(bao), "signs": len(signs), "memory_200": sum(1 for m in mem if m.get("http") == 200), "memory_total": len(mem), "gov": gov, "delegations": [{k: d.get(k) for k in ("iss", "azp", "exchange_ms", "error")} for d in dele], "tls_errors": [{"kind": e["kind"], "error": str(e.get("error"))[:100]} for e in tls_err][:3]})
 
 
