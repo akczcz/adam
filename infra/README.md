@@ -233,7 +233,8 @@ Keycloak soubory certifikátu znovu načítá sám. Klienti: `zakazka-env` `P0_B
 `SSL_CERT_FILE=/etc/platform/ca/ca.crt` (ConfigMap `platform-ca` z trust-manageru, mount do app/memory/governance; pody rolí ji mají od P2-4) –
 httpx (trust_env) i urllib/PyJWKClient ji ctí. Harness: port-forward Keycloak 18443→8443, OpenBao https, `SSL_CERT_FILE` = certifi + root platformy
 (`logs/ca-bundle.pem`). Služby: `openbao` 8200/8201, `keycloak` 8443/9000 – port 8080 už Service nemá. kind (`base/`) zůstává HTTP.
-Měření: `measure` s `e2e=p3-6` (E7a–b).
+Měření: `measure` s `e2e=p3-6` (E7a–c; rotace za běhu změřena: OpenBao 33–43 s, Keycloak 54–137 s). Pozor: NetworkPolicy podů rolí
+(rolegen `tenant_k8s`) musí pouštět Keycloak na 8443 – port je součást egress kontraktu role.
 
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);

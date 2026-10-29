@@ -641,11 +641,16 @@ FAILED po restartu podu nedohledatelná; (3) E6 nechá pool kata bez podů ≥ 1
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E7a | certy z platform-ca, HTTPS ověřené rootem / odmítnuté veřejnými CA, issuer https, plaintext odmítnut, Service 8200/8443, env klientů | ⏳ |
-| E7b | klienti přes TLS v provozu (GUI login, OpenBao login+sign, paměť JWKS, governance, exchange v podu), bez TLS chyb | ⏳ |
-| E7c | rotace certifikátů za běhu (Certificate Issuing=True jako `cmctl renew`): nový leaf bez restartu podu u OpenBao (`tls_auto_reload`) i Keycloaku (reload period 1 m), login dál funguje | ⏳ |
+| E7a | certy z platform-ca, HTTPS ověřené rootem / odmítnuté veřejnými CA, issuer https, plaintext odmítnut, Service 8200/8443, env klientů | ✅ oba certy Ready, issuer `platform-ca`, podpis rootem, SAN Service + localhost/127.0.0.1, 89 dní; OpenBao health i Keycloak discovery 200 přes root CA a SSL chyba přes veřejné CA (certifi); issuer `https://keycloak:8443/realms/p0`; z podu aplikace: OpenBao 8200 → 400 „Client sent an HTTP request to an HTTPS server“, keycloak:8080 → ConnectTimeout (Service bez portu), plaintext na 8443 → RemoteProtocolError |
+| E7b | klienti přes TLS v provozu (GUI login, OpenBao login+sign, paměť JWKS, governance, exchange v podu), bez TLS chyb | ✅ login 200 s iss https, 2× BAO_LOGIN kubernetes, 4× SIGN transit, 5/5 volání paměti z podů 200, governance 200, 5 delegací s iss https (exchange 99–575 ms), 0 TLS chyb |
+| E7c | rotace certifikátů za běhu (Certificate Issuing=True jako `cmctl renew`): nový leaf bez restartu podu u OpenBao (`tls_auto_reload`) i Keycloaku (reload period 1 m), login dál funguje | ✅ nová sériová čísla obou certů; nový cert nabízen za OpenBao 33–43 s, Keycloak 54–137 s (3 měření), restartCount beze změny, login 200 |
 
-Výsledek: ⏳ (doplním po měření).
+Výsledek: **66/66 + 9 INFO** (`measure` run 40959659815, `results/p3-6-20261029-225308.json`; 3 běhy). Nálezy: (1) NetworkPolicy podů rolí
+(rolegen `tenant_k8s`) pouštěla Keycloak jen na 8080 → exchange na 8443 `ConnectTimeout` (E2a–c, E7b v 1. běhu) – port je součást kontraktu
+egressu role, ne jen URL; (2) „ověření proti veřejným CA“ musí mít explicitní `certifi` kontext – výchozí `ssl.create_default_context()`
+ctí `SSL_CERT_FILE` harnessu s rootem platformy (E7a 1. běh); (3) 2. běh spadl v K1a: po ~15 min scénáři U-2 nepřišel RUN_STARTED do GUI
+(port-forward; fetch z prohlížeče nemá retry) → `create_thread` keepalive + náhradní run nad existujícím threadem, keepalive u všech instancí GUI;
+(4) Keycloak reload period 1 m je dev hodnota (default 1 h), OpenBao `tls_auto_reload` 30 s; kubelet propaguje Secret volume ~1 min.
 
 ## Spuštění
 
