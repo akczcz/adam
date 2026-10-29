@@ -229,3 +229,8 @@ patches:
 - target: {kind: ConfigMap, name: zakazka-env}
   patch: |
     - {op: add, path: /data/P0_BAO_KV, value: secret}
+# P3-6 E2: token exchange v podu role – IdP `aks` (kubernetes) v Keycloaku zakládá harness (kc_ensure) z issueru clusteru; klienti agent-<role>-<tenant> z rolegen-build
+- target: {kind: ConfigMap, name: zakazka-env}
+  patch: |
+    - {op: add, path: /data/P0_K8S_OIDC_ISSUER, value: "${AKS_OIDC_ISSUER}"}
+    - {op: add, path: /data/P0_KC_EXCHANGE_URL, value: http://keycloak.platform-data.svc:8080/realms/p0/protocol/openid-connect/token}   # pod role v ns tenanta: FQDN (2. běh E2: „Name or service not known“)

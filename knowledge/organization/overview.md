@@ -99,7 +99,7 @@ ven (čl. 50 disclosure), platba, smazání dat – všechny kryté approval pol
 | Q3 | Rozpočty v0 | per role × 24 h Audit/Block: Account 5/10, Architekt 15/30, Vývojář 25/50, Reviewer 10/20, SRE 10/20, Governance 20/40 USD; zakázka 400 USD/30 d Block; překročení úkolu = X1, navýšení = N6 |
 | Q4 | Prahy pass^k a body, které se nikdy neposouvají | ano; první kandidát na posun H4 merge u profilu `standard` |
 | Q5 | Komunikace ven v dogfoodingu | jen issue/PR komentáře v tomto repu s disclosure řádkem vkládaným adaptérem; e-mail MCP až s externím zákazníkem |
-| Q6 | Čí token je subject při vícedenním běhu | service account `svc-{tenant}-{proces}` s `on_behalf_of` = schvalovatel vstupu, obnovovaný při každém HITL; offline token člověka jen pro Account |
+| Q6 | Čí token je subject při vícedenním běhu | **P3-6 E2 (2026-10-28):** subject = access token schvalovatele posledního HITL (zadavatel pro Account), obnovovaný při každém schválení v AG-UI; pod role ho vymění za token `sub = schvalovatel, azp = agent-<role>-<tenant>` (client assertion = SA token podu); žádný `svc-{tenant}-{proces}` ani offline token – limit: subject žije 30 min, role bez HITL před sebou běží bez mandátu (degradace, `on_behalf_of null`) |
 | Q7 | Nevratné kroky vykonává Dapr aktivita, ne agent | ano – agent navrhuje, workflow provádí; změří O-1 |
 | Q8 | Reviewer schvaluje paměť i ve scope zákazník? | firma + zákazník vlastního tenanta, jen `fakt`/`pouceni`, sensitivity ≤ confidential |
 | Q9 | Registr agentů a risk register ve stejném Postgresu jako paměť? | ano, schéma `org`, role `org_writer` jen pro Dapr aktivity a eval-gate job |

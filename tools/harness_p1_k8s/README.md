@@ -528,6 +528,43 @@ Výsledek: **56/56 + 8 INFO** (`measure` run 40603229736, `results/p3-6-20261028
    harness smazat (SSA konflikt s trust-managerem). Zbývá: `openbao-init` (bootstrap OpenBao – PushSecret do Key Vaultu), `keycloak-admin`
    (literál; změna = rotace přes admin API), hesla `memory_app`/`org_reader` v DSN, TLS OpenBao/Keycloak z `platform-ca`, reload certu v gateway po rotaci.
 
+## P3-6 E2 – token exchange: mandát schvalovatele doložený Keycloakem (2026-10-28, AKS, `--step p3-6` = … + **E2a–c**)
+
+- **Cíl (Q6, T1)**: role nejedná „jménem“ jen claimem aplikace, ale tokenem, který podepsal Keycloak: `sub` = Keycloak sub schvalovatele
+  posledního HITL (u Account zadavatel), `azp` = klient role `agent-<role>-<tenant>`. Keycloak 26.8.1 **bez preview**: standard token exchange V2
+  + *federated client authentication* (GA od 26.5) – klient role se autentizuje **projektovaným tokenem SA `role-<role>`** svého podu (IdP `aks`
+  typu `kubernetes`, issuer clusteru z Terraformu). RFC 8693 delegace (`act`) i SPIFFE client auth jsou v 26.8 preview → záměrně nepoužity;
+  tvar `sub + azp` je podmnožinou budoucího `act`.
+- **Tok**: AG-UI předá access token člověka (`subject`) při založení zakázky a každém schválení → workflow `z.subject` → Secret podu
+  `P0_SUBJECT_TOKEN`; `role_runner` po získání SVID zavolá `POST /token grant=token-exchange` (subject = token člověka, `client_assertion`
+  = SA token, aud = issuer realmu) → token `sub=člověk, azp=agent-<role>-<tenant>, aud=memory, tenant_id` (lifespan 30 min) → hlavička
+  `X-Delegation` k serveru paměti; ten ji ověří JWKS realmu, **sváže s SVID volajícího** (azp = role × tenant ze SPIFFE ID, tenant_id = tenant)
+  a zapíše `created_by.on_behalf_of`; workflow zapíše `org.agents.on_behalf_of` (metriky.md T1), Governance MCP a GUI ho ukazují.
+- **Keycloak konfigurace z rolegen** (`keycloak-clients.json` v `rolegen-build`): klienti `agent-<role>-<tenant>` (autentizátor `federated-jwt`,
+  `jwt.credential.issuer=aks`, `jwt.credential.sub=system:serviceaccount:tenant-<id>:role-<role>`, `standard.token.exchange.enabled`),
+  audience mappery na `platform-gui` (žadatel exchange musí být v `aud` tokenu člověka), IdP `aks`; aplikuje harness `kc_ensure` (jako SPIRE entries).
+  SA per role: Keycloak hledá klienta podle subjektu assertion (`jwt.credential.sub` + IdP) → jeden SA nemůže sloužit více klientům
+  (SPIRE selektory `k8s_psat:agent_sa:role-<role>`, allow-list serveru z rolegen).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E2a | každá role zakázky: delegation sub == sub schvalovatele (org.approvals), azp == agent-<role>-acme, aud memory, tenant acme, client_assertion_sub == SA role, bez `act`; IdP kubernetes s JWKS, klient federated-jwt + exchange, GUI token nese klienty rolí v aud | ✅ account/architekt/vyvojar/reviewer: sub = sub adama, azp agent-<role>-acme, assertion sub `system:serviceaccount:tenant-acme:role-<role>`, iss = AKS OIDC issuer, exchange 94 ms, exp 1799 s, act null; gui_aud 10 klientů + memory |
+| E2b | paměť: on_behalf_of = sub schvalovatele v záznamech rolí běhu; X-Delegation = token z GUI (azp platform-gui) 403, token cizího tenanta 403, padělek HS256 401, bez hlavičky 200 | ✅ 1 záznam běhu s on_behalf_of = sub adama; negativní testy 403/403/401/200 |
+| E2c | org.agents.on_behalf_of u všech běhů rolí zakázky, nástroj `agents` ho vrací | ✅ 5 řádků (account ×2, architekt, vyvojar, reviewer) = sub adama; Governance MCP totéž |
+
+Výsledek: **59/59 + 8 INFO** (`measure` run 40667386140, `results/p3-6-20261028-104222.json`; 3 běhy). Nálezy:
+1. **SPIRE node alias se musí přegenerovat při změně selektorů** – harness alias při existenci jen přeskakoval; po přejmenování SA na
+   `role-<role>` zůstal selektor `agent_sa:role` → pody bez SVID (fail-closed). Harness teď porovnává selektory a entry přepíše.
+2. **`P0_KC_TOKEN_URL` v podu role** poslal `role_token()` do client_credentials bez secretů (`KeyError`) – pod spadl. Exchange URL je
+   vlastní env (`P0_KC_EXCHANGE_URL`), `role_token()` v podu bez SVID vrací prázdný token (fail-closed), ne výjimku.
+3. **PUT reprezentace klienta přepíše protocol mappery**: lifespan `platform-gui` se nastavoval PUTem reprezentace stažené před přidáním
+   mapperů → mappery zmizely (gui_aud jen memory). PUT bez `protocolMappers` a před mappery.
+4. **Pod v ns tenanta potřebuje FQDN** (`keycloak.platform-data.svc`), krátké jméno `keycloak` z `P0_KC_TOKEN_URL` nepřeloží.
+5. Zbývá: subject token žije 30 min (lifespan `platform-gui`) – role bez HITL před sebou (reviewer po dlouhém vývojáři) by exchange
+   nestihla → `delegation.error`, paměť zapíše `on_behalf_of null` (degradace, ne pád); řešení = Keycloak delegace (`act`) až opustí preview,
+   nebo obnova subjektu v GUI. Beta tenant (bea) má stejnou cestu, měří se jen acme. Klient `agent-<role>-<tenant>` na SPIFFE (A′) až
+   `spiffe` feature opustí preview.
+
 ## Spuštění
 
 ```bash

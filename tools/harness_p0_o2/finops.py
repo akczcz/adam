@@ -138,17 +138,17 @@ def autonomy_set(role: str, tenant: str, target: str, *, by: str, reason: str) -
     finally: c.close()
 
 
-def agent_insert(zid: str, *, tenant: str, role: str, version: str, process: str, model: str, pod: dict, run: dict, opa_rev: str, key_id: str, sandbox_profile: str) -> bool:
+def agent_insert(zid: str, *, tenant: str, role: str, version: str, process: str, model: str, pod: dict, run: dict, opa_rev: str, key_id: str, sandbox_profile: str, on_behalf_of: str | None = None) -> bool:
     """P3-3 (uzavírá otevřenou položku P2): řádek org.agents píše workflow po každém běhu role (dřív harness). agent_id = SPIFFE ID role per běh."""
     c = _conn("P0_REGISTRY_DSN")
     if c is None: return False
     try:
-        c.execute(DDL_GOVERNANCE)
+        c.execute(DDL_GOVERNANCE); c.execute("ALTER TABLE org.agents ADD COLUMN IF NOT EXISTS on_behalf_of text")   # P3-6 E2: principal (T1, metriky.md) z token exchange
         agent_id = f"spiffe://platform/role/{role}/{tenant}/{zid}/{(pod.get('pod') or 'local').rsplit('-', 1)[-1]}"
         c.execute("""INSERT INTO org.agents (agent_id, tenant_id, role_id, role_version, zakazka_id, process_id, workflow_instance, model, prompt_version, policy_bundle_rev,
-                                             gateway_key_id, sandbox_profile, image_digest, node, runtime_class, exit_code, cost_usd)
-                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (agent_id) DO NOTHING""",
-                  (agent_id, tenant, role, version, zid, process, zid, model, version, opa_rev, key_id, sandbox_profile, pod.get("image"), pod.get("node"), pod.get("runtime_class"), pod.get("exit_code"), run.get("cost_usd")))
+                                             gateway_key_id, sandbox_profile, image_digest, node, runtime_class, exit_code, cost_usd, on_behalf_of)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (agent_id) DO NOTHING""",
+                  (agent_id, tenant, role, version, zid, process, zid, model, version, opa_rev, key_id, sandbox_profile, pod.get("image"), pod.get("node"), pod.get("runtime_class"), pod.get("exit_code"), run.get("cost_usd"), on_behalf_of))
         c.execute("INSERT INTO org.agent_events (agent_id, role_id, role_version, tenant_id, kind, reason, actor) VALUES (%s, %s, %s, %s, 'created', %s, 'workflow')", (agent_id, role, version, tenant, f"běh role v zakázce {zid}"))
         return True
     except Exception:

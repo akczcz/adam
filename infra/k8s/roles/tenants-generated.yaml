@@ -86,14 +86,65 @@ spec:
     ports:
     - protocol: TCP
       port: 8081
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: keycloak
+    ports:
+    - protocol: TCP
+      port: 8080
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: role
+  name: role-account
   namespace: tenant-acme
   labels:
     platform.tenant: acme
+    platform.role: account
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-architekt
+  namespace: tenant-acme
+  labels:
+    platform.tenant: acme
+    platform.role: architekt
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-reviewer
+  namespace: tenant-acme
+  labels:
+    platform.tenant: acme
+    platform.role: reviewer
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-sre
+  namespace: tenant-acme
+  labels:
+    platform.tenant: acme
+    platform.role: sre
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-vyvojar
+  namespace: tenant-acme
+  labels:
+    platform.tenant: acme
+    platform.role: vyvojar
 automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -249,14 +300,65 @@ spec:
     ports:
     - protocol: TCP
       port: 8081
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: platform-data
+      podSelector:
+        matchLabels:
+          app: keycloak
+    ports:
+    - protocol: TCP
+      port: 8080
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: role
+  name: role-account
   namespace: tenant-beta
   labels:
     platform.tenant: beta
+    platform.role: account
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-architekt
+  namespace: tenant-beta
+  labels:
+    platform.tenant: beta
+    platform.role: architekt
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-reviewer
+  namespace: tenant-beta
+  labels:
+    platform.tenant: beta
+    platform.role: reviewer
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-sre
+  namespace: tenant-beta
+  labels:
+    platform.tenant: beta
+    platform.role: sre
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: role-vyvojar
+  namespace: tenant-beta
+  labels:
+    platform.tenant: beta
+    platform.role: vyvojar
 automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1

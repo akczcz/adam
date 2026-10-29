@@ -293,65 +293,209 @@ data:
     \n  ]\n }\n]"
   spire-entries.json: "[\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/account/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role-account\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
     : \"spiffe://platform/role/account/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/account/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/architekt/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/architekt/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt/acme\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role-architekt\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"\
+    spiffe_id\": \"spiffe://platform/role/architekt/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/reviewer/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/reviewer/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer/acme\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role-reviewer\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"\
+    spiffe_id\": \"spiffe://platform/role/reviewer/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/sre/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\": \"\
-    spiffe://platform/role/sre/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre/acme\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role-sre\",\n \
+    \  \"k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/sre/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/vyvojar/acme\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    \   \"k8s_psat:agent_ns:tenant-acme\",\n   \"k8s_psat:agent_sa:role-vyvojar\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
     : \"spiffe://platform/role/vyvojar/acme\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/vyvojar/acme\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/account/beta\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role-account\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:account\"\n  ]\n },\n {\n  \"spiffe_id\"\
     : \"spiffe://platform/role/account/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/account/beta\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/architekt/beta\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/architekt/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt/beta\"\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role-architekt\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:architekt\"\n  ]\n },\n {\n  \"\
+    spiffe_id\": \"spiffe://platform/role/architekt/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/architekt/beta\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/reviewer/beta\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"spiffe_id\"\
-    : \"spiffe://platform/role/reviewer/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer/beta\"\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role-reviewer\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:reviewer\"\n  ]\n },\n {\n  \"\
+    spiffe_id\": \"spiffe://platform/role/reviewer/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/reviewer/beta\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/sre/beta\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\": \"\
-    spiffe://platform/role/sre/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre/beta\"\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role-sre\",\n \
+    \  \"k8s_psat:agent_pod_label:platform.role:sre\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    : \"spiffe://platform/role/sre/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/sre/beta\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n },\n {\n  \"spiffe_id\": \"spiffe://platform/agent-pod/role/vyvojar/beta\"\
     ,\n  \"node\": true,\n  \"selectors\": [\n   \"k8s_psat:cluster:platform\",\n\
-    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role\",\n   \"\
-    k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
+    \   \"k8s_psat:agent_ns:tenant-beta\",\n   \"k8s_psat:agent_sa:role-vyvojar\"\
+    ,\n   \"k8s_psat:agent_pod_label:platform.role:vyvojar\"\n  ]\n },\n {\n  \"spiffe_id\"\
     : \"spiffe://platform/role/vyvojar/beta\",\n  \"parent_id\": \"spiffe://platform/agent-pod/role/vyvojar/beta\"\
     ,\n  \"selectors\": [\n   \"unix:uid:1000\"\n  ],\n  \"x509_svid_ttl\": 3600,\n\
     \  \"jwt_svid_ttl\": 1800\n }\n]"
+  keycloak-clients.json: "{\n \"identity_provider\": {\n  \"alias\": \"aks\",\n  \"\
+    providerId\": \"kubernetes\"\n },\n \"clients\": [\n  {\n   \"clientId\": \"agent-account-acme\"\
+    ,\n   \"name\": \"role account × tenant acme (token exchange, SA tenant-acme/role-account)\"\
+    ,\n   \"enabled\": true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\"\
+    : false,\n   \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\"\
+    : false,\n   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n\
+    \   \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n  \
+    \  \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-acme:role-account\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-architekt-acme\",\n   \"name\": \"role architekt\
+    \ × tenant acme (token exchange, SA tenant-acme/role-architekt)\",\n   \"enabled\"\
+    : true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n \
+    \  \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\": false,\n\
+    \   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n \
+    \  \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n   \
+    \ \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-acme:role-architekt\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-reviewer-acme\",\n   \"name\": \"role reviewer\
+    \ × tenant acme (token exchange, SA tenant-acme/role-reviewer)\",\n   \"enabled\"\
+    : true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n \
+    \  \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\": false,\n\
+    \   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n \
+    \  \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n   \
+    \ \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-acme:role-reviewer\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-sre-acme\",\n   \"name\": \"role sre × tenant\
+    \ acme (token exchange, SA tenant-acme/role-sre)\",\n   \"enabled\": true,\n \
+    \  \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n   \"standardFlowEnabled\"\
+    : false,\n   \"directAccessGrantsEnabled\": false,\n   \"serviceAccountsEnabled\"\
+    : false,\n   \"implicitFlowEnabled\": false,\n   \"clientAuthenticatorType\":\
+    \ \"federated-jwt\",\n   \"attributes\": {\n    \"jwt.credential.issuer\": \"\
+    aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-acme:role-sre\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-vyvojar-acme\",\n   \"name\": \"role vyvojar\
+    \ × tenant acme (token exchange, SA tenant-acme/role-vyvojar)\",\n   \"enabled\"\
+    : true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n \
+    \  \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\": false,\n\
+    \   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n \
+    \  \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n   \
+    \ \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-acme:role-vyvojar\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-account-beta\",\n   \"name\": \"role account\
+    \ × tenant beta (token exchange, SA tenant-beta/role-account)\",\n   \"enabled\"\
+    : true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n \
+    \  \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\": false,\n\
+    \   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n \
+    \  \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n   \
+    \ \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-beta:role-account\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-architekt-beta\",\n   \"name\": \"role architekt\
+    \ × tenant beta (token exchange, SA tenant-beta/role-architekt)\",\n   \"enabled\"\
+    : true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n \
+    \  \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\": false,\n\
+    \   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n \
+    \  \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n   \
+    \ \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-beta:role-architekt\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-reviewer-beta\",\n   \"name\": \"role reviewer\
+    \ × tenant beta (token exchange, SA tenant-beta/role-reviewer)\",\n   \"enabled\"\
+    : true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n \
+    \  \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\": false,\n\
+    \   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n \
+    \  \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n   \
+    \ \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-beta:role-reviewer\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-sre-beta\",\n   \"name\": \"role sre × tenant\
+    \ beta (token exchange, SA tenant-beta/role-sre)\",\n   \"enabled\": true,\n \
+    \  \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n   \"standardFlowEnabled\"\
+    : false,\n   \"directAccessGrantsEnabled\": false,\n   \"serviceAccountsEnabled\"\
+    : false,\n   \"implicitFlowEnabled\": false,\n   \"clientAuthenticatorType\":\
+    \ \"federated-jwt\",\n   \"attributes\": {\n    \"jwt.credential.issuer\": \"\
+    aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-beta:role-sre\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  },\n  {\n   \"clientId\": \"agent-vyvojar-beta\",\n   \"name\": \"role vyvojar\
+    \ × tenant beta (token exchange, SA tenant-beta/role-vyvojar)\",\n   \"enabled\"\
+    : true,\n   \"protocol\": \"openid-connect\",\n   \"publicClient\": false,\n \
+    \  \"standardFlowEnabled\": false,\n   \"directAccessGrantsEnabled\": false,\n\
+    \   \"serviceAccountsEnabled\": false,\n   \"implicitFlowEnabled\": false,\n \
+    \  \"clientAuthenticatorType\": \"federated-jwt\",\n   \"attributes\": {\n   \
+    \ \"jwt.credential.issuer\": \"aks\",\n    \"jwt.credential.sub\": \"system:serviceaccount:tenant-beta:role-vyvojar\"\
+    ,\n    \"standard.token.exchange.enabled\": \"true\",\n    \"access.token.lifespan\"\
+    : \"1800\"\n   },\n   \"defaultClientScopes\": [\n    \"basic\",\n    \"roles-flat\"\
+    ,\n    \"tenant\",\n    \"aud-memory\"\n   ],\n   \"optionalClientScopes\": []\n\
+    \  }\n ],\n \"gui_mappers\": [\n  {\n   \"name\": \"aud-agent-account-acme\",\n\
+    \   \"protocol\": \"openid-connect\",\n   \"protocolMapper\": \"oidc-audience-mapper\"\
+    ,\n   \"config\": {\n    \"included.client.audience\": \"agent-account-acme\"\
+    ,\n    \"access.token.claim\": \"true\",\n    \"id.token.claim\": \"false\",\n\
+    \    \"introspection.token.claim\": \"true\"\n   }\n  },\n  {\n   \"name\": \"\
+    aud-agent-architekt-acme\",\n   \"protocol\": \"openid-connect\",\n   \"protocolMapper\"\
+    : \"oidc-audience-mapper\",\n   \"config\": {\n    \"included.client.audience\"\
+    : \"agent-architekt-acme\",\n    \"access.token.claim\": \"true\",\n    \"id.token.claim\"\
+    : \"false\",\n    \"introspection.token.claim\": \"true\"\n   }\n  },\n  {\n \
+    \  \"name\": \"aud-agent-reviewer-acme\",\n   \"protocol\": \"openid-connect\"\
+    ,\n   \"protocolMapper\": \"oidc-audience-mapper\",\n   \"config\": {\n    \"\
+    included.client.audience\": \"agent-reviewer-acme\",\n    \"access.token.claim\"\
+    : \"true\",\n    \"id.token.claim\": \"false\",\n    \"introspection.token.claim\"\
+    : \"true\"\n   }\n  },\n  {\n   \"name\": \"aud-agent-sre-acme\",\n   \"protocol\"\
+    : \"openid-connect\",\n   \"protocolMapper\": \"oidc-audience-mapper\",\n   \"\
+    config\": {\n    \"included.client.audience\": \"agent-sre-acme\",\n    \"access.token.claim\"\
+    : \"true\",\n    \"id.token.claim\": \"false\",\n    \"introspection.token.claim\"\
+    : \"true\"\n   }\n  },\n  {\n   \"name\": \"aud-agent-vyvojar-acme\",\n   \"protocol\"\
+    : \"openid-connect\",\n   \"protocolMapper\": \"oidc-audience-mapper\",\n   \"\
+    config\": {\n    \"included.client.audience\": \"agent-vyvojar-acme\",\n    \"\
+    access.token.claim\": \"true\",\n    \"id.token.claim\": \"false\",\n    \"introspection.token.claim\"\
+    : \"true\"\n   }\n  },\n  {\n   \"name\": \"aud-agent-account-beta\",\n   \"protocol\"\
+    : \"openid-connect\",\n   \"protocolMapper\": \"oidc-audience-mapper\",\n   \"\
+    config\": {\n    \"included.client.audience\": \"agent-account-beta\",\n    \"\
+    access.token.claim\": \"true\",\n    \"id.token.claim\": \"false\",\n    \"introspection.token.claim\"\
+    : \"true\"\n   }\n  },\n  {\n   \"name\": \"aud-agent-architekt-beta\",\n   \"\
+    protocol\": \"openid-connect\",\n   \"protocolMapper\": \"oidc-audience-mapper\"\
+    ,\n   \"config\": {\n    \"included.client.audience\": \"agent-architekt-beta\"\
+    ,\n    \"access.token.claim\": \"true\",\n    \"id.token.claim\": \"false\",\n\
+    \    \"introspection.token.claim\": \"true\"\n   }\n  },\n  {\n   \"name\": \"\
+    aud-agent-reviewer-beta\",\n   \"protocol\": \"openid-connect\",\n   \"protocolMapper\"\
+    : \"oidc-audience-mapper\",\n   \"config\": {\n    \"included.client.audience\"\
+    : \"agent-reviewer-beta\",\n    \"access.token.claim\": \"true\",\n    \"id.token.claim\"\
+    : \"false\",\n    \"introspection.token.claim\": \"true\"\n   }\n  },\n  {\n \
+    \  \"name\": \"aud-agent-sre-beta\",\n   \"protocol\": \"openid-connect\",\n \
+    \  \"protocolMapper\": \"oidc-audience-mapper\",\n   \"config\": {\n    \"included.client.audience\"\
+    : \"agent-sre-beta\",\n    \"access.token.claim\": \"true\",\n    \"id.token.claim\"\
+    : \"false\",\n    \"introspection.token.claim\": \"true\"\n   }\n  },\n  {\n \
+    \  \"name\": \"aud-agent-vyvojar-beta\",\n   \"protocol\": \"openid-connect\"\
+    ,\n   \"protocolMapper\": \"oidc-audience-mapper\",\n   \"config\": {\n    \"\
+    included.client.audience\": \"agent-vyvojar-beta\",\n    \"access.token.claim\"\
+    : \"true\",\n    \"id.token.claim\": \"false\",\n    \"introspection.token.claim\"\
+    : \"true\"\n   }\n  }\n ]\n}"
   eval-status.json: "{\n \"account\": {\n  \"k\": 3,\n  \"layers\": {\n   \"L0\":\
     \ {\n    \"metric\": \"pass_rate\",\n    \"passed\": true,\n    \"threshold\"\
     : 1.0,\n    \"value\": 1.0\n   },\n   \"L1\": {\n    \"metric\": \"policy_compliance\"\

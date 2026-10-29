@@ -109,6 +109,32 @@ def principal(authorization: str | None) -> dict:
     return {"sub": c["sub"], "tenant_id": c["tenant_id"], "roles": roles, "agent_id": c.get("agent_id"), "on_behalf_of": c.get("on_behalf_of"), "iss": c.get("iss"), "alg": jwt.get_unverified_header(raw).get("alg")}
 
 
+def delegation(raw: str | None, tok: dict) -> dict | None:
+    """P3-6 E2: hlavička X-Delegation = token z token exchange Keycloaku (RS256, JWKS realmu): sub = člověk (schvalovatel), azp = agent-<role>-<tenant>
+    (klient role autentizovaný SA tokenem podu). Vazba na volajícího: azp musí odpovídat SVID role (role × tenant) a tenant_id subjektu tenantu
+    principala – jinak 403. Výsledek: on_behalf_of = sub (důkaz podpisem Keycloaku, ne claim aplikace)."""
+    if not raw: return None
+    if not _jwks: raise HTTPException(401, "delegation: JWKS realmu není nastaven")
+    try:
+        key = _jwks.get_signing_key_from_jwt(raw).key
+        c = jwt.decode(raw, key, algorithms=["RS256"], issuer=JWT_ISSUER, audience=JWT_AUDIENCE, options={"require": ["exp", "sub", "iss", "aud", "azp"]})
+    except Exception as e:
+        raise HTTPException(401, f"delegation: invalid token: {type(e).__name__}")
+    azp = str(c.get("azp") or "")
+    if not azp.startswith("agent-"): raise HTTPException(403, "delegation: azp není klient role")
+    if c.get("tenant_id") != tok["tenant_id"]: raise HTTPException(403, "delegation: tenant subjektu ≠ tenant role")
+    if tok.get("identity") == "svid":
+        parts = tok["sub"].split("/")   # spiffe://platform/role/<role>/<tenant>
+        if len(parts) > 5 and azp != f"agent-{parts[4]}-{parts[5]}": raise HTTPException(403, "delegation: azp ≠ role SVID")
+    return {"sub": c["sub"], "azp": azp, "exp": c.get("exp")}
+
+
+def with_delegation(req: Request, tok: dict) -> dict:
+    d = delegation(req.headers.get("x-delegation"), tok)
+    if d: tok["on_behalf_of"] = d["sub"]; tok["delegation_azp"] = d["azp"]
+    return tok
+
+
 TENANT_STATUS_URL = os.environ.get("MEMORY_TENANT_STATUS_URL")   # P3-3: stop tenanta (autonomie.md T5) – aplikace zakázky /tenants/<id> → stopped = deny (cache 5 s)
 _TENANT_CACHE: dict = {}
 
@@ -153,12 +179,13 @@ async def read_document(req: Request, authorization: str | None = Header(None)):
 
 @app.post("/tools/create_memory")
 async def create_memory(req: Request, authorization: str | None = Header(None)):
-    tok = principal(authorization)
+    tok = with_delegation(req, principal(authorization))
     b = await req.json()
     with tracer.start_as_current_span("create_memory") as sp:
         sp.set_attribute("gen_ai.operation.name", "create_memory")
         sp.set_attribute("tenant.id", tok["tenant_id"])
         sp.set_attribute("enduser.id", tok.get("on_behalf_of") or tok["sub"])
+        if tok.get("delegation_azp"): sp.set_attribute("platform.delegation.azp", tok["delegation_azp"])   # P3-6 E2
         sources = b.get("sources") or []
         if not sources:
             LEDGER.append({"kind": "REJECT", "reason": "no_sources", "sub": tok["sub"]})
@@ -194,12 +221,13 @@ async def create_memory(req: Request, authorization: str | None = Header(None)):
 
 @app.post("/tools/search_memory")
 async def search_memory(req: Request, authorization: str | None = Header(None)):
-    tok = principal(authorization)
+    tok = with_delegation(req, principal(authorization))
     b = await req.json()
     with tracer.start_as_current_span("search_memory") as sp:
         sp.set_attribute("gen_ai.operation.name", "search_memory")
         sp.set_attribute("tenant.id", tok["tenant_id"])
         sp.set_attribute("enduser.id", tok.get("on_behalf_of") or tok["sub"])
+        if tok.get("delegation_azp"): sp.set_attribute("platform.delegation.azp", tok["delegation_azp"])   # P3-6 E2
         d = opa("search_memory", tok)
         if not d.get("allow"):
             raise HTTPException(403, f"OPA: {d.get('reason')}")

@@ -197,6 +197,14 @@ ve stejném ns, SA `flux-helm` s cluster-admin – Flux extension vynucuje multi
 `time_sleep` 90 s na propagaci RBAC), UAMI `id-eso` + federated credential + Key Vault Secrets User; `flux.tf` bez `PG_PASSWORD`, substitute
 `ESO_CLIENT_ID`, `AZURE_TENANT_ID`. Harness nic nevydává (`ensure_platform_secrets` jen čeká a uklízí legacy ConfigMapy). Měření: `measure` s `e2e=p3-6` (E1a–c).
 
+## P3-6 E2: token exchange v podu role (2026-10-28)
+
+Keycloak IdP `aks` (typ `kubernetes`, `issuerDiscoveryUrl` = OIDC issuer AKS z Terraformu → Flux substitute `AKS_OIDC_ISSUER` → `zakazka-env`
+`P0_K8S_OIDC_ISSUER`), klienti `agent-<role>-<tenant>` (federated-jwt, standard token exchange) a audience mappery `platform-gui` – vše z
+`rolegen-build/keycloak-clients.json`, aplikuje harness `kc_ensure` (čerstvý realm je nemá – stejný režim jako SPIRE entries). Pody rolí běží pod
+SA `role-<role>` (rolegen `tenants-generated.yaml`, SPIRE allow-list + selektory), mají projektovaný token s audience = issuer realmu
+(`P0_KC_ISSUER`) a egress na Keycloak (`role-egress`); exchange volají na `P0_KC_EXCHANGE_URL` (FQDN). Měření: `measure` s `e2e=p3-6` (E2a–c).
+
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru
   nepropíše – GUI proto používá existující klient `harness-human`; nový klient/uživatel = P3-2 (migrace realmu, ne import).
@@ -215,6 +223,9 @@ ve stejném ns, SA `flux-helm` s cluster-admin – Flux extension vynucuje multi
   store „multiple tenantID found“ (E1, 2026-10-27).
 - Změna volume Deploymentu (`dapr-components` ConfigMap → Secret) zabije starý pod uprostřed zápisu do ledgeru na PVC → utržený řádek; aplikace ho od E1
   opraví při startu (`LEDGER_REPAIRED`).
+- SPIRE: `spire-server entry create` alias uzlu se při změně selektorů (SA per role) musí smazat a založit znovu – harness porovnává selektory.
+- Keycloak admin API: `PUT /clients/{id}` s reprezentací obsahující `protocolMappers` přepíše mappery – lifespan/atributy měnit bez nich.
+- Pod v ns tenanta: služby platformy jen přes FQDN (`keycloak.platform-data.svc`), krátká jména z `zakazka-env` nepřeloží (E2, 2. běh).
 - Smazání Kata podu je asynchronní (VM se vypíná, desítky sekund); pod zabité aplikace zůstane jako sirotek → GC v `role_pod.py`.
 - Flexible Server je z runneru GitHub Actions dosažitelný přímo (pravidlo „Allow Azure services“ 0.0.0.0) – pro schéma paměti a FinOps dotazy; záloha socat pod.
 - **OpenBao 2.7 nemá cloud sealy zabudované** (`Error configuring seal "azurekeyvault": unknown wrapper`; changelog 2.7.0, P2-3 2026-10-25) →

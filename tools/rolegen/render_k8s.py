@@ -41,6 +41,7 @@ def render(tenant="acme"):
         data["roles.json"] = (b / "registry/roles.json").read_text()
         data["tenants.json"] = (b / "registry/tenants.json").read_text()   # P3-2: tenanti (namespace, strop, profil) pro aplikaci (role_pod ns, org.tenants, AG-UI)
         data["spire-entries.json"] = (b / "spire/entries.json").read_text()   # P2-3: registrace SPIRE per role × tenant (aplikuje harness/operátor)
+        data["keycloak-clients.json"] = (b / "keycloak/clients.json").read_text()   # P3-6 E2: klienti agent-<role>-<tenant> (federated-jwt, token exchange) + audience mappery platform-gui
         tenants_yaml = (b / "k8s/tenants.yaml").read_text()   # P3-2: Namespace/NetworkPolicy/SA/RBAC/ConfigMap per tenant → infra/k8s/roles (vlastní Flux kustomization)
         tenants = json.loads(data["tenants.json"])
         # P3-2: lidé tenantů musí být v realmu (tools/harness_p0_o2/configs/realm-p0.json – zdroj; kopie v infra/k8s/base/keycloak) se stejným tenant_id
@@ -69,9 +70,10 @@ def render(tenant="acme"):
     cfg["llm"]["policies"] = {"apiKey": {"mode": "optional", "location": tpl["policies"]["apiKey"]["location"], "keys": []}}   # klíče doplní aplikace per zakázka
     cfg |= eg
     gw_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "agentgateway-config"}, "data": {"config.yaml": yaml.safe_dump(cfg, sort_keys=False)}}
-    # P3-2: SPIRE server smí atestovat sidecar agenta jen z SA `role` v namespacech tenantů (k8s_psat service_account_allow_list v base spire.yaml – řádek s markerem)
+    # P3-2: SPIRE server smí atestovat sidecar agenta jen z SA role-<role> v namespacech tenantů (P3-6 E2: SA per role) (k8s_psat service_account_allow_list v base spire.yaml – řádek s markerem)
     spire_path = ROOT / "infra/k8s/base/spire/spire.yaml"; spire_src = spire_path.read_text()
-    allow = ["platform-data:spire-agent"] + [f"{t['namespace']}:role" for t in tenants if t.get("namespace")]
+    role_ids = sorted(k.removeprefix("pod-").removesuffix(".yaml") for k in data if k.startswith("pod-"))   # role s podem (šablona pod-<role>.yaml)
+    allow = ["platform-data:spire-agent"] + [f"{t['namespace']}:role-{r}" for t in tenants if t.get("namespace") for r in role_ids]   # P3-6 E2: SA per role
     spire_new = re.sub(r'service_account_allow_list = \[[^\n]*', 'service_account_allow_list = [' + ", ".join(f'"{x}"' for x in allow) + ']   # GENEROVÁNO rolegen (tenants.yaml): sidecar spire-agent podu role jen z SA role v ns tenantů (P2-3 Kata: hostPath socket do VM nevede)', spire_src, count=1)
     files_abs = {spire_path: spire_new, ROOT / "infra/k8s/roles/tenants-generated.yaml": HEADER + tenants_yaml}
     return images, files_abs, {"rolegen-build.yaml": HEADER + yaml.safe_dump(build_cm, sort_keys=False, allow_unicode=True),

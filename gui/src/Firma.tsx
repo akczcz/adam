@@ -86,7 +86,7 @@ export function RegistrPage() {
   const agents = useTool("agents"); const events = useTool("agent_events");
   return (
     <>
-      <div className="card"><h2 style={{ marginTop: 0 }}>Registr agentů (T12) – instance rolí</h2>{agents.err && <p className="err">{agents.err}</p>}{agents.data && <Table id="agents-table" rows={agents.data} cols={["agent_id", "tenant_id", "role_id", "role_version", "zakazka_id", "model", "gateway_key_id", "sandbox_profile", "node", "cost_usd", "created_at"]} />}</div>
+      <div className="card"><h2 style={{ marginTop: 0 }}>Registr agentů (T12) – instance rolí</h2>{agents.err && <p className="err">{agents.err}</p>}{agents.data && <Table id="agents-table" rows={agents.data} cols={["agent_id", "tenant_id", "role_id", "role_version", "zakazka_id", "on_behalf_of", "model", "gateway_key_id", "sandbox_profile", "node", "cost_usd", "created_at"]} />}</div>
       <div className="card"><h3 style={{ marginTop: 0 }}>Události registru</h3>{events.data && <Table id="events-table" rows={events.data} cols={["created_at", "kind", "tenant_id", "role_id", "agent_id", "reason", "actor"]} />}</div>
     </>
   );

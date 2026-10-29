@@ -71,7 +71,7 @@ def user_from_request(req: Request) -> dict:
     if "human" not in roles: raise HTTPException(403, "GUI je pro lidi (realm role human)")
     if not c.get("tenant_id"): raise HTTPException(403, "token bez tenant_id")
     # klient harness-human nemá scope `profile` (preferred_username) a realm v clusteru se znovu neimportuje → jméno z loginu (cache sub → username); P3-2: scope v realmu
-    return {"sub": c["sub"], "name": c.get("preferred_username") or c.get("name") or _NAMES.get(c["sub"]) or c["sub"], "tenant": c["tenant_id"], "roles": roles, "exp": c.get("exp")}
+    return {"sub": c["sub"], "name": c.get("preferred_username") or c.get("name") or _NAMES.get(c["sub"]) or c["sub"], "tenant": c["tenant_id"], "roles": roles, "exp": c.get("exp"), "raw": raw}   # raw: subject token pro token exchange role (P3-6 E2)
 
 
 _NAMES: dict = {}
