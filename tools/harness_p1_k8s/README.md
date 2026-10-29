@@ -429,7 +429,7 @@ paměti čte `requested_status` (ne `status`) – kanárek člověka jinak skon�
 pause/resume končí FAILED** (nedeterministický replay po změně kódu workflow – Dapr/durabletask) → U2d a O3 měří jen zakázky běhu; verzování
 workflow/drain před nasazením = P3-6; (4) psycopg parsuje `%` v SQL jen s parametry (`args or None`); (5) **paralelní pody dvou tenantů na jednom uzlu
 Kata sdílejí agent ID k8s_psat** → SVID se střídá a jeden pod zůstal bez SVID; záložní Keycloak token role nese tenant service accountu (acme) →
-pod cizího tenanta by četl paměť jako acme → **fail-closed** (bez SVID žádný token), harness pouští pody tenantů sériově; identita agenta per pod = P3-6;
+pod cizího tenanta by četl paměť jako acme → **fail-closed** (bez SVID žádný token), harness pouští pody tenantů sériově; identita agenta per pod = P3-6 **(vyřešeno E5, 2026-10-29: SPIRE 1.15.5 `use_pod_uid_for_agent_id`)**;
 (6) timer nebo `sleep` před znovuspuštěním role nebyly příčinou (chybná diagnóza 3.–5. běhu) – znovuspuštění bez prodlevy funguje; (7) ConfigMap
 klíčů se do replik gateway propaguje nezávisle: role spuštěná hned po resume dostala z jedné repliky 429 → `resume_tenant` odblokuje klíče **před**
 resume workflow a čeká, až obě repliky klíč tenanta pustí (sonda); (8) Dapr resume je asynchronní (RUNNING ~0,3 s po volání) a run AG-UI nad instancí
@@ -564,6 +564,28 @@ Výsledek: **59/59 + 8 INFO** (`measure` run 40667386140, `results/p3-6-20261028
    nestihla → `delegation.error`, paměť zapíše `on_behalf_of null` (degradace, ne pád); řešení = Keycloak delegace (`act`) až opustí preview,
    nebo obnova subjektu v GUI. Beta tenant (bea) má stejnou cestu, měří se jen acme. Klient `agent-<role>-<tenant>` na SPIFFE (A′) až
    `spiffe` feature opustí preview.
+
+## P3-6 E5 – identita agenta SPIRE per pod (2026-10-29, AKS, `--step p3-6` = … + **E5a–b**)
+
+- **Problém (nález P3-5)**: agent ID z `k8s_psat` je UID uzlu → sidecary dvou podů rolí na jednom uzlu Kata sdílely jeden záznam agenta; server
+  při re-atestaci přepíše sériové číslo agentova SVID, druhý sidecar dostane `AGENT_NOT_ACTIVE` a re-atestuje se znovu (ping-pong), pody dostávaly
+  cizí SVID („StaleSvid“ v role_runneru) → harness pouštěl pody tenantů sériově, role čekala až 180 s.
+- **Řešení**: SPIRE **1.15.5** (server, agent, oidc provider; 1.15.3+ má `use_pod_uid_for_agent_id` v `k8s_psat`, PR spiffe/spire#7123 – šablona
+  `agent_path_template` pro k8s_psat neexistuje, byla v PR zamítnuta) → agent ID `spiffe://platform/spire/agent/k8s_psat/platform/pod/<pod-UID>`;
+  selektory i alias entries per role × tenant beze změny; `agent_ttl = 1h` + `prune_attested_nodes_expired_for = 1h` (záznamy zaniklých podů zmizí ≤ 2 h).
+  Harness zakládá zakázky obou tenantů v O3 paralelně (bez sériového čekání).
+- **Měření**: deterministická sonda `e5_probe` – dva Kata pody (tenant-acme, tenant-beta; SA `role-account`, sidecar spire-agent jako u rolí) současně,
+  každý 75 s fetchuje X.509-SVID z Workload API; pody account zakázek běží dál v O3 (vydání klíčů gateway je serializuje ~60 s, proto neměří překryv ony).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E5a | sondy obou tenantů běží současně na jednom uzlu Kata, každá vidí jen svůj SVID, server má agenty `…/pod/<UID>` obou sond; pody account zakázek bez stale SVID; server 1.15.5, flag + agent_ttl + prune v configu | ✅ obě Running za 8,1 s, 38 fetchů × jen `spiffe://platform/role/account/<tenant>` (první SVID po 2–3 pokusech = 4–6 s), agenti per pod obou sond nalezeni, zakázky acme/beta `stale_svids []`, wait 4,6 / 6,5 s |
+| E5b | záznamy agentů | ℹ️ ~20 pod-agentů z běhu (zanikají po agent_ttl + prune), X509-SVID agenta expiruje do 1 h |
+
+Výsledek: **60/60 + 9 INFO** (`measure` run 40866588061, `results/p3-6-20261029-123142.json`; 2 běhy). Nálezy: (1) první běh měřil překryv podů
+account obou zakázek – nepřekryly se (druhý workflow čeká ~60 s na vydání klíčů gateway a propagaci ConfigMapy), proto sonda; (2) upgrade serveru
+1.14.2 → 1.15.5 proběhl in-place (sqlite datastore, migrace automaticky), agenti 1.14.2 by směli zůstat (politika: agent ≤ server, max −1 minor);
+(3) `StaleSvid` je název harnessu, v SPIRE logu odpovídá `AGENT_NOT_ACTIVE` → reattest.
 
 ## Spuštění
 

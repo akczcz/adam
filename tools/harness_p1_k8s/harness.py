@@ -854,6 +854,54 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
     finally:
         g.close()
 
+def e5_probe(a, kj, duration_s=75):
+    """E5 (P3-6): dva sondovací Kata pody (tenant-acme, tenant-beta; SA role-account, label platform.role=account, sidecar spire-agent jako u podů rolí)
+    současně na uzlu Kata; každý po dobu duration_s každé 2 s fetchuje X.509-SVID z Workload API a vypíše seznam SPIFFE ID. Důkaz identity agenta per pod:
+    oba pody běží zároveň, každý vidí jen svůj SVID (role × tenant), SPIRE server eviduje agenty …/k8s_psat/platform/pod/<UID obou podů>."""
+    zenv = kj("-n", NS, "get", "configmap", "zakazka-env").get("data") or {}
+    img, sa_img, cm = zenv.get("P0_ROLE_IMAGE", ""), zenv.get("P0_ROLE_SPIRE_AGENT_IMAGE", "ghcr.io/spiffe/spire-agent:1.15.5"), "spire-agent-pod"
+    code = ("import time, json\nfrom spiffe import WorkloadApiClient\nt0 = time.time(); seen = []\nwhile time.time() - t0 < %d:\n    try:\n        with WorkloadApiClient() as c: seen.append(str(c.fetch_x509_svid().spiffe_id))\n"
+            "    except Exception as e: seen.append('ERR:' + type(e).__name__)\n    time.sleep(2)\nprint('SVIDS=' + json.dumps(seen), flush=True)\n") % duration_s
+    def pod(tenant):
+        return {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "e5-probe", "namespace": f"tenant-{tenant}", "labels": {"app": "role", "platform.role": "account", "platform.e5": "probe"}},
+                "spec": {"runtimeClassName": "kata-vm-isolation", "serviceAccountName": "role-account", "automountServiceAccountToken": False, "shareProcessNamespace": True, "restartPolicy": "Never", "activeDeadlineSeconds": 600,
+                         "nodeSelector": {"pool": "kata"}, "tolerations": [{"key": "sandbox", "operator": "Equal", "value": "kata", "effect": "NoSchedule"}],
+                         "securityContext": {"runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}},
+                         "initContainers": [{"name": "spire-agent", "image": sa_img, "restartPolicy": "Always", "args": ["-config", "/run/spire/config/agent.conf"],
+                                             "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}, "runAsUser": 1000, "runAsGroup": 1000},
+                                             "volumeMounts": [{"name": "spire-agent-config", "mountPath": "/run/spire/config", "readOnly": True}, {"name": "spire-sockets", "mountPath": "/run/spire/sockets"}, {"name": "spire-data", "mountPath": "/run/spire/data"}, {"name": "spire-token", "mountPath": "/var/run/secrets/tokens", "readOnly": True}],
+                                             "resources": {"requests": {"cpu": "20m", "memory": "32Mi"}, "limits": {"memory": "128Mi"}}}],
+                         "containers": [{"name": "probe", "image": img, "command": ["python", "-c", code], "env": [{"name": "SPIFFE_ENDPOINT_SOCKET", "value": "unix:///run/spire/sockets/agent.sock"}],
+                                         "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}, "volumeMounts": [{"name": "spire-sockets", "mountPath": "/run/spire/sockets"}],
+                                         "resources": {"requests": {"cpu": "50m", "memory": "128Mi"}, "limits": {"memory": "512Mi"}}}],
+                         "volumes": [{"name": "spire-sockets", "emptyDir": {"medium": "Memory", "sizeLimit": "4Mi"}}, {"name": "spire-data", "emptyDir": {"medium": "Memory", "sizeLimit": "16Mi"}},
+                                     {"name": "spire-agent-config", "configMap": {"name": cm}},
+                                     {"name": "spire-token", "projected": {"sources": [{"serviceAccountToken": {"path": "spire-agent", "expirationSeconds": 7200, "audience": "spire-server"}}]}}]}}
+    out = {"image": img, "both_running_at_s": None, "phases": {}, "svids": {}, "uids": {}, "nodes": {}}
+    for t in ("acme", "beta"):
+        kubectl(a, "-n", f"tenant-{t}", "delete", "pod", "e5-probe", "--ignore-not-found", "--wait=true")
+        subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=json.dumps(pod(t)), text=True, capture_output=True)
+    t0 = time.time()
+    while time.time() - t0 < 420:
+        ph = {t: (kj("-n", f"tenant-{t}", "get", "pod", "e5-probe").get("status") or {}).get("phase") for t in ("acme", "beta")}
+        if all(v == "Running" for v in ph.values()) and out["both_running_at_s"] is None: out["both_running_at_s"] = round(time.time() - t0, 1)
+        if all(v in ("Succeeded", "Failed") for v in ph.values()): break
+        time.sleep(5)
+    for t in ("acme", "beta"):
+        p_ = kj("-n", f"tenant-{t}", "get", "pod", "e5-probe"); out["phases"][t] = (p_.get("status") or {}).get("phase"); out["uids"][t] = (p_.get("metadata") or {}).get("uid"); out["nodes"][t] = (p_.get("spec") or {}).get("nodeName")
+        log = kubectl(a, "-n", f"tenant-{t}", "logs", "e5-probe", "-c", "probe").stdout
+        line = next((l for l in log.splitlines() if l.startswith("SVIDS=")), "")
+        try: seen = json.loads(line[6:]) if line else []
+        except Exception: seen = []
+        out["svids"][t] = {"fetches": len(seen), "ids": sorted({x for x in seen if not x.startswith("ERR")}), "errors": sorted({x for x in seen if x.startswith("ERR")}), "first_ok_idx": next((i for i, x in enumerate(seen) if not x.startswith("ERR")), None)}
+        kubectl(a, "-n", f"tenant-{t}", "delete", "pod", "e5-probe", "--ignore-not-found", "--wait=false")
+    agents_out = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "agent", "list", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+    ids = [l.split(":", 1)[1].strip() for l in agents_out.splitlines() if l.strip().startswith("SPIFFE ID")]
+    out["agents_for_probes"] = {t: any(u and x.endswith("/pod/" + u) for x in ids) for t, u in out["uids"].items()}
+    out["agents_pod_total"] = len([x for x in ids if "/k8s_psat/platform/pod/" in x])
+    return out
+
+
 def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_root_token):
     """O-3 (P3-5): multi-tenant harness v clusteru – M-E3 izolace paměti přes PEP identitou podu (SVID role × tenant), stop tenanta uprostřed běžící role
     s checkpointem (SIGTERM → sync-up), resume → role znovu od checkpointu a další HITL v GUI, spany paměti bez cizího tenanta (ClickHouse), útrata per tenant."""
@@ -874,6 +922,9 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
     probe_b = [can["acme"], can["beta"], "ACME kód projektu"]; probe_a = [can["beta"], can["acme"], "BETA kód projektu"]
     zb, za = f"{tag}-o3b", f"{tag}-o3a"
     http("POST", f"{APP}/zakazky", json={"id": zb, "poptavka": f"Zakázka tenanta beta {zb}: přidej soubor zakazky/{zb}/NOTES.md (test stopu tenanta uprostřed role).", "tenant": "beta", "klasifikace": KLAS_NO, "memory_probe": probe_b, "hitl_timeout_s": 3600}, timeout=15)
+    # P3-6 E5: zakázka acme hned za beta – pody account obou tenantů běží paralelně na jednom uzlu Kata (agent ID per pod: use_pod_uid_for_agent_id); dřív sériově (P3-5)
+    http("POST", f"{APP}/zakazky", json={"id": za, "poptavka": f"Zakázka tenanta acme {za}: přidej soubor zakazky/{za}/NOTES.md (acme běží během stopu beta).", "tenant": "acme", "klasifikace": KLAS_NO, "memory_probe": probe_a, "hitl_timeout_s": 3600}, timeout=15)
+    t_par = time.time()
     g = Gui(f"{APP}/gui/", shots=gui_shots / "o3").open()
     def wait_i(bod, timeout):
         t0 = time.time()
@@ -886,14 +937,26 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         g.login("bea", "bea"); g.open_thread(zb); dialog_then(g, zb, 1500)
         h1 = wait_i("H1", 1500); assert h1["interrupt"], f"H1 (beta o3) nepřišel: {h1['run_status']} {h1.get('error')}"
         L = led(); pod_b = next((e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "account"), {}); mp_b = pod_b.get("memory_probe") or {}
-        # zakázka acme až po podu beta: paralelní pody dvou tenantů na jednom uzlu Kata sdílejí agent ID k8s_psat → SVID se střídá (P2-3 omezení, identita agenta per pod = P3-6)
-        http("POST", f"{APP}/zakazky", json={"id": za, "poptavka": f"Zakázka tenanta acme {za}: přidej soubor zakazky/{za}/NOTES.md (acme běží během stopu beta).", "tenant": "acme", "klasifikace": KLAS_NO, "memory_probe": probe_a, "hitl_timeout_s": 3600}, timeout=15)
         t_a = time.time()
         while time.time() - t_a < 900 and not any(e["kind"] == "ROLE_POD" and e["zakazka"] == za and e["role"] == "account" for e in led()): time.sleep(5)
         pod_a = next((e for e in led() if e["kind"] == "ROLE_POD" and e["zakazka"] == za and e["role"] == "account"), {}); mp_a = pod_a.get("memory_probe") or {}
         # vyhledávání nemá práh podobnosti (top-N vlastního tenanta): důkazem izolace je, že se cizí kanárek (id) nikdy nevrátí a tenants_returned ⊆ vlastní tenant
         ok_b = bool(mp_b) and all(wr["acme"].get("id") not in (v.get("returned") or []) and set(v.get("tenants_returned") or []) <= {"beta"} and v.get("http") == 200 for v in mp_b.values()) and wr["beta"].get("id") in (mp_b.get(can["beta"], {}).get("returned") or [])
         ok_a = bool(mp_a) and all(wr["beta"].get("id") not in (v.get("returned") or []) and set(v.get("tenants_returned") or []) <= {"acme"} and v.get("http") == 200 for v in mp_a.values()) and wr["acme"].get("id") in (mp_a.get(can["acme"], {}).get("returned") or [])
+        # E5 (P3-6): identita agenta per pod – deterministická sonda: dva Kata pody (acme, beta) se sidecarem SPIRE současně, každý vidí jen svůj SVID;
+        # pody account zakázek běžely po sobě (vydání klíčů gateway serializuje start), proto měří sonda; agent ID …/k8s_psat/platform/pod/<UID> (SPIRE 1.15.5)
+        pr = e5_probe(a, kj)
+        own = {t: f"spiffe://platform/role/account/{t}" for t in ("acme", "beta")}
+        ok_svid = all(pr["svids"][t]["fetches"] >= 10 and pr["svids"][t]["ids"] == [own[t]] for t in own)
+        ida, idb = pod_a.get("identity") or {}, pod_b.get("identity") or {}
+        scfg = (kj("-n", NS, "get", "configmap", "spire-server-config").get("data") or {}).get("server.conf", "")
+        s_img = next((c["image"] for p_ in kj("-n", NS, "get", "pods", "-l", "app=spire-server").get("items", []) for c in p_["spec"]["containers"] if c["name"] == "spire-server"), "")
+        rep.add("E5a", "Identita agenta per pod (SPIRE 1.15.5, k8s_psat use_pod_uid_for_agent_id): dva sondovací Kata pody tenantů acme a beta (SA role-account, sidecar spire-agent jako u rolí) běží současně na jednom uzlu, každý po 75 s fetchuje SVID a vidí jen svůj (role × tenant, žádný cizí – dřív se sidecary přetahovaly o jeden záznam agenta uzlu: AGENT_NOT_ACTIVE → reattest ping-pong), SPIRE server eviduje agenty …/k8s_psat/platform/pod/<UID> obou podů; pody account zakázek obou tenantů bez stale SVID; agent_ttl 1h + prune v configu", "PASS" if pr["both_running_at_s"] is not None and ok_svid and pr["nodes"]["acme"] and pr["nodes"]["acme"] == pr["nodes"]["beta"] and all(pr["agents_for_probes"].values()) and not ida.get("stale_svids") and not idb.get("stale_svids") and ida.get("kind") == "svid" and idb.get("kind") == "svid" and "use_pod_uid_for_agent_id = true" in scfg and 'agent_ttl = "1h"' in scfg and "prune_attested_nodes_expired_for" in scfg and s_img.endswith(":1.15.5") else "FAIL", {"probe": pr, "zakazky_pods": {"acme": {k: ida.get(k) for k in ("kind", "spiffe_id", "wait_s", "stale_svids")}, "beta": {k: idb.get(k) for k in ("kind", "spiffe_id", "wait_s", "stale_svids")}}, "server_image": s_img, "config": {k: (k in scfg) for k in ("use_pod_uid_for_agent_id = true", 'agent_ttl = "1h"', "prune_attested_nodes_expired_for")}})
+        agents_out = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "agent", "list", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+        agent_ids = [l.split(":", 1)[1].strip() for l in agents_out.splitlines() if l.strip().startswith("SPIFFE ID")]
+        pod_agents = sorted({x for x in agent_ids if "/k8s_psat/platform/pod/" in x})
+        exp_lines = [l.split(":", 1)[1].strip() for l in agents_out.splitlines() if "X509-SVID expires" in l or "Expires" in l]
+        rep.add("E5b", "E5: záznamy agentů v SPIRE serveru (per pod – po zániku podu expirace agent_ttl, prune)", "INFO", {"agents_pod_ids": pod_agents[:6], "expires_sample": exp_lines[:4], "wait_s": {"acme": ida.get("wait_s"), "beta": idb.get("wait_s")}})
         rep.add("O3a", "M-E3 v clusteru (model-pameti.md): kanárky obou tenantů (lidé adam/bea zapsali approved přes server paměti), pod account každého tenanta se ptá identitou JWT-SVID role × tenant (PEP: tenant z cesty SVID, RLS app.tenant_id) na kanárek cizího tenanta → 0 záznamů, na vlastní → nalezen; 3 dotazy × 2 tenanty, žádný cizí tenant_id v odpovědích (gate 100 %); bez SVID pod paměť nečte (fail-closed, žádný záložní token)", "PASS" if ok_b and ok_a and (pod_b.get("identity") or {}).get("spiffe_id", "").endswith("/beta") and (pod_a.get("identity") or {}).get("spiffe_id", "").endswith("/acme") else "FAIL", {"canaries": wr, "beta_pod": {"identity": pod_b.get("identity"), "probe": mp_b}, "acme_pod": {"identity": pod_a.get("identity"), "probe": mp_a}})
         # O3b – beta k vývojáři (H1, H2 z GUI), stop tenanta beta během běžícího podu vývojáře: SIGTERM → checkpoint (sync-up) → pod pryč ≤ 60 s, acme běží dál
         g.decide("Zadání beta v pořádku – schvaluji (test stopu tenanta).")

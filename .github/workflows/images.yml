@@ -28,9 +28,9 @@ jobs:
           imp() { az acr repository show -n "$ACR" --image "$2" -o none 2>/dev/null && echo "skip $2" || { echo "import $1 -> $2"; az acr import -n "$ACR" --source "$1" --image "$2" -o none; }; }
           imp quay.io/keycloak/keycloak:26.8.1                        keycloak:26.8.1
           imp ghcr.io/openbao/openbao:2.7.1                            openbao:2.7.1
-          imp ghcr.io/spiffe/spire-server:1.14.2                       spire-server:1.14.2
-          imp ghcr.io/spiffe/spire-agent:1.14.2                        spire-agent:1.14.2
-          imp ghcr.io/spiffe/oidc-discovery-provider:1.14.2            oidc-discovery-provider:1.14.2
+          imp ghcr.io/spiffe/spire-server:1.15.5                       spire-server:1.15.5   # P3-6 E5: use_pod_uid_for_agent_id (1.15.3+)
+          imp ghcr.io/spiffe/spire-agent:1.15.5                        spire-agent:1.15.5
+          imp ghcr.io/spiffe/oidc-discovery-provider:1.15.5            oidc-discovery-provider:1.15.5
           imp ghcr.io/agentgateway/agentgateway:v1.6.0                 agentgateway:1.6.0
           imp docker.io/openpolicyagent/opa:1.11.0-static              opa:1.11.0
           imp docker.io/otel/opentelemetry-collector-contrib:0.163.2  otel-collector-contrib:0.163.2

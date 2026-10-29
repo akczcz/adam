@@ -151,6 +151,7 @@ Detail v [regulace.md](regulace.md). Tři věci, které mění návrh (ověřeno
 - [x] ~~Aktuální harmonogram EU AI Act a technické požadavky na audit a lidský dohled~~ → [regulace.md](regulace.md), 2026-10-22; text OJ zbývá ověřit.
 
 ## Changelog
+- 2026-10-29: P3-6 E5 změřeno na AKS (60/60, `measure` run 40866588061) – SPIRE 1.15.5 s agent ID per pod (`k8s_psat` `use_pod_uid_for_agent_id`); omezení „sidecary na jednom uzlu Kata sdílejí agent ID“ (P2-3/P3-5) padá, pody rolí tenantů běží paralelně.
 - 2026-10-28: P3-6 E2 změřeno na AKS (59/59, `measure` run 40667386140) – standard token exchange V2 s federated client auth (IdP kubernetes, SA token podu role) dává token `sub = schvalovatel, azp = agent-<role>-<tenant>`; `act` delegace a SPIFFE client auth v 26.8.1 preview (identity-scout 2026-10-28, zdroje v keycloak.md).
 - 2026-10-28: P3-6 E1 změřeno na AKS (56/56, `measure` run 40603229736) – ESO v2.14.0 (Key Vault, Workload Identity: tenant jen z anotace SA), cert-manager v1.21.3 + trust-manager v0.26.0 (interní CA, bundle do ns tenantů); harness ani Flux substitute nenesou tajemství. Zdroje: ESO releases/docs, cncf/toc#1486, #1819, cert-manager releases, azurerm docs (identity-scout 2026-10-27).
 - 2026-10-27: P3-4 – čl. 50(1) T7 naostro: disclosure vkládá adaptér kanálu (e-mail, ticket) z definice role, T8 `generated_by` jen na kanálech k lidem (mezikroky ne); T9/T15 klasifikační brána per zakázka (`org.zakazky.profile`, auditní řádek `org.approvals`, OPA data); změřeno harnessem K-1.
