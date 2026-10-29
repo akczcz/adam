@@ -34,7 +34,7 @@ Výsledek 2026-10-24: `tools/harness_p1_k8s/results/p1-2-*.json` **6/6 PASS + 1 
 
 `infra/k8s/base/{keycloak,openbao,spire}`: Keycloak 26.8.1 (`start --optimized --import-realm`, realm `p0` z ConfigMapy, DB `keycloak`
 v clusterovém Postgresu), OpenBao 2.7.1 (StatefulSet, raft, audit device deklarativně do stdout, init/unseal operátorem – harness),
-SPIRE 1.14.2 (server se sqlite datastore, agent DaemonSet s `k8s_psat` + `k8s` workload attestorem, trust domain `platform`).
+SPIRE 1.15.5 (server se sqlite datastore, agent DaemonSet s `k8s_psat` + `k8s` workload attestorem, trust domain `platform`; od P3-6 E5 agent ID per pod – `use_pod_uid_for_agent_id`, `agent_ttl` 1h, prune).
 
 Obrazy pro kind se stavějí lokálně (quay.io, ghcr.io a api.adoptium.net nejsou z prostředí dostupné, Docker Hub má rate limit):
 `platform/keycloak:26.8.1` = Debian základ (`pgvector/pgvector:pg16`, už lokálně) + Temurin JRE 21 z GitHub releases + Keycloak dist
@@ -204,6 +204,13 @@ Keycloak IdP `aks` (typ `kubernetes`, `issuerDiscoveryUrl` = OIDC issuer AKS z T
 `rolegen-build/keycloak-clients.json`, aplikuje harness `kc_ensure` (čerstvý realm je nemá – stejný režim jako SPIRE entries). Pody rolí běží pod
 SA `role-<role>` (rolegen `tenants-generated.yaml`, SPIRE allow-list + selektory), mají projektovaný token s audience = issuer realmu
 (`P0_KC_ISSUER`) a egress na Keycloak (`role-egress`); exchange volají na `P0_KC_EXCHANGE_URL` (FQDN). Měření: `measure` s `e2e=p3-6` (E2a–c).
+
+## P3-6 E5: identita agenta SPIRE per pod (2026-10-29)
+
+SPIRE 1.15.5 (obrazy `spire-server`, `spire-agent`, `oidc-discovery-provider` z ACR; sidecar podů rolí `P0_ROLE_SPIRE_AGENT_IMAGE`). `server.conf`:
+`use_pod_uid_for_agent_id = true` v clusteru `platform` pluginu `k8s_psat` (1.15.3+) → agent ID `…/k8s_psat/platform/pod/<pod-UID>` místo UID uzlu,
+`agent_ttl = "1h"`, `prune_attested_nodes_expired_for = "1h"`. Selektory a alias entries z rolegen beze změny. Upgrade serveru in-place (sqlite); politika
+kompatibility: agent ≤ server, max o jednu minor starší. Měření: `measure` s `e2e=p3-6` (E5a sonda dvou podů).
 
 ## Pasti (AKS + Flux)
 - Keycloak `--import-realm` existující realm **neaktualizuje** (import jen při prvním startu): změna `realm-p0.json` se do běžícího clusteru

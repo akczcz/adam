@@ -22,6 +22,13 @@ k gateway, **JWT-SVID** jako `actor_token` nebo `client_assertion` (Keycloak, En
 ## Aktuální stav
 SPIRE v1.15.5 (2026-10-20), CNCF graduated, Apache-2.0, DCO. Helm `helm-charts-hardened` 0.30.3 s OIDC discovery
 providerem **zapnutým defaultně**. Rešerše ze zdrojových repozitářů (2026-10-22), v harnessu I2 **neběžel**.
+**Nasazeno na AKS 1.15.5 (P3-6 E5, 2026-10-29)** – server + agent sidecar podů rolí + oidc provider; předtím 1.14.2 (P2-3 až E2).
+- `k8s_psat` server plugin: od **1.15.3** per-cluster `use_pod_uid_for_agent_id` → agent ID `spiffe://<td>/spire/agent/k8s_psat/<cluster>/pod/<pod-UID>`
+  (PR spiffe/spire#7123; `agent_path_template` pro k8s_psat **neexistuje** – v PR zamítnut kvůli riziku neunikátních ID). Selektory beze změny.
+- Re-atestace (`CanReattest: true`): `AttestAgent` existující záznam **přepíše** (nový serial), druhý agent se stejným ID dostane `AGENT_NOT_ACTIVE`
+  a re-atestuje se bez restartu (1.10+) → dva sidecary s ID uzlu se přetahují (nález P3-5; řešení = unikátní ID per pod, ne vypnutí reattestace).
+- `prune_attested_nodes_expired_for` (1.13+) maže expirované reattestovatelné záznamy agentů; `agent_ttl` lze krátký (varování až nad `ca_ttl/6`).
+- Kompatibilita: agent ≤ server, max o jednu minor starší, bez skoků o dvě minor (`doc/upgrading.md`).
 
 ## Klíčové koncepty
 - Attestace node (K8s PSAT, `join_token` lokálně) a workload (`unix`, `k8s` selectory); entry = SPIFFE ID + selektory.
@@ -58,4 +65,5 @@ o MCP hranici.
 - [ ] Společný root: ano/ne (rozhodnutí Adam).
 
 ## Changelog
+- 2026-10-29: P3-6 E5 – SPIRE 1.15.5 na AKS, `use_pod_uid_for_agent_id` (agent ID per pod), mechanismus re-atestace ping-pong doložen z kódu 1.14.2 (identity-scout: service.go, middleware.go, nodeutil, manager.go), prune + agent_ttl.
 - 2026-10-22: první verze (kolo 2, rešerše).
