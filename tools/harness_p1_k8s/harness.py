@@ -699,7 +699,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         rls_on = {r[0]: r[1] for r in c.execute("SELECT relname, relrowsecurity FROM pg_class WHERE relnamespace = 'org'::regnamespace AND relkind = 'r'").fetchall()}
     want_ns = {f"tenant-{t['id']}" for t in tenants_git if t.get("role_pods")}
     rep.add("T1a", "Tenanti z Gitu (knowledge/organization/tenants.yaml → rolegen tenants.json v ConfigMapě → aplikace při startu): řádky org.tenants (acme, beta, platform s rozpočtem a profilem), namespace tenant-<id> pro tenanty s pody rolí existují (Flux z tenants-generated.yaml), RLS zapnutá s politikou tenant_isolation na org.tenants/zakazky/approvals (TENANTS_SYNC v ledgeru)", "PASS" if {t["id"] for t in tenants_git} == set(trows) == {t["id"] for t in tj} and all(abs(trows[t["id"]]["budget"] - float(t["budget_usd"])) < 1e-6 for t in tenants_git) and want_ns <= set(tenant_namespaces()) and all(rls_on.get(t) for t in ("tenants", "zakazky", "approvals")) and {("tenants", "tenant_isolation"), ("zakazky", "tenant_isolation"), ("approvals", "tenant_isolation")} <= set(pols) and sync.get("written") else "FAIL", {"org_tenants": trows, "namespaces": tenant_namespaces(), "rls": rls_on, "policies": pols, "sync": {k: sync.get(k) for k in ("written", "tenants", "rls", "error")}})
-    zb = f"{tag}-beta"; g = Gui(f"{APP}/gui/", shots=gui_shots / "beta").open(); t_b = time.time()
+    zb = f"{tag}-beta"; g = Gui(f"{APP}/gui/", shots=gui_shots / "beta").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); t_b = time.time()
     def wait_i(g_, bod, timeout):
         t0 = time.time()
         while True:
@@ -740,7 +740,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         r403 = http("POST", f"{APP}/agui/run", headers={"Authorization": f"Bearer {g.token}"}, json={"threadId": zid_acme, "runId": "t1e", "messages": []}, timeout=15).status_code
         g.page.goto(f"{APP}/gui/#/t/{zb}"); g.page.wait_for_timeout(1500)
         g.open_thread(zb); stp = g.stop("Test tenantů hotov – zakázku beta zastavuji (není třeba dokončit).")
-        g.close(); g2 = Gui(f"{APP}/gui/", shots=gui_shots / "platform").open()
+        g.close(); g2 = Gui(f"{APP}/gui/", shots=gui_shots / "platform").open(); g2.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
         lp = g2.login("platform-admin", "platform-admin"); lst_p = g2.threads_list(); ot_p = g2.open_thread(zb)
         r403p = http("POST", f"{APP}/agui/run", headers={"Authorization": f"Bearer {g2.token}"}, json={"threadId": f"{tag}-plat", "runId": "t1e2", "messages": [{"id": "m", "role": "user", "content": "platform nesmí zakládat"}]}, timeout=15).status_code
         g2.close()
@@ -817,7 +817,7 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         res_h = http("GET", f"{APP}/agui/gov/resources", headers={"Authorization": f"Bearer {ta}"}, timeout=15).json()
         rep.add("U2g", "Governance MCP jen pro lidi a jen čtení: agentní token (client_credentials agent-account) → 403, bez tokenu 401, /resources hlásí read_only a DB roli org_reader (server nemá zápisové DSN)", "PASS" if s_ag == 403 and s_none == 401 and res_h.get("read_only") and res_h.get("db_role") == "org_reader" else "FAIL", {"agent_http": s_ag, "no_token_http": s_none, "resources": {k: res_h.get(k) for k in ("read_only", "db_role")}, "tools": [t["name"] for t in res_h.get("tools", [])]})
         # U2d – stop tenanta beta z GUI: druhá zakázka beta (bea) běží do interruptu, pak platform-admin stop → obě SUSPENDED, klíče Block (429), paměť deny, SPIRE entries zůstávají
-        g.close(); gb = Gui(f"{APP}/gui/", shots=gui_shots / "beta2").open()   # Playwright sync: v jednom vlákně jen jedna instance → zavřít a znovu otevřít
+        g.close(); gb = Gui(f"{APP}/gui/", shots=gui_shots / "beta2").open(); gb.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)   # Playwright sync: v jednom vlákně jen jedna instance → zavřít a znovu otevřít
         try:
             gb.login("bea", "bea"); zb2 = f"{tag}-beta2"; gb.create_thread(zb2, f"Druhá zakázka beta {zb2} – test stopu tenanta."); w2 = gb.wait_any_interrupt(1200)
         finally: gb.close()
@@ -925,7 +925,7 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
     # P3-6 E5: zakázka acme hned za beta – pody account obou tenantů běží paralelně na jednom uzlu Kata (agent ID per pod: use_pod_uid_for_agent_id); dřív sériově (P3-5)
     http("POST", f"{APP}/zakazky", json={"id": za, "poptavka": f"Zakázka tenanta acme {za}: přidej soubor zakazky/{za}/NOTES.md (acme běží během stopu beta).", "tenant": "acme", "klasifikace": KLAS_NO, "memory_probe": probe_a, "hitl_timeout_s": 3600}, timeout=15)
     t_par = time.time()
-    g = Gui(f"{APP}/gui/", shots=gui_shots / "o3").open()
+    g = Gui(f"{APP}/gui/", shots=gui_shots / "o3").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
     def wait_i(bod, timeout):
         t0 = time.time()
         while True:
@@ -1153,7 +1153,7 @@ def klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots):
         with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args).fetchall()
     roles_disc = {r: (_yg.safe_load((ROOT / f"knowledge/organization/roles/{r}.yaml").read_text()).get("disclosure") or {}).get("channels", {}) for r in ("account", "sre")}
     pf_ch = PortForward(a, "mock-channels", 19804, 9804); pf_opa = PortForward(a, "opa", 18181, 8181)
-    g = Gui(f"{APP}/gui/", shots=gui_shots / "klas").open(); t_k = time.time()
+    g = Gui(f"{APP}/gui/", shots=gui_shots / "klas").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); t_k = time.time()
     def wait_i(bod, timeout):   # čekání po 60s úsecích, mezi nimi /health obnoví spadlý port-forward (GUI se samo znovu připojí)
         t0 = time.time()
         while True:
@@ -1219,7 +1219,7 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
             with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
                 return [dict(zip(("process_id", "action", "decision", "reason", "approver", "channel", "artifact_sha"), r)) for r in c.execute("SELECT process_id, action, decision, reason, approver, channel, artifact_sha FROM org.approvals WHERE workflow_instance = %s ORDER BY decided_at", (z,)).fetchall()]
         except Exception as e: return {"error": f"{type(e).__name__}: {str(e)[:160]}"}
-    g = Gui(f"{APP}/gui/", shots=shots).open(); t_gui = time.time()
+    g = Gui(f"{APP}/gui/", shots=shots).open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); t_gui = time.time()
     def wait_i(bod, timeout):
         """Čekání na interrupt po 60s úsecích; mezi nimi http() na /health (obnoví spadlý port-forward – GUI se pak samo znovu připojí)."""
         t0 = time.time()
