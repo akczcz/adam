@@ -1,11 +1,13 @@
 ---
 tema: Keycloak 26.8 jako platformní authorization server – standard token exchange V2, downscope enforcer, delegace
-naposledy_overeno: 2026-10-22
+naposledy_overeno: 2026-10-29
 zralost: stable (V2 exchange supported, default on) / preview (delegace, `act`)
 primarni_zdroje:
   - https://github.com/keycloak/keycloak/blob/main/docs/guides/securing-apps/token-exchange.adoc
   - https://github.com/keycloak/keycloak/releases/tag/26.8.1
   - https://github.com/keycloak/keycloak/blob/main/LICENSE.txt
+  - https://github.com/keycloak/keycloak/blob/26.8.1/quarkus/config-api/src/main/java/org/keycloak/config/HttpOptions.java
+  - https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/server/hostname.adoc
 ---
 
 # Keycloak
@@ -54,6 +56,22 @@ Ověřeno z tagu `keycloak/keycloak@26.8.1` (docs + zdroje; identity-scout 2026-
 Důsledek: mandát „jménem“ = `sub + azp` podepsané Keycloakem + vazba na SVID v PEP (paměť ověří `azp == agent-<role>-<tenant>` ze SPIFFE ID);
 `act` přijde jako nadmnožina po GA. Omezení: subject token (člověk) žije 30 min – role bez HITL před sebou exchange nestihne (degradace).
 
+## TLS z interní CA a pevný issuer (P3-6 E7, ověřeno 2026-10-29 na tagu 26.8.1)
+
+| Volba | Hodnota na AKS | Poznámka | Zdroj |
+|---|---|---|---|
+| `KC_HTTP_ENABLED` | `false` | jen HTTPS; bez certu a s `false` start selže (`httpsConfigurationNotSet`); `true` + cert = oba listenery | `HttpPropertyMappers.java` |
+| `KC_HTTPS_CERTIFICATE_FILE` / `KC_HTTPS_CERTIFICATE_KEY_FILE` | `tls.crt`/`tls.key` ze Secretu `kubernetes.io/tls` (cert-manager) | PEM má přednost před keystore; klíč PKCS8 i SEC1 (Vert.x `KeyStoreHelper`) | `HttpOptions.java`, `enabletls.adoc` |
+| `KC_HTTPS_CERTIFICATES_RELOAD_PERIOD` | `1m` (default `1h`, min > 30 s, `-1` vypne) | periodický reload (ne inotify) – rotace z cert-manageru bez restartu; od 26.0 | `HttpOptions.java`, release notes 26.0 |
+| `KC_HOSTNAME` (hostname v2) | `https://keycloak:8443` | plná URL = pevný issuer `https://keycloak:8443/realms/p0` ať klient přijde jakkoli (port-forward, FQDN); priorita realm `frontendUrl` > hostname > request; `hostname-strict` je pak bez účinku | `HostnameV2Provider.java`, `hostname.adoc` |
+| `KC_HTTP_MANAGEMENT_SCHEME` | `http` | default `inherited` = management 9000 by s HTTPS běžel také HTTPS; `http` pro probe (kubelet by HTTPS necertifikoval, ale takhle je to prosté) | `ManagementOptions.java` |
+| outbound truststore (IdP `aks` discovery na veřejný issuer AKS) | nic | JDK default truststore vždy platí, `truststore-kubernetes-enabled` default přidá SA CA | `keycloak-truststore.adoc` |
+
+Issuer http → https: Keycloak issuer kontroluje jen u refresh tokenů (`TokenManager.verifyRefreshToken`) → staré refresh tokeny selžou; access tokeny
+ověřují klienti proti `*_ISSUER` env (aplikace, paměť, Governance MCP – všechny mění overlay); realm issuer nenese (`realm-p0.json` bez
+`attributes.frontendUrl`); jediná skrytá vazba: audience projektovaného SA tokenu podů rolí = `P0_KC_ISSUER` (mění se spolu). NetworkPolicy
+podů rolí musí pustit 8443 (první běh E7: `ConnectTimeout` exchange). Rotace změřena: nový leaf za ~54 s bez restartu (E7c).
+
 ## Místo v architektuře
 AS pro platformu, federovaný na Entra ID / IdP zákazníka. Exchange volá **agentgateway** (`backendAuth.oauthTokenExchange`),
 ne agentní kód. Viz [agentgateway-identity.md](agentgateway-identity.md) a diagram v [standardy.md](standardy.md).
@@ -77,5 +95,6 @@ ne agentní kód. Viz [agentgateway-identity.md](agentgateway-identity.md) a dia
 - [ ] Cache exchange v agentgateway: změřeno p50 71–81 ms přes gateway vs. 58 ms exchange → cache pravděpodobně neúčinná; ověřit.
 
 ## Changelog
+- 2026-10-29: P3-6 E7 – TLS jen HTTPS 8443 z interní CA (cert-manager), pevný issuer https přes `KC_HOSTNAME`, reload certifikátu periodou, management HTTP pro probe; ověřeno na tagu 26.8.1 a změřeno na AKS.
 - 2026-10-28: P3-6 E2 – federated client authentication (K8s SA token podu role) + standard exchange V2 změřeno na AKS; SPIFFE client auth a delegace `act` preview; past PUT klienta.
 - 2026-10-22: první verze; vše z harnessu I2 proti 26.8.1.

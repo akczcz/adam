@@ -643,6 +643,7 @@ FAILED po restartu podu nedohledatelná; (3) E6 nechá pool kata bez podů ≥ 1
 |---|---|---|
 | E7a | certy z platform-ca, HTTPS ověřené rootem / odmítnuté veřejnými CA, issuer https, plaintext odmítnut, Service 8200/8443, env klientů | ⏳ |
 | E7b | klienti přes TLS v provozu (GUI login, OpenBao login+sign, paměť JWKS, governance, exchange v podu), bez TLS chyb | ⏳ |
+| E7c | rotace certifikátů za běhu (Certificate Issuing=True jako `cmctl renew`): nový leaf bez restartu podu u OpenBao (`tls_auto_reload`) i Keycloaku (reload period 1 m), login dál funguje | ⏳ |
 
 Výsledek: ⏳ (doplním po měření).
 
