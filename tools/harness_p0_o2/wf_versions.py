@@ -85,7 +85,22 @@ def register(rt) -> dict:
         rt.register_versioned_workflow(_wrap(mod.zakazka), name=NAME, version_name=v, is_latest=False); registered.append(v)
     rt.register_versioned_workflow(_wrap(zakazka_wf.zakazka), name=NAME, version_name=cur, is_latest=True); registered.append(cur)
     if latest(rt) != cur: raise RuntimeError(f"registr workflow runtime nehlásí latest={cur} (SDK dapr-ext-workflow jiné verze než 1.18.3?)")   # privátní atribut SDK – selhat při startu, ne tiše
-    return {"name": NAME, "current": cur, "versions": sorted(registered), "unfrozen": cur not in snaps or not snaps[cur]["ok"], "bad": bad}
+    missing = missing_activities(rt, [SOURCE] + [Path(s["path"]) for v, s in snaps.items() if s["ok"] and v != cur])
+    if missing: raise RuntimeError(f"orchestrátor volá aktivity, které app.py neregistruje: {missing} (nález E6: smazaná raise_cap → instance FAILED až při navýšení stropu)")
+    return {"name": NAME, "current": cur, "versions": sorted(registered), "unfrozen": cur not in snaps or not snaps[cur]["ok"], "bad": bad, "activities_checked": True}
+
+
+_ACT_RE = re.compile(r'call_activity\(\s*"([a-z_]+)"|run_role\(ctx, z, "[a-z]+", "([a-z_]+)"')
+
+
+def missing_activities(rt, files) -> list:
+    """Jména aktivit volaná v (každé verzi) orchestrátoru vs. aktivity registrované v runtime: chybějící jméno = instance FAILED až v okamžiku volání
+    (kontrakt aktivit musí platit pro všechny registrované verze, ne jen pro latest)."""
+    used = set()
+    for f in files:
+        for m in _ACT_RE.finditer(Path(f).read_text()): used.add(m.group(1) or m.group(2))
+    have = set(_registry(rt).activities)
+    return sorted(used - have)
 
 
 def _registry(rt):

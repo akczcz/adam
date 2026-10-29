@@ -670,6 +670,20 @@ def notify_customer_run(inp):
 def notify_customer(ctx, inp): return notify_customer_run(inp)
 
 
+@rt.activity(name="raise_cap")
+def raise_cap(ctx, inp):
+    """P3-6 (E3): nový strop zakázky z HITL rozpocet – rozpočet zakazka-30d-block všech klíčů zakázky v gateway (hot reload, sonda na repliky) + org.zakazky.budget_usd."""
+    z, cap = inp["z"], float(inp["budget_usd"]); out = {}
+    if os.environ.get("P0_GATEWAY_KEYS") == "issue":
+        try:
+            import gateway_keys; out = gateway_keys.set_cap(z["id"], cap, ledger)
+        except Exception as e: out = {"error": f"{type(e).__name__}: {str(e)[:160]}"}
+    fin, hashes = zakazka_spend(z["id"])
+    ok = finops.registry_upsert(z["id"], tenant=z.get("tenant") or os.environ.get("P0_TENANT", "acme"), budget_usd=cap, spent=fin, status="Running", keys_source=None, key_hashes=hashes)
+    ledger("BUDGET_CAP", zakazka=z["id"], budget_usd=cap, by=inp.get("by"), registry=ok, **{k: v for k, v in out.items() if k != "propagation"}, propagation=out.get("propagation"))
+    return {**out, "registry": ok}
+
+
 # --- workflow zakázky: orchestrátor je ve verzovaném modulu zakazka_wf.py (P3-6 E6), aktivity volá jménem; všechny verze (snímky wf_versions/ +
 # aktuální jako latest) registruje wf_versions.register(rt) – aktivity výše musí být zaregistrované dřív (jména), tělo se mění volně, kontrakt ne
 import wf_versions   # noqa: E402
