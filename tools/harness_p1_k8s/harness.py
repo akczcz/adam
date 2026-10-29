@@ -1407,6 +1407,38 @@ def e7_app_checks(rep, http, led, APP, zid, t_run):
     rep.add("E7b", "Klienti přes TLS v provozu: přihlášení člověka z GUI = password grant aplikace na https Keycloak (token iss https://keycloak:8443/realms/p0), aplikace do OpenBao přes https (BAO_LOGIN auth kubernetes, SIGN transit u zakázky), server paměti ověřil tokeny rolí z JWKS přes https (volání paměti z podů 200), Governance MCP ověřil token člověka (200), pody rolí vyměnily token na https URL (delegace s iss https); v ledgeru žádná chyba ověření certifikátu", "PASS" if me.status_code == 200 and iss == "https://keycloak:8443/realms/p0" and bao and all(b.get("method") == "kubernetes" for b in bao) and signs and all(s_.get("backend") == "openbao-transit" for s_ in signs) and mem and all(m.get("http") == 200 for m in mem) and gov == 200 and dele and all(d.get("iss") == "https://keycloak:8443/realms/p0" and d.get("exchange_ms") for d in dele) and not tls_err else "FAIL", {"login": me.status_code, "iss": iss, "bao_login": len(bao), "signs": len(signs), "memory_200": sum(1 for m in mem if m.get("http") == 200), "memory_total": len(mem), "gov": gov, "delegations": [{k: d.get(k) for k in ("iss", "azp", "exchange_ms", "error")} for d in dele], "tls_errors": [{"kind": e["kind"], "error": str(e.get("error"))[:100]} for e in tls_err][:3]})
 
 
+def e7_rotation(a, rep, kj, http, APP):
+    """E7c: rotace certifikátů za běhu – harness vyvolá obnovu (stav Certificate Issuing=True = `cmctl renew`), cert-manager vydá nový leaf
+    (jiné sériové číslo), kubelet aktualizuje Secret volume, OpenBao (tls_auto_reload 30 s) i Keycloak (reload period 1 m) nový cert nabídnou
+    bez restartu podu; klienti (aplikace: login člověka) fungují dál."""
+    import ssl, datetime as _dt
+    from cryptography import x509
+    def serial(port):
+        try: return x509.load_pem_x509_certificate(ssl.get_server_certificate(("127.0.0.1", port)).encode()).serial_number
+        except Exception as e: return f"ERR {type(e).__name__}"
+    def restarts(app): return {p["metadata"]["name"]: sum(c.get("restartCount", 0) for c in (p["status"].get("containerStatuses") or [])) for p in kj("-n", NS, "get", "pods", "-l", f"app={app}").get("items", [])}
+    pf_b = PortForward(a, "openbao", 18205, 8200); pf_k = PortForward(a, "keycloak", 18444, 8443)
+    try:
+        before = {"openbao": serial(18205), "keycloak": serial(18444)}; r0 = {"openbao": restarts("openbao"), "keycloak": restarts("keycloak")}
+        patched = {}
+        for name in ("openbao-tls", "keycloak-tls"):
+            r = kubectl(a, "-n", NS, "patch", "certificate", name, "--subresource=status", "--type=merge", "-p", json.dumps({"status": {"conditions": [{"type": "Issuing", "status": "True", "reason": "ManuallyTriggered", "message": "harness E7c", "lastTransitionTime": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}]}}))
+            patched[name] = r.returncode == 0 or (r.stderr or "")[-160:]
+        t0 = time.time(); after = dict(before); seen = {}
+        while time.time() - t0 < 420:
+            for n, port in (("openbao", 18205), ("keycloak", 18444)):
+                if n not in seen:
+                    cur = serial(port)
+                    if isinstance(cur, int) and cur != before[n]: seen[n] = round(time.time() - t0, 1); after[n] = cur
+            if len(seen) == 2: break
+            time.sleep(10); pf_b.start() if pf_b.p.poll() is not None else None; pf_k.start() if pf_k.p.poll() is not None else None
+        r1 = {"openbao": restarts("openbao"), "keycloak": restarts("keycloak")}
+        login = http("POST", f"{APP}/agui/login", json={"username": "adam", "password": "adam"}, timeout=20).status_code
+        secs = {n: ((kj("-n", NS, "get", "secret", n).get("metadata") or {}).get("annotations") or {}).get("cert-manager.io/certificate-name") for n in ("openbao-tls", "keycloak-tls")}
+        rep.add("E7c", "Rotace certifikátů bez restartu: obnova vyvolána stavem Certificate Issuing=True (jako `cmctl renew`), cert-manager vydal nový leaf (jiné sériové číslo v Secretu), kubelet volume aktualizoval a OpenBao (tls_auto_reload 30 s) i Keycloak (https-certificates-reload-period 1 m) nový cert nabízejí bez restartu podu (restartCount beze změny); login člověka přes aplikaci funguje dál", "PASS" if all(v is True for v in patched.values()) and len(seen) == 2 and r0 == r1 and login == 200 else "FAIL", {"patched": patched, "serial_before": {k: str(v) for k, v in before.items()}, "serial_after": {k: str(v) for k, v in after.items()}, "reload_s": seen, "restarts": {"before": r0, "after": r1}, "login_after": login, "secrets": secs})
+    finally: pf_b.stop(); pf_k.stop()
+
+
 def e1_checks(a, rep, kj, pre):
     """E1 (P3-6): tajemství a certifikáty platformy vydávají operátoři z Gitu – cert-manager (interní CA → agentgateway-tls), trust-manager
     (ConfigMap platform-ca v platform-data a ns tenantů), ESO (Key Vault přes workload identitu → postgres-auth, agentgateway-secrets, zakazka-secrets,
@@ -1724,6 +1756,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             zid, issue, pr, merged, st, adr_early = gui_flow(a, rep, http, led, zid, APP, GHS, dsn)
             if e2: e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t1)   # P3-6 E2: mandát z token exchange v podu
             if e7: e7_app_checks(rep, http, led, APP, zid, t1)   # P3-6 E7: klienti OpenBao/Keycloaku přes TLS v provozu
+            if e7: e7_rotation(a, rep, kj, http, APP)   # P3-6 E7c: rotace certifikátů bez restartu
         else:
             http("POST", f"{APP}/zakazky", json={"id": zid, "poptavka": f"Přidej do repa platformy soubor zakazky/{zid}/NOTES.md s poznámkou, že zakázka proběhla v AKS s konfigurací rolí z Gitu.", "hitl_timeout_s": 7200, "klasifikace": KLAS_NO}, timeout=15)
             issue = pub(zid, "issue"); assert issue, f"issue nebylo publikováno; ledger: {[(e['kind'], e.get('role'), e.get('error') or e.get('phase')) for e in led() if e.get('zakazka') == zid][-8:]}"
