@@ -66,6 +66,13 @@ def _load(path: Path, modname: str):
     return mod
 
 
+def _wrap(fn):
+    """Čerstvý objekt funkce pro každou registraci: SDK si na funkci zapisuje `_workflow_registered` a druhou registraci odmítá – a `app` se
+    importuje i podruhé (aktivity rolí: `import app` v gateway_keys/role_runner vedle `__main__`), s vlastním WorkflowRuntime, který nikdy nestartuje."""
+    def zakazka(ctx, z): return (yield from fn(ctx, z))
+    return zakazka
+
+
 def register(rt) -> dict:
     """Registrace všech verzí do WorkflowRuntime: snímky (is_latest=False) + aktuální zakazka_wf.py (is_latest=True). Snímek, který se neshoduje
     se svým názvem, se neregistruje (hlášen v `bad`). Chybí-li snímek aktuální verze (`unfrozen`), běží se dál – ale příští obraz by starou verzi ztratil."""
@@ -74,9 +81,9 @@ def register(rt) -> dict:
     for v, s in snaps.items():
         if not s["ok"]: bad.append(v); continue
         if v == cur: continue
-        mod = _load(Path(s["path"]), f"wf_versions.zakazka_{v}")
-        rt.register_versioned_workflow(mod.zakazka, name=NAME, version_name=v, is_latest=False); registered.append(v)
-    rt.register_versioned_workflow(zakazka_wf.zakazka, name=NAME, version_name=cur, is_latest=True); registered.append(cur)
+        mod = sys.modules.get(f"wf_versions.zakazka_{v}") or _load(Path(s["path"]), f"wf_versions.zakazka_{v}")
+        rt.register_versioned_workflow(_wrap(mod.zakazka), name=NAME, version_name=v, is_latest=False); registered.append(v)
+    rt.register_versioned_workflow(_wrap(zakazka_wf.zakazka), name=NAME, version_name=cur, is_latest=True); registered.append(cur)
     if latest(rt) != cur: raise RuntimeError(f"registr workflow runtime nehlásí latest={cur} (SDK dapr-ext-workflow jiné verze než 1.18.3?)")   # privátní atribut SDK – selhat při startu, ne tiše
     return {"name": NAME, "current": cur, "versions": sorted(registered), "unfrozen": cur not in snaps or not snaps[cur]["ok"], "bad": bad}
 
