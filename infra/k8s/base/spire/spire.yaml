@@ -88,6 +88,8 @@ data:
       default_jwt_svid_ttl = "15m"                                    # P2-3: JWT-SVID pro role (server paměti ověřuje přes spire-oidc /keys)
       jwt_issuer = "http://spire-oidc.platform-data.svc:8082"
       socket_path = "/tmp/spire-server/private/api.sock"
+      agent_ttl = "1h"                                                # P3-6 E5: agent = sidecar podu role (minuty) – krátký SVID agenta, re-atestace v půlce
+      prune_attested_nodes_expired_for = "1h"                         # P3-6 E5: záznamy agentů zaniklých podů zmizí ≤ 2 h (1.13+)
     }
     plugins {
       DataStore "sql" {
@@ -101,6 +103,7 @@ data:
           clusters = {
             "platform" = {
               service_account_allow_list = ["platform-data:spire-agent", "tenant-acme:role-account", "tenant-acme:role-architekt", "tenant-acme:role-reviewer", "tenant-acme:role-sre", "tenant-acme:role-vyvojar", "tenant-beta:role-account", "tenant-beta:role-architekt", "tenant-beta:role-reviewer", "tenant-beta:role-sre", "tenant-beta:role-vyvojar"]   # GENEROVÁNO rolegen (tenants.yaml): sidecar spire-agent podu role jen z SA role v ns tenantů (P2-3 Kata: hostPath socket do VM nevede)
+              use_pod_uid_for_agent_id = true                                                 # P3-6 E5 (SPIRE 1.15.3+): agent ID = …/k8s_psat/platform/pod/<pod-UID>, ne UID uzlu – sidecary paralelních podů na jednom uzlu Kata se nepřetahují o jeden záznam agenta (AGENT_NOT_ACTIVE → reattest ping-pong, nález P3-5)
               allowed_pod_label_keys = ["platform.role"]                                          # selektor k8s_psat:agent_pod_label:platform.role:<role> → alias uzlu per role
             }
           }
@@ -150,7 +153,7 @@ spec:
       serviceAccountName: spire-server
       containers:
       - name: spire-server
-        image: platform/spire:1.14.2   # kind: busybox + statické binárky z GitHub releases; AKS: ghcr.io/spiffe/spire-server:1.14.2
+        image: platform/spire:1.15.5   # kind: busybox + statické binárky z GitHub releases; AKS: ghcr.io/spiffe/spire-server:1.14.2
         command: ["spire-server", "run", "-config", "/run/spire/config/server.conf"]
         ports:
         - {containerPort: 8081, name: grpc}
@@ -231,7 +234,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       containers:
       - name: spire-agent
-        image: platform/spire:1.14.2
+        image: platform/spire:1.15.5
         command: ["spire-agent", "run", "-config", "/run/spire/config/agent.conf"]
         env:
         - {name: MY_NODE_NAME, valueFrom: {fieldRef: {fieldPath: spec.nodeName}}}

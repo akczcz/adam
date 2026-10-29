@@ -169,7 +169,7 @@ def main():
         # P2-3: identita role = JWT-SVID (aud memory) z Workload API sidecaru spire-agent; Keycloak token ze Secretu zůstává záloha
         t_id = time.time(); err = None; stale = []
         want_id = f"spiffe://platform/role/{role}/{os.environ.get('P0_TENANT', 'acme')}"
-        for _ in range(90):   # P3-5: až 180 s – paralelní pody dvou tenantů na jednom uzlu Kata sdílejí agent ID (k8s_psat) a SVID se střídá
+        for _ in range(90):   # P3-5: až 180 s; od P3-6 E5 (agent ID per pod – use_pod_uid_for_agent_id) se SVID nestřídá, kontrola cizího SVID zůstává jako pojistka
             try:
                 from spiffe import WorkloadApiClient
                 with WorkloadApiClient() as c:

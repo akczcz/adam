@@ -91,7 +91,7 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
         env |= {"P0_ROLE_IDENTITY": "svid", "SPIFFE_ENDPOINT_SOCKET": "unix:///run/spire/sockets/agent.sock", "P0_TENANT": tenant}
         runtime_c["volumeMounts"] = runtime_c["volumeMounts"] + [{"name": "spire-sockets", "mountPath": "/run/spire/sockets"}]
         runtime_spec |= {"serviceAccountName": os.environ.get("P0_ROLE_SA_TEMPLATE", "role-{role}").format(role=role), "shareProcessNamespace": True,   # P3-6 E2: SA per role (client assertion klienta agent-<role>-<tenant>)
-                         "initContainers": [{"name": "spire-agent", "image": os.environ.get("P0_ROLE_SPIRE_AGENT_IMAGE", "ghcr.io/spiffe/spire-agent:1.14.2"), "restartPolicy": "Always",
+                         "initContainers": [{"name": "spire-agent", "image": os.environ.get("P0_ROLE_SPIRE_AGENT_IMAGE", "ghcr.io/spiffe/spire-agent:1.15.5"), "restartPolicy": "Always",
                                              "args": ["-config", "/run/spire/config/agent.conf"],
                                              "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}, "runAsUser": 1000, "runAsGroup": 1000},
                                              "volumeMounts": [{"name": "spire-agent-config", "mountPath": "/run/spire/config", "readOnly": True}, {"name": "spire-sockets", "mountPath": "/run/spire/sockets"},

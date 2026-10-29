@@ -874,6 +874,9 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
     probe_b = [can["acme"], can["beta"], "ACME kód projektu"]; probe_a = [can["beta"], can["acme"], "BETA kód projektu"]
     zb, za = f"{tag}-o3b", f"{tag}-o3a"
     http("POST", f"{APP}/zakazky", json={"id": zb, "poptavka": f"Zakázka tenanta beta {zb}: přidej soubor zakazky/{zb}/NOTES.md (test stopu tenanta uprostřed role).", "tenant": "beta", "klasifikace": KLAS_NO, "memory_probe": probe_b, "hitl_timeout_s": 3600}, timeout=15)
+    # P3-6 E5: zakázka acme hned za beta – pody account obou tenantů běží paralelně na jednom uzlu Kata (agent ID per pod: use_pod_uid_for_agent_id); dřív sériově (P3-5)
+    http("POST", f"{APP}/zakazky", json={"id": za, "poptavka": f"Zakázka tenanta acme {za}: přidej soubor zakazky/{za}/NOTES.md (acme běží během stopu beta).", "tenant": "acme", "klasifikace": KLAS_NO, "memory_probe": probe_a, "hitl_timeout_s": 3600}, timeout=15)
+    t_par = time.time()
     g = Gui(f"{APP}/gui/", shots=gui_shots / "o3").open()
     def wait_i(bod, timeout):
         t0 = time.time()
@@ -886,14 +889,25 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_
         g.login("bea", "bea"); g.open_thread(zb); dialog_then(g, zb, 1500)
         h1 = wait_i("H1", 1500); assert h1["interrupt"], f"H1 (beta o3) nepřišel: {h1['run_status']} {h1.get('error')}"
         L = led(); pod_b = next((e for e in L if e["kind"] == "ROLE_POD" and e["zakazka"] == zb and e["role"] == "account"), {}); mp_b = pod_b.get("memory_probe") or {}
-        # zakázka acme až po podu beta: paralelní pody dvou tenantů na jednom uzlu Kata sdílejí agent ID k8s_psat → SVID se střídá (P2-3 omezení, identita agenta per pod = P3-6)
-        http("POST", f"{APP}/zakazky", json={"id": za, "poptavka": f"Zakázka tenanta acme {za}: přidej soubor zakazky/{za}/NOTES.md (acme běží během stopu beta).", "tenant": "acme", "klasifikace": KLAS_NO, "memory_probe": probe_a, "hitl_timeout_s": 3600}, timeout=15)
         t_a = time.time()
         while time.time() - t_a < 900 and not any(e["kind"] == "ROLE_POD" and e["zakazka"] == za and e["role"] == "account" for e in led()): time.sleep(5)
         pod_a = next((e for e in led() if e["kind"] == "ROLE_POD" and e["zakazka"] == za and e["role"] == "account"), {}); mp_a = pod_a.get("memory_probe") or {}
         # vyhledávání nemá práh podobnosti (top-N vlastního tenanta): důkazem izolace je, že se cizí kanárek (id) nikdy nevrátí a tenants_returned ⊆ vlastní tenant
         ok_b = bool(mp_b) and all(wr["acme"].get("id") not in (v.get("returned") or []) and set(v.get("tenants_returned") or []) <= {"beta"} and v.get("http") == 200 for v in mp_b.values()) and wr["beta"].get("id") in (mp_b.get(can["beta"], {}).get("returned") or [])
         ok_a = bool(mp_a) and all(wr["beta"].get("id") not in (v.get("returned") or []) and set(v.get("tenants_returned") or []) <= {"acme"} and v.get("http") == 200 for v in mp_a.values()) and wr["acme"].get("id") in (mp_a.get(can["acme"], {}).get("returned") or [])
+        # E5 (P3-6): identita agenta per pod – oba pody account (acme, beta) běžely současně na jednom uzlu Kata, oba dostaly SVID bez cizího (stale) SVID,
+        # SPIRE server eviduje agenty …/k8s_psat/platform/pod/<pod-UID> (SPIRE 1.15.5, use_pod_uid_for_agent_id), agent_ttl + prune v configu
+        def span(e): return (e.get("ts", 0) - (e.get("t_total_s") or 0), e.get("ts", 0))
+        ov = (pod_a and pod_b and max(span(pod_a)[0], span(pod_b)[0]) < min(span(pod_a)[1], span(pod_b)[1])) or False
+        ida, idb = pod_a.get("identity") or {}, pod_b.get("identity") or {}
+        agents_out = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "agent", "list", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
+        agent_ids = [l.split(":", 1)[1].strip() for l in agents_out.splitlines() if l.strip().startswith("SPIFFE ID")]
+        pod_agents = sorted({x for x in agent_ids if "/k8s_psat/platform/pod/" in x}); node_agents = [x for x in agent_ids if "/k8s_psat/platform/" in x and "/pod/" not in x]
+        scfg = (kj("-n", NS, "get", "configmap", "spire-server-config").get("data") or {}).get("server.conf", "")
+        s_img = next((c["image"] for p_ in kj("-n", NS, "get", "pods", "-l", "app=spire-server").get("items", []) for c in p_["spec"]["containers"] if c["name"] == "spire-server"), "")
+        rep.add("E5a", "Identita agenta per pod (SPIRE 1.15.5, k8s_psat use_pod_uid_for_agent_id): pody account tenantů acme a beta běžely paralelně na jednom uzlu Kata, oba dostaly SVID své role × tenant bez cizího SVID (stale_svids prázdné – dřív se sidecary přetahovaly o jeden záznam agenta uzlu, AGENT_NOT_ACTIVE → reattest), server eviduje agenty …/k8s_psat/platform/pod/<pod-UID> (≥ 2 různé), agent_ttl 1h + prune_attested_nodes_expired_for v configu", "PASS" if ov and pod_a.get("node") and pod_a.get("node") == pod_b.get("node") and ida.get("kind") == "svid" and idb.get("kind") == "svid" and not ida.get("stale_svids") and not idb.get("stale_svids") and len(pod_agents) >= 2 and "use_pod_uid_for_agent_id = true" in scfg and 'agent_ttl = "1h"' in scfg and "prune_attested_nodes_expired_for" in scfg and s_img.endswith(":1.15.5") else "FAIL", {"overlap": ov, "spans": {"acme": [round(x - t_par, 1) for x in span(pod_a)], "beta": [round(x - t_par, 1) for x in span(pod_b)]}, "node": [pod_a.get("node"), pod_b.get("node")], "identity": {"acme": {k: ida.get(k) for k in ("kind", "spiffe_id", "wait_s", "stale_svids")}, "beta": {k: idb.get(k) for k in ("kind", "spiffe_id", "wait_s", "stale_svids")}}, "agents_pod": len(pod_agents), "agents_node": len(node_agents), "agents_total": len(agent_ids), "server_image": s_img, "config": {k: (k in scfg) for k in ("use_pod_uid_for_agent_id = true", 'agent_ttl = "1h"', "prune_attested_nodes_expired_for")}})
+        exp_lines = [l.split(":", 1)[1].strip() for l in agents_out.splitlines() if "X509-SVID expires" in l or "Expires" in l]
+        rep.add("E5b", "E5: záznamy agentů v SPIRE serveru (per pod – po zániku podu expirace agent_ttl, prune)", "INFO", {"agents_pod_ids": pod_agents[:6], "expires_sample": exp_lines[:4], "wait_s": {"acme": ida.get("wait_s"), "beta": idb.get("wait_s")}})
         rep.add("O3a", "M-E3 v clusteru (model-pameti.md): kanárky obou tenantů (lidé adam/bea zapsali approved přes server paměti), pod account každého tenanta se ptá identitou JWT-SVID role × tenant (PEP: tenant z cesty SVID, RLS app.tenant_id) na kanárek cizího tenanta → 0 záznamů, na vlastní → nalezen; 3 dotazy × 2 tenanty, žádný cizí tenant_id v odpovědích (gate 100 %); bez SVID pod paměť nečte (fail-closed, žádný záložní token)", "PASS" if ok_b and ok_a and (pod_b.get("identity") or {}).get("spiffe_id", "").endswith("/beta") and (pod_a.get("identity") or {}).get("spiffe_id", "").endswith("/acme") else "FAIL", {"canaries": wr, "beta_pod": {"identity": pod_b.get("identity"), "probe": mp_b}, "acme_pod": {"identity": pod_a.get("identity"), "probe": mp_a}})
         # O3b – beta k vývojáři (H1, H2 z GUI), stop tenanta beta během běžícího podu vývojáře: SIGTERM → checkpoint (sync-up) → pod pryč ≤ 60 s, acme běží dál
         g.decide("Zadání beta v pořádku – schvaluji (test stopu tenanta).")

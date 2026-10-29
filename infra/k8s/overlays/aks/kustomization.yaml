@@ -58,10 +58,10 @@ patches:
     - {op: replace, path: /spec/template/spec/containers/1/command/0, value: /daprd}
 - target: {kind: StatefulSet, name: spire-server}
   patch: |
-    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-server:1.14.2"}
+    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-server:1.15.5"}
 - target: {kind: DaemonSet, name: spire-agent}
   patch: |
-    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-agent:1.14.2"}
+    - {op: replace, path: /spec/template/spec/containers/0/image, value: "${ACR_LOGIN_SERVER}/spire-agent:1.15.5"}
     - {op: replace, path: /spec/template/spec/containers/0/command/0, value: /opt/spire/bin/spire-agent}
 - target: {kind: StatefulSet, name: spire-server}
   patch: |
@@ -197,7 +197,7 @@ patches:
       path: /spec/template/spec/containers/-
       value:
         name: oidc
-        image: "${ACR_LOGIN_SERVER}/oidc-discovery-provider:1.14.2"
+        image: "${ACR_LOGIN_SERVER}/oidc-discovery-provider:1.15.5"
         args: ["-config", "/run/spire/oidc/oidc.conf"]
         ports: [{containerPort: 8082, name: oidc}]
         volumeMounts:
@@ -216,7 +216,7 @@ patches:
   patch: |
     - {op: add, path: /data/P0_BAO_K8S_ROLE, value: zakazka}
     - {op: add, path: /data/P0_ROLE_IDENTITY, value: svid}
-    - {op: add, path: /data/P0_ROLE_SPIRE_AGENT_IMAGE, value: "${ACR_LOGIN_SERVER}/spire-agent:1.14.2"}
+    - {op: add, path: /data/P0_ROLE_SPIRE_AGENT_IMAGE, value: "${ACR_LOGIN_SERVER}/spire-agent:1.15.5"}
 # P2-4: egress podu role přes gateway CONNECT – CA gateway z ConfigMapy platform-ca (ns tenant-<id>; od P3-6 E1 ji plní trust-manager), git a mirror přes
 # terminované listenery; sonda role_runner (clone/push větve/push main/pip/npm/cizí SNI) měří P24b–d
 - target: {kind: ConfigMap, name: zakazka-env}
