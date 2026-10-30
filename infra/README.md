@@ -236,6 +236,15 @@ httpx (trust_env) i urllib/PyJWKClient ji ctí. Harness: port-forward Keycloak 1
 Měření: `measure` s `e2e=p3-6` (E7a–c; rotace za běhu změřena: OpenBao 33–43 s, Keycloak 54–137 s). Pozor: NetworkPolicy podů rolí
 (rolegen `tenant_k8s`) musí pouštět Keycloak na 8443 – port je součást egress kontraktu role.
 
+## P3-6 E8: bootstrap OpenBao v Key Vaultu (2026-10-30)
+
+`sys/init` OpenBao (recovery_shares 1, seal azurekeyvault) provádí operátor = harness identitou runneru (OIDC, role Key Vault Secrets Officer
+z `secrets.tf`) a výsledek (root token + recovery klíč) ukládá do Key Vault secretu **`openbao-init`** (`az keyvault secret set --file`, contentType);
+při dalších bězích ho čte `az keyvault secret show`. V clusteru už žádný Secret `openbao-init` (dřívější Secret z P2-3 harness jednorázově přenesl
+do Key Vaultu a smazal) – E1c nemá výjimku. Unseal po startu clusteru dělá Key Vault bez operátora. Proč ne ESO PushSecret: zdrojem PushSecretu je
+Kubernetes Secret, cílem bylo žádný Secret v clusteru nemít; operátor zapisuje do Key Vaultu přímo. Root token zůstává operátorský (harness ho
+používá pro policy/transit/auth kubernetes a čtení KV) – scoped operátorský token místo rootu zbývá. Měření: `measure` s `e2e=p3-6` (E8a–b).
+
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);
   realm sám issuer nenese (`KC_HOSTNAME`).
