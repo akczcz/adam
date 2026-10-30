@@ -245,6 +245,13 @@ do Key Vaultu a smazal) – E1c nemá výjimku. Unseal po startu clusteru dělá
 Kubernetes Secret, cílem bylo žádný Secret v clusteru nemít; operátor zapisuje do Key Vaultu přímo. Root token zůstává operátorský (harness ho
 používá pro policy/transit/auth kubernetes a čtení KV) – scoped operátorský token místo rootu zbývá. Měření: `measure` s `e2e=p3-6` (E8a–b).
 
+Vedlejší nálezy měření E8 (stav rostoucí každým během): **ConfigMap `agentgateway-keys` přerostl limit API serveru 1 MiB** (5 klíčů na zakázku,
+~400 zakázek, bez úklidu) → `PUT` 422 „Too long“ tiše shodil blokaci tenanta i vydání klíčů nové zakázky; aplikace teď při vydávání nad 300 položek
+odstraní klíče zakázek COMPLETED/FAILED/TERMINATED starších 1 dne (`GATEWAY_KEYS_GC`, při 422 bez věkového limitu) – hodnoty v OpenBao KV a útrata
+v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se parsoval celý při každém `GET /zakazky/<id>` → zablokovaný event loop,
+timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
+jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
+
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);
   realm sám issuer nenese (`KC_HOSTNAME`).
