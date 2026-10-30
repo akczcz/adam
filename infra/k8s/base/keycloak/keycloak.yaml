@@ -9,7 +9,7 @@ metadata:
 type: Opaque
 stringData:
   KC_BOOTSTRAP_ADMIN_USERNAME: admin
-  KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev   # jen kind; na AKS z OpenBao
+  KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev   # jen kind; AKS: overlay tento Secret maže, ESO ho dává z Key Vaultu (P3-6 E9; bootstrap admin platí jen pro prázdnou DB – běžící instanci otočí harness admin API)
 ---
 apiVersion: v1
 kind: Service

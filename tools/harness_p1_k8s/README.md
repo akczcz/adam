@@ -686,6 +686,35 @@ Výsledek: **67/67 + 11 INFO** (`measure` run 41046364239, `results/p3-6-2026103
 zelené a padaly na kapacitě rostoucího stavu, ne na mechanismu E8). Omezení: harness stále pracuje s **root tokenem** OpenBao
 (z Key Vaultu) – scoped operátorský token je samostatná položka P3-6.
 
+## P3-6 E9 – žádný literál hesla z Gitu (2026-10-30, AKS, `--step p3-6` = … + **E9a–b**)
+
+- **Problém**: v manifestech ležely dev literály hesel, které platily i na AKS: admin Keycloaku `admin-dev` (Secret `keycloak-admin` v base),
+  DSN paměti `memory_app:memory_app` a Governance MCP `org_reader:org_reader` (env Deploymentů, overlay je jen doplnil o `sslmode`), hesla rolí
+  `org_reader`/`org_writer` v SQL aplikace a `memory_app` v harnessu (`ALTER ROLE … 'memory_app'`).
+- **Řešení**: Terraform `random_password` → Key Vault (`keycloak-admin-password`, `pg-memory-app-password`, `pg-org-reader-password`,
+  `pg-org-writer-password`), ESO → Secrety `keycloak-admin`, `memory-db` (`MEMORY_DB_URI`), `governance-db` (`GOV_DSN`) a
+  `zakazka-finops.P0_DB_ROLE_PASSWORDS`; Deploymenty čtou DSN přes `secretKeyRef`; overlay AKS base Secrety maže. Hesla DB rolí nastavuje
+  **aplikace zakázky při startu** (`finops.roles_sync`: `ALTER ROLE`, ledger `DB_ROLES_SYNC` jen se jmény rolí) – vlastník schématu, ne harness.
+  Admin Keycloaku: `KC_BOOTSTRAP_ADMIN_*` platí jen pro prázdnou DB, běžící instance má admina z prvního startu → harness jako operátor
+  (`kc_admin`) zkusí heslo ze Secretu, při neúspěchu dev literál a heslo otočí admin API (`reset-password`) na hodnotu Secretu. Dev literály
+  zůstávají jen v base pro kind.
+- **Měření**: E9a – render overlaye AKS bez literálů a bez base Secretů (jen ExternalSecrety), DSN/heslo admina přes `secretKeyRef`, hodnoty
+  Secretů == Key Vault, login admina Keycloaku dev literálem odmítnut (Keycloak 26 vrací 400 `invalid_grant`, ne 401 – zjištěno 1. během) / Key Vaultem 200, Postgres role s literálem odmítnuty / s Key Vaultem přijaty
+  (LOGIN, ne superuser), ledger `DB_ROLES_SYNC written` se 3 rolemi; E9b (INFO) – průběh migrace admina a synchronizace rolí; E1b nově hlídá
+  i ExternalSecrety `keycloak-admin`, `memory-db`, `governance-db`.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E9a | žádný literál hesla z Gitu: render, Secrety == Key Vault, literály odmítnuty, hesla z Key Vaultu přijata, aplikace role synchronizovala | ✅ render bez literálů i base Secretů, 3 env přes `secretKeyRef`; Secrety == Key Vault (4 hesla i JSON aplikace); Keycloak dev literál 400 `invalid_grant` / Key Vault 200; Postgres 3 role literálem odmítnuty, Key Vaultem přijaty, LOGIN bez superuser; `DB_ROLES_SYNC written` 3 role |
+| E9b | migrace admina Keycloaku a synchronizace DB rolí | ℹ️ 1. běh: Secret 400 → dev literál 200 → rotace 204 → Secret 200; 2. běh: Secret 200 rovnou (legacy netestován); `DB_ROLES_SYNC` 2→4 záznamy (start aplikace) |
+
+Výsledek: **AKS 68/68 + 12 INFO** (`measure` run 41103440719, 2 běhy). 1. běh 66/68: E9a jen kvůli návratovému kódu (Keycloak 26 vrací špatnému heslu
+400 `invalid_grant`, check čekal 401 – teď rozhoduje „invalid_grant bez tokenu“); T1e padl na `error` při otevření threadu beta platform-adminem
+bez zachyceného textu (po ~25 min GUI scénáře – přechodný výpadek streamu jako v E7) → T1e ukládá text chyby a po keepalive zkouší jednou znovu.
+Migrace admina proběhla v 1. běhu bez výpadku (ESO Secret → rotace admin API), 2. běh už se přihlásil heslem ze Secretu rovnou. Omezení: hesla rolí
+nastavuje aplikace při startu, Governance MCP a paměť se připojují per request → při rotaci hesla v Key Vaultu je okno do restartu aplikace
+(ESO refresh 1 h + rollout) – rotace zatím není automatizovaná.
+
 ## Spuštění
 
 ```bash

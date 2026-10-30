@@ -1057,6 +1057,7 @@ agui.CTX["tenants"] = TENANTS
 if __name__ == "__main__":
     import uvicorn
     ledger("TENANTS_SYNC", **finops.tenants_sync(TENANTS), source="rolegen-build/tenants.json")   # P3-2: org.tenants + RLS org.* (idempotentní při startu)
+    ledger("DB_ROLES_SYNC", **finops.roles_sync())   # P3-6 E9: hesla RLS rolí (memory_app, org_reader, org_writer) z env (ESO/Key Vault), ne literál v Gitu
     ledger("WF_VERSIONS", **WF)   # P3-6 E6: které verze orchestrátoru tento obraz nese a která je latest
     rt.start()
     uvicorn.run(app, host=os.environ.get("APP_HOST", "127.0.0.1"), port=int(os.environ.get("APP_PORT", "8010")), log_level="warning")

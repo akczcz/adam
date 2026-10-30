@@ -8,7 +8,9 @@ Env: P0_FINOPS_DSN (DB agentgateway), P0_REGISTRY_DSN (DB org). Bez nich = kind/
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import time
 
 NANO = 1e9   # agentgateway ukládá USD v nanodolarech, okna v ms (harness O-2 B3)
@@ -219,8 +221,8 @@ def tenant_is_stopped(tenant: str) -> bool | None:
     finally: c.close()
 RLS_SQL = """
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'org_reader') THEN CREATE ROLE org_reader LOGIN PASSWORD 'org_reader'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'org_writer') THEN CREATE ROLE org_writer LOGIN PASSWORD 'org_writer'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'org_reader') THEN CREATE ROLE org_reader LOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'org_writer') THEN CREATE ROLE org_writer LOGIN; END IF;
 END $$;
 GRANT USAGE ON SCHEMA org TO org_reader, org_writer;
 GRANT SELECT ON ALL TABLES IN SCHEMA org TO org_reader;
@@ -249,6 +251,29 @@ def tenants_sync(tenants: list[dict]) -> dict:
         c.execute(RLS_SQL)
         for t in RLS_TABLES: c.execute(RLS_POLICY.format(t=t))
         return {"written": True, "tenants": [t["id"] for t in tenants], "rls": list(RLS_TABLES)}
+    except Exception as e:
+        return {"written": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    finally: c.close()
+
+
+def roles_sync() -> dict:
+    """P3-6 E9: hesla DB rolí s RLS (memory_app, org_reader, org_writer) nejsou literál v Gitu ani v SQL, ale env P0_DB_ROLE_PASSWORDS
+    (JSON role → heslo; AKS: ESO z Key Vaultu, kind: dev hodnoty v base Secretu). Aplikace jako vlastník schématu je při startu nastaví (ALTER ROLE,
+    idempotentní; roli založí, když chybí – paměť ji jinak zakládá harness M1). Hodnoty se nelogují; do ledgeru jen jména rolí."""
+    raw = os.environ.get("P0_DB_ROLE_PASSWORDS")
+    if not raw: return {"written": False, "reason": "bez P0_DB_ROLE_PASSWORDS"}
+    try: pws = json.loads(raw)
+    except ValueError as e: return {"written": False, "error": f"P0_DB_ROLE_PASSWORDS není JSON: {e}"}
+    bad = [r for r in pws if not re.fullmatch(r"[a-z_][a-z0-9_]*", r)]
+    if bad: return {"written": False, "error": f"neplatné jméno role: {bad}"}
+    c = _conn("P0_REGISTRY_DSN")
+    if c is None: return {"written": False, "reason": "bez P0_REGISTRY_DSN"}
+    from psycopg import sql
+    try:
+        for role, pw in pws.items():
+            c.execute(sql.SQL("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {r}) THEN CREATE ROLE {i} LOGIN; END IF; END $$").format(r=sql.Literal(role), i=sql.Identifier(role)))
+            c.execute(sql.SQL("ALTER ROLE {i} WITH LOGIN PASSWORD {p}").format(i=sql.Identifier(role), p=sql.Literal(str(pw))))
+        return {"written": True, "roles": sorted(pws)}
     except Exception as e:
         return {"written": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
     finally: c.close()

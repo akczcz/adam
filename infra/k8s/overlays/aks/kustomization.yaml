@@ -84,6 +84,22 @@ patches:
     apiVersion: v1
     kind: Secret
     metadata: {name: zakazka-secrets}
+# P3-6 E9: dev literály hesel (admin Keycloaku, DSN paměti a Governance MCP) zůstávají jen v base pro kind – tady je dává ESO z Key Vaultu
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata: {name: keycloak-admin}
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata: {name: memory-db}
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata: {name: governance-db}
 - patch: |
     $patch: delete
     apiVersion: v1
@@ -92,16 +108,11 @@ patches:
 - target: {kind: Deployment, name: zakazka}   # Dapr komponenty ze Secretu dapr-components (connection string nese heslo)
   patch: |
     - {op: replace, path: /spec/template/spec/volumes/0, value: {name: components, secret: {secretName: dapr-components}}}
-- target: {kind: Deployment, name: governance}   # P3-3: Flexible Server vyžaduje TLS
-  patch: |
-    - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: "postgresql://org_reader:org_reader@postgres:5432/org?sslmode=require"}
 - target: {kind: Deployment, name: keycloak}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: platform}
     - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_DB_URL_PROPERTIES, value: "?sslmode=require"}}
-- target: {kind: Deployment, name: memory}
-  patch: |
-    - {op: replace, path: /spec/template/spec/containers/0/env/2/value, value: "postgresql://memory_app:memory_app@postgres:5432/memory?sslmode=require"}
+# (DSN paměti a Governance MCP se sslmode=require dává od P3-6 E9 ESO v Secretech memory-db / governance-db – secrets-eso.yaml)
 # Oficiální obrazy se liší od kind buildů (měřeno 2026-10-25, první Flux nasazení): daprio/* mají binárku v / (ne v PATH),
 # quay.io/keycloak není předbuildovaný pro Postgres (start bez --optimized + KC_DB), ghcr.io/spiffe obrazy běží jako uid 1000
 # (PVC data_dir potřebuje fsGroup, hostPath socket agenta root).
