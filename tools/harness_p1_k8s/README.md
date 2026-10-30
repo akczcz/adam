@@ -705,10 +705,15 @@ zelené a padaly na kapacitě rostoucího stavu, ne na mechanismu E8). Omezení:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E9a | žádný literál hesla z Gitu: render, Secrety == Key Vault, literály odmítnuty, hesla z Key Vaultu přijata, aplikace role synchronizovala | ⏳ |
-| E9b | migrace admina Keycloaku a synchronizace DB rolí | ⏳ |
+| E9a | žádný literál hesla z Gitu: render, Secrety == Key Vault, literály odmítnuty, hesla z Key Vaultu přijata, aplikace role synchronizovala | ✅ render bez literálů i base Secretů, 3 env přes `secretKeyRef`; Secrety == Key Vault (4 hesla i JSON aplikace); Keycloak dev literál 400 `invalid_grant` / Key Vault 200; Postgres 3 role literálem odmítnuty, Key Vaultem přijaty, LOGIN bez superuser; `DB_ROLES_SYNC written` 3 role |
+| E9b | migrace admina Keycloaku a synchronizace DB rolí | ℹ️ 1. běh: Secret 400 → dev literál 200 → rotace 204 → Secret 200; 2. běh: Secret 200 rovnou (legacy netestován); `DB_ROLES_SYNC` 2→4 záznamy (start aplikace) |
 
-Výsledek: ⏳ (doplním po měření).
+Výsledek: **AKS 68/68 + 12 INFO** (`measure` run 41103440719, 2 běhy). 1. běh 66/68: E9a jen kvůli návratovému kódu (Keycloak 26 vrací špatnému heslu
+400 `invalid_grant`, check čekal 401 – teď rozhoduje „invalid_grant bez tokenu“); T1e padl na `error` při otevření threadu beta platform-adminem
+bez zachyceného textu (po ~25 min GUI scénáře – přechodný výpadek streamu jako v E7) → T1e ukládá text chyby a po keepalive zkouší jednou znovu.
+Migrace admina proběhla v 1. běhu bez výpadku (ESO Secret → rotace admin API), 2. běh už se přihlásil heslem ze Secretu rovnou. Omezení: hesla rolí
+nastavuje aplikace při startu, Governance MCP a paměť se připojují per request → při rotaci hesla v Key Vaultu je okno do restartu aplikace
+(ESO refresh 1 h + rollout) – rotace zatím není automatizovaná.
 
 ## Spuštění
 
