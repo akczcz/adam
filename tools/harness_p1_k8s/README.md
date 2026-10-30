@@ -677,10 +677,14 @@ ctí `SSL_CERT_FILE` harnessu s rootem platformy (E7a 1. běh); (3) 2. běh spad
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E8a | bootstrap jen v Key Vaultu, žádný Secret kubectl, auto-unseal bez operátora, root token platný | ⏳ |
-| E8b | inventář Key Vaultu | ⏳ |
+| E8a | bootstrap jen v Key Vaultu, žádný Secret kubectl, auto-unseal bez operátora, root token platný | ✅ Key Vault secret `openbao-init` (contentType, `CustomizedRecoverable+Purgeable`), žádný K8s Secret, seal azurekeyvault unsealed při příchodu, root token platný |
+| E8b | inventář Key Vaultu | ℹ️ Terraform secrets.tf + `openbao-init`; runner Secrets Officer, pody přes ESO Secrets User |
+| E1c | žádný Secret se stopou kubectl – nově bez výjimky pro `openbao-init` | ✅ `secrets_by_kubectl: []`, `created_by_harness: []` |
+| E4d | velikost ConfigMapy `agentgateway-keys` + události GC | ℹ️ 658 kB, 940 klíčů / 188 zakázek; GC v běhu: 138 zakázek / 690 klíčů odstraněno |
 
-Výsledek: ⏳ (doplním po měření).
+Výsledek: **67/67 + 11 INFO** (`measure` run 41046364239, `results/p3-6-20261030-121813.json`; 6 běhů – nálezy výše; běhy 2–5 měly E8a/E8b/E1c
+zelené a padaly na kapacitě rostoucího stavu, ne na mechanismu E8). Omezení: harness stále pracuje s **root tokenem** OpenBao
+(z Key Vaultu) – scoped operátorský token je samostatná položka P3-6.
 
 ## Spuštění
 
