@@ -80,8 +80,17 @@ class Gui:
         if budget is not None: self.t("new-budget").fill(str(budget))
         for k, v in (klasifikace or {}).items():
             if v: self.t(f"new-k-{k}").check()
+        if self.keepalive:
+            try: self.keepalive()   # port-forward po dlouhém scénáři (U-2 ~15 min) občas spadne – fetch z prohlížeče nemá retry (E7 2. běh: RUN_STARTED nepřišel)
+            except Exception: pass
         self.t("new-submit").click()
-        self.page.wait_for_function("document.querySelector('[data-testid=run-protocol]') && document.querySelector('[data-testid=run-protocol]').textContent !== '?'", timeout=60_000)
+        try: self.page.wait_for_function("document.querySelector('[data-testid=run-protocol]') && document.querySelector('[data-testid=run-protocol]').textContent !== '?'", timeout=60_000)
+        except Exception:
+            if self.keepalive:
+                try: self.keepalive()
+                except Exception: pass
+            self.open_thread(zid)   # zakázka už existuje (POST prošel, SSE ne) → nový run nad threadem
+            self.page.wait_for_function("document.querySelector('[data-testid=run-protocol]') && document.querySelector('[data-testid=run-protocol]').textContent !== '?'", timeout=60_000)
         return {"protocol": self.t("run-protocol").inner_text(), "run_id": self.t("run-id").inner_text(), "url": self.page.url}
 
     def open_thread(self, zid):

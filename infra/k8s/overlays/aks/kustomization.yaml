@@ -9,6 +9,7 @@ resources:
 - namespace.yaml
 - spire-oidc.yaml
 - agentgateway-egress.yaml   # P2-4: NetworkPolicy egressu gateway (ne IMDS/link-local/privátní sítě)
+- tls-internal.yaml   # P3-6 E7: Certificate openbao-tls, keycloak-tls (ClusterIssuer platform-ca)
 - ../../base/clickhouse
 - ../../base/otel-collector
 - ../../base/keycloak
@@ -110,11 +111,50 @@ patches:
 - target: {kind: StatefulSet, name: scheduler}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/command/0, value: /scheduler}
-- target: {kind: Deployment, name: keycloak}
+- target: {kind: Deployment, name: keycloak}   # P3-6 E7: jen HTTPS 8443 (cert keycloak-tls z cert-manageru, reload souborů Keycloak sám), KC_HOSTNAME = pevný issuer https://keycloak:8443/realms/p0 (hostname-strict je pak bez účinku); management 9000 HTTP (probe; default by zdědil HTTPS)
   patch: |
-    - {op: replace, path: /spec/template/spec/containers/0/args, value: ["start", "--import-realm", "--http-enabled=true", "--hostname-strict=false", "--proxy-headers=xforwarded"]}
+    - {op: replace, path: /spec/template/spec/containers/0/args, value: ["start", "--import-realm", "--http-enabled=false", "--hostname-strict=false", "--proxy-headers=xforwarded"]}
     - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_DB, value: postgres}}
     - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_HEALTH_ENABLED, value: "true"}}
+    - {op: replace, path: /spec/template/spec/containers/0/env/6/value, value: https://keycloak:8443}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_HTTPS_PORT, value: "8443"}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_HTTPS_CERTIFICATE_FILE, value: /opt/keycloak/tls/tls.crt}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_HTTPS_CERTIFICATE_KEY_FILE, value: /opt/keycloak/tls/tls.key}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_HTTP_MANAGEMENT_SCHEME, value: http}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_HTTPS_CERTIFICATES_RELOAD_PERIOD, value: 1m}}   # rotace z cert-manageru bez restartu (default 1h; min > 30 s)
+    - {op: add, path: /spec/template/spec/containers/0/ports/-, value: {containerPort: 8443, name: https}}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: tls, mountPath: /opt/keycloak/tls, readOnly: true}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: tls, secret: {secretName: keycloak-tls}}}
+- target: {kind: Service, name: keycloak}
+  patch: |
+    - {op: replace, path: /spec/ports/0, value: {name: https, port: 8443, targetPort: 8443}}
+# P3-6 E7: klienti Keycloaku a OpenBao přes HTTPS – ConfigMap platform-ca (jen root platformy, bez veřejných CA – pody volají jen interní HTTPS;
+# SSL_CERT_FILE systémové CA nahrazuje, httpx trust_env i urllib/PyJWKClient; veřejné TLS by vyžadovalo Bundle useDefaultCAs)
+- target: {kind: ConfigMap, name: zakazka-env}
+  patch: |
+    - {op: replace, path: /data/P0_BAO_ADDR, value: https://openbao:8200}
+    - {op: replace, path: /data/P0_KC_TOKEN_URL, value: https://keycloak:8443/realms/p0/protocol/openid-connect/token}
+    - {op: replace, path: /data/P0_KC_JWKS_URL, value: https://keycloak:8443/realms/p0/protocol/openid-connect/certs}
+    - {op: replace, path: /data/P0_KC_ISSUER, value: https://keycloak:8443/realms/p0}
+    - {op: add, path: /data/SSL_CERT_FILE, value: /etc/platform/ca/ca.crt}
+- target: {kind: Deployment, name: zakazka}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: platform-ca, configMap: {name: platform-ca}}}
+- target: {kind: Deployment, name: memory}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/3/value, value: https://keycloak:8443/realms/p0/protocol/openid-connect/certs}
+    - {op: replace, path: /spec/template/spec/containers/0/env/4/value, value: https://keycloak:8443/realms/p0}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: SSL_CERT_FILE, value: /etc/platform/ca/ca.crt}}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts, value: [{name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}]}
+    - {op: add, path: /spec/template/spec/volumes, value: [{name: platform-ca, configMap: {name: platform-ca}}]}
+- target: {kind: Deployment, name: governance}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/2/value, value: https://keycloak:8443/realms/p0/protocol/openid-connect/certs}
+    - {op: replace, path: /spec/template/spec/containers/0/env/3/value, value: https://keycloak:8443/realms/p0}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: SSL_CERT_FILE, value: /etc/platform/ca/ca.crt}}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts, value: [{name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}]}
+    - {op: add, path: /spec/template/spec/volumes, value: [{name: platform-ca, configMap: {name: platform-ca}}]}
 - target: {kind: StatefulSet, name: spire-server}
   patch: |
     - {op: add, path: /spec/template/spec/securityContext, value: {fsGroup: 1000, runAsUser: 1000, runAsNonRoot: true}}
@@ -165,6 +205,13 @@ patches:
 - target: {kind: ServiceAccount, name: openbao}
   patch: |
     - {op: add, path: /metadata/annotations, value: {azure.workload.identity/client-id: "${OPENBAO_CLIENT_ID}"}}
+- target: {kind: StatefulSet, name: openbao}   # P3-6 E7: listener jen HTTPS (cert openbao-tls), readiness přes HTTPS, api/cluster addr https
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: "https://$(POD_IP):8200"}
+    - {op: replace, path: /spec/template/spec/containers/0/env/2/value, value: "https://$(POD_IP):8201"}
+    - {op: add, path: /spec/template/spec/containers/0/readinessProbe/httpGet/scheme, value: HTTPS}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: tls, mountPath: /openbao/tls, readOnly: true}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: tls, secret: {secretName: openbao-tls}}}
 - target: {kind: StatefulSet, name: openbao}
   patch: |
     - {op: add, path: /spec/template/metadata/labels/azure.workload.identity~1use, value: "true"}
@@ -233,4 +280,4 @@ patches:
 - target: {kind: ConfigMap, name: zakazka-env}
   patch: |
     - {op: add, path: /data/P0_K8S_OIDC_ISSUER, value: "${AKS_OIDC_ISSUER}"}
-    - {op: add, path: /data/P0_KC_EXCHANGE_URL, value: http://keycloak.platform-data.svc:8080/realms/p0/protocol/openid-connect/token}   # pod role v ns tenanta: FQDN (2. běh E2: „Name or service not known“)
+    - {op: add, path: /data/P0_KC_EXCHANGE_URL, value: https://keycloak.platform-data.svc:8443/realms/p0/protocol/openid-connect/token}   # pod role v ns tenanta: FQDN (2. běh E2: „Name or service not known“); E7: https, CA z ConfigMapy platform-ca (SSL_CERT_FILE podu)

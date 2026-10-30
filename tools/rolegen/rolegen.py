@@ -81,7 +81,7 @@ def tenant_k8s(tenants, agent_conf: str, roles=()):
             {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "role-egress", "namespace": ns},
              "spec": {"podSelector": {"matchLabels": {"app": "role"}}, "policyTypes": ["Egress"], "egress": [
                  {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}], "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
-                 to("agentgateway", [4100, 3128]), to("memory", [9900]), to("zakazka", [8010]), to("spire-server", [8081]), to("keycloak", [8080])]}},   # keycloak: token exchange z podu (P3-6 E2)
+                 to("agentgateway", [4100, 3128]), to("memory", [9900]), to("zakazka", [8010]), to("spire-server", [8081]), to("keycloak", [8080, 8443])]}},   # keycloak: token exchange z podu (P3-6 E2; E7: 8443 https, 8080 jen kind)
             *[{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": role_sa(r["role"]), "namespace": ns, "labels": lab | {"platform.role": r["role"]}}, "automountServiceAccountToken": False} for r in roles if r["sandbox"].get("pod")],
             {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": {"name": "role-pods", "namespace": ns}, "rules": [
                 {"apiGroups": [""], "resources": ["pods"], "verbs": ["create", "get", "list", "watch", "delete"]},
