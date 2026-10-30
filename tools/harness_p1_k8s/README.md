@@ -699,7 +699,7 @@ zelené a padaly na kapacitě rostoucího stavu, ne na mechanismu E8). Omezení:
   (`kc_admin`) zkusí heslo ze Secretu, při neúspěchu dev literál a heslo otočí admin API (`reset-password`) na hodnotu Secretu. Dev literály
   zůstávají jen v base pro kind.
 - **Měření**: E9a – render overlaye AKS bez literálů a bez base Secretů (jen ExternalSecrety), DSN/heslo admina přes `secretKeyRef`, hodnoty
-  Secretů == Key Vault, login admina Keycloaku dev literálem 401 / Key Vaultem 200, Postgres role s literálem odmítnuty / s Key Vaultem přijaty
+  Secretů == Key Vault, login admina Keycloaku dev literálem odmítnut (Keycloak 26 vrací 400 `invalid_grant`, ne 401 – zjištěno 1. během) / Key Vaultem 200, Postgres role s literálem odmítnuty / s Key Vaultem přijaty
   (LOGIN, ne superuser), ledger `DB_ROLES_SYNC written` se 3 rolemi; E9b (INFO) – průběh migrace admina a synchronizace rolí; E1b nově hlídá
   i ExternalSecrety `keycloak-admin`, `memory-db`, `governance-db`.
 

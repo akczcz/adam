@@ -770,10 +770,15 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         g.open_thread(zb); stp = g.stop("Test tenantů hotov – zakázku beta zastavuji (není třeba dokončit).")
         g.close(); g2 = Gui(f"{APP}/gui/", shots=gui_shots / "platform").open(); g2.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
         lp = g2.login("platform-admin", "platform-admin"); lst_p = g2.threads_list(); ot_p = g2.open_thread(zb)
+        if ot_p["status"] == "error":   # přechodný výpadek streamu/port-forwardu po ~25 min GUI scénáře (1. běh E9: error bez zachyceného detailu) → keepalive a jednou znovu
+            first_err = ot_p.get("error")
+            try: g2.keepalive()
+            except Exception: pass
+            g2.page.wait_for_timeout(3000); ot_p = {**g2.open_thread(zb), "first_error": first_err}
         r403p = http("POST", f"{APP}/agui/run", headers={"Authorization": f"Bearer {g2.token}"}, json={"threadId": f"{tag}-plat", "runId": "t1e2", "messages": [{"id": "m", "role": "user", "content": "platform nesmí zakládat"}]}, timeout=15).status_code
         g2.close()
         ids_b_list = [t["id"] for t in lst_b]; ids_p = [t["id"] for t in lst_p]
-        rep.add("T1e", "GUI per tenant: bea (tenant beta) vidí jen zakázky beta (acme zakázka v seznamu není, otevřít ji → 404 v GUI i API), stop zakázky beta s důvodem funguje; platform-admin (tenant platform) vidí průřez obou tenantů (acme i beta), otevře thread beta, ale zakázku založit nesmí (403)", "PASS" if li["tenant"] == "beta" and zb in ids_b_list and zid_acme not in ids_b_list and all(t["cells"][1] == "beta" for t in lst_b) and ot["status"] == "error" and "404" in (ot["error"] or "") and r403 == 404 and stp["run_status"] == "cancelled" and lp["tenant"] == "platform" and {zid_acme, zb} <= set(ids_p) and ot_p["status"] != "error" and r403p == 403 else "FAIL", {"bea": {"tenant": li["tenant"], "listed": ids_b_list[:8], "open_acme": ot, "api_acme": r403, "stop": stp["run_status"]}, "platform_admin": {"tenant": lp["tenant"], "listed_n": len(ids_p), "has_both": {zid_acme, zb} <= set(ids_p), "open_beta": ot_p["status"], "create_http": r403p}, "wall_s": round(time.time() - t_b, 1)})
+        rep.add("T1e", "GUI per tenant: bea (tenant beta) vidí jen zakázky beta (acme zakázka v seznamu není, otevřít ji → 404 v GUI i API), stop zakázky beta s důvodem funguje; platform-admin (tenant platform) vidí průřez obou tenantů (acme i beta), otevře thread beta, ale zakázku založit nesmí (403)", "PASS" if li["tenant"] == "beta" and zb in ids_b_list and zid_acme not in ids_b_list and all(t["cells"][1] == "beta" for t in lst_b) and ot["status"] == "error" and "404" in (ot["error"] or "") and r403 == 404 and stp["run_status"] == "cancelled" and lp["tenant"] == "platform" and {zid_acme, zb} <= set(ids_p) and ot_p["status"] != "error" and r403p == 403 else "FAIL", {"bea": {"tenant": li["tenant"], "listed": ids_b_list[:8], "open_acme": ot, "api_acme": r403, "stop": stp["run_status"]}, "platform_admin": {"tenant": lp["tenant"], "listed_n": len(ids_p), "has_both": {zid_acme, zb} <= set(ids_p), "open_beta": ot_p["status"], "open_beta_error": ot_p.get("error"), "open_beta_first_error": ot_p.get("first_error"), "create_http": r403p}, "wall_s": round(time.time() - t_b, 1)})
     finally:
         try: g.close()
         except Exception: pass
@@ -1434,8 +1439,14 @@ def e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, kc_adm, led):
              "gov_dsn": bool(kv["pg-org-reader-password"]) and urlsplit(gov_dsn).password == kv["pg-org-reader-password"] and urlsplit(gov_dsn).username == "org_reader",
              "roles_json": {r: bool(roles_pw.get(r)) and roles_pw.get(r) == kv[f"pg-{r.replace('_', '-')}-password"] for r in ("memory_app", "org_reader", "org_writer")}}
     # Keycloak: dev literál odmítnut, heslo z Key Vaultu přijato
-    def login(p): return http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": "admin", "password": p}, timeout=20).status_code
-    kc_login = {"legacy": login(LEGACY_KC_ADMIN), "keyvault": login(kc_pw) if kc_pw else "no-secret"}
+    def login(p):
+        r = http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": "admin", "password": p}, timeout=20)
+        try: err = r.json().get("error") if r.status_code != 200 else None
+        except Exception: err = None
+        return {"status": r.status_code, "error": err}
+    kc_login = {"legacy": login(LEGACY_KC_ADMIN), "keyvault": login(kc_pw) if kc_pw else {"status": "no-secret", "error": None}}
+    # Keycloak 26 vrací špatnému heslu admina 400 invalid_grant (1. běh E9), ne 401 – rozhoduje „bez tokenu“, ne konkrétní kód
+    kc_ok = kc_login["legacy"]["status"] in (400, 401) and kc_login["legacy"]["error"] == "invalid_grant" and kc_login["keyvault"]["status"] == 200
     # Postgres: literály odmítnuty, hesla z Key Vaultu přijata; role bez superuser, s LOGIN
     hostport = dsn("org").split("@")[1].split("/")[0]
     def pg_try(role, pw, db):
@@ -1447,9 +1458,9 @@ def e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, kc_adm, led):
         pg_roles = {r_[0]: {"login": r_[1], "super": r_[2]} for r_ in c.execute("SELECT rolname, rolcanlogin, rolsuper FROM pg_roles WHERE rolname IN ('memory_app','org_reader','org_writer')").fetchall()}
     sync = [e for e in led() if e.get("kind") == "DB_ROLES_SYNC"]; last_sync = sync[-1] if sync else None
     ok = (not lits_in_render and secrets_in_render == [] and all(v and v.startswith("secretKeyRef:") for v in env_src.values()) and match["keycloak"] and match["memory_uri"] and match["gov_dsn"]
-          and all(match["roles_json"].values()) and kc_login == {"legacy": 401, "keyvault": 200} and all(v["legacy"] is not True and v["keyvault"] is True for v in pg.values())
+          and all(match["roles_json"].values()) and kc_ok and all(v["legacy"] is not True and v["keyvault"] is True for v in pg.values())
           and set(pg_roles) == {"memory_app", "org_reader", "org_writer"} and all(v["login"] and not v["super"] for v in pg_roles.values()) and bool(last_sync) and last_sync.get("written") is True and sorted(last_sync.get("roles") or []) == ["memory_app", "org_reader", "org_writer"])
-    rep.add("E9a", "Žádný literál hesla z Gitu v běžící platformě: render overlaye AKS neobsahuje `admin-dev` ani `memory_app:memory_app`/`org_reader:org_reader`/`org_writer:org_writer` a žádný base Secret keycloak-admin/memory-db/governance-db/zakazka-finops (jen ExternalSecrety), DSN paměti a Governance MCP i heslo admina Keycloaku jdou ze Secretů (secretKeyRef); hodnoty Secretů == Key Vault (keycloak-admin-password, pg-*-password; i P0_DB_ROLE_PASSWORDS aplikace); Keycloak admin: dev literál 401, heslo z Key Vaultu 200; Postgres: role memory_app/org_reader/org_writer s dev literálem odmítnuty, s heslem z Key Vaultu přijaty, LOGIN bez superuser; aplikace hesla nastavila při startu (ledger DB_ROLES_SYNC written, 3 role)", "PASS" if ok else "FAIL",
+    rep.add("E9a", "Žádný literál hesla z Gitu v běžící platformě: render overlaye AKS neobsahuje `admin-dev` ani `memory_app:memory_app`/`org_reader:org_reader`/`org_writer:org_writer` a žádný base Secret keycloak-admin/memory-db/governance-db/zakazka-finops (jen ExternalSecrety), DSN paměti a Governance MCP i heslo admina Keycloaku jdou ze Secretů (secretKeyRef); hodnoty Secretů == Key Vault (keycloak-admin-password, pg-*-password; i P0_DB_ROLE_PASSWORDS aplikace); Keycloak admin: dev literál odmítnut (invalid_grant, bez tokenu), heslo z Key Vaultu 200; Postgres: role memory_app/org_reader/org_writer s dev literálem odmítnuty, s heslem z Key Vaultu přijaty, LOGIN bez superuser; aplikace hesla nastavila při startu (ledger DB_ROLES_SYNC written, 3 role)", "PASS" if ok else "FAIL",
             {"render": {"literals": lits_in_render, "base_secrets": secrets_in_render, "env_sources": env_src}, "keyvault_match": match, "keycloak_login": kc_login, "pg_login": pg, "pg_roles": pg_roles, "db_roles_sync": last_sync, "keyvault_secrets_present": {k: bool(v) for k, v in kv.items()}})
     rep.add("E9b", "E9: migrace admina Keycloaku v tomto běhu (login Secretem / dev literálem, rotace admin API) a synchronizace hesel DB rolí aplikací", "INFO", {"keycloak_admin": kc_adm, "db_roles_sync_events": len(sync), "last_sync": last_sync})
 
