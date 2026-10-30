@@ -68,6 +68,7 @@ venvy harnessů M1 a O1. `--create-kind` postaví obraz uzlu (runc obal), cluste
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import re
@@ -104,7 +105,10 @@ class Report:
     def __init__(self): self.checks = []
     def add(self, cid, name, status, detail):
         self.checks.append({"id": cid, "name": name, "status": status, "detail": detail})
-        print(f"  {dict(PASS='✅', FAIL='❌', INFO='ℹ️', SKIP='⏭️')[status]} {cid} {name}: {json.dumps(detail, ensure_ascii=False)[:420 if status != 'FAIL' else 6000]}")   # FAIL celý detail (CI log)
+        if status == "FAIL" and isinstance(detail, dict):   # FAIL: každý klíč detailu viditelný (jeden velký seznam dřív uřízl zbytek – 4. běh E8), zbytek v results/*.json (artefakt)
+            shown = {k: (json.dumps(v, ensure_ascii=False)[:1500] + "…" if len(json.dumps(v, ensure_ascii=False)) > 1500 else v) for k, v in detail.items()}
+        else: shown = detail
+        print(f"  {dict(PASS='✅', FAIL='❌', INFO='ℹ️', SKIP='⏭️')[status]} {cid} {name}: {json.dumps(shown, ensure_ascii=False)[:420 if status != 'FAIL' else 12000]}")
 
 
 def sh(cmd, env=None, timeout=600, check=False):
@@ -853,7 +857,13 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         stop_led = next((e for e in reversed(led()) if e["kind"] == "STOP_TENANT" and e.get("tenant") == "beta"), {})
         rs = g.tenant_stop("beta", "Test hotov – tenant beta zpět do provozu (resume).", resume=True)
         after_resume = {z_: status(z_) for z_ in beta_z}
-        rep.add("U2d", "Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if st["ok"] and st["disabled_empty"] and w2.get("kind") in ("dialog", "approval") and running_before and all(after[z_] == "SUSPENDED" for z_ in running_before) and blocked_cm and gw_http == 429 and mem.status_code == 403 and "tenant_stopped" in mem.text and mem_a.status_code == 200 and "spiffe://platform/role/account/beta" in ents and tst == "stopped" and evs >= 1 and rs["ok"] and all(after_resume[z_] == "RUNNING" for z_ in running_before) else "FAIL", {"before": before, "after_stop": after, "after_resume": after_resume, "stop_gui": st, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
+        cond = {"stop_gui_ok": bool(st["ok"]), "disabled_empty": bool(st["disabled_empty"]), "second_interrupt": w2.get("kind") in ("dialog", "approval"), "running_before": bool(running_before),
+                "suspended": all(after[z_] == "SUSPENDED" for z_ in running_before), "keys_blocked_cm": blocked_cm, "gateway_429": gw_http == 429, "memory_beta_denied": mem.status_code == 403 and "tenant_stopped" in mem.text,
+                "memory_acme_ok": mem_a.status_code == 200, "spire_beta_entries": "spiffe://platform/role/account/beta" in ents, "tenant_stopped": tst == "stopped", "events_suspended": evs >= 1, "resume_gui_ok": bool(rs["ok"]),
+                "running_after_resume": all(after_resume[z_] == "RUNNING" for z_ in running_before)}   # 4. běh E8: FAIL bez čitelné příčiny (detail uříznutý seznamem ~100 zakázek beta) → podmínky jmenovitě, stavy jen pro zakázky běhu
+        def hist(d): return {"run": {z_: v for z_, v in d.items() if z_.startswith(tag)}, "others": dict(collections.Counter(v for z_, v in d.items() if not z_.startswith(tag)))}
+        before, after, after_resume = hist(before), hist(after), hist(after_resume)
+        rep.add("U2d","Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "before": before, "after_stop": after, "after_resume": after_resume, "stop_gui": st, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
         rep.add("U2h", "GUI nad firmou: čas scénáře, screenshoty", "INFO", {"wall_s": round(time.time() - t_g, 1), "shots": sorted(p.name for p in (gui_shots / "gov").glob("*.png")) if (gui_shots / "gov").exists() else []})
     finally:
         g.close()
