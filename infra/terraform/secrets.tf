@@ -76,6 +76,40 @@ resource "azurerm_key_vault_secret" "role_client_secrets" {
   lifecycle { ignore_changes = [value] }
 }
 
+# --- P3-6 E9: hesla, která dosud ležela jako dev literály v manifestech (base/keycloak keycloak-admin `admin-dev`, DSN paměti a Governance MCP
+# `memory_app:memory_app` / `org_reader:org_reader`) – náhodná hodnota v Key Vaultu, do clusteru přes ESO (overlays/aks/secrets-eso.yaml);
+# hesla DB rolí nastavuje aplikace zakázky při startu (ALTER ROLE z P0_DB_ROLE_PASSWORDS), admina Keycloaku otočí harness jako operátor
+# (KC_BOOTSTRAP_ADMIN_* platí jen pro prázdnou DB). Base hodnoty zůstávají jen pro kind. Rotace = `terraform taint`/nová hodnota tady.
+resource "random_password" "keycloak_admin" {
+  length  = 32
+  special = false
+}
+
+resource "random_password" "pg_role" {
+  for_each = toset(["memory_app", "org_reader", "org_writer"])
+  length   = 32
+  special  = false
+}
+
+resource "azurerm_key_vault_secret" "keycloak_admin_password" {
+  name         = "keycloak-admin-password"
+  value        = random_password.keycloak_admin.result
+  key_vault_id = azurerm_key_vault.kv.id
+  content_type = "heslo bootstrap admina Keycloaku (realm master; Secret keycloak-admin přes ESO, harness ho při migraci otočí admin API)"
+  tags         = var.tags
+  depends_on   = [time_sleep.kv_rbac]
+}
+
+resource "azurerm_key_vault_secret" "pg_role_password" {
+  for_each     = random_password.pg_role
+  name         = "pg-${replace(each.key, "_", "-")}-password"
+  value        = each.value.result
+  key_vault_id = azurerm_key_vault.kv.id
+  content_type = "heslo DB role ${each.key} (RLS, ne admin; nastavuje aplikace zakázky při startu, DSN přes ESO)"
+  tags         = var.tags
+  depends_on   = [time_sleep.kv_rbac]
+}
+
 # --- ESO: workload identita pro čtení Key Vaultu ------------------------------------------------------------------------------
 resource "azurerm_user_assigned_identity" "eso" {
   name                = "id-eso-${var.name_suffix}"

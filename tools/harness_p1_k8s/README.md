@@ -686,6 +686,30 @@ Výsledek: **67/67 + 11 INFO** (`measure` run 41046364239, `results/p3-6-2026103
 zelené a padaly na kapacitě rostoucího stavu, ne na mechanismu E8). Omezení: harness stále pracuje s **root tokenem** OpenBao
 (z Key Vaultu) – scoped operátorský token je samostatná položka P3-6.
 
+## P3-6 E9 – žádný literál hesla z Gitu (2026-10-30, AKS, `--step p3-6` = … + **E9a–b**)
+
+- **Problém**: v manifestech ležely dev literály hesel, které platily i na AKS: admin Keycloaku `admin-dev` (Secret `keycloak-admin` v base),
+  DSN paměti `memory_app:memory_app` a Governance MCP `org_reader:org_reader` (env Deploymentů, overlay je jen doplnil o `sslmode`), hesla rolí
+  `org_reader`/`org_writer` v SQL aplikace a `memory_app` v harnessu (`ALTER ROLE … 'memory_app'`).
+- **Řešení**: Terraform `random_password` → Key Vault (`keycloak-admin-password`, `pg-memory-app-password`, `pg-org-reader-password`,
+  `pg-org-writer-password`), ESO → Secrety `keycloak-admin`, `memory-db` (`MEMORY_DB_URI`), `governance-db` (`GOV_DSN`) a
+  `zakazka-finops.P0_DB_ROLE_PASSWORDS`; Deploymenty čtou DSN přes `secretKeyRef`; overlay AKS base Secrety maže. Hesla DB rolí nastavuje
+  **aplikace zakázky při startu** (`finops.roles_sync`: `ALTER ROLE`, ledger `DB_ROLES_SYNC` jen se jmény rolí) – vlastník schématu, ne harness.
+  Admin Keycloaku: `KC_BOOTSTRAP_ADMIN_*` platí jen pro prázdnou DB, běžící instance má admina z prvního startu → harness jako operátor
+  (`kc_admin`) zkusí heslo ze Secretu, při neúspěchu dev literál a heslo otočí admin API (`reset-password`) na hodnotu Secretu. Dev literály
+  zůstávají jen v base pro kind.
+- **Měření**: E9a – render overlaye AKS bez literálů a bez base Secretů (jen ExternalSecrety), DSN/heslo admina přes `secretKeyRef`, hodnoty
+  Secretů == Key Vault, login admina Keycloaku dev literálem 401 / Key Vaultem 200, Postgres role s literálem odmítnuty / s Key Vaultem přijaty
+  (LOGIN, ne superuser), ledger `DB_ROLES_SYNC written` se 3 rolemi; E9b (INFO) – průběh migrace admina a synchronizace rolí; E1b nově hlídá
+  i ExternalSecrety `keycloak-admin`, `memory-db`, `governance-db`.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E9a | žádný literál hesla z Gitu: render, Secrety == Key Vault, literály odmítnuty, hesla z Key Vaultu přijata, aplikace role synchronizovala | ⏳ |
+| E9b | migrace admina Keycloaku a synchronizace DB rolí | ⏳ |
+
+Výsledek: ⏳ (doplním po měření).
+
 ## Spuštění
 
 ```bash

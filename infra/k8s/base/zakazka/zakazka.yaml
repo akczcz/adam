@@ -41,6 +41,24 @@ type: Opaque
 stringData:
   P0_FINOPS_DSN: postgresql://postgres:platform-dev@postgres:5432/agentgateway
   P0_REGISTRY_DSN: postgresql://postgres:platform-dev@postgres:5432/org
+  P0_DB_ROLE_PASSWORDS: '{"memory_app": "memory_app", "org_reader": "org_reader", "org_writer": "org_writer"}'   # P3-6 E9: hesla RLS rolí nastavuje aplikace při startu (ALTER ROLE); kind dev, AKS z Key Vaultu přes ESO
+---
+# P3-6 E9: DSN paměti (role memory_app) a Governance MCP (role org_reader) – v Gitu jen dev hesla pro kind; na AKS overlay tyto Secrety maže a ESO je dává z Key Vaultu
+apiVersion: v1
+kind: Secret
+metadata:
+  name: memory-db
+type: Opaque
+stringData:
+  MEMORY_DB_URI: postgresql://memory_app:memory_app@postgres:5432/memory
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: governance-db
+type: Opaque
+stringData:
+  GOV_DSN: postgresql://org_reader:org_reader@postgres:5432/org
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -227,7 +245,7 @@ spec:
         env:
         - {name: MEMORY_HOST, value: "0.0.0.0"}
         - {name: MEMORY_PORT, value: "9900"}
-        - {name: MEMORY_DB_URI, value: "postgresql://memory_app:memory_app@postgres:5432/memory"}   # role memory_app (RLS), ne superuser; heslo kind-dev
+        - {name: MEMORY_DB_URI, valueFrom: {secretKeyRef: {name: memory-db, key: MEMORY_DB_URI}}}   # role memory_app (RLS), ne superuser; P3-6 E9: DSN ze Secretu (kind dev / AKS ESO z Key Vaultu)
         - {name: MEMORY_JWKS_URL, value: http://keycloak:8080/realms/p0/protocol/openid-connect/certs}
         - {name: MEMORY_ISSUER, value: http://keycloak:8080/realms/p0}
         - {name: MEMORY_AUDIENCE, value: memory}
@@ -442,7 +460,7 @@ spec:
         command: ["python", "/app/governance_mcp/governance_mcp.py"]
         env:
         - {name: GOV_PORT, value: "9910"}
-        - {name: GOV_DSN, value: "postgresql://org_reader:org_reader@postgres:5432/org"}   # role org_reader (jen SELECT, RLS); heslo dev – P3-6 ESO/OpenBao
+        - {name: GOV_DSN, valueFrom: {secretKeyRef: {name: governance-db, key: GOV_DSN}}}   # role org_reader (jen SELECT, RLS); P3-6 E9: DSN ze Secretu (kind dev / AKS ESO z Key Vaultu)
         - {name: GOV_KC_JWKS_URL, value: http://keycloak:8080/realms/p0/protocol/openid-connect/certs}
         - {name: GOV_KC_ISSUER, value: http://keycloak:8080/realms/p0}
         - {name: GOV_CLICKHOUSE_URL, value: http://clickhouse:8123}   # P3-6 E4: per-request ledger ze spanů gateway (otel.otel_traces); uživatel default bez hesla – dev

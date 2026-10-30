@@ -462,7 +462,7 @@ def step_p1_5(a, rep, env):
         # paměť: schéma M1 + seed v clusterovém Postgresu, role memory_app s heslem
         su = f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{PG_PORT}/memory"
         with psycopg.connect(su, autocommit=True, connect_timeout=10) as c:
-            c.execute(m1m.SCHEMA); c.execute("ALTER ROLE memory_app PASSWORD 'memory_app'")
+            c.execute(m1m.SCHEMA)   # heslo role memory_app nastavuje aplikace při startu z P0_DB_ROLE_PASSWORDS (P3-6 E9), ne harness
             txt = "ACME konvence: každý endpoint má test a vrací JSON; splatnost faktur 30 dní."
             c.execute("""INSERT INTO memory_records (id,tenant_id,scope,type,content,content_hash,sources,created_by,created_at,verification,confidence,valid_from,status,sensitivity,pipeline_version,embedding)
                          VALUES ('seed-acme','acme','zakaznik','fakt',%s,'h','[{"ref":"doc://acme/konvence","kind":"document"}]','{"sub":"seed"}',now(),'{"method":"human","by":"adam"}',0.95,now(),'approved','internal','seed',%s::vector)""", (txt, m1m._embed_sql(txt)))
@@ -612,16 +612,38 @@ class PortForward:
         if self.p: self.p.terminate()
 
 
+LEGACY_KC_ADMIN = "admin-dev"   # dev literál z base manifestu (kind); na AKS od P3-6 E9 heslo z Key Vaultu přes ESO – běžící instanci harness otočí
+
+
+def kc_admin(a, http, KC):
+    """Admin token Keycloaku (realm master): heslo ze Secretu keycloak-admin (AKS: ESO z Key Vaultu, kind: dev literál). P3-6 E9: KC_BOOTSTRAP_ADMIN_*
+    platí jen pro prázdnou DB – běžící Keycloak má admina z prvního startu; když Secret nesedí a sedí dev literál, harness jako operátor heslo
+    nastaví na hodnotu Secretu (admin API reset-password) a ověří. Hodnoty hesel se nikam nelogují."""
+    import base64 as _b
+    def sec(k): v = kubectl(a, "-n", NS, "get", "secret", "keycloak-admin", "-o", f"jsonpath={{.data.{k}}}").stdout.strip(); return _b.b64decode(v).decode() if v else ""
+    user, pw = sec("KC_BOOTSTRAP_ADMIN_USERNAME") or "admin", sec("KC_BOOTSTRAP_ADMIN_PASSWORD")
+    def login(p): return http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": user, "password": p}, timeout=20)
+    info = {"user": user, "secret_login": None, "legacy_login": None, "rotated": None}
+    r = login(pw) if pw else None; info["secret_login"] = r.status_code if r is not None else "no-secret"
+    if r is None or r.status_code != 200:
+        r = login(LEGACY_KC_ADMIN); info["legacy_login"] = r.status_code
+        assert r.status_code == 200, f"Keycloak admin login: Secret {info['secret_login']}, dev literál {r.status_code} {r.text[:200]}"
+        if pw:
+            H = {"Authorization": f"Bearer {r.json()['access_token']}"}
+            u = http("GET", f"{KC}/admin/realms/master/users", headers=H, params={"username": user, "exact": "true"}, timeout=20).json()
+            x = http("PUT", f"{KC}/admin/realms/master/users/{u[0]['id']}/reset-password", headers=H, json={"type": "password", "value": pw, "temporary": False}, timeout=20)
+            info["rotated"] = x.status_code
+            r = login(pw); info["secret_login_after"] = r.status_code
+            assert r.status_code == 200, f"Keycloak admin po rotaci hesla: {r.status_code} {r.text[:200]}"
+    return r.json()["access_token"], info
+
+
 def kc_ensure(a, http, KC, realm="p0"):
     """P3-2: Keycloak `--import-realm` existující realm nemění → chybějící realm role, klienty a uživatele z realm-p0.json (zdroj pravdy; lidé tenantů
     = tenants.yaml) doplní harness admin API (idempotentní). Nový cluster je importuje z ConfigMapy; tady jde o migraci běžícího realmu."""
-    import base64 as _b
     O2 = T / "harness_p0_o2"; rj = json.loads((O2 / "configs/realm-p0.json").read_text())
-    pw = _b.b64decode(kubectl(a, "-n", NS, "get", "secret", "keycloak-admin", "-o", "jsonpath={.data.KC_BOOTSTRAP_ADMIN_PASSWORD}").stdout.strip()).decode()
-    user = _b.b64decode(kubectl(a, "-n", NS, "get", "secret", "keycloak-admin", "-o", "jsonpath={.data.KC_BOOTSTRAP_ADMIN_USERNAME}").stdout.strip()).decode() or "admin"
-    tok = http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": user, "password": pw}, timeout=20)
-    assert tok.status_code == 200, f"Keycloak admin login: {tok.status_code} {tok.text[:200]}"
-    H = {"Authorization": f"Bearer {tok.json()['access_token']}"}; A = f"{KC}/admin/realms/{realm}"; created = {"roles": [], "clients": [], "users": [], "errors": []}
+    tok, adm_info = kc_admin(a, http, KC)   # P3-6 E9: heslo admina ze Secretu (Key Vault), dev literál při migraci otočen
+    H = {"Authorization": f"Bearer {tok}"}; A = f"{KC}/admin/realms/{realm}"; created = {"roles": [], "clients": [], "users": [], "errors": [], "admin": adm_info}
     have_roles = {r["name"] for r in http("GET", f"{A}/roles", headers=H, timeout=20).json()}
     for r in rj["roles"]["realm"]:
         if r["name"] not in have_roles:
@@ -732,8 +754,8 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         gate_b = next((e for e in L if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zb), {})
         rep.add("T1d", "Klíče gateway per tenant: klíče zakázky beta jsou k-beta-<zakazka>-<role> s metadata.tenant=beta a user_id beta/…, vydané z šablony s placeholderem {tenant}; útrata account v budget_usage > 0; budget_gate zná strop tenanta (org.tenants.budget_usd 20) a útratu tenanta", "PASS" if len(mine) >= 4 and all((k.get("metadata") or {}).get("tenant") == "beta" and (k.get("metadata") or {}).get("name", "").startswith("k-beta-") and (k.get("metadata") or {}).get("user_id", "").startswith("beta/") for k in mine) and spend_b.get("account", 0) > 0 and (gate_b.get("tenant") or {}).get("budget_usd") == 20 else "FAIL", {"keys": [(k.get("metadata") or {}).get("name") for k in mine], "spend_usd": {k: round(v, 6) for k, v in spend_b.items()}, "gate": {k: gate_b.get(k) for k in ("role", "tenant", "exceeded")}})
         def rls(tenant):
-            pw = dsn("org").split(":", 2)[2].split("@")[0]; host = dsn("org").split("@")[1].split("/")[0]
-            with psycopg.connect(f"postgresql://org_reader:org_reader@{host}/org?sslmode=require", autocommit=True, connect_timeout=10) as c:
+            host = dsn("org").split("@")[1].split("/")[0]; pw = json.loads(secret("zakazka-finops", "P0_DB_ROLE_PASSWORDS") or "{}").get("org_reader", "org_reader")   # P3-6 E9: heslo role z ESO Secretu (Key Vault), ne literál
+            with psycopg.connect(f"postgresql://org_reader:{pw}@{host}/org?sslmode=require", autocommit=True, connect_timeout=10) as c:
                 c.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant,))
                 z_ = sorted(r[0] for r in c.execute("SELECT zakazka_id FROM org.zakazky").fetchall()); ap_ = c.execute("SELECT count(*) FROM org.approvals").fetchone()[0]
                 tn_ = sorted(r[0] for r in c.execute("SELECT tenant_id FROM org.tenants").fetchall())
@@ -1386,6 +1408,50 @@ def kv_set(kv_name, name, value, content_type):
     return r.returncode == 0 or (r.stderr or "")[-300:]
 
 
+def e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, kc_adm, led):
+    """E9 (P3-6): žádný literál hesla z Gitu v běžící platformě – admin Keycloaku (`admin-dev`) a DB role memory_app/org_reader/org_writer
+    (`role:role` v DSN) mají hesla z Key Vaultu (Terraform random_password → ESO: Secrety keycloak-admin, memory-db, governance-db a
+    zakazka-finops.P0_DB_ROLE_PASSWORDS). Hesla rolí nastavuje aplikace při startu (ALTER ROLE, ledger DB_ROLES_SYNC), admina Keycloaku otočil
+    harness jako operátor (bootstrap admin platí jen pro prázdnou DB). Dev literály zůstávají jen v base manifestech pro kind."""
+    import yaml as _y
+    from urllib.parse import urlsplit
+    LIT = ["admin-dev", "memory_app:memory_app", "org_reader:org_reader", "org_writer:org_writer"]
+    text = _y.safe_dump_all(rendered, allow_unicode=True)
+    lits_in_render = [l for l in LIT if l in text]
+    secrets_in_render = sorted(d["metadata"]["name"] for d in rendered if d.get("kind") == "Secret" and d["metadata"]["name"] in ("keycloak-admin", "memory-db", "governance-db", "zakazka-finops"))
+    def env_of(name):
+        d = next((d for d in rendered if d.get("kind") == "Deployment" and d["metadata"]["name"] == name), {})
+        return {e["name"]: ("secretKeyRef:" + e["valueFrom"]["secretKeyRef"]["name"]) if "valueFrom" in e else "literal" for e in ((((d.get("spec") or {}).get("template") or {}).get("spec") or {}).get("containers") or [{}])[0].get("env", [])}
+    env_src = {"memory/MEMORY_DB_URI": env_of("memory").get("MEMORY_DB_URI"), "governance/GOV_DSN": env_of("governance").get("GOV_DSN"), "keycloak/KC_BOOTSTRAP_ADMIN_PASSWORD": env_of("keycloak").get("KC_BOOTSTRAP_ADMIN_PASSWORD")}
+    # hodnoty: Key Vault == Secret z ESO (porovnání jen jako bool, hodnoty se nelogují)
+    kv = {n: kv_get(kv_name, n) for n in ("keycloak-admin-password", "pg-memory-app-password", "pg-org-reader-password", "pg-org-writer-password")}
+    kc_pw = secret("keycloak-admin", "KC_BOOTSTRAP_ADMIN_PASSWORD") or ""; mem_uri = secret("memory-db", "MEMORY_DB_URI") or ""; gov_dsn = secret("governance-db", "GOV_DSN") or ""
+    roles_pw = json.loads(secret("zakazka-finops", "P0_DB_ROLE_PASSWORDS") or "{}")
+    match = {"keycloak": bool(kv["keycloak-admin-password"]) and kv["keycloak-admin-password"] == kc_pw,
+             "memory_uri": bool(kv["pg-memory-app-password"]) and urlsplit(mem_uri).password == kv["pg-memory-app-password"] and urlsplit(mem_uri).username == "memory_app",
+             "gov_dsn": bool(kv["pg-org-reader-password"]) and urlsplit(gov_dsn).password == kv["pg-org-reader-password"] and urlsplit(gov_dsn).username == "org_reader",
+             "roles_json": {r: bool(roles_pw.get(r)) and roles_pw.get(r) == kv[f"pg-{r.replace('_', '-')}-password"] for r in ("memory_app", "org_reader", "org_writer")}}
+    # Keycloak: dev literál odmítnut, heslo z Key Vaultu přijato
+    def login(p): return http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": "admin", "password": p}, timeout=20).status_code
+    kc_login = {"legacy": login(LEGACY_KC_ADMIN), "keyvault": login(kc_pw) if kc_pw else "no-secret"}
+    # Postgres: literály odmítnuty, hesla z Key Vaultu přijata; role bez superuser, s LOGIN
+    hostport = dsn("org").split("@")[1].split("/")[0]
+    def pg_try(role, pw, db):
+        try:
+            with psycopg.connect(f"postgresql://{role}:{pw}@{hostport}/{db}?sslmode=require", connect_timeout=10) as c: return c.execute("SELECT current_user").fetchone()[0] == role
+        except psycopg.OperationalError as e: return f"denied: {str(e).splitlines()[0][:90]}"
+    pg = {r: {"legacy": pg_try(r, r, db), "keyvault": pg_try(r, roles_pw.get(r, ""), db) if roles_pw.get(r) else "no-secret"} for r, db in (("memory_app", "memory"), ("org_reader", "org"), ("org_writer", "org"))}
+    with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
+        pg_roles = {r_[0]: {"login": r_[1], "super": r_[2]} for r_ in c.execute("SELECT rolname, rolcanlogin, rolsuper FROM pg_roles WHERE rolname IN ('memory_app','org_reader','org_writer')").fetchall()}
+    sync = [e for e in led() if e.get("kind") == "DB_ROLES_SYNC"]; last_sync = sync[-1] if sync else None
+    ok = (not lits_in_render and secrets_in_render == [] and all(v and v.startswith("secretKeyRef:") for v in env_src.values()) and match["keycloak"] and match["memory_uri"] and match["gov_dsn"]
+          and all(match["roles_json"].values()) and kc_login == {"legacy": 401, "keyvault": 200} and all(v["legacy"] is not True and v["keyvault"] is True for v in pg.values())
+          and set(pg_roles) == {"memory_app", "org_reader", "org_writer"} and all(v["login"] and not v["super"] for v in pg_roles.values()) and bool(last_sync) and last_sync.get("written") is True and sorted(last_sync.get("roles") or []) == ["memory_app", "org_reader", "org_writer"])
+    rep.add("E9a", "Žádný literál hesla z Gitu v běžící platformě: render overlaye AKS neobsahuje `admin-dev` ani `memory_app:memory_app`/`org_reader:org_reader`/`org_writer:org_writer` a žádný base Secret keycloak-admin/memory-db/governance-db/zakazka-finops (jen ExternalSecrety), DSN paměti a Governance MCP i heslo admina Keycloaku jdou ze Secretů (secretKeyRef); hodnoty Secretů == Key Vault (keycloak-admin-password, pg-*-password; i P0_DB_ROLE_PASSWORDS aplikace); Keycloak admin: dev literál 401, heslo z Key Vaultu 200; Postgres: role memory_app/org_reader/org_writer s dev literálem odmítnuty, s heslem z Key Vaultu přijaty, LOGIN bez superuser; aplikace hesla nastavila při startu (ledger DB_ROLES_SYNC written, 3 role)", "PASS" if ok else "FAIL",
+            {"render": {"literals": lits_in_render, "base_secrets": secrets_in_render, "env_sources": env_src}, "keyvault_match": match, "keycloak_login": kc_login, "pg_login": pg, "pg_roles": pg_roles, "db_roles_sync": last_sync, "keyvault_secrets_present": {k: bool(v) for k, v in kv.items()}})
+    rep.add("E9b", "E9: migrace admina Keycloaku v tomto běhu (login Secretem / dev literálem, rotace admin API) a synchronizace hesel DB rolí aplikací", "INFO", {"keycloak_admin": kc_adm, "db_roles_sync_events": len(sync), "last_sync": last_sync})
+
+
 def e8_checks(a, rep, kj, kv_name, BAO, init, seal0, migrated, secret):
     """E8 (P3-6): bootstrap OpenBao (root token + recovery klíč z `sys/init`) žije jen v Key Vaultu platformy (secret `openbao-init`, zapsal operátor =
     harness identitou runneru), v clusteru žádný Secret; unseal dělá Key Vault (seal azurekeyvault) bez operátora; root token z Key Vaultu platný."""
@@ -1529,7 +1595,7 @@ def e1_checks(a, rep, kj, pre):
     rep.add("E1a", "TLS egressu gateway z cert-manageru (interní CA: self-signed root platform-root-ca → ClusterIssuer platform-ca): Certificate agentgateway-tls Ready, Secret s anotacemi cert-manageru, SAN git/mirror.platform.internal, podpis ověřen proti root CA, ca.crt v Secretu == root; trust-manager rozdal CA jako ConfigMap platform-ca (label bundle) do platform-data i všech ns tenantů; HelmReleasy cert-manager/trust-manager Ready; Secret bez stopy kubectl", "PASS" if ready(cert) == "True" and ann.get("cert-manager.io/issuer-name") == "platform-ca" and ann.get("cert-manager.io/issuer-kind") == "ClusterIssuer" and sans == ["git.platform.internal", "mirror.platform.internal"] and chain_ok is True and ca_in_tls.strip() == root.strip() and root and cm_ok and all(cm_ok.values()) and all(hr.get(k, {}).get("ready") == "True" for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")) and not any(m.startswith("kubectl") for m in managers(tls)) else "FAIL", {"certificate_ready": ready(cert), "issuer": [ann.get("cert-manager.io/issuer-kind"), ann.get("cert-manager.io/issuer-name")], "sans": sans, "issuer_cn": leaf.issuer.rfc4514_string() if leaf else None, "validity_days": days, "chain_ok": chain_ok, "ca_matches_root": ca_in_tls.strip() == root.strip(), "platform_ca_configmaps": cm_ok, "secret_managers": managers(tls), "helm": {k: hr.get(k) for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")}, "legacy_removed": pre.get("legacy_removed")})
     # E1b – ESO z Key Vaultu přes workload identitu
     css = get(None, "clustersecretstore", "azure-kv"); ess = {x["metadata"]["name"]: x for x in kj("-n", NS, "get", "externalsecrets").get("items", [])}
-    want = ["postgres-auth", "agentgateway-secrets", "zakazka-secrets", "zakazka-finops", "agentgateway-git-token", "dapr-components"]
+    want = ["postgres-auth", "agentgateway-secrets", "zakazka-secrets", "zakazka-finops", "agentgateway-git-token", "dapr-components", "keycloak-admin", "memory-db", "governance-db"]   # P3-6 E9: + admin Keycloaku, DSN paměti a Governance MCP
     secs = {n: get(NS, "secret", n) for n in want}
     owned = {n: any(o.get("kind") == "ExternalSecret" and o.get("name") == n for o in ((s_.get("metadata") or {}).get("ownerReferences") or [])) for n, s_ in secs.items()}
     kv_name = ((((get("flux-system", "kustomization", "platform-trust").get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME"))
@@ -1555,9 +1621,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     def claims(t): return json.loads(_b64.urlsafe_b64decode(t.split(".")[1] + "==").decode())
     ta, tb = tok("adam", "adam"), tok("bea", "bea"); adam_sub = claims(ta)["sub"]; aud_gui = claims(ta).get("aud"); aud_gui = aud_gui if isinstance(aud_gui, list) else [aud_gui]
     # admin pohled na Keycloak (IdP + klient role)
-    import base64 as _b
-    pw = _b.b64decode(kubectl(a, "-n", NS, "get", "secret", "keycloak-admin", "-o", "jsonpath={.data.KC_BOOTSTRAP_ADMIN_PASSWORD}").stdout.strip()).decode()
-    adm = http("POST", f"{KC}/realms/master/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "admin-cli", "username": "admin", "password": pw}, timeout=20).json().get("access_token")
+    adm, _ = kc_admin(a, http, KC)   # P3-6 E9: heslo admina ze Secretu keycloak-admin (ESO z Key Vaultu)
     H = {"Authorization": f"Bearer {adm}"}; A = f"{KC}/admin/realms/p0"
     idp = http("GET", f"{A}/identity-provider/instances/aks", headers=H, timeout=20); idp_j = idp.json() if idp.status_code == 200 else {}
     cl = http("GET", f"{A}/clients", headers=H, params={"clientId": "agent-architekt-acme"}, timeout=20).json(); cl0 = cl[0] if cl else {}
@@ -1586,7 +1650,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1721,7 +1785,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         pf_pg = subprocess.Popen([a.kubectl, "--context", a.context, "-n", NS, "port-forward", "pod/pgfwd", "15432:5432"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(3)
         dsn = lambda db, host="127.0.0.1", port=15432: f"postgresql://platform:{pg_pw}@{host}:{port}/{db}?sslmode=require"
     with psycopg.connect(dsn("memory"), autocommit=True, connect_timeout=10) as c:
-        c.execute(m1m.SCHEMA); c.execute("ALTER ROLE memory_app PASSWORD 'memory_app'")
+        c.execute(m1m.SCHEMA)   # P3-6 E9: heslo role memory_app nastavuje aplikace při startu (P0_DB_ROLE_PASSWORDS z Key Vaultu přes ESO), harness ho nezná ani nemění
         txt = "ACME konvence: každý endpoint má test a vrací JSON; splatnost faktur 30 dní."
         c.execute("""INSERT INTO memory_records (id,tenant_id,scope,type,content,content_hash,sources,created_by,created_at,verification,confidence,valid_from,status,sensitivity,pipeline_version,embedding)
                      VALUES ('seed-acme','acme','zakaznik','fakt',%s,'h','[{"ref":"doc://acme/konvence","kind":"document"}]','{"sub":"seed"}',now(),'{"method":"human","by":"adam"}',0.95,now(),'approved','internal','seed',%s::vector)
@@ -1794,6 +1858,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
         if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
         def led(): return http("GET", f"{APP}/_debug/ledger", timeout=20).json()
+        if e9: e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, (kc_migr or {}).get("admin"), led)   # P3-6 E9: žádný literál hesla z Gitu (admin Keycloaku, DB role)
         def hash_of(zid, typ):
             for e in reversed(led()):
                 if e.get("kind") == "HANDOFF" and e.get("zakazka") == zid and str(e.get("artifact", "")).startswith(typ): return e["hash"]
@@ -2100,7 +2165,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

@@ -252,6 +252,19 @@ v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se 
 timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
 jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
 
+## P3-6 E9: žádný literál hesla z Gitu (2026-10-30)
+
+Dev hesla z base manifestů platila i na AKS: admin Keycloaku `admin-dev` (Secret `keycloak-admin`), DSN paměti `memory_app:memory_app` a Governance
+MCP `org_reader:org_reader` (env Deploymentů), hesla rolí `org_reader`/`org_writer` v SQL aplikace. Od E9: `secrets.tf` generuje `random_password`
+do Key Vaultu (`keycloak-admin-password`, `pg-memory-app-password`, `pg-org-reader-password`, `pg-org-writer-password`), ESO z nich skládá Secrety
+`keycloak-admin`, `memory-db` (`MEMORY_DB_URI`), `governance-db` (`GOV_DSN`) a klíč `P0_DB_ROLE_PASSWORDS` v `zakazka-finops`; Deploymenty čtou DSN
+přes `secretKeyRef`, overlay AKS base Secrety maže (`$patch: delete`). **Hesla DB rolí nastavuje aplikace zakázky při startu** (`ALTER ROLE` jako
+vlastník schématu z `P0_DB_ROLE_PASSWORDS`, ledger `DB_ROLES_SYNC` bez hodnot) – role s RLS tak nemají heslo v Gitu ani v SQL. **Admin Keycloaku**:
+`KC_BOOTSTRAP_ADMIN_*` se použije jen při prázdné DB; běžící instance má admina z prvního startu, proto ho harness jako operátor při prvním běhu
+otočí admin API (`reset-password`) na hodnotu Secretu. Rotace = nová hodnota v Key Vaultu (`terraform taint random_password…` nebo ručně) → ESO
+do 1 h → restart aplikace (role) resp. další běh harnessu (Keycloak). Dev literály zůstávají jen v base pro kind. Měření: `measure` s `e2e=p3-6`
+(E9a–b, E1b).
+
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);
   realm sám issuer nenese (`KC_HOSTNAME`).
