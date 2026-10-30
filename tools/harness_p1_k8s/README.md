@@ -667,7 +667,13 @@ ctí `SSL_CERT_FILE` harnessu s rootem platformy (E7a 1. běh); (3) 2. běh spad
   znovuotevření threadu; (3) první dotaz nástroje `ledger` po dlouhém běhu vrátil 502 (ClickHouse) → E4b opakuje 3× a chybu uvádí v detailu;
   (4) **ledger aplikace** (JSONL na PVC, roste každým během) se při každém `GET /zakazky/<id>`, `tenant_of`, `current_budget` … celý parsoval
   v async handleru → event loop zablokovaný na sekundy, timeouty readiness proby (`/health`) i harnessu (U2d 3. běh), pravděpodobně i dřívější
-  výpadky SSE v GUI → `_ledger()` čte jen přírůstek od minulého volání (cache v procesu, rozepsaný řádek nechá na příště).
+  výpadky SSE v GUI → `_ledger()` čte jen přírůstek od minulého volání (cache v procesu, rozepsaný řádek nechá na příště);
+  (5) **ConfigMap `agentgateway-keys` přerostl limit API serveru 1 MiB** (5 klíčů na zakázku, nikdy se nemazaly; ~400 zakázek) → `PUT` 422
+  „Too long“: ve 4. běhu tiše selhala blokace tenanta (U2d), v 5. běhu vydání klíčů pro zakázku beta (žádný pod role, H1 nepřišel) → aplikace
+  při vydávání nad 300 položek odstraní klíče zakázek COMPLETED/FAILED/TERMINATED starších 1 dne (`GATEWAY_KEYS_GC`; při 422 bez věkového
+  limitu); gateway tak ukončeným zakázkám klíče odebírá (least privilege), hodnoty v OpenBao KV a útrata v `budget_usage`/ClickHouse zůstávají;
+  INFO E4d hlídá velikost. Obecně: **stav rostoucí každým během** (ledger na PVC, klíče v ConfigMapě, instance v Dapru) potřebuje úklid, jinak
+  měření po desítkách běhů padá na kapacitě, ne na funkci.
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
