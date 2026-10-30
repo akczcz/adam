@@ -1128,7 +1128,14 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     rep.add("E4a", "Per-request ledger z gateway: tracing agentgateway (randomSampling, fields tenant/zakazka/role z metadat klíče + llm.cost.total) posílá span každého LLM requestu rolí do OTEL Collectoru → ClickHouse otel.otel_traces; součet llm.cost.total per zakázka tohoto běhu == útrata klíčů v budget_usage (± 5 % + 0,002 USD) – nezávislý zdroj FinOps bez tabulky gateway; každý span nese tenant, zakázku a roli", "PASS" if attrs_ok and ok_sum and not ch_err else "FAIL", {"spans_rows": len(rows), "services": sorted({svc for *_, svc in rows}), "per_zakazka": cmp, "zakazky_with_spend": len(with_spend), "sample": rows[:4], "clickhouse_error": ch_err})
     ta, tb, tp = tok("adam", "adam"), tok("bea", "bea"), tok("platform-admin", "platform-admin")
     def gov(t_, args=None): r = http("POST", f"{APP}/agui/gov/tools/ledger", json=args or {}, headers={"Authorization": f"Bearer {t_}"}, timeout=60); return r.status_code, (r.json() if r.headers.get("content-type", "").startswith("application/json") else {"text": r.text[:200]})
-    sp, sb = gov(tp), gov(tb)
+    gov_errors = []
+    def gov_retry(t_):   # ClickHouse po dlouhém běhu občas první dotaz odmítne (governance vrací 502 s textem ClickHouse) – 3 pokusy, chybu nechat v detailu
+        for i in range(3):
+            st, body = gov(t_)
+            if st == 200: return st, body
+            gov_errors.append({"attempt": i + 1, "http": st, "body": str(body)[:300]}); time.sleep(15)
+        return st, body
+    sp, sb = gov_retry(tp), gov_retry(tb)
     res_p = (sp[1].get("result") or {}) if sp[0] == 200 else {}; res_b = (sb[1].get("result") or {}) if sb[0] == 200 else {}
     ten_p = {r_["tenant_id"] for r_ in res_p.get("rows", [])}; ten_b = {r_["tenant_id"] for r_ in res_b.get("rows", [])}
     run_z = [z for z in res_p.get("by_zakazka", []) if str(z["zakazka_id"]).startswith(tag)]
@@ -1137,7 +1144,7 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     try:
         g.login("platform-admin", "platform-admin"); pages = g.page_rows("finops", ["finops-ledger", "finops-ledger-zakazky"]); src = g.t("ledger-source").inner_text() if g.t("ledger-source").count() else None
     finally: g.close()
-    rep.add("E4b", "FinOps pohled z ledgeru: Governance MCP nástroj `ledger` čte ClickHouse (per tenant/zakázka/role, okno N dní) a přikládá rozdíl proti org.zakazky.spent_usd; hranice tenanta jako u RLS (bea vidí jen beta, platform-admin oba); u dokončených a zastavených zakázek běhu rozdíl ledger vs. registr ≤ 5 % + 0,002 USD; GUI FinOps má tabulky ledgeru s řádky", "PASS" if sp[0] == 200 and sb[0] == 200 and {"acme", "beta"} <= ten_p and ten_b == {"beta"} and run_z and delta_ok and isinstance(pages.get("finops-ledger"), int) and pages["finops-ledger"] >= 1 and pages.get("finops-ledger-zakazky", 0) >= 1 and src and "ClickHouse" in src else "FAIL", {"http": [sp[0], sb[0]], "tenants_platform": sorted(ten_p), "tenants_bea": sorted(ten_b), "run_zakazky": [{k: z.get(k) for k in ("zakazka_id", "status", "requests", "ledger_usd", "spent_usd", "delta_usd")} for z in run_z], "gui": pages, "source": src})
+    rep.add("E4b", "FinOps pohled z ledgeru: Governance MCP nástroj `ledger` čte ClickHouse (per tenant/zakázka/role, okno N dní) a přikládá rozdíl proti org.zakazky.spent_usd; hranice tenanta jako u RLS (bea vidí jen beta, platform-admin oba); u dokončených a zastavených zakázek běhu rozdíl ledger vs. registr ≤ 5 % + 0,002 USD; GUI FinOps má tabulky ledgeru s řádky", "PASS" if sp[0] == 200 and sb[0] == 200 and {"acme", "beta"} <= ten_p and ten_b == {"beta"} and run_z and delta_ok and isinstance(pages.get("finops-ledger"), int) and pages["finops-ledger"] >= 1 and pages.get("finops-ledger-zakazky", 0) >= 1 and src and "ClickHouse" in src else "FAIL", {"http": [sp[0], sb[0]], "tenants_platform": sorted(ten_p), "tenants_bea": sorted(ten_b), "run_zakazky": [{k: z.get(k) for k in ("zakazka_id", "status", "requests", "ledger_usd", "spent_usd", "delta_usd")} for z in run_z], "gui": pages, "source": src, "gov_errors": gov_errors})
     rep.add("E4c", "E4: čas", "INFO", {"wall_s": round(time.time() - t_e, 1)})
 
 
