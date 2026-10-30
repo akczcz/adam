@@ -662,6 +662,12 @@ ctí `SSL_CERT_FILE` harnessu s rootem platformy (E7a 1. běh); (3) 2. běh spad
 - **Měření**: E8a – Key Vault secret `openbao-init` existuje (contentType, enabled), v platform-data žádný Secret `openbao-init` ani jiný se stopou
   kubectl, OpenBao při příchodu harnessu unsealed (seal azurekeyvault, recovery seal), root token z Key Vaultu platný (`lookup-self` policies root),
   1 recovery klíč; E8b (INFO) – inventář tajemství v Key Vaultu.
+- **Nálezy** (4 běhy): (1) existující init je z doby shamir sealu (`keys_base64`, seal migrován na azurekeyvault v P2-3) → kontrola
+  recovery klíče bere `recovery_keys_base64` i `keys_base64`; (2) GUI `stop()` po výpadku SSE (port-forward) nenašlo tlačítko → keepalive +
+  znovuotevření threadu; (3) první dotaz nástroje `ledger` po dlouhém běhu vrátil 502 (ClickHouse) → E4b opakuje 3× a chybu uvádí v detailu;
+  (4) **ledger aplikace** (JSONL na PVC, roste každým během) se při každém `GET /zakazky/<id>`, `tenant_of`, `current_budget` … celý parsoval
+  v async handleru → event loop zablokovaný na sekundy, timeouty readiness proby (`/health`) i harnessu (U2d 3. běh), pravděpodobně i dřívější
+  výpadky SSE v GUI → `_ledger()` čte jen přírůstek od minulého volání (cache v procesu, rozepsaný řádek nechá na příště).
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
