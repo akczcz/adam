@@ -754,7 +754,9 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         gate_b = next((e for e in L if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zb), {})
         rep.add("T1d", "Klíče gateway per tenant: klíče zakázky beta jsou k-beta-<zakazka>-<role> s metadata.tenant=beta a user_id beta/…, vydané z šablony s placeholderem {tenant}; útrata account v budget_usage > 0; budget_gate zná strop tenanta (org.tenants.budget_usd 20) a útratu tenanta", "PASS" if len(mine) >= 4 and all((k.get("metadata") or {}).get("tenant") == "beta" and (k.get("metadata") or {}).get("name", "").startswith("k-beta-") and (k.get("metadata") or {}).get("user_id", "").startswith("beta/") for k in mine) and spend_b.get("account", 0) > 0 and (gate_b.get("tenant") or {}).get("budget_usd") == 20 else "FAIL", {"keys": [(k.get("metadata") or {}).get("name") for k in mine], "spend_usd": {k: round(v, 6) for k, v in spend_b.items()}, "gate": {k: gate_b.get(k) for k in ("role", "tenant", "exceeded")}})
         def rls(tenant):
-            host = dsn("org").split("@")[1].split("/")[0]; pw = json.loads(secret("zakazka-finops", "P0_DB_ROLE_PASSWORDS") or "{}").get("org_reader", "org_reader")   # P3-6 E9: heslo role z ESO Secretu (Key Vault), ne literál
+            import base64 as _b64r
+            host = dsn("org").split("@")[1].split("/")[0]; raw_ = kubectl(a, "-n", NS, "get", "secret", "zakazka-finops", "-o", "jsonpath={.data.P0_DB_ROLE_PASSWORDS}").stdout.strip()
+            pw = json.loads(_b64r.b64decode(raw_).decode() if raw_ else "{}").get("org_reader", "org_reader")   # P3-6 E9: heslo role z ESO Secretu (Key Vault), ne literál
             with psycopg.connect(f"postgresql://org_reader:{pw}@{host}/org?sslmode=require", autocommit=True, connect_timeout=10) as c:
                 c.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant,))
                 z_ = sorted(r[0] for r in c.execute("SELECT zakazka_id FROM org.zakazky").fetchall()); ap_ = c.execute("SELECT count(*) FROM org.approvals").fetchone()[0]
@@ -1413,7 +1415,7 @@ def e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, kc_adm, led):
     (`role:role` v DSN) mají hesla z Key Vaultu (Terraform random_password → ESO: Secrety keycloak-admin, memory-db, governance-db a
     zakazka-finops.P0_DB_ROLE_PASSWORDS). Hesla rolí nastavuje aplikace při startu (ALTER ROLE, ledger DB_ROLES_SYNC), admina Keycloaku otočil
     harness jako operátor (bootstrap admin platí jen pro prázdnou DB). Dev literály zůstávají jen v base manifestech pro kind."""
-    import yaml as _y
+    import psycopg, yaml as _y
     from urllib.parse import urlsplit
     LIT = ["admin-dev", "memory_app:memory_app", "org_reader:org_reader", "org_writer:org_writer"]
     text = _y.safe_dump_all(rendered, allow_unicode=True)
