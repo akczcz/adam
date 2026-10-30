@@ -1340,6 +1340,42 @@ def e6_flow(a, rep, http, led, APP, kj, tag):
     rep.add("E6c", "Report verzí pro drain (GET /_wf/versions): instance per verze podle ledgeru + stavu v Dapru; starší verze má po dokončení E6b jen terminální instance (drained = snímek lze smazat), latest má instance běhu; `legacy` = instance z doby před verzováním (Dapr je přehrává na latest – kompatibilní, dokud se nezmění pořadí úloh); chybějící verze by instance nechala STALLED, ne FAILED (Dapr 1.17+, neměřeno)", "PASS" if vo.get("registered") and vo.get("instances", {}).get("COMPLETED", 0) >= 1 and vo.get("drained") is True and vc.get("registered") and sum(vc.get("instances", {}).values()) >= 1 else "FAIL", {"old": vo, "current": vc, "legacy": v_end.get("legacy"), "latest": v_end.get("latest"), "wall_s": round(time.time() - t_e, 1)})
 
 
+def kv_name_of(kj):
+    """Jméno Key Vaultu platformy z Flux substitute kustomizace trust (KV_NAME z Terraformu)."""
+    k = kj("-n", "flux-system", "get", "kustomization", "platform-trust")
+    return ((((k.get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME")) or ""
+
+
+def kv_get(kv_name, name):
+    """Hodnota tajemství z Key Vaultu identitou runneru (az login OIDC; role Key Vault Secrets Officer z Terraformu secrets.tf); None když chybí."""
+    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def kv_set(kv_name, name, value, content_type):
+    """Zápis tajemství do Key Vaultu přes dočasný soubor (hodnota není v argumentech procesu ani v logs/, které jdou do artefaktu běhu)."""
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f: f.write(value); tmp = f.name
+    try: r = subprocess.run(["az", "keyvault", "secret", "set", "--vault-name", kv_name, "-n", name, "--file", tmp, "--encoding", "utf-8", "--content-type", content_type, "-o", "none"], capture_output=True, text=True, timeout=180)
+    finally: os.unlink(tmp)
+    return r.returncode == 0 or (r.stderr or "")[-300:]
+
+
+def e8_checks(a, rep, kj, kv_name, BAO, init, seal0, migrated, secret):
+    """E8 (P3-6): bootstrap OpenBao (root token + recovery klíč z `sys/init`) žije jen v Key Vaultu platformy (secret `openbao-init`, zapsal operátor =
+    harness identitou runneru), v clusteru žádný Secret; unseal dělá Key Vault (seal azurekeyvault) bez operátora; root token z Key Vaultu platný."""
+    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", "openbao-init", "--query", "{contentType:contentType,enabled:attributes.enabled,created:attributes.created,updated:attributes.updated,recoveryLevel:attributes.recoveryLevel}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    meta = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stderr or "")[-200:]}
+    k8s_secret = secret("openbao-init", "init\\.json")
+    by_kubectl = sorted(s_["metadata"]["name"] for s_ in kj("-n", NS, "get", "secrets").get("items", []) if any(m.get("manager", "").startswith("kubectl") for m in s_["metadata"].get("managedFields", [])))
+    try: look = httpx.get(f"{BAO}/v1/auth/token/lookup-self", headers={"X-Vault-Token": init.get("root_token", "")}, timeout=10); look_j = look.json().get("data", {}) if look.status_code == 200 else {"http": look.status_code}
+    except Exception as e: look_j = {"error": type(e).__name__}
+    seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
+    rep.add("E8a", "Bootstrap OpenBao jen v Key Vaultu: `sys/init` (recovery_shares 1) provádí operátor (harness identitou runneru, OIDC) a výsledek ukládá do Key Vault secretu `openbao-init` (contentType, soft-delete/purge protection Key Vaultu), ne do Kubernetes Secretu – v platform-data žádný Secret `openbao-init` ani jiný se stopou kubectl; při startu clusteru unseal zajistí seal azurekeyvault (při příchodu harnessu už unsealed, type azurekeyvault, recovery seal); root token z Key Vaultu platný (lookup-self policies root); migrace ze staršího Secretu proběhla jednorázově a Secret byl smazán", "PASS" if meta.get("enabled") is True and meta.get("contentType") and not k8s_secret and not by_kubectl and seal0.get("sealed") is False and seal0.get("type") == "azurekeyvault" and seal0.get("recovery_seal") is True and "root" in (look_j.get("policies") or []) and len(init.get("recovery_keys_base64") or []) == 1 and not seal.get("sealed") else "FAIL", {"keyvault": {"name": kv_name, "secret": meta}, "k8s_secret_openbao_init": bool(k8s_secret), "secrets_by_kubectl": by_kubectl, "seal_at_start": {k: seal0.get(k) for k in ("sealed", "type", "recovery_seal", "initialized")}, "root_token": {"policies": look_j.get("policies"), "ttl": look_j.get("ttl"), "error": look_j.get("error") or look_j.get("http")}, "recovery_keys": len(init.get("recovery_keys_base64") or []), "migrated_this_run": migrated})
+    r = subprocess.run(["az", "keyvault", "secret", "list", "--vault-name", kv_name, "--query", "[].{name:name,contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    rep.add("E8b", "E8: inventář tajemství platformy v Key Vaultu (Terraform secrets.tf + bootstrap OpenBao); runner čte/zapisuje jako Key Vault Secrets Officer, pody přes ESO jako Secrets User", "INFO", {"secrets": json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else (r.stderr or "")[-200:]})
+
+
 def platform_ca_bundle(a, kj):
     """P3-6 E7: root interní CA (Secret cert-manager/platform-root-ca) → logs/platform-ca.crt a bundle certifi + root → SSL_CERT_FILE procesu harnessu
     (httpx trust_env, urllib/PyJWKClient, Playwright ne – GUI jde přes aplikaci). Vrací cestu k rootu."""
@@ -1482,7 +1518,7 @@ def e1_checks(a, rep, kj, pre):
     rep.add("E1b", "Tajemství z Key Vaultu přes ESO (ClusterSecretStore azure-kv, Workload Identity UAMI id-eso + federated credential SA external-secrets/eso-keyvault, role Key Vault Secrets User): ExternalSecrety Ready/SecretSynced, Secrety vlastní ExternalSecret (ownerReference), hodnoty == Key Vault (git token, heslo PG i v DSN gateway/FinOps/Dapr), zakazka-secrets nese client secrety rolí/API klíč/webhook; Flux substitute kustomizace platform už PG_PASSWORD nenese; HelmRelease external-secrets Ready", "PASS" if ready(css) == "True" and set(want) <= set(ess) and all(ready(ess[n]) == "True" for n in want) and all(owned.values()) and kv_ok and set(zs) >= {"P0_ROLE_CLIENT_SECRETS", "P0_API_KEY", "BRIDGE_WEBHOOK_SECRET", "P0_ROLE_KEYS"} and "PG_PASSWORD" not in ks.get("platform", {}).get("substitute", []) and hr.get("external-secrets/external-secrets", {}).get("ready") == "True" else "FAIL", {"store_ready": ready(css), "store_message": next((c.get("message") for c in (css.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), None), "externalsecrets": {n: ready(ess[n]) if n in ess else None for n in want}, "owned_by_eso": owned, "keyvault": {"name": kv_name, "git_token_match": bool(kv_tok) and kv_tok == tok, "pg_match": bool(kv_pg) and kv_pg == pg, "pg_in_dsn": bool(pg) and f":{pg}@postgres" in agw_url, "pg_in_dapr": bool(pg) and f"password={pg} " in dapr}, "zakazka_secrets_keys": sorted(zs), "flux": ks, "helm": hr.get("external-secrets/external-secrets")})
     # E1c – harness nic nevydává: žádný Secret platformy se stopou kubectl kromě openbao-init (bootstrap OpenBao – zbývá PushSecret do Key Vaultu)
     by_kubectl = sorted(s_["metadata"]["name"] for s_ in kj("-n", NS, "get", "secrets").get("items", []) if any(m.get("manager", "").startswith("kubectl") for m in s_["metadata"].get("managedFields", [])))
-    rep.add("E1c", "Harness nic nevydává: žádný Secret v platform-data se stopou kubectl (managedFields) kromě openbao-init (init OpenBao – bootstrap, zbývá), ensure_platform_secrets nic nezaložil (jen čekal na operátory), Flux kustomizace operators → trust → platform v závislostech", "PASS" if set(by_kubectl) <= {"openbao-init"} and pre.get("created") == [] and ks.get("trust", {}).get("dependsOn") == ["operators"] and ks.get("platform", {}).get("dependsOn") == ["trust"] else "FAIL", {"secrets_by_kubectl": by_kubectl, "created_by_harness": pre.get("created"), "waited_s": pre.get("wait_s"), "flux_depends": {k: v.get("dependsOn") for k, v in ks.items()}})
+    rep.add("E1c", "Harness nic nevydává: žádný Secret v platform-data se stopou kubectl (managedFields) – od E8 ani openbao-init (bootstrap OpenBao je v Key Vaultu), ensure_platform_secrets nic nezaložil (jen čekal na operátory), Flux kustomizace operators → trust → platform v závislostech", "PASS" if not by_kubectl and pre.get("created") == [] and ks.get("trust", {}).get("dependsOn") == ["operators"] and ks.get("platform", {}).get("dependsOn") == ["trust"] else "FAIL", {"secrets_by_kubectl": by_kubectl, "created_by_harness": pre.get("created"), "waited_s": pre.get("wait_s"), "flux_depends": {k: v.get("dependsOn") for k, v in ks.items()}})
 
 
 def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
@@ -1525,7 +1561,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1612,12 +1648,20 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     assert seal0 is not None, "OpenBao neodpovídá na seal-status (pod padá? kubectl -n platform-data logs openbao-0)"
     seal_type = seal0.get("type")
     st = httpx.get(f"{BAO}/v1/sys/init", timeout=10).json()
+    # P3-6 E8: bootstrap (root token + recovery klíč) žije v Key Vaultu platformy (secret openbao-init), ne v Kubernetes Secretu; zapisuje/čte operátor = runner (az, OIDC)
+    kv_name = kv_name_of(kj); assert kv_name, "KV_NAME v substitute kustomizace platform-trust chybí"
+    init_s = kv_get(kv_name, "openbao-init"); legacy_s = secret("openbao-init", "init\\.json"); bao_init_migrated = False
+    KV_CT = "OpenBao sys/init: root token + recovery klíč (bootstrap; operátor, ne pody)"
     if not st.get("initialized"):
         body = {"recovery_shares": 1, "recovery_threshold": 1} if seal_type and seal_type != "shamir" else {"secret_shares": 1, "secret_threshold": 1}   # auto-unseal (P2-3): recovery klíče místo unseal klíčů
         init = httpx.post(f"{BAO}/v1/sys/init", json=body, timeout=30).json(); assert "root_token" in init, f"init selhal: {init}"
-        sec = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "create", "secret", "generic", "openbao-init", f"--from-literal=init.json={json.dumps(init)}", "--dry-run=client", "-o", "yaml"], capture_output=True, text=True).stdout
-        subprocess.run([a.kubectl, "--context", a.context, "apply", "-f", "-"], input=sec, text=True, capture_output=True)
-    init_s = secret("openbao-init", "init\\.json"); assert init_s, "OpenBao je inicializovaný, ale Secret openbao-init chybí – smazat PVC data-openbao-0 a pod openbao-0, nebo Secret doplnit"
+        ok_kv = kv_set(kv_name, "openbao-init", json.dumps(init), KV_CT); assert ok_kv is True, f"zápis openbao-init do Key Vaultu selhal: {ok_kv}"
+        init_s = json.dumps(init)
+    elif not init_s and legacy_s:   # migrace z P2-3: Secret openbao-init z clusteru → Key Vault (jednorázově)
+        ok_kv = kv_set(kv_name, "openbao-init", legacy_s, KV_CT); assert ok_kv is True, f"migrace openbao-init do Key Vaultu selhala: {ok_kv}"
+        init_s = legacy_s; bao_init_migrated = True
+    assert init_s, "OpenBao je inicializovaný, ale Key Vault secret openbao-init chybí (a v clusteru není ani starý Secret) – smazat PVC data-openbao-0 a pod openbao-0, nebo tajemství do Key Vaultu doplnit"
+    if legacy_s: kubectl(a, "-n", NS, "delete", "secret", "openbao-init", "--ignore-not-found")   # bootstrap už jen v Key Vaultu
     init = json.loads(init_s); bao_migrated = False
     seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
     if seal.get("sealed"):
@@ -1634,6 +1678,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     if "kubernetes/" not in httpx.get(f"{BAO}/v1/sys/auth", headers=Hb, timeout=10).json(): httpx.post(f"{BAO}/v1/sys/auth/kubernetes", json={"type": "kubernetes"}, headers=Hb, timeout=10)
     httpx.post(f"{BAO}/v1/auth/kubernetes/config", json={"kubernetes_host": "https://kubernetes.default.svc:443"}, headers=Hb, timeout=10)
     httpx.post(f"{BAO}/v1/auth/kubernetes/role/zakazka", json={"bound_service_account_names": ["zakazka"], "bound_service_account_namespaces": [NS], "token_policies": ["approval-signer"], "token_ttl": "1h", "token_max_ttl": "4h"}, headers=Hb, timeout=10)
+    if e8: e8_checks(a, rep, kj, kv_name, BAO, init, seal0, bao_init_migrated, secret)   # P3-6 E8: bootstrap OpenBao jen v Key Vaultu
     # Postgres = Flexible Server: admin `platform`, heslo ze Secretu postgres-auth (Flux substitute), TLS; z runneru přímo (pravidlo Allow Azure services),
     # jinak přes socat pod + port-forward
     pg_host = kubectl(a, "-n", NS, "get", "svc", "postgres", "-o", "jsonpath={.spec.externalName}").stdout.strip(); pg_pw = secret("postgres-auth", "POSTGRES_PASSWORD")
@@ -2030,7 +2075,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}
