@@ -54,8 +54,14 @@ class Gui:
     def login(self, user, pw):
         self.t("login-user").fill(user); self.t("login-pass").fill(pw); self.t("login-submit").click()
         self.t("user-name").wait_for()
-        self.shot("login")
+        self.shot("login"); self.creds = (user, pw)
         return {"user": self.t("user-name").inner_text(), "tenant": self.t("user-tenant").inner_text(), "token": bool(self.token)}
+
+    def relogin(self):
+        """P3-6 E10 nález: po neúspěšném refreshi GUI token zahodí (api.ts ensureFresh), stav `user` v paměti ale zůstane → další akce jde bez Authorization (401 „chybí Bearer token“).
+        Harness se přihlásí znovu stejnými údaji (sessionStorage pryč → login stránka)."""
+        self.page.evaluate("sessionStorage.clear()"); self.page.reload(); self.t("login-user").wait_for()
+        return self.login(*self.creds)
 
     @property
     def token(self):
@@ -226,7 +232,7 @@ class Gui:
         self.shot(f"autonomy-{role}-{tenant}-{level}")
         return {"ok": self.t("auto-result").get_attribute("data-ok") == "true", "text": self.t("auto-result").inner_text()[:400]}
 
-    def tenant_stop(self, tenant, reason, resume=False):
+    def tenant_stop(self, tenant, reason, resume=False, _retry=True):
         self.page.goto(self.base + "#/firma"); self.t("tstop-tenant").wait_for()
         self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(""); d0 = self.t("tstop-submit").is_disabled(); self.t("tstop-reason").fill(reason)
         seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None
@@ -238,7 +244,10 @@ class Gui:
             seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None; self.t("tresume-submit" if resume else "tstop-submit").click()
             self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")
-        return {"disabled_empty": d0, "ok": self.t("tstop-result").get_attribute("data-ok") == "true", "text": self.t("tstop-result").inner_text()[:400]}
+        out = {"disabled_empty": d0, "ok": self.t("tstop-result").get_attribute("data-ok") == "true", "text": self.t("tstop-result").inner_text()[:400]}
+        if not out["ok"] and "(401)" in out["text"] and _retry and getattr(self, "creds", None):   # 1. běh E10: GUI bez tokenu po neúspěšném refreshi → přihlásit znovu a jednou opakovat
+            self.relogin(); return {**self.tenant_stop(tenant, reason, resume, _retry=False), "relogin_after": out["text"]}
+        return out
 
     def report(self):
         self.page.goto(self.base + "#/governance"); self.t("report-summary").wait_for(timeout=60_000)

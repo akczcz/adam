@@ -855,14 +855,18 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_
             gb.login("bea", "bea"); zb2 = f"{tag}-beta2"; gb.create_thread(zb2, f"Druhá zakázka beta {zb2} – test stopu tenanta."); w2 = gb.wait_any_interrupt(1200)
         finally: gb.close()
         g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); g.login("platform-admin", "platform-admin")
-        beta_z = [z_ for z_ in sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})]
-        def status(z):   # zakázek beta přibývá každým během (ledger na PVC) – timeout nesmí shodit celý běh (3. běh E8), pomalost ukáže detail
+        beta_all = sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})
+        beta_z = [z_ for z_ in beta_all if z_.startswith(tag)]   # 1. běh E10: GET /zakazky/<id> (stav z Dapru + ledger) pro ~155 historických zakázek beta 3× za sebou protáhl scénář na 38 min → GUI přišlo o token (refresh selhal, stop bez Authorization → 401); stavy jen pro zakázky tohoto běhu
+        def status(z):   # timeout nesmí shodit celý běh (3. běh E8), pomalost ukáže detail
             for i in range(3):
                 try: r = http("GET", f"{APP}/zakazky/{z}", timeout=60); return r.json().get("status") if r.status_code == 200 else f"http{r.status_code}"
                 except httpx.ReadTimeout:
                     if i == 2: return "timeout"
-        before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING" and z_.startswith(tag)]   # jen zakázky tohoto běhu: instance ze starého obrazu po pause/resume končí FAILED (změna kódu workflow = nedeterministický replay)
+        timing = {"wait_beta2_s": w2.get("waited_s"), "u2a_g_s": round(time.time() - t_g, 1)}; t_s = time.time()
+        before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING"]   # jen zakázky tohoto běhu: instance ze starého obrazu po pause/resume končí FAILED (změna kódu workflow = nedeterministický replay)
+        timing["status_before_s"] = round(time.time() - t_s, 1); t_s = time.time()
         st = g.tenant_stop("beta", "Zákazník beta pozastavil spolupráci do vyjasnění smlouvy – stop celého tenanta.")
+        timing["stop_s"] = round(time.time() - t_s, 1); t_s = time.time()
         after = {z_: status(z_) for z_ in beta_z}
         import yaml as _yk
         keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
@@ -878,6 +882,8 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_
                 if gw_http == 429: break
                 time.sleep(5)
         finally: pf_b.stop(); pf_gw.stop()
+        timing["after_keys_s"] = round(time.time() - t_s, 1); t_s = time.time()
+        tb, ta = tok("bea", "bea"), tok("adam", "adam")   # tokeny z úvodu scénáře po 15 min vyprší (1. běh E10: ExpiredSignatureError) → čerstvé těsně před kontrolou paměti
         mem = http("POST", f"http://127.0.0.1:19900/tools/search_memory", json={"query": "test", "limit": 1}, headers={"Authorization": f"Bearer {tb}"}, timeout=15)
         mem_a = http("POST", f"http://127.0.0.1:19900/tools/search_memory", json={"query": "test", "limit": 1}, headers={"Authorization": f"Bearer {ta}"}, timeout=15)
         ents = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
@@ -885,14 +891,12 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_
             tst = c.execute("SELECT status FROM org.tenants WHERE tenant_id = 'beta'").fetchone()[0]; evs = c.execute("SELECT count(*) FROM org.agent_events WHERE tenant_id = 'beta' AND kind = 'suspended'").fetchone()[0]
         stop_led = next((e for e in reversed(led()) if e["kind"] == "STOP_TENANT" and e.get("tenant") == "beta"), {})
         rs = g.tenant_stop("beta", "Test hotov – tenant beta zpět do provozu (resume).", resume=True)
-        after_resume = {z_: status(z_) for z_ in beta_z}
+        after_resume = {z_: status(z_) for z_ in beta_z}; timing["resume_s"] = round(time.time() - t_s, 1)
         cond = {"stop_gui_ok": bool(st["ok"]), "disabled_empty": bool(st["disabled_empty"]), "second_interrupt": w2.get("kind") in ("dialog", "approval"), "running_before": bool(running_before),
                 "suspended": all(after[z_] == "SUSPENDED" for z_ in running_before), "keys_blocked_cm": blocked_cm, "gateway_429": gw_http == 429, "memory_beta_denied": mem.status_code == 403 and "tenant_stopped" in mem.text,
                 "memory_acme_ok": mem_a.status_code == 200, "spire_beta_entries": "spiffe://platform/role/account/beta" in ents, "tenant_stopped": tst == "stopped", "events_suspended": evs >= 1, "resume_gui_ok": bool(rs["ok"]),
                 "running_after_resume": all(after_resume[z_] == "RUNNING" for z_ in running_before)}   # 4. běh E8: FAIL bez čitelné příčiny (detail uříznutý seznamem ~100 zakázek beta) → podmínky jmenovitě, stavy jen pro zakázky běhu
-        def hist(d): return {"run": {z_: v for z_, v in d.items() if z_.startswith(tag)}, "others": dict(collections.Counter(v for z_, v in d.items() if not z_.startswith(tag)))}
-        before, after, after_resume = hist(before), hist(after), hist(after_resume)
-        rep.add("U2d","Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "before": before, "after_stop": after, "after_resume": after_resume, "stop_gui": st, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
+        rep.add("U2d","Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "before": before, "after_stop": after, "after_resume": after_resume, "beta_older_n": len(beta_all) - len(beta_z), "timing": timing, "stop_gui": st, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
         rep.add("U2h", "GUI nad firmou: čas scénáře, screenshoty", "INFO", {"wall_s": round(time.time() - t_g, 1), "shots": sorted(p.name for p in (gui_shots / "gov").glob("*.png")) if (gui_shots / "gov").exists() else []})
     finally:
         g.close()
