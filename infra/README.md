@@ -276,8 +276,11 @@ Root token z Key Vaultu (`openbao-init`) se čte a použije **jen při bootstrap
 operátora; dál jen při driftu policy/role/config vůči verzi v harnessu) nebo při ručním unsealu; jinak harness čte jen atributy secretu. Auth/jwt
 konfiguraci drží harness (`BAO_OPERATOR_POLICY`, `BAO_OPERATOR_ROLE` v `tools/harness_p1_k8s/harness.py`) – změna = bootstrap rootem v dalším běhu
 (E10b to vypíše). OpenBao pod potřebuje egress na GitHub (OIDC discovery + JWKS; TLS přes systémové CA podu – jako k Key Vaultu). kind bez
-OIDC zůstává na dev root tokenu. Měření: `measure` s `e2e=p3-6` (E10a–b). Výhled: stejnou roli může dostat člověk-operátor (OIDC Keycloak/Entra
-→ `auth/oidc`), root token pak zůstane jen break-glass v Key Vaultu.
+OIDC zůstává na dev root tokenu. Měření: `measure` s `e2e=p3-6` (E10a–b) – **AKS 69/69 + 13 INFO** (run 41130143802, 2 běhy): 1. běh bootstrap
+(5 zápisů rootem, login po něm 200), 2. běh bez jediného požadavku root tokenem, hodnota `openbao-init` nečtena. Nález: `sub` claim GitHub OIDC
+má tvar `repo:akczcz@<owner_id>/adam@<repo_id>:environment:dev` (s id, ne jen jméno) – role váže claim `repository`; proti převzetí jména lze
+přidat `repository_id`. Výhled: stejnou roli může dostat člověk-operátor (OIDC Keycloak/Entra → `auth/oidc`), root token pak zůstane jen
+break-glass v Key Vaultu.
 
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);

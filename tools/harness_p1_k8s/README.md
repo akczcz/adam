@@ -737,10 +737,23 @@ nastavuje aplikace při startu, Governance MCP a paměť se připojují per requ
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E10a | operátor se scoped tokenem z auth/jwt (OIDC běhu), root jen bootstrap, zakázané operace 403, audit | ⏳ |
-| E10b | bootstrap, drift, požadavky rootem, audit podle identity | ⏳ |
+| E10a | operátor se scoped tokenem z auth/jwt (OIDC běhu), root jen bootstrap, zakázané operace 403, audit | ✅ login 200, policies `[default, operator]`, display_name `jwt-repo:akczcz@…/adam@…:environment:dev`, TTL 3 h, metadata run_id/workflow/actor/ref; 8 zakázaných → 403, 3 povolené → 200; cizí publikum i pozměněný payload odmítnuty; audit: 1. běh root 5 požadavků (jen bootstrap cesty), 2. běh root 0, jwt 23 |
+| E10b | bootstrap, drift, požadavky rootem, audit podle identity | ℹ️ 1. běh `bootstrap: true` (auth/jwt chyběla → login 403 → root: `sys/auth/jwt`, `auth/jwt/config`, policy a role operátora → login 200); 2. běh `bootstrap: false`, `drift: []`, `root_used: []`, hodnota `openbao-init` nečtena |
 
-Výsledek: ⏳ (doplním po měření).
+Výsledek: **AKS 69/69 + 13 INFO** (`measure` run 41130143802, 2 běhy; 1. běh 41116682713: E10a/E10b v pořádku už napoprvé, FAIL jen U2d – viz nálezy).
+
+Nálezy:
+
+- **`sub` claim GitHub OIDC nese id** (`repo:akczcz@51314480/adam@1386473812:environment:dev`, ne `repo:akczcz/adam:…` z dokumentace) – proto role váže
+  `bound_claims.repository` (jméno), ne `sub`; pro ochranu proti přejmenování/převzetí jména lze přidat `repository_id` (ověřeno měřením 2026-10-30).
+- **Discovery/JWKS z podu OpenBao na GitHub prošlo** napoprvé (systémové CA, egress NetworkPolicy platform-data ho nepotřebuje blokovat); bootstrap
+  v prvním běhu trval jen pět zápisů root tokenem a login po něm 200.
+- **U2d (stop tenanta z GUI) FAIL v 1. běhu, bez vztahu k E10**: `GET /zakazky/<id>` (stav z Dapru + ledger) pro ~155 historických zakázek beta
+  3× za sebou protáhl scénář U2 z 16 na 38 min → GUI přišlo o token (neúspěšný refresh → `ensureFresh` token zahodí, stav `user` v paměti zůstane →
+  stop bez Authorization → 401 „chybí Bearer token“) a tokeny bea/adam z úvodu scénáře vypršely (15 min, `ExpiredSignatureError`). Harness
+  (`gui_checks.py`, `gov_flow`): stavy jen zakázek tohoto běhu (+ počet starších), časování kroků v detailu, čerstvé tokeny těsně před kontrolou
+  paměti, `Gui.relogin` a jedno opakování stopu při 401. 2. běh: U2 338 s. Otevřené pro GUI: po neúspěšném refreshi by měl GUI uživatele odhlásit
+  (zobrazit login), ne pokračovat bez tokenu.
 
 ## Spuštění
 
