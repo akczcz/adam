@@ -823,7 +823,11 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         finally: gb.close()
         g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); g.login("platform-admin", "platform-admin")
         beta_z = [z_ for z_ in sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})]
-        def status(z): r = http("GET", f"{APP}/zakazky/{z}", timeout=15); return r.json().get("status") if r.status_code == 200 else f"http{r.status_code}"
+        def status(z):   # zakázek beta přibývá každým během (ledger na PVC) – timeout nesmí shodit celý běh (3. běh E8), pomalost ukáže detail
+            for i in range(3):
+                try: r = http("GET", f"{APP}/zakazky/{z}", timeout=60); return r.json().get("status") if r.status_code == 200 else f"http{r.status_code}"
+                except httpx.ReadTimeout:
+                    if i == 2: return "timeout"
         before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING" and z_.startswith(tag)]   # jen zakázky tohoto běhu: instance ze starého obrazu po pause/resume končí FAILED (změna kódu workflow = nedeterministický replay)
         st = g.tenant_stop("beta", "Zákazník beta pozastavil spolupráci do vyjasnění smlouvy – stop celého tenanta.")
         after = {z_: status(z_) for z_ in beta_z}

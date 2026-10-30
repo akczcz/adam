@@ -586,15 +586,26 @@ def verify_approval(ctx, inp):
     return tok
 
 
+_LEDGER_CACHE = {"pos": 0, "ino": None, "items": []}
+
+
 def _ledger():
+    """Ledger je append-only JSONL na PVC a roste každým během (P3-6 E8 nález: celé parsování při každém GET /zakazky, tenant_of, current_budget…
+    blokovalo event loop aplikace na sekundy → timeouty readiness proby i harnessu). Proto se čte jen přírůstek od minulého volání (cache v procesu);
+    celý soubor znovu jen po výměně/zkrácení souboru. Rozepsaný poslední řádek bez konce se nechá na příště (zápis z jiného procesu uprostřed)."""
     if not os.path.exists(LEDGER): return []
-    out, bad = [], 0
-    for l in open(LEDGER):
-        if not l.strip(): continue
-        try: out.append(json.loads(l))
-        except ValueError: bad += 1   # utržený/slepený řádek (viz _ledger_repair) – přeskočit, API ledgeru musí fungovat dál
-    _LEDGER_BAD["lines"] = bad
-    return out
+    c = _LEDGER_CACHE; st = os.stat(LEDGER)
+    if st.st_ino != c["ino"] or st.st_size < c["pos"]: c.update(pos=0, ino=st.st_ino, items=[]); _LEDGER_BAD["lines"] = 0
+    if st.st_size > c["pos"]:
+        with open(LEDGER, "rb") as f:
+            f.seek(c["pos"]); buf = f.read()
+        end = buf.rfind(b"\n") + 1
+        for l in buf[:end].splitlines():
+            if not l.strip(): continue
+            try: c["items"].append(json.loads(l))
+            except ValueError: _LEDGER_BAD["lines"] += 1   # utržený/slepený řádek (viz _ledger_repair) – přeskočit, API ledgeru musí fungovat dál
+        c["pos"] += end
+    return c["items"]
 
 
 # --- P3-4: klasifikační brána (P1a, T9/T15), SLA bodů (procesy.md), kanály k lidem (čl. 50(1) T7, T8) --------------------------------
