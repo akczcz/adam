@@ -1160,6 +1160,10 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     finally: g.close()
     rep.add("E4b", "FinOps pohled z ledgeru: Governance MCP nástroj `ledger` čte ClickHouse (per tenant/zakázka/role, okno N dní) a přikládá rozdíl proti org.zakazky.spent_usd; hranice tenanta jako u RLS (bea vidí jen beta, platform-admin oba); u dokončených a zastavených zakázek běhu rozdíl ledger vs. registr ≤ 5 % + 0,002 USD; GUI FinOps má tabulky ledgeru s řádky", "PASS" if sp[0] == 200 and sb[0] == 200 and {"acme", "beta"} <= ten_p and ten_b == {"beta"} and run_z and delta_ok and isinstance(pages.get("finops-ledger"), int) and pages["finops-ledger"] >= 1 and pages.get("finops-ledger-zakazky", 0) >= 1 and src and "ClickHouse" in src else "FAIL", {"http": [sp[0], sb[0]], "tenants_platform": sorted(ten_p), "tenants_bea": sorted(ten_b), "run_zakazky": [{k: z.get(k) for k in ("zakazka_id", "status", "requests", "ledger_usd", "spent_usd", "delta_usd")} for z in run_z], "gui": pages, "source": src, "gov_errors": gov_errors})
     rep.add("E4c", "E4: čas", "INFO", {"wall_s": round(time.time() - t_e, 1)})
+    cm_raw = (kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or ""; cm_keys = _yk.safe_load(cm_raw) or []
+    gcs = [e for e in led() if e.get("kind") == "GATEWAY_KEYS_GC" and str(e.get("zakazka", "")).startswith(tag)]
+    rep.add("E4d", "ConfigMap agentgateway-keys: velikost a počet klíčů (limit API serveru 1 MiB – 5. běh E8 ho přerostl: 422 při vydání klíčů i blokaci tenanta); aplikace při vydávání nad 300 položek uklízí klíče ukončených zakázek starších 1 dne (GATEWAY_KEYS_GC), při 422 bez věkového limitu", "INFO",
+            {"bytes": len(cm_raw.encode()), "keys": len(cm_keys), "zakazky": len({(k.get("metadata") or {}).get("zakazka") for k in cm_keys}), "gc_events": [{k: e.get(k) for k in ("zakazka", "ttl_s", "checked", "removed_zakazky", "removed_keys", "kept_keys")} for e in gcs]})
 
 
 def klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots):
