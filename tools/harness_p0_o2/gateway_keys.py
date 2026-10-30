@@ -173,6 +173,24 @@ def set_cap(zid, cap_usd, ledger=None, probe_key=None):
     return {"keys": n, "propagation": prop}
 
 
+def _gc(cur, zid, ttl_s, ledger=None):
+    """Úklid klíčů ukončených zakázek (P3-6 E8 nález: ConfigMap agentgateway-keys bez úklidu přerostl 1 MiB → 422 při vydání klíčů i blokaci
+    tenanta). Klíče zakázky ve stavu COMPLETED/FAILED/TERMINATED nebo bez instance v Dapru, starší než ttl_s, se z ConfigMapy odstraní – gateway
+    je přestane přijímat (ukončená zakázka už nesmí utrácet). Hodnoty v OpenBao KV a útrata v budget_usage / ledgeru ClickHouse zůstávají
+    (audit, FinOps). Když Dapr na dotaz neodpoví, klíč zůstává (nikdy nemazat naslepo)."""
+    import app
+    starts = {e.get("zakazka"): e.get("ts", 0) for e in app._ledger() if e.get("kind") == "ZAKAZKA_START"}
+    now = time.time(); drop = set(); checked = 0
+    for z in sorted({(c.get("metadata") or {}).get("zakazka") for c in cur} - {zid, None}):
+        if now - starts.get(z, 0) < ttl_s: continue
+        try: st = app.client().get_workflow_state(z, fetch_payloads=False); checked += 1
+        except Exception: continue
+        if st is None or st.runtime_status.name in ("COMPLETED", "FAILED", "TERMINATED"): drop.add(z)
+    kept = [c for c in cur if (c.get("metadata") or {}).get("zakazka") not in drop]
+    if ledger: ledger("GATEWAY_KEYS_GC", zakazka=zid, ttl_s=ttl_s, checked=checked, removed_zakazky=len(drop), removed_keys=len(cur) - len(kept), kept_keys=len(kept), sample=sorted(drop)[:5])
+    return kept
+
+
 def issue(zid, ledger=None, tenant=None, cap_usd=None):
     """Vrátí {role: klíč} pro zakázku; vydá je, pokud ještě nejsou (idempotentní přes OpenBao KV, resp. Secret). cap_usd (P3-6 E3): strop zakázky
     jako rozpočet `zakazka-30d-block` každého klíče – gateway vrátí 429 i bez orchestrátoru."""
@@ -198,14 +216,19 @@ def issue(zid, ledger=None, tenant=None, cap_usd=None):
             e = _sub({kk: v for kk, v in k.items() if kk != "keyHash"}, zid, tenant); e["keyHash"] = "sha256:" + hashlib.sha256(val.encode()).hexdigest()
             if cap_usd is not None: e["budgets"] = [b for b in e.get("budgets", []) if b.get("name") != CAP_BUDGET] + [cap_budget(cap_usd)]
             keys[role] = val; entries.append(e)
-        # ConfigMap agentgateway-keys: get → union (bez starých klíčů této zakázky) → update s resourceVersion (409 → opakovat)
+        # ConfigMap agentgateway-keys: get → union (bez starých klíčů této zakázky) → update s resourceVersion (409 → opakovat);
+        # nad P0_GATEWAY_KEYS_MAX položek úklid klíčů ukončených zakázek starších P0_GATEWAY_KEYS_TTL_S, při 422 „Too long“ (1 MiB) úklid bez věkového limitu
+        force_gc = False
         for attempt in range(6):
             cm = role_pod.k8s("GET", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys")
             cur = yaml.safe_load((cm.get("data") or {}).get("keys.yaml") or "[]") or []
-            cur = [c for c in cur if (c.get("metadata") or {}).get("zakazka") != zid] + entries
+            cur = [c for c in cur if (c.get("metadata") or {}).get("zakazka") != zid]
+            if force_gc or len(cur) > int(os.environ.get("P0_GATEWAY_KEYS_MAX", "300")): cur = _gc(cur, zid, 0 if force_gc else float(os.environ.get("P0_GATEWAY_KEYS_TTL_S", "86400")), ledger)
+            cur = cur + entries
             cm["data"] = {"keys.yaml": yaml.safe_dump(cur, sort_keys=False, allow_unicode=True)}
             try: cm = role_pod.k8s("PUT", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys", cm); break
             except RuntimeError as e:
+                if "Too long" in str(e) and not force_gc: force_gc = True; continue
                 if "409" not in str(e) or attempt == 5: raise
                 time.sleep(0.5)
         if use_bao:   # hodnoty klíčů drží OpenBao (KV v2), ne Kubernetes Secret

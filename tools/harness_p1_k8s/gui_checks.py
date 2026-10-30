@@ -258,6 +258,12 @@ class Gui:
         return {"waited_s": round(time.time() - t0, 1), **self.snapshot()}
 
     def stop(self, reason):
+        try: self.t("stop-button").wait_for(timeout=15_000)
+        except Exception:   # run po výpadku SSE/port-forwardu ve stavu error → tlačítko není; obnovit spojení a otevřít thread novým runem (E8 1. běh, T1e)
+            if self.keepalive:
+                try: self.keepalive()
+                except Exception: pass
+            self.open_thread(self.page.url.split("#/t/")[-1]); self.t("stop-button").wait_for(timeout=30_000)
         self.t("stop-button").click(); self.t("stop-reason").fill("x"); d1 = self.t("stop-confirm").is_disabled()
         self.t("stop-reason").fill(reason); d2 = self.t("stop-confirm").is_disabled(); t0 = time.time()
         self.t("stop-confirm").click()

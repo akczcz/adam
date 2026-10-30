@@ -513,7 +513,7 @@ Výsledek: **53/53 + 8 INFO** (`measure` run 40581766759, `results/p3-6-20261027
 |---|---|---|
 | E1a | Certificate Ready, Secret s anotacemi cert-manageru, SAN git/mirror, podpis ověřen proti root, ca.crt == root, ConfigMap platform-ca od trust-manageru v platform-data + tenant-acme + tenant-beta, HelmReleasy Ready, Secret bez stopy kubectl | ✅ issuer ClusterIssuer/platform-ca, CN=platform-root-ca, 90 d, chain ok, bundle ve 3 ns, managers [] (žádný kubectl) |
 | E1b | ClusterSecretStore Ready (Workload Identity), 6 ExternalSecretů Ready + ownerReference, hodnoty == Key Vault (git token, heslo PG i v DSN gateway/FinOps/Dapr), zakazka-secrets 4 klíče, substitute bez PG_PASSWORD | ✅ store „store validated“; git token a heslo PG shodné s `az keyvault secret show`; substitute platform = ACR_LOGIN_SERVER, KV_NAME, OPENBAO_CLIENT_ID, PG_HOST |
-| E1c | žádný Secret v platform-data se stopou kubectl kromě `openbao-init`, harness nic nezaložil, závislosti operators → trust → platform | ✅ secrets_by_kubectl [] (ani `openbao-init` dnes stopu kubectl nenese – založen při dřívějším initu; přesun do Key Vaultu přesto zbývá), harness nic nezaložil, čekání na operátory 4,4 s |
+| E1c | žádný Secret v platform-data se stopou kubectl (od E8 ani `openbao-init`), harness nic nezaložil, závislosti operators → trust → platform | ✅ secrets_by_kubectl [] (ani `openbao-init` dnes stopu kubectl nenese – založen při dřívějším initu; přesun do Key Vaultu přesto zbývá), harness nic nezaložil, čekání na operátory 4,4 s |
 
 Výsledek: **56/56 + 8 INFO** (`measure` run 40603229736, `results/p3-6-20261028-002404.json`; 4 běhy). Nálezy:
 1. **ESO Workload Identity bere tenant jen z anotace SA** `azure.workload.identity/tenant-id`; bez ní „unable to create client“, s ní **a zároveň**
@@ -651,6 +651,40 @@ egressu role, ne jen URL; (2) „ověření proti veřejným CA“ musí mít ex
 ctí `SSL_CERT_FILE` harnessu s rootem platformy (E7a 1. běh); (3) 2. běh spadl v K1a: po ~15 min scénáři U-2 nepřišel RUN_STARTED do GUI
 (port-forward; fetch z prohlížeče nemá retry) → `create_thread` keepalive + náhradní run nad existujícím threadem, keepalive u všech instancí GUI;
 (4) Keycloak reload period 1 m je dev hodnota (default 1 h), OpenBao `tls_auto_reload` 30 s; kubelet propaguje Secret volume ~1 min.
+
+## P3-6 E8 – bootstrap OpenBao jen v Key Vaultu (2026-10-30, AKS, `--step p3-6` = … + **E8a–b**)
+
+- **Problém**: výsledek `sys/init` (root token, recovery klíč) ležel v Kubernetes Secretu `openbao-init`, který založil harness `kubectl` – jediná
+  výjimka v E1c („harness nic nevydává“).
+- **Řešení**: harness jako operátor zapisuje init do Key Vaultu platformy (`kv_set`: `az keyvault secret set --file`, identita runneru = Key Vault
+  Secrets Officer z Terraformu) a při dalších bězích ho čte (`kv_get`); existující Secret z P2-3 jednorázově přenese a smaže. Žádný manifest se nemění
+  (seal azurekeyvault + auth kubernetes z P2-3 zůstávají). ESO PushSecret nepoužit: potřeboval by Kubernetes Secret jako zdroj.
+- **Měření**: E8a – Key Vault secret `openbao-init` existuje (contentType, enabled), v platform-data žádný Secret `openbao-init` ani jiný se stopou
+  kubectl, OpenBao při příchodu harnessu unsealed (seal azurekeyvault, recovery seal), root token z Key Vaultu platný (`lookup-self` policies root),
+  1 recovery klíč; E8b (INFO) – inventář tajemství v Key Vaultu.
+- **Nálezy** (4 běhy): (1) existující init je z doby shamir sealu (`keys_base64`, seal migrován na azurekeyvault v P2-3) → kontrola
+  recovery klíče bere `recovery_keys_base64` i `keys_base64`; (2) GUI `stop()` po výpadku SSE (port-forward) nenašlo tlačítko → keepalive +
+  znovuotevření threadu; (3) první dotaz nástroje `ledger` po dlouhém běhu vrátil 502 (ClickHouse) → E4b opakuje 3× a chybu uvádí v detailu;
+  (4) **ledger aplikace** (JSONL na PVC, roste každým během) se při každém `GET /zakazky/<id>`, `tenant_of`, `current_budget` … celý parsoval
+  v async handleru → event loop zablokovaný na sekundy, timeouty readiness proby (`/health`) i harnessu (U2d 3. běh), pravděpodobně i dřívější
+  výpadky SSE v GUI → `_ledger()` čte jen přírůstek od minulého volání (cache v procesu, rozepsaný řádek nechá na příště);
+  (5) **ConfigMap `agentgateway-keys` přerostl limit API serveru 1 MiB** (5 klíčů na zakázku, nikdy se nemazaly; ~400 zakázek) → `PUT` 422
+  „Too long“: ve 4. běhu tiše selhala blokace tenanta (U2d), v 5. běhu vydání klíčů pro zakázku beta (žádný pod role, H1 nepřišel) → aplikace
+  při vydávání nad 300 položek odstraní klíče zakázek COMPLETED/FAILED/TERMINATED starších 1 dne (`GATEWAY_KEYS_GC`; při 422 bez věkového
+  limitu); gateway tak ukončeným zakázkám klíče odebírá (least privilege), hodnoty v OpenBao KV a útrata v `budget_usage`/ClickHouse zůstávají;
+  INFO E4d hlídá velikost. Obecně: **stav rostoucí každým během** (ledger na PVC, klíče v ConfigMapě, instance v Dapru) potřebuje úklid, jinak
+  měření po desítkách běhů padá na kapacitě, ne na funkci.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E8a | bootstrap jen v Key Vaultu, žádný Secret kubectl, auto-unseal bez operátora, root token platný | ✅ Key Vault secret `openbao-init` (contentType, `CustomizedRecoverable+Purgeable`), žádný K8s Secret, seal azurekeyvault unsealed při příchodu, root token platný |
+| E8b | inventář Key Vaultu | ℹ️ Terraform secrets.tf + `openbao-init`; runner Secrets Officer, pody přes ESO Secrets User |
+| E1c | žádný Secret se stopou kubectl – nově bez výjimky pro `openbao-init` | ✅ `secrets_by_kubectl: []`, `created_by_harness: []` |
+| E4d | velikost ConfigMapy `agentgateway-keys` + události GC | ℹ️ 658 kB, 940 klíčů / 188 zakázek; GC v běhu: 138 zakázek / 690 klíčů odstraněno |
+
+Výsledek: **67/67 + 11 INFO** (`measure` run 41046364239, `results/p3-6-20261030-121813.json`; 6 běhů – nálezy výše; běhy 2–5 měly E8a/E8b/E1c
+zelené a padaly na kapacitě rostoucího stavu, ne na mechanismu E8). Omezení: harness stále pracuje s **root tokenem** OpenBao
+(z Key Vaultu) – scoped operátorský token je samostatná položka P3-6.
 
 ## Spuštění
 
