@@ -900,7 +900,7 @@ async def wf_versions_get():
     """P3-6 E6: registrované verze orchestrátoru (snímky wf_versions/ + aktuální), latest pro nové instance, instance per verze podle ledgeru
     a stavu v Dapru; `drained` = snímek verze lze smazat; `legacy` = instance z doby před verzováním (Dapr je přehrává na latest)."""
     starts = [e for e in _ledger() if e.get("kind") == "ZAKAZKA_START"]
-    return {**wf_versions.report(rt, starts, _wf_state), "registered": WF}
+    return {**wf_versions.report(rt, starts, _wf_state), "registered": {**WF, "versions": wf_versions.registered_versions(rt)}}   # versions živě (E13 unregister/register)
 
 
 @app.post("/_wf/latest")
@@ -1045,7 +1045,7 @@ def _wf_state(zid):
 
 agui.CTX.update({
     "ledger": ledger, "read_ledger": _ledger, "wf_state": _wf_state, "root_dir": "/tmp/p0-o2",
-    "wf_versions": lambda: {**wf_versions.report(rt, [e for e in _ledger() if e.get("kind") == "ZAKAZKA_START"], _wf_state), "registered": WF},   # P3-6 E13: karta verzí ve Firmě (tenant platform)
+    "wf_versions": lambda: {**wf_versions.report(rt, [e for e in _ledger() if e.get("kind") == "ZAKAZKA_START"], _wf_state), "registered": {**WF, "versions": wf_versions.registered_versions(rt)}},   # P3-6 E13: karta verzí ve Firmě (tenant platform)
     "disclosure": lambda role, channel: _disclosure(role, channel),
     "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s", "klasifikace", "sla", "contact") if k in fp}}, by=u["name"], channel="agui", by_sub=u["sub"], subject=subject_of(u)),
     "classify": lambda zid, u, answers, reason: classify_zakazka(zid, by=u["name"], answers=answers, reason=reason, channel="agui", sub=u["sub"]),

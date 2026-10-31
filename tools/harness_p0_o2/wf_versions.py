@@ -123,6 +123,11 @@ def set_latest(rt, version: str) -> dict:
     return {"name": NAME, "latest": version, "previous": prev}
 
 
+def registered_versions(rt) -> list:
+    """Živý seznam registrovaných verzí (po unregister/register se liší od seznamu ze startu – nález E13a běh 1)."""
+    return sorted(_registry(rt).versioned_orchestrators.get(NAME, {}))
+
+
 def unregister(rt, version: str) -> dict:
     """P3-6 E13: odebrání registrované (ne-latest) verze za běhu = simulace obrazu bez snímku `wf_versions/zakazka_<verze>.py` (resolver SDK pak
     při dalším work itemu instance této verze vyhodí VersionNotRegisteredException → akce `version_not_available` → Dapr instanci označí STALLED,
