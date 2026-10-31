@@ -193,7 +193,7 @@ def t_ledger(c, u, a):
     q = ("SELECT SpanAttributes['tenant'] AS tenant_id, SpanAttributes['zakazka'] AS zakazka_id, SpanAttributes['role'] AS role, count() AS requests, "
          "round(sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), 6) AS cost_usd, sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])) AS input_tokens, "
          "sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.output_tokens'])) AS output_tokens, toString(min(Timestamp)) AS first, toString(max(Timestamp)) AS last "
-         "FROM otel.otel_traces WHERE SpanAttributes['zakazka'] != '' AND Timestamp > now() - INTERVAL {days:UInt32} DAY")
+         "FROM otel.otel_traces WHERE ServiceName = 'agentgateway' AND SpanAttributes['zakazka'] != '' AND Timestamp > now() - INTERVAL {days:UInt32} DAY")   # ServiceName = prefix primárního klíče → čte jen granule gateway; bez něj Map sloupec všech spanů (E13 běh 2: ClickHouse memory limit 1 GiB)
     if u["tenant"] != "platform": q += " AND SpanAttributes['tenant'] = {tenant:String}"; params["tenant"] = u["tenant"]   # stejná hranice jako RLS org.*: jen vlastní tenant
     q += " GROUP BY tenant_id, zakazka_id, role ORDER BY last DESC LIMIT 1000 FORMAT JSONEachRow"
     rws = clickhouse(q, params)

@@ -834,6 +834,10 @@ Výsledek: **AKS 73/73 + 13 INFO 2026-10-31** (`measure` run 41226790285, 2 běh
   záloha, ale jediná cesta harnessu k DB.
 - E4b v 1. běhu FAIL na timeoutu tabulek FinOps v GUI (přímá volání Governance MCP `ledger` v témže checku prošla); ve 2. běhu prošlo, žádné události
   K8s mimo běžný rozsah – příčina nezjištěna; detail E4b nově nese `page_errors` (texty `.err` ze stránky) pro příští výskyt.
+  → **Příčina nalezena v E13 běhu 2** díky `page_errors`: ClickHouse `Code: 241 (total) memory limit exceeded: would use 1.00 GiB` –
+  `max_server_memory_usage_to_ram_ratio 0.5` (z harnessu O1) × limit kontejneru 2Gi = 1 GiB; dotaz ledgeru filtroval jen přes Map sloupec
+  `SpanAttributes['zakazka']` a četl tak spany všech služeb za 30 dní (tabulka bez TTL roste každým během). Oprava: filtr `ServiceName = 'agentgateway'`
+  (prefix primárního klíče tabulky exportéru → čtou se jen granule gateway) a poměr paměti na výchozích 0.9 (projeví se restartem podu = příští start clusteru).
 
 ## P3-6 E13 – STALLED (chybějící verze orchestrátoru) v GUI (2026-10-31, AKS, `--step p3-6` = … + **E13a–c**)
 
@@ -872,6 +876,9 @@ Nálezy:
   on a new replica“) instanci přehraje a ona pokračuje. **Event doručený v době zaseknutí se neztratí** – klasifikace K1 poslaná do zaseknuté
   instance po obnově proběhla bez opakování (`event_again: null`). V provozu to platí samo: verze přibývá jen novým obrazem = rollout podů.
 - `registered.versions` v `GET /_wf/versions` byl seznam ze startu aplikace (E13a běh 1 FAIL: odregistrovaná verze v něm zůstala) → živě z registru.
+- E4b běh 2 FAIL bez vztahu k E13: dotaz ledgeru překročil paměťový limit ClickHouse (1 GiB) – příčina opakovaného E4b z E12 (viz nálezy E12);
+  opraveno filtrem `ServiceName` a poměrem paměti 0.9. Otevřené: tabulka `otel_traces` bez TTL (`ttl: 0` v exportéru) roste s každým během –
+  retence je rozhodnutí FinOps/auditu (ledger čte okno 30 dní), exportér TTL nastaví jen při založení tabulky.
 
 ## Spuštění
 
