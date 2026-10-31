@@ -220,6 +220,9 @@ jako latest. Instance si verzi nese v historii → nasazení nového obrazu (`im
 na své verzi; chybějící verze = STALLED, ne FAILED. **Postup při změně orchestrátoru**: upravit `zakazka_wf.py` → `python tools/harness_p0_o2/wf_versions.py freeze`
 (nový snímek; `images.yml` build padá bez něj) → commit obojího. **Úklid**: `GET /_wf/versions` (port-forward `zakazka` 8010) → verze s `drained: true`
 = snímek smazat v Gitu. Aktivity (`app.py`) se mění volně, kontrakty vstupů/výstupů jen rozšiřovat. Měření: `measure` s `e2e=p3-6` (E6a–c).
+**Chybějící verze** (E13, 2026-10-31): instance je STALLED – v GUI „zaseknuto – chybí verze orchestrátoru“, ve Firmě (tenant platform) karta verzí
+orchestrátoru se zaseknutými instancemi a chybějící verzí. Obnova: vrátit snímek `wf_versions/zakazka_<verze>.py` do repa → `images.yml` → rollout podu
+(nová replika; registrace verze do běžícího procesu nestačí); eventy doručené v době zaseknutí se neztratí.
 
 ## P3-6 E7: TLS OpenBao a Keycloaku z interní CA (2026-10-29)
 

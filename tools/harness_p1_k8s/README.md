@@ -858,11 +858,20 @@ Výsledek: **AKS 73/73 + 13 INFO 2026-10-31** (`measure` run 41226790285, 2 běh
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E13a | chybějící verze = STALLED, ne FAILED; `wf_version` zůstává; `GET /_wf/versions` hlásí verzi registered=false, `missing`, `stalled` | doplním |
-| E13b | GUI: badge „zaseknuto“ v seznamu, detail run `stalled` + karta s verzí a nápovědou, Firma: karta verzí (počet zaseknutých, chybějící verze, řádek verze) | doplním |
-| E13c | obnova po registraci verze bez nového eventu (`recovered_by` sama / restart podu), event z doby zaseknutí zpracován → COMPLETED/Odmitnuto na své verzi, GUI dokončeno | doplním |
+| E13a | chybějící verze = STALLED, ne FAILED; `wf_version` zůstává; `GET /_wf/versions` hlásí verzi registered=false, `missing`, `stalled` | ✅ event do instance bez verze → `STALLED` za 0,6 s, `failure: null`, `wf_version` kandidáta; report: verze `registered: false`, `missing: true`, `stalled: [zakázka]` |
+| E13b | GUI: badge „zaseknuto“ v seznamu, detail run `stalled` + karta s verzí a nápovědou, Firma: karta verzí (počet zaseknutých, chybějící verze, řádek verze) | ✅ seznam `badge stalled` „zaseknuto – chybí verze orchestrátoru“, detail run `stalled` + karta s verzí instance, Firma (platform-admin): zaseknuté 1, chybějící verze = kandidát, řádek registered=ne s odkazem |
+| E13c | obnova po registraci verze bez nového eventu (`recovered_by` sama / restart podu), event z doby zaseknutí zpracován → COMPLETED/Odmitnuto na své verzi, GUI dokončeno | ✅ **`recovered_by: restart`**: po `POST /_wf/register` instance 120 s stojí; po restartu podu aplikace (`rollout` 0,5 s) pokračuje sama – klasifikace z doby zaseknutí zpracována, COMPLETED/Odmitnuto na kandidátské verzi, `KLASIFIKACE_DONE` s ní až po obnově, report bez `stalled`, GUI COMPLETED |
 
-Výsledek: **doplním po měření**.
+Výsledek: **AKS RUNRESULT** (`measure` run RUNID, RUNCOUNT běhy).
+
+Nálezy:
+
+- **Obnova STALLED = nová replika, ne nová registrace** (odpověď na otevřenou otázku E6): Dapr označí instanci STALLED při work itemu, na který
+  worker odpoví `version_not_available`; samotné doplnění verze do registru běžícího workeru (`POST /_wf/register` = snímek v obrazu) instanci
+  nerozběhne – Dapr jí nový work item nepošle (120 s nic). Až restart podu (nový proces = nová replika v docs: „once a stalled workflow is scheduled
+  on a new replica“) instanci přehraje a ona pokračuje. **Event doručený v době zaseknutí se neztratí** – klasifikace K1 poslaná do zaseknuté
+  instance po obnově proběhla bez opakování (`event_again: null`). V provozu to platí samo: verze přibývá jen novým obrazem = rollout podů.
+- `registered.versions` v `GET /_wf/versions` byl seznam ze startu aplikace (E13a běh 1 FAIL: odregistrovaná verze v něm zůstala) → živě z registru.
 
 ## Spuštění
 

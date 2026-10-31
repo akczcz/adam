@@ -177,7 +177,7 @@ v SUSPENDED se eventy bufferují, nesoulad vyplave až po resume – přesně n�
 | Mechanismus | Co dělá | API (dapr-ext-workflow 1.18.3) | Zdroj |
 |---|---|---|---|
 | Pojmenované verze | více verzí pod jedním jménem workflow; verze, pod kterou instance začala, je v historii (`OrchestratorStarted.version`, backend ji tam zapíše z odpovědi workeru – durabletask-go `orchestration.go` v0.12.6 = daprd 1.18.9) a replay volá vždy ji; nové instance = `is_latest` | `@wfr.versioned_workflow(name=, version_name=, is_latest=)` / `register_versioned_workflow` | docs v1.18 `workflow-versioning.md`, `workflow-protocol-versioning.md`, release notes 1.17 |
-| Chybějící verze | instance **STALLED** (`ExecutionStalled reason=VERSION_NAME_MISMATCH`), pokračuje, až se replika s verzí připojí | – | tamtéž (STALLED na AKS neměřeno) |
+| Chybějící verze | instance **STALLED** (`ExecutionStalled reason=VERSION_NAME_MISMATCH`), ne FAILED, bez `failureDetails`; pokračuje, až ji přehraje **nová replika** – doplnění verze do registru běžícího workeru nestačí (120 s nic), restart podu ano; event doručený v době zaseknutí se neztratí | SDK: `VersionNotRegisteredException` → akce `version_not_available`; klient `WorkflowStatus.STALLED` | tamtéž; změřeno P3-6 E13 na AKS 2026-10-31 (`tools/harness_p1_k8s`) |
 | Patch | `if ctx.is_patched("p1"): …` – při prvním průchodu se patch zapíše do historie, replay drží původní větev | `ctx.is_patched(name)` | tamtéž |
 | Resolver | neverzovaná registrace téhož jména má **přednost** před verzovanými; historie bez verze → latest; chybějící verze → `VersionNotRegisteredException` | `_Registry.get_orchestrator` (vendored durabletask) | kód SDK v1.18.3 |
 | Co verzování **neřeší** | změna typů vstupu/výstupu workflow a aktivit (docs: „doesn't address changing the types of inputs and outputs“); výběr verze při startu instance (Python 1.18.3 nemá parametr, protokol to umožňuje) | – | docs v1.18 |
@@ -231,12 +231,16 @@ pro ADK; rozdíl je jen v tom, že u Dapru je to dokumentovaná vlastnost aktivi
 - [ ] Lze MAF workflow spustit nad Dapr Workflow nebo Temporalem bez `agent-framework-durabletask`?
 - [ ] `continue_as_new` a verze: drží nová inkarnace instance `version.name`, nebo se resolvuje znovu na latest? V docs ani kódu nenalezeno.
 - [ ] `dapr` 1.19.0 SDK (rerun, `get_workflow_history`, `list_workflow_instance_ids`) proti daprd 1.18.9 – podporovaná kombinace? Do té doby list/history jen CLI.
-- [ ] STALLED při odebrání verze změřit (E6 měří jen běh dvou registrovaných verzí); jak ho zobrazit v GUI (dnes Running/Pozastaveno/FAILED).
+- [x] ~~STALLED při odebrání verze změřit; jak ho zobrazit v GUI.~~ → 2026-10-31 P3-6 E13 na AKS: odebrání verze za běhu + event → STALLED
+      (ne FAILED, `wf_version` zůstává); obnova až novou replikou (restart podu), registrace verze do běžícího workeru instanci nerozběhne;
+      event z doby zaseknutí zpracován bez opakování. GUI: stav „zaseknuto – chybí verze orchestrátoru“, karta s verzí a nápovědou, ve Firmě
+      karta verzí orchestrátoru (zaseknuté instance, chybějící verze).
 - [~] Změřit harnessem: pozastavení na lidské rozhodnutí → restart clusteru → obnovení
       po 14 dnech. Ani jeden kandidát nemá dokumentovaný maximální horizont čekání.
       → 2026-10-21: Dapr Agents změřeno pro krátkou pauzu (viz dapr-agents.md), 14 dní zbývá.
 
 ## Changelog
+- 2026-10-31: STALLED změřeno P3-6 E13 na AKS – chybějící verze = STALLED bez failure, obnova jen novou replikou (restart podu; registrace verze do běžícího workeru nestačí), event z doby zaseknutí se neztratí; otevřená otázka uzavřena.
 - 2026-10-29: verzování workflow v Dapru 1.17+ (named versions v historii instance, STALLED místo FAILED, patches, limity) – ověřeno z docs v1.18, SDK 1.18.3 a durabletask-go v0.12.6; změřeno P3-6 E6 na AKS; otevřené otázky k `continue_as_new`, SDK 1.19 a STALLED.
 - 2026-10-24: P1-5 kind – Dapr Workflow 1.18.9 v clusteru s `state.postgresql`: pod aplikace smazán uprostřed zakázky (čekání na HITL), nový pod obnovil instanci ze stavu v Postgresu a zakázka doběhla (`tools/harness_p1_k8s` P15c). Bez operátoru a sentry (daprd jako sidecar, komponenty z ConfigMapy).
 - 2026-09-27: první verze.
