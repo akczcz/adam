@@ -319,8 +319,10 @@ egress na privátní sítě nefiltrují). **Harness** z runneru GitHub Actions n
 RBAC: identita Actions potřebuje **Network Contributor jen na node RG** (peering z druhé strany, join VNet pro DNS link) – uděluje Adam ručně
 (`bootstrap/azure-oidc.sh` po vzniku clusteru), nic na subscription. Cena (orientačně, sekundární zdroje 2026-10-31, ověřit v kalkulačce):
 private endpoint ~0,01 USD/h ≈ 7,3 USD/měs + data; privátní DNS zóna 0,50 USD/měs; peering v regionu 0,01 USD/GB každým směrem.
-Měření: `measure` s `e2e=p3-6` (E12a) – **výsledek doplním po měření**. Bez změny obrazů. Zbývá (P4): VNet integrace ostatních PaaS (Key Vault, ACR
-private endpoint), privátní API server AKS.
+Měření: `measure` s `e2e=p3-6` (E12a) – **AKS 73/73 + 13 INFO 2026-10-31** (run 41226790285, 2 běhy; `infra apply` napoprvé: 7 zdrojů přidáno,
+3 změněny, 1 smazán, bez pořadové závislosti PE ↔ public off). FAIL 1. běhu jen v harnessu: `az postgres flexible-server firewall-rule list` na serveru bez
+veřejného přístupu vrací chybu (ne prázdný seznam) a IP private endpointu není v `customDnsConfigs` (prázdné, když je DNS zone group) – je jen na NIC
+endpointu (`az network nic show`). Bez změny obrazů. Zbývá (P4): VNet integrace ostatních PaaS (Key Vault, ACR private endpoint), privátní API server AKS.
 
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);

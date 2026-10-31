@@ -823,9 +823,17 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E12a | Flexible Server jen přes private endpoint: public off, bez firewall, PE/peering/DNS v pořádku, pod → privátní IP, runner nedosáhne | doplním |
+| E12a | Flexible Server jen přes private endpoint: public off, bez firewall, PE/peering/DNS v pořádku, pod → privátní IP, runner nedosáhne | ✅ |
 
-Výsledek: **doplním po měření**.
+Výsledek: **AKS 73/73 + 13 INFO 2026-10-31** (`measure` run 41226790285, 2 běhy). Nálezy (jen harness):
+- `az postgres flexible-server firewall-rule list` na serveru s `publicNetworkAccess Disabled` vrací chybu „Firewall rule operations are not supported
+  for a server without public access“, ne prázdný seznam – check ji bere jako „žádná pravidla“.
+- IP private endpointu není v `customDnsConfigs` (prázdné, když DNS řeší `private_dns_zone_group`) – je jen na NIC endpointu
+  (`az network nic show --ids <nic> --query ipConfigurations[0].privateIPAddress`).
+- Přímé spojení z runneru na Flexible Server selže (`ConnectionTimeout`, očekávané) → `pg_via` je vždy `socat-forward`; cesta socat pod + port-forward už není
+  záloha, ale jediná cesta harnessu k DB.
+- E4b v 1. běhu FAIL na timeoutu tabulek FinOps v GUI (přímá volání Governance MCP `ledger` v témže checku prošla); ve 2. běhu prošlo, žádné události
+  K8s mimo běžný rozsah – příčina nezjištěna; detail E4b nově nese `page_errors` (texty `.err` ze stránky) pro příští výskyt.
 
 ## Spuštění
 
