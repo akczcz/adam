@@ -305,6 +305,25 @@ E11c hlásí issuer serverového certifikátu (měřeno: **Microsoft TLS G2 RSA 
 Měření: `measure` s `e2e=p3-6` (E11a–c) – **AKS 72/72 + 13 INFO 2026-10-31** (run 41193518735, 4 běhy; FAIL dřívějších běhů jen v harnessu/GUI: kolize portů,
 E11b před provozem rolí, GUI bez retry po výpadku streamu). Bez změny obrazů a Terraformu. Zbývá (P4): mTLS mesh, interní porty (ClickHouse interserver 9009, Dapr placement/scheduler, SPIRE) a OPA.
 
+## P3-6 E12: Flexible Server jen přes private endpoint (2026-10-31)
+
+Do E11 měl Flexible Server veřejný endpoint + firewall pravidlo „Allow Azure services“ (0.0.0.0) = databáze dosažitelná **heslem z celého Azure**
+(kdokoli s účtem Azure, ne jen náš cluster). `infra/terraform/network.tf`: VNet `vnet-platform-pe-<suffix>` (`var.pe_vnet_cidr` = 192.168.250.0/24;
+managed VNet AKS je 10.224.0.0/12, pody 10.244.0.0/16, služby 10.0.0.0/16 – bez překryvu) se subnetem `snet-private-endpoints`, **peering** obousměrně
+s managed VNet AKS (data `azurerm_resources` najde VNet v node RG `MC_…`), **privátní DNS zóna** `privatelink.postgres.database.azure.com` nalinkovaná
+na VNet AKS (`registration_enabled false`) a **private endpoint** `pe-<server>` (`subresource postgresqlServer`, `private_dns_zone_group` → A záznam
+serveru). `postgres.tf`: `public_network_access_enabled = false`, firewall pravidlo pryč. FQDN serveru se nemění (veřejné DNS vrací CNAME na
+`privatelink.…`, v VNet AKS ho zóna přeloží na privátní IP) → `verify-full` z E11 drží beze změny DSN. Flux substitute `PE_SUBNET_CIDR` →
+NetworkPolicy `agentgateway-egress` povolí k private endpointu jen TCP 5432 (gateway jinak privátní sítě blokuje; pody aplikace/paměti/Keycloaku
+egress na privátní sítě nefiltrují). **Harness** z runneru GitHub Actions na server už nedosáhne → vždy socat pod + port-forward (dosud záloha).
+RBAC: identita Actions potřebuje **Network Contributor jen na node RG** (peering z druhé strany, join VNet pro DNS link) – uděluje Adam ručně
+(`bootstrap/azure-oidc.sh` po vzniku clusteru), nic na subscription. Cena (orientačně, sekundární zdroje 2026-10-31, ověřit v kalkulačce):
+private endpoint ~0,01 USD/h ≈ 7,3 USD/měs + data; privátní DNS zóna 0,50 USD/měs; peering v regionu 0,01 USD/GB každým směrem.
+Měření: `measure` s `e2e=p3-6` (E12a) – **AKS 73/73 + 13 INFO 2026-10-31** (run 41226790285, 2 běhy; `infra apply` napoprvé: 7 zdrojů přidáno,
+3 změněny, 1 smazán, bez pořadové závislosti PE ↔ public off). FAIL 1. běhu jen v harnessu: `az postgres flexible-server firewall-rule list` na serveru bez
+veřejného přístupu vrací chybu (ne prázdný seznam) a IP private endpointu není v `customDnsConfigs` (prázdné, když je DNS zone group) – je jen na NIC
+endpointu (`az network nic show`). Bez změny obrazů. Zbývá (P4): VNet integrace ostatních PaaS (Key Vault, ACR private endpoint), privátní API server AKS.
+
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);
   realm sám issuer nenese (`KC_HOSTNAME`).
@@ -331,7 +350,8 @@ E11b před provozem rolí, GUI bez retry po výpadku streamu). Bez změny obraz�
 - Keycloak admin API: `PUT /clients/{id}` s reprezentací obsahující `protocolMappers` přepíše mappery – lifespan/atributy měnit bez nich.
 - Pod v ns tenanta: služby platformy jen přes FQDN (`keycloak.platform-data.svc`), krátká jména z `zakazka-env` nepřeloží (E2, 2. běh).
 - Smazání Kata podu je asynchronní (VM se vypíná, desítky sekund); pod zabité aplikace zůstane jako sirotek → GC v `role_pod.py`.
-- Flexible Server je z runneru GitHub Actions dosažitelný přímo (pravidlo „Allow Azure services“ 0.0.0.0) – pro schéma paměti a FinOps dotazy; záloha socat pod.
+- Flexible Server byl do E11 z runneru GitHub Actions dosažitelný přímo (pravidlo „Allow Azure services“ 0.0.0.0); od P3-6 E12 jen private endpoint →
+  harness (schéma paměti, FinOps dotazy) vždy přes socat pod + port-forward.
 - **OpenBao 2.7 nemá cloud sealy zabudované** (`Error configuring seal "azurekeyvault": unknown wrapper`; changelog 2.7.0, P2-3 2026-10-25) →
   `seal "azurekeyvault"` je externí KMS plugin `openbao-plugin-kms-azure` (repo openbao-plugins, release `kms-azure-v0.1.0`): `plugin_directory`
   + stanza `plugin "kms" "azurekeyvault" { command version }`; binárku stáhne a ověří (sha256 z `checksums-kms-azure.txt`) init kontejner do emptyDir.

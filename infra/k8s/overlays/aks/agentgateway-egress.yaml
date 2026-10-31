@@ -1,6 +1,7 @@
 # P2-4: egress samotné gateway. agentgateway 1.6.0 u dynamic backendů nekontroluje loopback/link-local (PR #3889 až 1.7) a dialuje SNI
 # hostname přes DNS – role by přes povolené jméno (rebinding) mohla cílit IMDS nebo síť clusteru. Gateway smí ven jen na internet (Flexible
 # Server, api.anthropic.com), DNS a na pody vlastního namespace (mock upstream/github/mirror, OPA); ne IMDS, ne link-local, ne privátní sítě.
+# P3-6 E12: Flexible Server je jen na private endpointu (${PE_SUBNET_CIDR}, Flux substitute z Terraformu) → jediná povolená privátní cesta, jen TCP 5432.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,6 +17,9 @@ spec:
     ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
   - to:
     - podSelector: {}                      # služby v platform-data (backendy routovaných hostů, OPA, otel)
+  - to:
+    - ipBlock: {cidr: "${PE_SUBNET_CIDR}"}          # P3-6 E12: private endpoint Flexible Serveru (sqlx FinOps/ledger gateway)
+    ports: [{protocol: TCP, port: 5432}]
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0

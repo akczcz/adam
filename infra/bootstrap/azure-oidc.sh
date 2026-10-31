@@ -38,6 +38,14 @@ for role in Contributor "User Access Administrator"; do   # UAA: Terraform přid
   az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal --role "$role" --scope "$RG_ID" -o none 2>/dev/null || true
 done
 az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal --role "Storage Blob Data Contributor" --scope "$SA_ID" -o none 2>/dev/null || true
+# P3-6 E12: private endpoint Flexible Serveru – peering z managed VNet AKS a link privátní DNS zóny na ni leží v node RG (MC_…), kterou spravuje AKS
+# a která s clusterem vzniká i zaniká → Network Contributor jen na ni (ne na subscription). Node RG existuje až po prvním `terraform apply`
+# (cluster) → skript spustit znovu po vzniku/rekreaci clusteru; bez role apply skončí AuthorizationFailed na peering/virtualNetworks/join.
+NODE_RG=$(az aks show -n "${CLUSTER:-aks-platform-dev}" -g "$RG" --query nodeResourceGroup -o tsv 2>/dev/null || true)
+if [ -n "$NODE_RG" ]; then
+  az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal --role "Network Contributor" --scope "$(az group show -n "$NODE_RG" --query id -o tsv)" -o none 2>/dev/null || true
+  echo "== Network Contributor pro $ID na node RG $NODE_RG (E12: peering + DNS link)"
+else echo "== cluster zatím neexistuje – po prvním apply spustit znovu (Network Contributor na node RG pro private endpoint PG)"; fi
 
 cat <<EOF
 

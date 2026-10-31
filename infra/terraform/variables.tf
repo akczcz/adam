@@ -47,6 +47,11 @@ variable "pg_sku_name" {
   type    = string
   default = "B_Standard_B1ms"
 }
+variable "pe_vnet_cidr" {
+  type        = string
+  default     = "192.168.250.0/24"
+  description = "P3-6 E12: VNet pro private endpoint Flexible Serveru (peering na managed VNet AKS 10.224.0.0/12; pody 10.244.0.0/16, služby 10.0.0.0/16 – bez překryvu)"
+}
 variable "pg_admin" {
   type    = string
   default = "platform"

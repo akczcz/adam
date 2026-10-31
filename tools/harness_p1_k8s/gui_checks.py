@@ -231,7 +231,10 @@ class Gui:
             try:
                 self.page.wait_for_function(f"document.querySelector('[data-testid={tid}]') || document.querySelector('[data-testid={tid}-empty]')", timeout=timeout_s * 1000)
                 out[tid] = int(self.t(tid).get_attribute("data-rows")) if self.t(tid).count() else 0
-            except Exception as e: out[tid] = f"err:{type(e).__name__}"
+            except Exception as e:
+                out[tid] = f"err:{type(e).__name__}"
+                try: out.setdefault("page_errors", sorted({t.strip()[:160] for t in self.page.locator(".err").all_inner_texts() if t.strip()}))   # proč tabulka chybí (chyba nástroje / fetch)
+                except Exception: pass
         self.shot(f"page-{page}")
         return out
 
