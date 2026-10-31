@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -22,6 +23,7 @@ class Gui:
     def __init__(self, base_url: str, *, headless=True, chromium: str | None = None, shots: Path | None = None, slow_ms=0):
         self.base, self.headless, self.chromium, self.shots, self.slow = base_url.rstrip("/") + "/", headless, chromium or os.environ.get("PW_CHROMIUM"), shots, slow_ms
         self.pw = self.browser = self.page = None; self.log = []; self.keepalive = None   # harness dodá obnovu port-forwardu (fetch z prohlížeče nemá retry)
+        self.cur = None; self._err_t = None; self.recoveries = []   # otevřený thread + obnova pohledu po vyčerpání retry GUI (E11 3. běh: „error Failed to fetch“ 50 min)
 
     def open(self):
         from playwright.sync_api import sync_playwright
@@ -82,7 +84,7 @@ class Gui:
     def create_thread(self, zid, poptavka, budget=None, klasifikace=None):
         """Nová zakázka z GUI: poptávka + dotazník K1–K6 (P3-4; výchozí vše „ne“) → první run s forwardedProps.klasifikace."""
         self.page.goto(self.base + "#/"); self.t("new-id").wait_for(); self.t("new-k-form").wait_for(timeout=30_000)
-        self.t("new-id").fill(zid); self.t("new-poptavka").fill(poptavka)
+        self.t("new-id").fill(zid); self.t("new-poptavka").fill(poptavka); self.cur = zid
         if budget is not None: self.t("new-budget").fill(str(budget))
         for k, v in (klasifikace or {}).items():
             if v: self.t(f"new-k-{k}").check()
@@ -103,7 +105,7 @@ class Gui:
         """Otevře thread s NOVÝM runem: navigace jen změnou hashe na tutéž URL stránku nereloaduje (React komponenta zůstane se starým stavem – po resume
         tenanta GUI ukazovalo run „cancelled“ ze stopu; nález P3-5 O3c) → nejdřív seznam, pak thread."""
         if self.page.url.endswith(f"#/t/{zid}"): self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
-        self.page.goto(self.base + f"#/t/{zid}")
+        self.page.goto(self.base + f"#/t/{zid}"); self.cur = zid
         self.page.wait_for_function("document.querySelector('[data-testid=run-status]') && !['idle','connecting'].includes(document.querySelector('[data-testid=run-status]').textContent)", timeout=60_000)
         return {"status": self.t("run-status").inner_text(), "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
 
@@ -121,13 +123,28 @@ class Gui:
         return {"run_status": self.t("run-status").inner_text(), "protocol": self.t("run-protocol").inner_text(), "subagents": subs, "messages": msgs, "events": evs, "state": st, "acts": acts,
                 "interrupt": self.t("interrupt").get_attribute("data-interrupt-id") if self.t("interrupt").count() else None, "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
 
+    def _recover(self, rs, after_s=100):
+        """GUI po síťovém výpadku streamu (ne 4xx/5xx ze serveru) zkouší znovu jen 30× po 3 s (~90 s, App.tsx start()) a pak zůstane v „error“
+        (E11 3. běh: „Failed to fetch“, workflow přitom čekal na dialog 50 min). Když „error“ bez HTTP kódu trvá déle než retry GUI, obnovit
+        port-forward (keepalive) a znovu otevřít thread = nový run-pohled (run je jen pohled, zdroj pravdy je ledger)."""
+        err = (self.t("run-error").inner_text() if self.t("run-error").count() else "") if rs == "error" else ""
+        if rs != "error" or re.match(r"^\d{3}", err.strip()): self._err_t = None; return False
+        self._err_t = self._err_t or time.time()
+        if time.time() - self._err_t < after_s or not self.cur: return False
+        if self.keepalive:
+            try: self.keepalive()
+            except Exception: pass
+        try: self.open_thread(self.cur); self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": err[:120]})
+        except Exception as e: self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": err[:120], "reopen_failed": type(e).__name__})
+        self._err_t = None; return True
+
     def wait_interrupt(self, bod, timeout_s=900):
         t0 = time.time()
         while time.time() - t0 < timeout_s:
             if self.t("interrupt").count() and self.t("interrupt-bod").inner_text().strip() == bod: break
             rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
-            if rs in ("finished", "cancelled"): break   # "error" = i přechodný výpadek streamu (GUI se znovu připojí) – čekat dál do timeoutu
-            self.page.wait_for_timeout(1500)
+            if rs in ("finished", "cancelled"): break   # "error" = i přechodný výpadek streamu (GUI se znovu připojí; po vyčerpání jeho retry obnoví pohled _recover)
+            self._recover(rs); self.page.wait_for_timeout(1500)
         self.shot(f"interrupt-{bod}")
         return {"waited_s": round(time.time() - t0, 1), **self.snapshot()}
 
@@ -165,7 +182,7 @@ class Gui:
             if self.t("interrupt").count(): return {"waited_s": round(time.time() - t0, 1), "kind": self.t("interrupt").get_attribute("data-kind"), "bod": self.t("interrupt-bod").inner_text().strip() if self.t("interrupt-bod").count() else "dialog", **self.snapshot()}
             rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
             if rs in ("finished", "cancelled"): break
-            self.page.wait_for_timeout(1500)
+            self._recover(rs); self.page.wait_for_timeout(1500)
         return {"waited_s": round(time.time() - t0, 1), "kind": None, "bod": None, **self.snapshot()}
 
     def classify(self, answers, reason=""):
