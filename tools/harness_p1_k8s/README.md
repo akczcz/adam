@@ -835,6 +835,35 @@ Výsledek: **AKS 73/73 + 13 INFO 2026-10-31** (`measure` run 41226790285, 2 běh
 - E4b v 1. běhu FAIL na timeoutu tabulek FinOps v GUI (přímá volání Governance MCP `ledger` v témže checku prošla); ve 2. běhu prošlo, žádné události
   K8s mimo běžný rozsah – příčina nezjištěna; detail E4b nově nese `page_errors` (texty `.err` ze stránky) pro příští výskyt.
 
+## P3-6 E13 – STALLED (chybějící verze orchestrátoru) v GUI (2026-10-31, AKS, `--step p3-6` = … + **E13a–c**)
+
+- **Problém** (otevřená otázka E6, `knowledge/frameworks/durable-execution.md`): instance workflow, jejíž verze orchestrátoru v nasazené aplikaci
+  chybí (smazaný snímek `wf_versions/zakazka_<verze>.py`, obraz bez něj), je v Dapru 1.17+ **STALLED** (`ExecutionStalled reason=VERSION_NAME_MISMATCH`,
+  docs v1.18 `workflow-versioning.md`), ne FAILED – ale na AKS to nebylo změřeno a GUI znalo jen Running/Pozastaveno/FAILED: zaseknutá zakázka
+  by vypadala jako běžící a provoz by nevěděl, že má nasadit verzi. Docs k obnově říkají jen „once a stalled workflow is scheduled on a new
+  replica, it will continue executing“ – zda stačí verzi zaregistrovat, nebo je třeba nový pod, a co s eventem doručeným v době zaseknutí, neříkají.
+- **Řešení** (obrazy aplikace + GUI, bez Terraformu): SDK 1.18.3 při `VersionNotRegisteredException` vrací Dapru akci `version_not_available`
+  (`worker.py set_version_not_registered` → `ORCHESTRATION_STATUS_STALLED`). Aplikace: `GET /zakazky/<id>` a AG-UI stav nesou `STALLED`
+  (`stav` „zaseknuto – chybí verze orchestrátoru“, `wf_version`, `stalled.hint`), run AG-UI nad zaseknutou zakázkou končí `RUN_FINISHED`
+  s `metadata.stalled` (run je pohled; instance nic nevyprodukuje), `org.zakazky.status` „Zaseknuto“; `GET /_wf/versions` nově `stalled`
+  (instance) a `missing` (neregistrovaná verze s živými instancemi); `GET /agui/gov/wf/versions` (jen tenant platform). Interní API pro měření:
+  `POST /_wf/unregister` (odebrání ne-latest verze za běhu = obraz bez snímku) a `POST /_wf/register` (verze zpět ze snímku = nasazení obrazu).
+  GUI: badge `stalled` v seznamu zakázek, detail s kartou „Zakázka je zaseknutá“ (verze instance + nápověda: nasadit obraz se snímkem, nic se
+  neztratilo) a dotazem na stav každých 5 s (po obnově sám otevře nový run-pohled), Firma (platform): karta **Verze orchestrátoru** – latest,
+  obraz, počet zaseknutých, chybějící verze, řádek per verze (registrovaná, instance per stav, odkazy na zaseknuté zakázky, drained).
+- **Měření** (`e13_flow`, hned po E6 – stejné podmínky bez podů rolí): zakázka na kandidátské (ne-latest) verzi čeká na klasifikaci → `POST /_wf/unregister`
+  kandidáta → `POST …/classify` K1 → instance STALLED (ne FAILED, bez `failure`), report verzí `missing`/`stalled`; Playwright: seznam (adam),
+  detail, Firma (platform-admin); obnova `POST /_wf/register` → čekání 120 s, zda instance pokračuje sama; pokud ne, restart podu aplikace
+  (nová replika); pokud ani pak ne, event znovu (= event z doby zaseknutí se ztratil → E13c FAIL, „nic se neztratilo“ by neplatilo).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E13a | chybějící verze = STALLED, ne FAILED; `wf_version` zůstává; `GET /_wf/versions` hlásí verzi registered=false, `missing`, `stalled` | doplním |
+| E13b | GUI: badge „zaseknuto“ v seznamu, detail run `stalled` + karta s verzí a nápovědou, Firma: karta verzí (počet zaseknutých, chybějící verze, řádek verze) | doplním |
+| E13c | obnova po registraci verze bez nového eventu (`recovered_by` sama / restart podu), event z doby zaseknutí zpracován → COMPLETED/Odmitnuto na své verzi, GUI dokončeno | doplním |
+
+Výsledek: **doplním po měření**.
+
 ## Spuštění
 
 ```bash
