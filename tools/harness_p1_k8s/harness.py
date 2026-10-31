@@ -1051,12 +1051,12 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_t
         stop_b = http("POST", f"{APP}/zakazky/{zb}/stop", json={"by": "harness", "reason": "O3c hotovo – zakázku beta zastavuji (H5 není třeba)."}, timeout=60).status_code
         rep.add("O3c", "Resume tenanta beta (platform-admin s důvodem): workflow RUNNING, výsledek zabitého podu (stopped) se zpracuje až po resume → ROLE_STOPPED rerun_after_resume → vývojář běží znovu (druhý ROLE_GATE/ROLE_POD vývojář od checkpointu), reviewer, HITL H4 znovu v GUI jako interrupt, schválení bea projde → merge executor allow (EXECUTED merge)", "PASS" if rs.status_code == 200 and zb in (rs_j.get("resumed") or []) and h4["interrupt"] and h4["interrupt"].startswith("hitl:H4:") and stopped_ev and stopped_ev[0].get("result") == "rerun_after_resume" and len(gates_v) >= 2 and len(pods_v) >= 2 and pods_v[-1].get("phase") == "Succeeded" and not pods_v[-1].get("stopped") and d4 and d4["new_run"] and ex and (ex.get("applied") is not None) else "FAIL", {"resume": {k: rs_j.get(k) for k in ("resumed", "keys_unblocked")}, "h4": h4["interrupt"], "h4_after_resume_s": round(time.time() - t_r, 1), "role_stopped": [{k: e.get(k) for k in ("role", "attempt", "result")} for e in stopped_ev], "vyvojar_gates": len(gates_v), "vyvojar_pods": [{k: e.get(k) for k in ("phase", "stopped", "t_run_s")} for e in pods_v], "decide": d4, "executed": {k: ex.get(k) for k in ("action", "by", "applied")} if ex else None, "stop_http": stop_b, "wf_after": st_b2.get("status"), "wf_output": st_b2.get("output"), "running_after_resume_s": resumed_after_s, "unblock_propagation": next((e.get("propagation") for e in reversed(led()) if e.get("kind") == "GATEWAY_KEYS_UNBLOCK" and e.get("tenant") == "beta"), None), "ledger_after_resume": tail_b, "app_pods": app_pods})
         # O3d – ClickHouse: spany serveru paměti (search_memory) tenanta acme nenesou žádný record.id ani tenant beta (a naopak); ledger zakázky acme bez identifikátorů beta
-        pf_ch = PortForward(a, "clickhouse", 18443, 8443); rows = []; ch_err = None
+        pf_ch = PortForward(a, "clickhouse", 18445, 8443); rows = []; ch_err = None
         try:
             t_c = time.time()
             while time.time() - t_c < 120:
                 q = "SELECT SpanAttributes['tenant.id'], SpanAttributes['gen_ai.memory.record.ids'], SpanAttributes['memory.tenants_returned'], SpanAttributes['enduser.id'] FROM otel.otel_traces WHERE ServiceName = 'memory-server' AND SpanName = 'search_memory' AND Timestamp > now() - INTERVAL 2 HOUR FORMAT JSONCompact"
-                r = http("POST", "https://127.0.0.1:18443/", content=q, timeout=30)
+                r = http("POST", "https://127.0.0.1:18445/", content=q, timeout=30)
                 if r.status_code == 200:
                     rows = r.json().get("data", [])
                     if any(x[3] and "/beta" in x[3] for x in rows) and any(x[3] and "/acme" in x[3] for x in rows): break
@@ -1151,11 +1151,11 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     sys.path.insert(0, str(HERE)); from gui_checks import Gui
     def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
     t_e = time.time(); time.sleep(20)   # batch Collectoru + flush gateway
-    pf_ch = PortForward(a, "clickhouse", 18443, 8443); rows = []; ch_err = None
+    pf_ch = PortForward(a, "clickhouse", 18445, 8443); rows = []; ch_err = None
     try:
         q = f"SELECT SpanAttributes['tenant'], SpanAttributes['zakazka'], SpanAttributes['role'], count(), sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])), ServiceName FROM otel.otel_traces WHERE SpanAttributes['zakazka'] LIKE '{tag}%' AND Timestamp > now() - INTERVAL 6 HOUR GROUP BY 1,2,3,7 FORMAT JSONCompact"
         for _ in range(6):
-            r = http("POST", "https://127.0.0.1:18443/", content=q, timeout=30)
+            r = http("POST", "https://127.0.0.1:18445/", content=q, timeout=30)
             if r.status_code == 200: rows = r.json().get("data", []); break
             ch_err = r.text[:200]; time.sleep(5)
     finally: pf_ch.stop()
@@ -1748,18 +1748,18 @@ def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep,
     def probe(method, url, ctx, **kw):
         try: r = httpx.request(method, url, verify=ctx, timeout=15, **kw); return {"http": r.status_code, "body": r.text[:100].replace("\n", " ")}
         except Exception as e: return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
-    pf_ch = PortForward(a, "clickhouse", 18443, 8443); pf_col = PortForward(a, "otel-collector", 14318, 4318)
+    pf_ch = PortForward(a, "clickhouse", 18445, 8443); pf_col = PortForward(a, "otel-collector", 14318, 4318)
     try:
-        ch_ok = probe("GET", "https://127.0.0.1:18443/ping", ctx_root); ch_pub = probe("GET", "https://127.0.0.1:18443/ping", ctx_public)
-        ch_sel = probe("POST", "https://127.0.0.1:18443/", ctx_root, content="SELECT version()")
+        ch_ok = probe("GET", "https://127.0.0.1:18445/ping", ctx_root); ch_pub = probe("GET", "https://127.0.0.1:18445/ping", ctx_public)
+        ch_sel = probe("POST", "https://127.0.0.1:18445/", ctx_root, content="SELECT version()")
         col_ok = probe("POST", "https://127.0.0.1:14318/v1/traces", ctx_root, json={"resourceSpans": []}); col_pub = probe("POST", "https://127.0.0.1:14318/v1/traces", ctx_public, json={"resourceSpans": []})
         # spany od startu harnessu podle služby – gateway (agentgateway → https Collector → secure ClickHouse) i paměť (OTLP https s OTEL_EXPORTER_OTLP_CERTIFICATE)
         q = f"SELECT ServiceName, count() FROM otel.otel_traces WHERE Timestamp > parseDateTimeBestEffort('{since_iso}') GROUP BY ServiceName FORMAT JSONCompact"
         spans = {}
         for _ in range(6):
-            r = probe("POST", "https://127.0.0.1:18443/", ctx_root, content=q)
+            r = probe("POST", "https://127.0.0.1:18445/", ctx_root, content=q)
             if r.get("http") == 200:
-                try: spans = {row[0]: row[1] for row in httpx.post("https://127.0.0.1:18443/", content=q, verify=ctx_root, timeout=30).json().get("data", [])}
+                try: spans = {row[0]: row[1] for row in httpx.post("https://127.0.0.1:18445/", content=q, verify=ctx_root, timeout=30).json().get("data", [])}
                 except Exception as e: spans = {"error": type(e).__name__}
                 if spans.get("agentgateway") and spans.get("memory-server"): break
             time.sleep(10)
@@ -1780,7 +1780,9 @@ def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep,
     # chyby TLS v lozích Collectoru a ClickHouse od startu harnessu
     col_log = kubectl(a, "-n", NS, "logs", "deploy/otel-collector", f"--since-time={since_iso}", timeout=120).stdout
     ch_log = kubectl(a, "-n", NS, "logs", "clickhouse-0", f"--since-time={since_iso}", timeout=120).stdout
-    tls_err = {"collector": [l[:160] for l in col_log.splitlines() if re.search(r"tls|certificate|handshake|x509", l, re.I)][:5], "clickhouse": [l[:160] for l in ch_log.splitlines() if re.search(r"<Error>.*(SSL|certificate|handshake)", l, re.I)][:5]}
+    # bez stop vlastních negativních sond harnessu: port-forward (127.0.0.1 – sonda proti veřejným CA utne handshake) a plaintext na TLS porty z podu („HTTP request to an HTTPS server“, ClickHouse „SSL routines::http request“)
+    own = lambda l: "127.0.0.1:" in l or "HTTP request to an HTTPS server" in l or "http request" in l
+    tls_err = {"collector": [l[:160] for l in col_log.splitlines() if re.search(r"tls|certificate|handshake|x509", l, re.I) and not own(l)][:5], "clickhouse": [l[:160] for l in ch_log.splitlines() if re.search(r"<Error>.*(SSL|certificate|handshake)", l, re.I) and not own(l)][:5]}
     ok_certs = all(v["ready"] == "True" and v["issuer"] == "platform-ca" and v["chain_ok"] is True and v["sans_ok"] and v["ip"] == ["127.0.0.1"] and (v["days_left"] or 0) > 30 for v in certs.values())
     e11a = ok_certs and ch_ok.get("http") == 200 and "error" in ch_pub and ch_sel.get("http") == 200 and col_ok.get("http") in (200, 400, 415) and "error" in col_pub and plain_ok and svc == {"clickhouse": [8443, 9440], "otel-collector": [4317, 4318]} \
         and all(col_tls.values()) and "secure=true" in col_exp and ":9440" in col_exp and "<https_port>8443</https_port>" in ch_cfg and '<http_port remove="1"/>' in ch_cfg and '<tcp_port remove="1"/>' in ch_cfg and clients_ok
@@ -1791,7 +1793,7 @@ def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep,
             "PASS" if e11b else "FAIL", {"spans_since_start": spans, "tls_errors": tls_err, "since": since_iso})
     # --- E11c: Postgres Flexible Server verify-full -------------------------------------------------------------------------------------------
     dsns = {"agentgateway-secrets/AGW_DATABASE_URL": secret("agentgateway-secrets", "AGW_DATABASE_URL"), "zakazka-finops/P0_FINOPS_DSN": secret("zakazka-finops", "P0_FINOPS_DSN"), "zakazka-finops/P0_REGISTRY_DSN": secret("zakazka-finops", "P0_REGISTRY_DSN"),
-            "memory-db/MEMORY_DB_URI": secret("memory-db", "MEMORY_DB_URI"), "governance-db/GOV_DSN": secret("governance-db", "GOV_DSN"), "dapr-components/statestore": secret("dapr-components", "statestore.yaml")}
+            "memory-db/MEMORY_DB_URI": secret("memory-db", "MEMORY_DB_URI"), "governance-db/GOV_DSN": secret("governance-db", "GOV_DSN"), "dapr-components/statestore": secret("dapr-components", "statestore\\.yaml")}
     env_kc = env_of("keycloak")
     dsns["keycloak/KC_DB_URL+PROPERTIES"] = f"{env_kc.get('KC_DB_URL')}{env_kc.get('KC_DB_URL_PROPERTIES')}"
     def dsn_ok(s): s = s or ""; return "sslmode=verify-full" in s and "sslrootcert=/etc/platform/ca/ca.crt" in s and pg_host in s and "@postgres:" not in s and "host=postgres " not in s and "//postgres:" not in s
@@ -1825,9 +1827,9 @@ def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep,
         so = socket.create_connection(pg_ep, timeout=15); so.sendall(struct.pack("!II", 8, 80877103))
         if so.recv(1) == b"S":
             ctx_any = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); ctx_any.check_hostname = False; ctx_any.verify_mode = ssl.CERT_NONE
-            ss = ctx_any.wrap_socket(so, server_hostname=pg_host); der = ss.getpeercert(True); ss.close()
+            ss = ctx_any.wrap_socket(so, server_hostname=pg_host); der = ss.getpeercert(True); tls_ver = ss.version(); ss.close()   # version() až po close vrací None
             sc = x509.load_der_x509_certificate(der); san_ = sc.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
-            server_cert = {"subject": sc.subject.rfc4514_string(), "issuer": sc.issuer.rfc4514_string(), "not_after": sc.not_valid_after_utc.date().isoformat(), "san": sorted(san_.get_values_for_type(x509.DNSName))[:4], "tls": ss.version()}
+            server_cert = {"subject": sc.subject.rfc4514_string(), "issuer": sc.issuer.rfc4514_string(), "not_after": sc.not_valid_after_utc.date().isoformat(), "san": sorted(san_.get_values_for_type(x509.DNSName))[:4], "tls": tls_ver}
     except Exception as e: server_cert = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
     import psycopg
     def try_conn(mode, rootcert, host, port):
@@ -1879,8 +1881,8 @@ def e1_checks(a, rep, kj, pre):
     tok = _b64.b64decode((secs["agentgateway-git-token"].get("data") or {}).get("token", "")).decode(); pg = _b64.b64decode((secs["postgres-auth"].get("data") or {}).get("POSTGRES_PASSWORD", "")).decode()
     agw_url = _b64.b64decode((secs["agentgateway-secrets"].get("data") or {}).get("AGW_DATABASE_URL", "")).decode(); dapr = _b64.b64decode((secs["dapr-components"].get("data") or {}).get("statestore.yaml", "")).decode()
     zs = {k: _b64.b64decode(v).decode() for k, v in (secs["zakazka-secrets"].get("data") or {}).items()}
-    kv_ok = bool(kv_tok) and kv_tok == tok and bool(kv_pg) and kv_pg == pg and pg and f":{pg}@postgres" in agw_url and f"password={pg} " in dapr
-    rep.add("E1b", "Tajemství z Key Vaultu přes ESO (ClusterSecretStore azure-kv, Workload Identity UAMI id-eso + federated credential SA external-secrets/eso-keyvault, role Key Vault Secrets User): ExternalSecrety Ready/SecretSynced, Secrety vlastní ExternalSecret (ownerReference), hodnoty == Key Vault (git token, heslo PG i v DSN gateway/FinOps/Dapr), zakazka-secrets nese client secrety rolí/API klíč/webhook; Flux substitute kustomizace platform už PG_PASSWORD nenese; HelmRelease external-secrets Ready", "PASS" if ready(css) == "True" and set(want) <= set(ess) and all(ready(ess[n]) == "True" for n in want) and all(owned.values()) and kv_ok and set(zs) >= {"P0_ROLE_CLIENT_SECRETS", "P0_API_KEY", "BRIDGE_WEBHOOK_SECRET", "P0_ROLE_KEYS"} and "PG_PASSWORD" not in ks.get("platform", {}).get("substitute", []) and hr.get("external-secrets/external-secrets", {}).get("ready") == "True" else "FAIL", {"store_ready": ready(css), "store_message": next((c.get("message") for c in (css.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), None), "externalsecrets": {n: ready(ess[n]) if n in ess else None for n in want}, "owned_by_eso": owned, "keyvault": {"name": kv_name, "git_token_match": bool(kv_tok) and kv_tok == tok, "pg_match": bool(kv_pg) and kv_pg == pg, "pg_in_dsn": bool(pg) and f":{pg}@postgres" in agw_url, "pg_in_dapr": bool(pg) and f"password={pg} " in dapr}, "zakazka_secrets_keys": sorted(zs), "flux": ks, "helm": hr.get("external-secrets/external-secrets")})
+    kv_ok = bool(kv_tok) and kv_tok == tok and bool(kv_pg) and kv_pg == pg and pg and f":{pg}@" in agw_url and f"password={pg} " in dapr
+    rep.add("E1b", "Tajemství z Key Vaultu přes ESO (ClusterSecretStore azure-kv, Workload Identity UAMI id-eso + federated credential SA external-secrets/eso-keyvault, role Key Vault Secrets User): ExternalSecrety Ready/SecretSynced, Secrety vlastní ExternalSecret (ownerReference), hodnoty == Key Vault (git token, heslo PG i v DSN gateway/FinOps/Dapr), zakazka-secrets nese client secrety rolí/API klíč/webhook; Flux substitute kustomizace platform už PG_PASSWORD nenese; HelmRelease external-secrets Ready", "PASS" if ready(css) == "True" and set(want) <= set(ess) and all(ready(ess[n]) == "True" for n in want) and all(owned.values()) and kv_ok and set(zs) >= {"P0_ROLE_CLIENT_SECRETS", "P0_API_KEY", "BRIDGE_WEBHOOK_SECRET", "P0_ROLE_KEYS"} and "PG_PASSWORD" not in ks.get("platform", {}).get("substitute", []) and hr.get("external-secrets/external-secrets", {}).get("ready") == "True" else "FAIL", {"store_ready": ready(css), "store_message": next((c.get("message") for c in (css.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), None), "externalsecrets": {n: ready(ess[n]) if n in ess else None for n in want}, "owned_by_eso": owned, "keyvault": {"name": kv_name, "git_token_match": bool(kv_tok) and kv_tok == tok, "pg_match": bool(kv_pg) and kv_pg == pg, "pg_in_dsn": bool(pg) and f":{pg}@" in agw_url, "pg_in_dapr": bool(pg) and f"password={pg} " in dapr}, "zakazka_secrets_keys": sorted(zs), "flux": ks, "helm": hr.get("external-secrets/external-secrets")})
     # E1c – harness nic nevydává: žádný Secret platformy se stopou kubectl kromě openbao-init (bootstrap OpenBao – zbývá PushSecret do Key Vaultu)
     by_kubectl = sorted(s_["metadata"]["name"] for s_ in kj("-n", NS, "get", "secrets").get("items", []) if any(m.get("manager", "").startswith("kubectl") for m in s_["metadata"].get("managedFields", [])))
     rep.add("E1c", "Harness nic nevydává: žádný Secret v platform-data se stopou kubectl (managedFields) – od E8 ani openbao-init (bootstrap OpenBao je v Key Vaultu), ensure_platform_secrets nic nezaložil (jen čekal na operátory), Flux kustomizace operators → trust → platform v závislostech", "PASS" if not by_kubectl and pre.get("created") == [] and ks.get("trust", {}).get("dependsOn") == ["operators"] and ks.get("platform", {}).get("dependsOn") == ["trust"] else "FAIL", {"secrets_by_kubectl": by_kubectl, "created_by_harness": pre.get("created"), "waited_s": pre.get("wait_s"), "flux_depends": {k: v.get("dependsOn") for k, v in ks.items()}})
