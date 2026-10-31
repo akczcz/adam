@@ -24,6 +24,7 @@ label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 2px;
 .badge.done { background: #dafbe1; color: var(--ok); }
 .badge.error, .badge.blocked { background: #ffebe9; color: var(--err); }
 .badge.waiting { background: #fff8c5; color: var(--warn); }
+.badge.stalled { background: #ffd8b5; color: #953800; }   /* P3-6 E13: instance bez verze orchestrátoru v nasazené aplikaci */
 .timeline { display: grid; gap: 8px; }
 .ev { border-left: 3px solid var(--line); padding: 4px 10px; font-size: 13px; }
 .ev.msg { border-left-color: var(--accent); white-space: pre-wrap; background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 10px 12px; }

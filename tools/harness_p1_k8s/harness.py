@@ -1724,6 +1724,93 @@ def e7_rotation(a, rep, kj, http, APP):
     finally: pf_b.stop(); pf_k.stop()
 
 
+def e13_flow(a, rep, http, led, APP, kj, tag, shots):
+    """E13 (P3-6): zaseknutá zakázka – instance workflow, jejíž verze orchestrátoru v nasazené aplikaci chybí (smazaný snímek, obraz bez něj), je
+    v Dapru 1.17+ STALLED (reason VERSION_NAME_MISMATCH), ne FAILED (durable-execution.md: neměřeno; GUI do E12 znalo jen Running/Pozastaveno/FAILED).
+    Důkaz: zakázka na starší (ne-latest) verzi čeká na klasifikaci → POST /_wf/unregister té verze (simulace obrazu bez snímku) → event klasifikace
+    → instance STALLED (ne FAILED, bez failure), report verzí hlásí missing/stalled; GUI: badge „zaseknuto“ v seznamu, detail s kartou a verzí, karta
+    verzí ve Firmě (platform); obnova: POST /_wf/register (snímek zpět = nasazení) → instance pokračuje (sama / po restartu podu – E13c zaznamená jak;
+    nový event se neposílá: ten z doby zaseknutí se nesmí ztratit) → COMPLETED/Odmitnuto na své verzi."""
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui
+    t_e = time.time(); z = f"{tag}-e13"
+    def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
+    def status(z_):
+        r = http("GET", f"{APP}/zakazky/{z_}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+    def versions(): return http("GET", f"{APP}/_wf/versions", timeout=30).json()
+    def wait_status(z_, want, timeout):
+        t0 = time.time(); s = {}
+        while time.time() - t0 < timeout:
+            s = status(z_)
+            if s.get("status") in want: break
+            time.sleep(3)
+        return s, round(time.time() - t0, 1)
+    def wait_kind(z_, kind, timeout=120):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            e = next((e for e in led() if K(e) == kind and e.get("zakazka") == z_), None)
+            if e: return e
+            time.sleep(2)
+    v0 = versions(); cur = v0.get("current"); old = next((v for v in sorted((v0.get("registered") or {}).get("versions") or []) if v != cur), None)
+    sw1 = http("POST", f"{APP}/_wf/latest", json={"version": old, "by": "harness", "reason": "E13: zakázka na starší verzi orchestrátoru"}, timeout=15).json() if old else {}
+    http("POST", f"{APP}/zakazky", json={"id": z, "poptavka": f"Zakázka {z} bez dotazníku (E13: založena na verzi {old}, která bude odebrána).", "tenant": "acme", "hitl_timeout_s": 1800}, timeout=15)
+    w0 = wait_kind(z, "KLASIFIKACE_WAIT") or {}
+    sw2 = http("POST", f"{APP}/_wf/latest", json={"version": cur, "by": "harness", "reason": "E13: zpět na latest"}, timeout=15).json()
+    st0 = status(z)
+    # odebrání verze (simulace obrazu bez snímku) → event → instance musí přehrát historii → resolver verzi nenajde → STALLED
+    r_un = http("POST", f"{APP}/_wf/unregister", json={"version": old, "by": "harness", "reason": "E13a: simulace obrazu bez snímku verze"}, timeout=15); un = r_un.json() if r_un.status_code == 200 else {"http": r_un.status_code, "detail": r_un.text[:200]}
+    v_un = versions()
+    t_ev = time.time(); http("POST", f"{APP}/zakazky/{z}/classify", json={"answers": {"K1": True}, "by": "harness", "reason": "E13a: čl. 5 → Odmitnuto bez role (event do zaseknuté instance)"}, timeout=15)
+    st1, t_st = wait_status(z, ("STALLED", "FAILED", "COMPLETED"), 180)
+    time.sleep(5); v_mid = versions(); vo = (v_mid.get("versions") or {}).get(old) or {}
+    ok_a = bool(old) and sw1.get("latest") == old and w0.get("wf_version") == old and st0.get("status") == "RUNNING" and r_un.status_code == 200 and old not in ((v_un.get("registered") or {}).get("versions") or []) and st1.get("status") == "STALLED" and not st1.get("failure") and st1.get("wf_version") == old and vo.get("registered") is False and z in (vo.get("stalled") or []) and vo.get("missing") is True and old in (v_mid.get("missing") or []) and z in (v_mid.get("stalled") or [])
+    rep.add("E13a", "Chybějící verze orchestrátoru = STALLED, ne FAILED (Dapr 1.17+ named versioning, reason VERSION_NAME_MISMATCH): zakázka založená na starší verzi čeká na klasifikaci; verze odebrána za běhu (POST /_wf/unregister = obraz bez snímku wf_versions/), event klasifikace → instance STALLED bez failure, wf_version zůstává; GET /_wf/versions hlásí verzi registered=false, missing (živé instance bez verze) a seznam stalled", "PASS" if ok_a else "FAIL", {"versions": {"current": cur, "old": old, "registered_after_unregister": (v_un.get("registered") or {}).get("versions")}, "switch": [sw1, sw2], "before": {"status": st0.get("status"), "wf_version": st0.get("wf_version")}, "unregister": un, "after_event": {"status": st1.get("status"), "wf_version": st1.get("wf_version"), "failure": st1.get("failure"), "s": t_st}, "report": {"old": vo, "stalled": v_mid.get("stalled"), "missing": v_mid.get("missing")}})
+    # GUI: seznam (badge), detail (run stalled + karta), Firma (karta verzí – tenant platform)
+    gui = {}; g = None
+    try:
+        g = Gui(f"{APP}/gui/", shots=shots / "e13").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
+        g.login("adam", "adam"); gui["row"] = g.thread_status(z); gui["detail"] = g.stalled_view(z)
+        g.page.evaluate("sessionStorage.clear()"); g.page.reload(); g.t("login-user").wait_for(); g.login("platform-admin", "platform-admin"); gui["firma"] = g.wf_versions_card()
+        gui["console"] = g.log[-10:]
+    except Exception as e: gui["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    row, det, fm = gui.get("row") or {}, gui.get("detail") or {}, gui.get("firma") or {}
+    ok_b = row.get("found") and row.get("status") == "STALLED" and "zaseknuto" in (row.get("stav") or "") and "stalled" in (row.get("class") or "") and det.get("run_status") == "stalled" and det.get("notice") and det.get("notice_wf_version") == old and old in (det.get("notice") or "") and det.get("state_wf_version") == old and "zaseknuto" in ((det.get("state") or {}).get("stav") or "") and not det.get("error") and fm.get("stalled", 0) >= 1 and old in (fm.get("missing") or []) and (fm.get("rows") or {}).get(old, {}).get("registered") is False and (fm.get("rows") or {}).get(old, {}).get("stalled", 0) >= 1 and not fm.get("error")
+    rep.add("E13b", "STALLED v GUI: seznam zakázek ukazuje badge „zaseknuto – chybí verze orchestrátoru“ (status STALLED), detail zakázky končí run stavem `stalled` s kartou (verze orchestrátoru instance + nápověda: nasadit obraz se snímkem, nic se neztratilo) a verzí ve stavu; Firma (tenant platform) má kartu verzí orchestrátoru: počet zaseknutých, chybějící verze, řádek verze registered=ne se zaseknutou zakázkou (odkaz)", "PASS" if ok_b else "FAIL", gui)
+    # obnova: snímek zpět (= nasazení obrazu se snímkem) → instance musí pokračovat BEZ nového eventu; eskalace: sama → restart podu → (nový event = ztráta eventu, FAIL)
+    r_re = http("POST", f"{APP}/_wf/register", json={"version": old, "by": "harness", "reason": "E13c: nasazení verze zpět"}, timeout=15); re_ = r_re.json() if r_re.status_code == 200 else {"http": r_re.status_code, "detail": r_re.text[:200]}
+    t_r = time.time(); st2, t_auto = wait_status(z, ("RUNNING", "COMPLETED", "FAILED"), 120); recovered_by = "register" if st2.get("status") != "STALLED" else None
+    restart = None
+    if not recovered_by:
+        restart_pods(a, "zakazka"); time.sleep(5)
+        roll = kubectl(a, "-n", NS, "rollout", "status", "deployment/zakazka", "--timeout=420s", timeout=440).returncode == 0
+        kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=zakazka", "--timeout=300s", timeout=320)
+        health = None
+        for _ in range(30):
+            try: health = http("GET", f"{APP}/health", timeout=10).status_code
+            except Exception: health = None
+            if health == 200: break
+            time.sleep(5)
+        st2, t_rs = wait_status(z, ("RUNNING", "COMPLETED", "FAILED"), 180); restart = {"rollout": roll, "health": health, "s": t_rs}
+        recovered_by = "restart" if st2.get("status") != "STALLED" else None
+    event_again = None
+    if not recovered_by:   # event z doby zaseknutí se ztratil → poslat znovu (zaznamenat; E13c FAIL – „nic se neztratilo“ neplatí)
+        http("POST", f"{APP}/zakazky/{z}/classify", json={"answers": {"K1": True}, "by": "harness", "reason": "E13c: event znovu (po obnově verze instance nepokračovala)"}, timeout=15)
+        st2, t_ev2 = wait_status(z, ("RUNNING", "COMPLETED", "FAILED"), 120); event_again = {"s": t_ev2, "status": st2.get("status")}
+    fin, t_fin = wait_status(z, ("COMPLETED", "FAILED", "TERMINATED"), 240)
+    L = led(); done = next((e for e in L if e.get("zakazka") == z and K(e) == "KLASIFIKACE_DONE"), None)
+    ev = [(K(e), e.get("wf_version"), round(e["ts"] - t_ev, 1)) for e in L if e.get("zakazka") == z and K(e) in ("ZAKAZKA_START", "WORKFLOW_VERSION", "KLASIFIKACE_WAIT", "KLASIFIKACE_RAISED", "KLASIFIKACE", "KLASIFIKACE_DONE", "REGISTRY_ZAKAZKA")]
+    gui2 = {}
+    try:
+        if g:
+            g.page.evaluate("sessionStorage.clear()"); g.page.reload(); g.t("login-user").wait_for(); g.login("adam", "adam"); gui2["row"] = g.thread_status(z)
+            g.open_thread(z); gui2["detail"] = {**g.wait_run_status(("finished", "cancelled", "stalled"), 60), **{k: v for k, v in g.snapshot().items() if k in ("state", "error")}}
+    except Exception as e: gui2["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    finally:
+        if g: g.close()
+    v_end = versions(); vo2 = (v_end.get("versions") or {}).get(old) or {}
+    ok_c = r_re.status_code == 200 and recovered_by in ("register", "restart") and fin.get("status") == "COMPLETED" and (fin.get("output") or {}).get("stav") == "Odmitnuto" and fin.get("wf_version") == old and done and done.get("wf_version") == old and done["ts"] > t_r and vo2.get("registered") is True and not vo2.get("stalled") and (gui2.get("row") or {}).get("status") == "COMPLETED" and not gui2.get("error")
+    rep.add("E13c", "Obnova zaseknuté zakázky bez ztráty eventu: verze zpět (POST /_wf/register ze snímku = nasazení obrazu) → instance pokračuje bez nového eventu (sama, nebo po restartu podu aplikace – `recovered_by`), klasifikace z doby zaseknutí se zpracuje → COMPLETED/Odmitnuto na své (starší) verzi, KLASIFIKACE_DONE s touto verzí až po obnově; report verzí bez stalled; GUI: seznam ukazuje dokončenou zakázku", "PASS" if ok_c else "FAIL", {"register": re_, "recovered_by": recovered_by, "auto_s": t_auto, "restart": restart, "event_again": event_again, "final": {"status": fin.get("status"), "stav": (fin.get("output") or {}).get("stav"), "wf_version": fin.get("wf_version"), "failure": fin.get("failure"), "s": t_fin}, "events": ev, "report_old": vo2, "gui": gui2, "wall_s": round(time.time() - t_e, 1)})
+
+
 def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep, pg_tls, since_iso):
     """E11 (P3-6): TLS zbytku datové vrstvy uvnitř clusteru – ClickHouse (https 8443, native 9440) a OTEL Collector (OTLP gRPC/HTTP s TLS) z interní CA,
     plaintext porty pryč; Postgres Flexible Server s sslmode=verify-full (host = FQDN, rooty Azure v bundle platform-ca) u všech klientů."""
@@ -1984,7 +2071,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -2290,6 +2377,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if e3: e3_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E3: strop v gateway + navýšení z GUI
         if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E4: per-request ledger → ClickHouse
         if e6: e6_flow(a, rep, http, led, APP, kj, zid[:-2])   # P3-6 E6: verzování workflow (restart podu aplikace – až po všech tocích s pody rolí)
+        if e13: e13_flow(a, rep, http, led, APP, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E13: STALLED (chybějící verze) v GUI a obnova – po E6 (stejné podmínky: bez podů rolí)
         if e11: e11b_check(a, rep, ca_file, t_bao0)   # P3-6 E11b: spany gateway i paměti přes TLS – až po LLM provozu rolí
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
@@ -2524,7 +2612,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

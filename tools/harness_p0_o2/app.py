@@ -792,7 +792,7 @@ def registry_sync(zid, tenant, status, later_s=0):
         import threading; threading.Timer(float(d), registry_sync, args=(zid, tenant, None)).start()
     if status is None:   # opožděný zápis: stav podle workflow v okamžiku zápisu (zakázka mohla být mezitím obnovena nebo dokončena)
         st = _wf_state(zid) or {}; out = st.get("output") or {}
-        status = {"SUSPENDED": "Pozastaveno", "RUNNING": "Running"}.get(st.get("status")) or out.get("stav") or st.get("status") or "Running"
+        status = {"SUSPENDED": "Pozastaveno", "RUNNING": "Running", "STALLED": "Zaseknuto"}.get(st.get("status")) or out.get("stav") or st.get("status") or "Running"   # STALLED: P3-6 E13 (chybí verze orchestrátoru)
     try:
         fin, hashes = zakazka_spend(zid)
         ok = finops.registry_upsert(zid, tenant=tenant, budget_usd=current_budget(zid), spent=fin, status=status, keys_source=None, key_hashes=hashes)
@@ -913,6 +913,29 @@ async def wf_latest_set(req: Request):
     return r
 
 
+@app.post("/_wf/unregister")
+async def wf_unregister(req: Request):
+    """P3-6 E13: odebrání ne-latest verze orchestrátoru za běhu (simulace obrazu bez snímku) – instance této verze při dalším work itemu STALLED.
+    Interní API pro měření (jako /_wf/latest); v provozu verze mizí smazáním snímku a novým obrazem."""
+    b = await req.json()
+    try: r = wf_versions.unregister(rt, b["version"])
+    except KeyError as e: raise HTTPException(404, str(e))
+    except ValueError as e: raise HTTPException(409, str(e))
+    ledger("WF_UNREGISTER", by=b.get("by"), reason=b.get("reason"), **r)
+    return r
+
+
+@app.post("/_wf/register")
+async def wf_register(req: Request):
+    """P3-6 E13: (znovu)registrace verze ze snímku za běhu (simulace nasazení obrazu se snímkem) – obnova STALLED instancí (E13c měří jak)."""
+    b = await req.json()
+    try: r = wf_versions.register_version(rt, b["version"])
+    except KeyError as e: raise HTTPException(404, str(e))
+    except ValueError as e: raise HTTPException(409, str(e))
+    ledger("WF_REGISTER", by=b.get("by"), reason=b.get("reason"), **r)
+    return r
+
+
 @app.post("/zakazky/{zid}/approve/{bod}")
 async def approve(zid: str, bod: str, req: Request):
     b = await req.json()  # {by, by_kind, artifact_hash, action?, exp_s?, reason?}
@@ -1022,6 +1045,7 @@ def _wf_state(zid):
 
 agui.CTX.update({
     "ledger": ledger, "read_ledger": _ledger, "wf_state": _wf_state, "root_dir": "/tmp/p0-o2",
+    "wf_versions": lambda: {**wf_versions.report(rt, [e for e in _ledger() if e.get("kind") == "ZAKAZKA_START"], _wf_state), "registered": WF},   # P3-6 E13: karta verzí ve Firmě (tenant platform)
     "disclosure": lambda role, channel: _disclosure(role, channel),
     "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s", "klasifikace", "sla", "contact") if k in fp}}, by=u["name"], channel="agui", by_sub=u["sub"], subject=subject_of(u)),
     "classify": lambda zid, u, answers, reason: classify_zakazka(zid, by=u["name"], answers=answers, reason=reason, channel="agui", sub=u["sub"]),

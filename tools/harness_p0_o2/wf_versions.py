@@ -123,21 +123,48 @@ def set_latest(rt, version: str) -> dict:
     return {"name": NAME, "latest": version, "previous": prev}
 
 
+def unregister(rt, version: str) -> dict:
+    """P3-6 E13: odebrání registrované (ne-latest) verze za běhu = simulace obrazu bez snímku `wf_versions/zakazka_<verze>.py` (resolver SDK pak
+    při dalším work itemu instance této verze vyhodí VersionNotRegisteredException → akce `version_not_available` → Dapr instanci označí STALLED,
+    ne FAILED). Jen pro měření/ladění; v provozu verze mizí smazáním snímku a novým obrazem."""
+    reg = _registry(rt); have = reg.versioned_orchestrators.get(NAME, {})
+    if version not in have: raise KeyError(f"verze {version} není registrovaná (k dispozici: {sorted(have)})")
+    if version == reg.latest_versioned_orchestrators_version_name.get(NAME): raise ValueError(f"verze {version} je latest – nové instance by neměly kam jít")
+    del have[version]
+    return {"name": NAME, "unregistered": version, "versions": sorted(have)}
+
+
+def register_version(rt, version: str) -> dict:
+    """P3-6 E13: (znovu)registrace verze ze snímku za běhu = simulace nasazení obrazu, který snímek nese (bez restartu podu – zda se STALLED instance
+    obnoví sama, po restartu podu, nebo až po dalším eventu, měří harness E13c)."""
+    reg = _registry(rt); have = reg.versioned_orchestrators.get(NAME, {})
+    if version in have: raise ValueError(f"verze {version} už je registrovaná")
+    s = snapshots().get(version)
+    if not s or not s["ok"]: raise KeyError(f"verze {version} nemá platný snímek v {SNAP_DIR.name}/ (k dispozici: {sorted(snapshots())})")
+    mod = sys.modules.get(f"wf_versions.zakazka_{version}") or _load(Path(s["path"]), f"wf_versions.zakazka_{version}")
+    rt.register_versioned_workflow(_wrap(mod.zakazka), name=NAME, version_name=version, is_latest=False)
+    return {"name": NAME, "registered": version, "versions": sorted(reg.versioned_orchestrators.get(NAME, {}))}
+
+
 def report(rt, starts: list, state_of) -> dict:
     """Instance per verze: starts = záznamy ZAKAZKA_START ledgeru (zakazka, wf_version), state_of(zid) → {"status"} nebo None.
     `drained` = žádná ne-terminální instance verze → snímek lze smazat. `legacy` = instance založené před verzováním (bez wf_version; Dapr je
-    přehrává na latest – kompatibilní jen pokud se pořadí úloh nezměnilo)."""
+    přehrává na latest – kompatibilní jen pokud se pořadí úloh nezměnilo). P3-6 E13: `stalled` = instance ve stavu STALLED (Dapr: verze
+    orchestrátoru není v běžící aplikaci – `missing` = verze neregistrovaná a má živé instance → nasadit obraz se snímkem)."""
     reg = _registry(rt); have = sorted(reg.versioned_orchestrators.get(NAME, {}))
-    per = {v: {"registered": True, "instances": {}, "drained": True} for v in have}; legacy = {"instances": {}, "drained": True}
+    per = {v: {"registered": True, "instances": {}, "drained": True, "stalled": [], "missing": False} for v in have}; legacy = {"instances": {}, "drained": True, "stalled": []}
     for e in starts:
         zid, v = e.get("zakazka"), e.get("wf_version")
         so = state_of(zid) or {}; st = so.get("status") or "UNKNOWN"
-        slot = per.setdefault(v, {"registered": False, "instances": {}, "drained": True}) if v else legacy
+        slot = per.setdefault(v, {"registered": False, "instances": {}, "drained": True, "stalled": [], "missing": False}) if v else legacy
         slot["instances"][st] = slot["instances"].get(st, 0) + 1
         if st in NON_TERMINAL or st == "UNKNOWN": slot["drained"] = False
+        if st == "STALLED": slot["stalled"].append(zid)
         if st == "FAILED" and so.get("failure") and len(slot.setdefault("failures", [])) < 3:   # proč (Dapr failureDetails) – vzorek pro diagnostiku replaye
             slot["failures"].append({"zakazka": zid, "type": so["failure"].get("type"), "message": (so["failure"].get("message") or "")[:240]})
-    return {"name": NAME, "current": current_version(), "latest": latest(rt), "versions": per, "legacy": legacy, "snapshots": {k: s["ok"] for k, s in snapshots().items()}}
+    for v, slot in per.items(): slot["missing"] = not slot["registered"] and not slot["drained"]
+    return {"name": NAME, "current": current_version(), "latest": latest(rt), "versions": per, "legacy": legacy, "snapshots": {k: s["ok"] for k, s in snapshots().items()},
+            "stalled": sorted(z for slot in list(per.values()) + [legacy] for z in slot["stalled"]), "missing": sorted(v for v, slot in per.items() if slot["missing"])}
 
 
 if __name__ == "__main__":

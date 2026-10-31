@@ -107,7 +107,7 @@ function Threads() {
               <tr key={t.id} data-testid={`thread-row-${t.id}`} data-tenant={t.tenant}>
                 <td><a href={`#/t/${encodeURIComponent(t.id)}`}>{t.id}</a></td>
                 <td><span className="badge" data-testid="thread-tenant">{t.tenant}</span></td>
-                <td><span className={`badge ${t.status === "RUNNING" ? (t.bod ? "waiting" : "running") : t.status === "COMPLETED" ? "done" : t.status === "SUSPENDED" ? "error" : ""}`}>{t.stav ?? t.status ?? "?"}</span></td>
+                <td><span className={`badge ${t.status === "RUNNING" ? (t.bod ? "waiting" : "running") : t.status === "COMPLETED" ? "done" : t.status === "SUSPENDED" ? "error" : t.status === "STALLED" ? "stalled" : ""}`} data-testid="thread-stav" data-status={t.status ?? ""}>{t.stav ?? t.status ?? "?"}</span></td>
                 <td>{t.bod ?? ""}</td>
                 <td>{Object.entries(t.roles).map(([r, s]) => <span key={r} className={`badge ${s}`} style={{ marginRight: 4 }}>{r}</span>)}</td>
                 <td>{t.budget_usd ?? ""}</td><td>{t.spent_usd != null ? t.spent_usd.toFixed(4) : ""}</td>
@@ -146,7 +146,7 @@ function Thread({ id, user }: { id: string; user: User }) {
       case EventType.RUN_FINISHED: {
         const o = e.outcome ?? {};
         if (o.type === "interrupt") { setInterrupt(o.interrupts?.[0] ?? null); setRunStatus("interrupt"); }
-        else setRunStatus(o.type === "cancelled" ? "cancelled" : "finished");
+        else setRunStatus(o.type === "cancelled" ? "cancelled" : e.result?.status === "STALLED" ? "stalled" : "finished");   // P3-6 E13: instance bez verze orchestrátoru – run je pohled, stav sledujeme dotazem
         if (e.result) setState(e.result);
         break;
       }
@@ -183,10 +183,12 @@ function Thread({ id, user }: { id: string; user: User }) {
   }, [id]);
 
   // P3-4: run končí interruptem; než člověk rozhodne, GUI každých 5 s čte stav threadu (SLA překročení, profil) – zdroj je stále ledger
+  // P3-6 E13: zaseknutá zakázka (STALLED) – GUI čte stav každých 5 s; jakmile instance po nasazení verze pokračuje, otevře nový run-pohled
   useEffect(() => {
-    if (runStatus !== "interrupt") return;
-    const t = setInterval(() => threadState(id).then(setState).catch(() => undefined), 5000);
+    if (runStatus !== "interrupt" && runStatus !== "stalled") return;
+    const t = setInterval(() => threadState(id).then((s) => { setState(s); if (runStatus === "stalled" && s.status !== "STALLED") start(); }).catch(() => undefined), 5000);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runStatus, id]);
 
   const decide = (decision: "approve" | "reject") => {
@@ -221,7 +223,7 @@ function Thread({ id, user }: { id: string; user: User }) {
       <div className="card">
         <div className="row">
           <h2 style={{ margin: 0 }}>Zakázka <code>{id}</code></h2>
-          <span className={`badge ${runStatus === "running" ? "running" : runStatus === "interrupt" ? "waiting" : runStatus === "error" || runStatus === "cancelled" ? "error" : "done"}`} data-testid="run-status">{runStatus}</span>
+          <span className={`badge ${runStatus === "running" ? "running" : runStatus === "interrupt" ? "waiting" : runStatus === "stalled" ? "stalled" : runStatus === "error" || runStatus === "cancelled" ? "error" : "done"}`} data-testid="run-status">{runStatus}</span>
           <span className="muted">AG-UI <span data-testid="run-protocol">{proto ?? "?"}</span> · run <code data-testid="run-id">{runId?.slice(0, 8) ?? "-"}</code></span>
           <span className="spacer" />
           {state?.status === "RUNNING" && !stopOpen && <button className="danger" onClick={() => setStopOpen(true)} data-testid="stop-button">Stop zakázky</button>}
@@ -246,7 +248,12 @@ function Thread({ id, user }: { id: string; user: User }) {
             {!!state.sla_breaches?.length && <span className="err" data-testid="state-sla">SLA překročeno: {state.sla_breaches.join(", ")}</span>}
             <span>rozpočet <code data-testid="state-budget">{state.budget_usd ?? "?"}</code> USD</span>
             <span>útrata <code data-testid="state-spent">{state.spent_usd != null ? state.spent_usd.toFixed(4) : "-"}</code> USD</span>
+            {state.wf_version && <span className="muted">orchestrátor <code data-testid="state-wf-version">{state.wf_version}</code></span>}
             <span className="muted">tenant {state.tenant}</span>
+          </div>)}
+        {state?.stalled && (
+          <div className="card interrupt" style={{ marginTop: 10 }} data-testid="stalled-notice" data-wf-version={state.stalled.wf_version ?? ""}>
+            <b>Zakázka je zaseknutá (STALLED)</b> – {state.stalled.hint} Rozhodnutí ani artefakty se neztrácejí; po nasazení verze zakázka pokračuje sama a tento pohled se obnoví.
           </div>)}
         <div className="roles" style={{ marginTop: 10 }} data-testid="subagents">
           {subs.map((s) => (

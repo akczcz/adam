@@ -1,6 +1,6 @@
 // GUI nad celou firmou (P3-3): pohledy z Governance MCP (org.* přes org_reader, RLS per tenant) a akce (posun autonomie, stop tenanta, export).
 import { useEffect, useState } from "react";
-import { govExport, govPost, govTool, type User } from "./api";
+import { govExport, govGet, govPost, govTool, type User } from "./api";
 
 type Row = Record<string, any>;
 
@@ -78,7 +78,40 @@ export function FirmaPage({ user }: { user: User }) {
         </div>
         {stopRes && <div className="ev stop" style={{ marginTop: 8 }} data-testid="tstop-result" data-ok={String(!!stopRes.ok)} data-seq={stopSeq}>{stopRes.ok ? <span className="ok">{stopRes.action}: zakázky {JSON.stringify(stopRes.paused ?? stopRes.resumed)} · pody {JSON.stringify(stopRes.pods_killed ?? [])} · klíče {String(stopRes.keys_blocked ?? stopRes.keys_unblocked)}</span> : <span className="err">chyba ({stopRes.http}): {stopRes.detail}</span>}</div>}
       </div>
+      {user.tenant === "platform" && <WfVersions />}
     </>
+  );
+}
+
+// P3-6 E13: verze orchestrátoru v běžící aplikaci a instance per verze (provoz, jen tenant platform). Verze bez registrace s živými instancemi =
+// zaseknuté zakázky (Dapr STALLED) → nasadit obraz se snímkem wf_versions/zakazka_<verze>.py; `drained` = snímek verze lze smazat.
+function WfVersions() {
+  const [data, setData] = useState<Row | null>(null); const [err, setErr] = useState<string | null>(null); const [tick, setTick] = useState(0);
+  useEffect(() => { let live = true; govGet("wf/versions").then((r) => { if (live) { setData(r); setErr(null); } }).catch((e) => live && setErr(String(e.message ?? e))); const t = setInterval(() => setTick((x) => x + 1), 15000); return () => { live = false; clearInterval(t); }; }, [tick]);
+  const rows = data ? Object.entries(data.versions ?? {}).map(([v, s]: [string, any]) => ({ version: v, ...s })) : [];
+  return (
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>Verze orchestrátoru zakázky (Dapr named versioning) – instance per verze</h3>
+      {err && <p className="err">{err}</p>}
+      {data && (<>
+        <p className="muted" data-testid="wf-summary" data-stalled={(data.stalled ?? []).length} data-missing={(data.missing ?? []).join(",")}>
+          latest <code>{data.latest}</code> · obraz <code>{data.current}</code> · zaseknuté zakázky <b data-testid="wf-stalled-count">{(data.stalled ?? []).length}</b>
+          {!!(data.missing ?? []).length && <span className="err" data-testid="wf-missing"> · chybí verze {(data.missing ?? []).join(", ")} → nasadit obraz se snímkem wf_versions/zakazka_&lt;verze&gt;.py</span>}
+        </p>
+        <table data-testid="wf-versions" data-rows={rows.length}>
+          <thead><tr><th>Verze</th><th>Registrovaná</th><th>Instance (stav: počet)</th><th>Zaseknuté</th><th>Drained (snímek lze smazat)</th></tr></thead>
+          <tbody>{rows.map((r) => (
+            <tr key={r.version} data-testid={`wf-version-${r.version}`} data-registered={String(!!r.registered)} data-stalled={(r.stalled ?? []).length} data-missing={String(!!r.missing)}>
+              <td><code>{r.version}</code>{r.version === data.latest && <span className="badge done" style={{ marginLeft: 6 }}>latest</span>}</td>
+              <td><span className={`badge ${r.registered ? "done" : "error"}`}>{r.registered ? "ano" : "ne"}</span></td>
+              <td>{Object.entries(r.instances ?? {}).map(([st, n]) => <span key={st} className={`badge ${st === "STALLED" ? "stalled" : st === "FAILED" ? "error" : st === "COMPLETED" ? "done" : ""}`} style={{ marginRight: 4 }}>{st}: {String(n)}</span>)}</td>
+              <td>{(r.stalled ?? []).map((z: string) => <a key={z} href={`#/t/${encodeURIComponent(z)}`} style={{ marginRight: 6 }}>{z}</a>)}{r.missing && <span className="err">chybí verze – zakázky čekají na nasazení</span>}</td>
+              <td>{r.drained ? "ano" : "ne"}</td>
+            </tr>))}</tbody>
+        </table>
+        {!!Object.keys(data.legacy?.instances ?? {}).length && <p className="muted">instance před verzováním (jedou na latest): {JSON.stringify(data.legacy.instances)}</p>}
+      </>)}
+    </div>
   );
 }
 
