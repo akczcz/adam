@@ -1,5 +1,6 @@
 # Azure Database for PostgreSQL Flexible Server – jedna instance, databáze memory/dapr_state/org/agentgateway/keycloak, extension vector.
-# Dev: veřejný endpoint + pravidlo „Allow Azure services“ (AKS egress); cíl = VNet integrace / private endpoint (P2).
+# P3-6 E12: jen privátní síť – private endpoint ve VNet platformy (network.tf), veřejný přístup vypnutý, žádné firewall pravidlo
+# (do E11 dev běžel přes veřejný endpoint + „Allow Azure services“ = dosažitelný heslem z celého Azure).
 resource "random_password" "pg" {
   length  = 28
   special = false
@@ -16,7 +17,7 @@ resource "azurerm_postgresql_flexible_server" "pg" {
   administrator_password = random_password.pg.result
   # zónu nepinujeme: Sweden Central 2026-10-24 vrátil RegionalAllocationFailed pro B1ms v zóně 1; Azure si zónu vybere
   backup_retention_days         = 7
-  public_network_access_enabled = true
+  public_network_access_enabled = false # P3-6 E12: přístup jen přes private endpoint (network.tf)
   tags                          = var.tags
 
   authentication {
@@ -25,13 +26,6 @@ resource "azurerm_postgresql_flexible_server" "pg" {
 
   # Azure přidělí zónu sám; bez ignore by Terraform chtěl zónu „vrátit“ na null → "zone can only be changed when exchanged with standby" (apply 2026-10-25)
   lifecycle { ignore_changes = [zone] }
-}
-
-resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
-  name             = "AllowAzureServices"
-  server_id        = azurerm_postgresql_flexible_server.pg.id
-  start_ip_address = "0.0.0.0"
-  end_ip_address   = "0.0.0.0"
 }
 
 # pgvector musí být na allow-listu rozšíření, jinak CREATE EXTENSION vector selže

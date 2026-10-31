@@ -72,6 +72,7 @@ resource "azurerm_kubernetes_flux_configuration" "platform" {
         KV_NAME           = azurerm_key_vault.kv.name                        # P2-3: auto-unseal OpenBao
         OPENBAO_CLIENT_ID = azurerm_user_assigned_identity.openbao.client_id # workload identity SA openbao
         AKS_OIDC_ISSUER   = azurerm_kubernetes_cluster.aks.oidc_issuer_url   # P3-6 E2: IdP kubernetes v Keycloaku (projektované SA tokeny podů rolí)
+        PE_SUBNET_CIDR    = var.pe_vnet_cidr                                 # P3-6 E12: egress gateway na private endpoint Flexible Serveru
       }
     }
   }

@@ -17,7 +17,7 @@ flowchart LR
 
 | Vrstva | Kde | Co |
 |---|---|---|
-| bootstrap (1×, ručně) | `infra/bootstrap/azure-oidc.sh` | RG, storage account pro state, user-assigned identita s federovanými credentials pro `repo:akczcz/adam` (`ref:refs/heads/main`, `pull_request`, `environment:dev`), role **Contributor + User Access Administrator jen na RG**, Storage Blob Data Contributor na state; registrace providerů. Vypíše `gh variable set …` |
+| bootstrap (1×, ručně) | `infra/bootstrap/azure-oidc.sh` | RG, storage account pro state, user-assigned identita s federovanými credentials pro `repo:akczcz/adam` (`ref:refs/heads/main`, `pull_request`, `environment:dev`), role **Contributor + User Access Administrator jen na RG**, Storage Blob Data Contributor na state, od P3-6 E12 **Network Contributor na node RG `MC_…`** (peering a DNS link do managed VNet AKS; node RG vzniká s clusterem → skript znovu po jeho vzniku/rekreaci); registrace providerů. Vypíše `gh variable set …` |
 | IaC | `infra/terraform/` (azurerm 5.x) | ACR Basic; AKS Free tier, Azure Linux, Azure CNI overlay + Cilium, OIDC issuer + workload identity, system pool 1× D4as_v5; node pool `kata` D2ads_v7 `KataVmIsolation` autoscale 0–1, taint `sandbox=kata`; Flexible Server B1ms PG 16, DB memory/dapr_state/org/agentgateway/keycloak, `azure.extensions=VECTOR`, firewall Allow Azure services; AcrPull kubeletu; Cluster Admin pro identitu Actions; Flux extension + konfigurace `platform` |
 | pipelines | `.github/workflows/` | `infra` (plan na PR, apply na push do main / ručně; destroy ručně), `images` (ACR import pinovaných oficiálních obrazů + `az acr build` aplikace z `infra/images/app/Dockerfile.aks`), `measure` (stav podů, S1 na Katě, artifact s výsledky), `cluster` (stop/start/status – šetření) |
 | GitOps | Flux (AKS extension `microsoft.flux`) | kustomization `platform` z `infra/k8s/overlays/aks` na větvi `main`, sync 120 s; proměnné dosazuje `post_build.substitute` z Terraformu |
@@ -38,7 +38,7 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 | kind | AKS |
 |---|---|
 | obrazy stavěné lokálně (`infra/images`) | oficiální obrazy přes ACR import; aplikace `Dockerfile.aks` (python:3.12-slim, CLI z npm) |
-| Postgres StatefulSet v clusteru | Flexible Server (ExternalName `postgres`, `sslmode=require`, admin `platform`) – dev: Allow Azure services (jen Azure IP), cíl VNet integrace / private endpoint |
+| Postgres StatefulSet v clusteru | Flexible Server (ExternalName `postgres` → FQDN, `sslmode=verify-full` od E11, admin `platform`) – od P3-6 E12 jen private endpoint ve VNet `vnet-platform-pe` (peering na VNet AKS, privátní DNS zóna), veřejný přístup vypnutý; harness z runneru přes socat pod |
 | NodePorty | žádné – přístup `kubectl port-forward`, později interní LB / AG-UI |
 | runc | role pody na node poolu `kata` (`runtimeClassName: kata-vm-isolation`, toleration `sandbox=kata`) – P1-6 |
 | Dapr placement/scheduler z binárek | totéž (oficiální `daprio/*` obrazy); Dapr Helm chart jako Flux HelmRelease = další krok |
@@ -46,7 +46,8 @@ Claude: `actions_run_trigger` → `actions_get` → `get_job_logs` přes GitHub 
 
 ## Bezpečnostní model
 - OIDC: GitHub vydá krátkodobý token, Entra ho vymění za Azure token jen pro subjekty `repo:akczcz/adam:*` výše; žádný client secret neexistuje.
-- Identita má Contributor + UAA **jen na `rg-platform-dev`** (UAA kvůli role assignments AcrPull / Cluster Admin v Terraformu). Subscription-wide nic.
+- Identita má Contributor + UAA **jen na `rg-platform-dev`** (UAA kvůli role assignments AcrPull / Cluster Admin v Terraformu) a od E12 Network Contributor
+  **jen na node RG clusteru** (peering/DNS link do managed VNet). Subscription-wide nic.
 - `apply` běží v environmentu `dev` → lze vyžadovat ruční schválení; `plan` na PR má jen `pull_request` subjekt (čtení + plan, zápis do state locku).
 - Tf state obsahuje heslo PG → storage account bez veřejného blob přístupu, přístup jen identita Actions + Adam.
 

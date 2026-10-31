@@ -1852,6 +1852,50 @@ def e11b_check(a, rep, ca_file, since_iso):
             "PASS" if e11b else "FAIL", {"spans_since_start": spans, "tls_errors": tls_err, "since": since_iso})
 
 
+def e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw):
+    """E12 (P3-6): Flexible Server jen přes privátní síť – public access Disabled, žádné firewall pravidlo, private endpoint Approved ve VNet platformy,
+    peering na managed VNet AKS, privátní DNS zóna (FQDN serveru → privátní IP i z podů); z runneru GitHub Actions server nedosažitelný (harness přes socat pod)."""
+    import socket, ipaddress
+    rg = os.environ.get("RG", "rg-platform-dev")
+    def az(*args):
+        r = subprocess.run(["az", *args, "-o", "json"], capture_output=True, text=True, timeout=180)
+        try: return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stderr or r.stdout)[-300:]}
+        except Exception as e: return {"error": f"{type(e).__name__}: {r.stdout[:200]}"}
+    pg_name = pg_host.split(".")[0]
+    srv = az("postgres", "flexible-server", "show", "-g", rg, "-n", pg_name, "--query", "{public:network.publicNetworkAccess, delegated:network.delegatedSubnetResourceId, state:state}")
+    fw = az("postgres", "flexible-server", "firewall-rule", "list", "-g", rg, "--server-name", pg_name, "--query", "[].name")
+    pes = az("network", "private-endpoint", "list", "-g", rg, "--query", "[].{name:name, state:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status, target:privateLinkServiceConnections[0].privateLinkServiceId, ip:customDnsConfigs[0].ipAddresses[0], fqdn:customDnsConfigs[0].fqdn, subnet:subnet.id}")
+    pe = next((p for p in (pes if isinstance(pes, list) else []) if str(p.get("target", "")).endswith(f"/flexibleServers/{pg_name}")), {})
+    zones = az("network", "private-dns", "zone", "list", "-g", rg, "--query", "[].{name:name, links:numberOfVirtualNetworkLinks, records:numberOfRecordSets}")
+    zone = next((z for z in (zones if isinstance(zones, list) else []) if z.get("name") == "privatelink.postgres.database.azure.com"), {})
+    recs = az("network", "private-dns", "record-set", "a", "list", "-g", rg, "-z", "privatelink.postgres.database.azure.com", "--query", "[].{name:name, ip:aRecords[0].ipv4Address}") if zone else []
+    rec = next((r_ for r_ in (recs if isinstance(recs, list) else []) if r_.get("name") == pg_name), {})
+    links = az("network", "private-dns", "link", "vnet", "list", "-g", rg, "-z", "privatelink.postgres.database.azure.com", "--query", "[].{name:name, vnet:virtualNetwork.id, state:virtualNetworkLinkState}") if zone else []
+    vnet_pe = az("network", "vnet", "list", "-g", rg, "--query", "[?starts_with(name, 'vnet-platform-pe')].{name:name, space:addressSpace.addressPrefixes, peerings:virtualNetworkPeerings[].{name:name, state:peeringState, sync:peeringSyncLevel}}")
+    vnet_pe = (vnet_pe or [{}])[0] if isinstance(vnet_pe, list) else vnet_pe
+    node_rg = (az("aks", "show", "-g", rg, "-n", os.environ.get("CLUSTER", "aks-platform-dev"), "--query", "nodeResourceGroup") or "")
+    peer_aks = az("network", "vnet", "peering", "list", "-g", node_rg, "--vnet-name", (az("network", "vnet", "list", "-g", node_rg, "--query", "[0].name") or ""), "--query", "[].{name:name, state:peeringState}") if isinstance(node_rg, str) and node_rg else []
+    pe_cidr = ((vnet_pe.get("space") or [""])[0]) if isinstance(vnet_pe, dict) else ""
+    def in_pe(ip):
+        try: return bool(pe_cidr) and ipaddress.ip_address(ip) in ipaddress.ip_network(pe_cidr)
+        except Exception: return False
+    # DNS z podu aplikace + z runneru: FQDN → privátní IP v podu (zóna nalinkovaná na VNet AKS), z runneru veřejná odpověď bez cesty (public Disabled → connect selže)
+    code = f"import socket\ntry: print('pod', sorted({{ai[4][0] for ai in socket.getaddrinfo('{pg_host}', 5432)}}))\nexcept Exception as e: print('pod ERR', type(e).__name__)\n"
+    pod_dns = kubectl(a, "-n", NS, "exec", "deploy/zakazka", "-c", "app", "--", "python", "-c", code, timeout=60).stdout.strip()
+    pod_ips = re.findall(r"'([0-9.]+)'", pod_dns)
+    try: runner_ips = sorted({ai[4][0] for ai in socket.getaddrinfo(pg_host, 5432)})
+    except Exception as e: runner_ips = [f"ERR {type(e).__name__}"]
+    try:
+        so = socket.create_connection((pg_host, 5432), timeout=8); so.close(); runner_connect = "connected"
+    except Exception as e: runner_connect = f"{type(e).__name__}"
+    cond = {"public_disabled": (srv or {}).get("public") == "Disabled", "no_firewall_rules": fw == [], "pe_approved": pe.get("state") == "Approved" and in_pe(pe.get("ip") or ""), "dns_zone_record": in_pe(rec.get("ip") or "") and rec.get("ip") == pe.get("ip"),
+            "zone_linked_to_aks": any(str(l_.get("vnet", "")).lower().find(f"/resourcegroups/{node_rg}/".lower()) >= 0 and l_.get("state") == "Completed" for l_ in (links if isinstance(links, list) else [])),
+            "peering_connected": bool(vnet_pe.get("peerings")) and all(p_.get("state") == "Connected" for p_ in vnet_pe.get("peerings", [])) and any(p_.get("state") == "Connected" for p_ in (peer_aks if isinstance(peer_aks, list) else [])),
+            "pod_resolves_private_ip": bool(pod_ips) and all(in_pe(ip) for ip in pod_ips), "runner_cannot_connect": runner_connect != "connected" and not pg_via.startswith("direct")}
+    rep.add("E12a", "Flexible Server jen přes privátní síť: publicNetworkAccess Disabled a žádné firewall pravidlo (dřív „Allow Azure services“ 0.0.0.0 = dosažitelný heslem z celého Azure), private endpoint Approved ve VNet platformy (rg-platform-dev), peering obou VNet Connected, privátní DNS zóna privatelink.postgres.database.azure.com s A záznamem serveru nalinkovaná na managed VNet AKS → pod aplikace přeloží FQDN na privátní IP (verify-full z E11 drží, stejné FQDN), runner GitHub Actions se na server nepřipojí (harness přes socat pod)",
+            "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "server": srv, "firewall_rules": fw, "private_endpoint": {k: pe.get(k) for k in ("name", "state", "ip", "fqdn")}, "dns": {"zone": zone, "record": rec, "links": links, "pod": pod_ips, "runner": runner_ips}, "vnet_pe": vnet_pe, "peering_aks_side": peer_aks, "runner_connect": runner_connect, "harness_pg_via": pg_via})
+
+
 def e1_checks(a, rep, kj, pre):
     """E1 (P3-6): tajemství a certifikáty platformy vydávají operátoři z Gitu – cert-manager (interní CA → agentgateway-tls), trust-manager
     (ConfigMap platform-ca v platform-data a ns tenantů), ESO (Key Vault přes workload identitu → postgres-auth, agentgateway-secrets, zakazka-secrets,
@@ -1935,7 +1979,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -2065,8 +2109,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     httpx.post(f"{BAO}/v1/auth/kubernetes/role/zakazka", json={"bound_service_account_names": ["zakazka"], "bound_service_account_namespaces": [NS], "token_policies": ["approval-signer"], "token_ttl": "1h", "token_max_ttl": "4h"}, headers=Hb, timeout=10)
     if e8: e8_checks(a, rep, kj, kv_name, BAO, bao_state["init"], seal0, bao_init_migrated, secret, kv_meta)   # P3-6 E8: bootstrap OpenBao jen v Key Vaultu
     if e10: e10_checks(a, rep, BAO, bao_tok, bao_op, t_bao0)   # P3-6 E10: operátor se scoped tokenem, root jen bootstrap
-    # Postgres = Flexible Server: admin `platform`, heslo ze Secretu postgres-auth (Flux substitute), TLS; z runneru přímo (pravidlo Allow Azure services),
-    # jinak přes socat pod + port-forward
+    # Postgres = Flexible Server: admin `platform`, heslo ze Secretu postgres-auth (ESO z Key Vaultu), TLS; od P3-6 E12 jen private endpoint → z runneru
+    # přímé spojení selže a harness jde přes socat pod + port-forward (do E11 přímo díky pravidlu Allow Azure services)
     pg_host = kubectl(a, "-n", NS, "get", "svc", "postgres", "-o", "jsonpath={.spec.externalName}").stdout.strip(); pg_pw = secret("postgres-auth", "POSTGRES_PASSWORD")
     assert pg_host and pg_pw, "chybí svc postgres (ExternalName) nebo Secret postgres-auth"
     pg_via = "direct"; pf_pg = None; pg_ep = (pg_host, 5432)
@@ -2165,6 +2209,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
         if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
         if e11: e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep, pg_tls, t_bao0)   # P3-6 E11: TLS ClickHouse/Collector, Postgres verify-full
+        if e12: e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw)   # P3-6 E12: Flexible Server jen přes private endpoint
         def led(): return http("GET", f"{APP}/_debug/ledger", timeout=20).json()
         if e9: e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, (kc_migr or {}).get("admin"), led)   # P3-6 E9: žádný literál hesla z Gitu (admin Keycloaku, DB role)
         def hash_of(zid, typ):
@@ -2474,7 +2519,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}
