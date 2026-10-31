@@ -34,6 +34,59 @@ components:
 - ../../rolegen   # P2-1: ConfigMap rolegen-build + patch agentgateway-config z Gitu (generuje tools/rolegen/render_k8s.py)
 patches:
 - path: openbao-aks.yaml   # P2-3: config OpenBao se seal azurekeyvault (patch base ConfigMapy)
+- path: clickhouse-aks.yaml   # P3-6 E11: ClickHouse jen TLS (config.d/tls.xml: https 8443 + native 9440, plaintext porty odebrány)
+- path: otel-collector-aks.yaml   # P3-6 E11: Collector OTLP s TLS, export do ClickHouse secure
+# P3-6 E11: ClickHouse – cert ze Secretu clickhouse-tls (fsGroup 101 = uid clickhouse), bez init skriptů (databázi otel zakládá Collector), probe HTTPS, Service jen 8443/9440
+- target: {kind: StatefulSet, name: clickhouse}
+  patch: |
+    - {op: remove, path: /spec/template/spec/containers/0/volumeMounts/3}
+    - {op: remove, path: /spec/template/spec/volumes/1}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: config, mountPath: /etc/clickhouse-server/config.d/tls.xml, subPath: tls.xml}}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: tls, mountPath: /etc/clickhouse-server/tls, readOnly: true}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: tls, secret: {secretName: clickhouse-tls, defaultMode: 0440}}}
+    - {op: add, path: /spec/template/spec/securityContext, value: {fsGroup: 101}}
+    - {op: replace, path: /spec/template/spec/containers/0/ports, value: [{containerPort: 8443, name: https}, {containerPort: 9440, name: native-tls}]}
+    - {op: replace, path: /spec/template/spec/containers/0/readinessProbe, value: {httpGet: {path: /ping, port: 8443, scheme: HTTPS}, periodSeconds: 5}}
+- target: {kind: Service, name: clickhouse}
+  patch: |
+    - {op: replace, path: /spec/ports, value: [{name: https, port: 8443, targetPort: 8443}, {name: native-tls, port: 9440, targetPort: 9440}]}
+# P3-6 E11: Collector – cert otel-collector-tls (fsGroup 10001 = uid obrazu), CA platformy pro export do ClickHouse (Go ctí SSL_CERT_FILE)
+- target: {kind: Deployment, name: otel-collector}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: tls, mountPath: /etc/otel/tls, readOnly: true}}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: tls, secret: {secretName: otel-collector-tls, defaultMode: 0440}}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: platform-ca, configMap: {name: platform-ca}}}
+    - {op: add, path: /spec/template/spec/containers/0/env, value: [{name: SSL_CERT_FILE, value: /etc/platform/ca/ca.crt}]}
+    - {op: add, path: /spec/template/spec/securityContext, value: {fsGroup: 10001}}
+# P3-6 E11: agentgateway – spany na https Collector (env OTEL_EXPORTER_OTLP_TRACES_ENDPOINT má přednost před otlpEndpoint v configu z rolegen;
+# https → backend TLS se systémovými rooty = rustls-native-certs: SSL_CERT_FILE root platformy + SSL_CERT_DIR veřejné CA obrazu pro upstream
+# api.anthropic.com) a Postgres verify-full (sqlx: sslrootcert v URL, AGW_DATABASE_URL v secrets-eso.yaml)
+- target: {kind: Deployment, name: agentgateway}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, value: https://otel-collector:4318}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: SSL_CERT_FILE, value: /etc/platform/ca/ca.crt}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: SSL_CERT_DIR, value: /etc/ssl/certs}}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: platform-ca, configMap: {name: platform-ca}}}
+# P3-6 E11: daprd (state store Postgres, pgx) čte sslrootcert z bundle platformy; paměť posílá spany na https Collector (OTEL_EXPORTER_OTLP_CERTIFICATE –
+# exporter requests nectí SSL_CERT_FILE); Governance MCP čte ClickHouse přes https (httpx + SSL_CERT_FILE)
+- target: {kind: Deployment, name: zakazka}
+  patch: |
+    - {op: add, path: /spec/template/spec/containers/1/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}
+- target: {kind: Deployment, name: memory}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/8/value, value: https://otel-collector:4318}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: OTEL_EXPORTER_OTLP_CERTIFICATE, value: /etc/platform/ca/ca.crt}}
+- target: {kind: Deployment, name: governance}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/4/value, value: https://clickhouse:8443}
+# P3-6 E11: Keycloak JDBC verify-full – host FQDN Flexible Serveru (${PG_HOST} dosazuje Flux), sslrootcert = bundle platformy
+- target: {kind: Deployment, name: keycloak}
+  patch: |
+    - {op: replace, path: /spec/template/spec/containers/0/env/0/value, value: "jdbc:postgresql://${PG_HOST}:5432/keycloak"}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: platform-ca, configMap: {name: platform-ca}}}
 # P2-1: upstream modelu gateway přes env (config z rolegen má baseUrl $LLM_UPSTREAM_URL)
 - target: {kind: Deployment, name: agentgateway}
   patch: |
@@ -111,8 +164,8 @@ patches:
 - target: {kind: Deployment, name: keycloak}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/env/1/value, value: platform}
-    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_DB_URL_PROPERTIES, value: "?sslmode=require"}}
-# (DSN paměti a Governance MCP se sslmode=require dává od P3-6 E9 ESO v Secretech memory-db / governance-db – secrets-eso.yaml)
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: KC_DB_URL_PROPERTIES, value: "?sslmode=verify-full&sslrootcert=/etc/platform/ca/ca.crt"}}   # P3-6 E11: verify-full (dřív require)
+# (DSN paměti a Governance MCP dává od P3-6 E9 ESO v Secretech memory-db / governance-db – secrets-eso.yaml; od E11 verify-full s FQDN)
 # Oficiální obrazy se liší od kind buildů (měřeno 2026-10-25, první Flux nasazení): daprio/* mají binárku v / (ne v PATH),
 # quay.io/keycloak není předbuildovaný pro Postgres (start bez --optimized + KC_DB), ghcr.io/spiffe obrazy běží jako uid 1000
 # (PVC data_dir potřebuje fsGroup, hostPath socket agenta root).
