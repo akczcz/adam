@@ -784,10 +784,11 @@ Nálezy:
 | E11b | spany gateway i paměti dorazily přes TLS, bez TLS chyb v lozích | ✅ |
 | E11c | Postgres verify-full u všech klientů, rooty Azure v bundle, alias `postgres` odmítnut, chain ověřen | ✅ |
 
-Výsledek: **AKS 72/72 + 13 INFO** (`measure` run 41189317696, 3 měřicí běhy). 1. běh 41177730039 66/72: TLS samo prošlo (certifikáty, verify-full
+Výsledek: **AKS 72/72 + 13 INFO** (`measure` run 41193518735, 4 měřicí běhy). 1. běh 41177730039 66/72: TLS samo prošlo (certifikáty, verify-full
 z podů i runneru, veřejné CA a alias `postgres` odmítnuty), FAIL jen na straně harnessu – viz nálezy. 2. běh 41184838669 71/72: E11b bez spanů gateway,
-protože se vyhodnocoval v P2-1 před prvním LLM provozem rolí (od startu harnessu jen spany paměti). Dva běhy mezi tím (41182493916, 41183288835)
-jely bez harnessu – spuštění přes GitHub MCP bez `inputs` = výchozí hodnoty (`s1=true`, `e2e=none`), stejně „stop“ clusteru byl jen `status`.
+protože se vyhodnocoval v P2-1 před prvním LLM provozem rolí (od startu harnessu jen spany paměti). 3. běh 41189317696 spadl mimo E11 v GUI toku
+(H1 nepřišel: GUI 50 min v „error Failed to fetch“ – viz nálezy). Dva běhy mezi tím (41182493916, 41183288835) jely bez harnessu – spuštění přes
+GitHub MCP bez `inputs` = výchozí hodnoty (`s1=true`, `e2e=none`), stejně „stop“ clusteru byl jen `status`.
 
 Nálezy:
 
@@ -800,6 +801,10 @@ Nálezy:
 - **Certifikát Flexible Serveru**: subject `CN=<id>.database.azure.com`, FQDN serveru v SAN, issuer **Microsoft TLS G2 RSA CA** (řetězec do DigiCert
   Global Root G2) – bundle s rooty Azure stačí, legacy DigiCert Global Root CA není potřeba; z runneru chain proti rootu platformy samotnému odmítnut.
 - **Chyby TLS v lozích Collectoru/ClickHouse** byly jen z negativních sond harnessu (veřejné CA přes 127.0.0.1, plaintext na TLS porty) → filtr vlastních sond.
+- **GUI po síťovém výpadku streamu přestane zkoušet** (App.tsx `start()`: 30 pokusů po 3 s ≈ 90 s) a zůstane v „error Failed to fetch“; workflow přitom
+  čekal na odpověď dialogu Account (ledger `NOTIFY DIALOG_WAIT`), harness čekal do timeoutu dialogu (30 min) + H1 (20 min). Harness: `Gui._recover`
+  po ~100 s trvajícího síťového „error“ obnoví port-forward a znovu otevře thread (nový run-pohled; zdroj pravdy je ledger), počet obnov v U1h.
+  Pro GUI samotné zbývá retry bez limitu s backoffem (změna obrazu aplikace – mimo E11).
 
 ## Spuštění
 
