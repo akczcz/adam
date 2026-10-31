@@ -1753,16 +1753,6 @@ def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep,
         ch_ok = probe("GET", "https://127.0.0.1:18445/ping", ctx_root); ch_pub = probe("GET", "https://127.0.0.1:18445/ping", ctx_public)
         ch_sel = probe("POST", "https://127.0.0.1:18445/", ctx_root, content="SELECT version()")
         col_ok = probe("POST", "https://127.0.0.1:14318/v1/traces", ctx_root, json={"resourceSpans": []}); col_pub = probe("POST", "https://127.0.0.1:14318/v1/traces", ctx_public, json={"resourceSpans": []})
-        # spany od startu harnessu podle služby – gateway (agentgateway → https Collector → secure ClickHouse) i paměť (OTLP https s OTEL_EXPORTER_OTLP_CERTIFICATE)
-        q = f"SELECT ServiceName, count() FROM otel.otel_traces WHERE Timestamp > parseDateTimeBestEffort('{since_iso}') GROUP BY ServiceName FORMAT JSONCompact"
-        spans = {}
-        for _ in range(6):
-            r = probe("POST", "https://127.0.0.1:18445/", ctx_root, content=q)
-            if r.get("http") == 200:
-                try: spans = {row[0]: row[1] for row in httpx.post("https://127.0.0.1:18445/", content=q, verify=ctx_root, timeout=30).json().get("data", [])}
-                except Exception as e: spans = {"error": type(e).__name__}
-                if spans.get("agentgateway") and spans.get("memory-server"): break
-            time.sleep(10)
     finally: pf_ch.stop(); pf_col.stop()
     # plaintext zevnitř clusteru (pod aplikace): 8123 Service nemá (connect error), TLS porty na plaintext request odpoví 400 nebo utnou spojení
     code = "import httpx\nfor u in ('http://clickhouse:8123/ping', 'http://clickhouse:8443/ping', 'http://otel-collector:4318/v1/traces'):\n    try: r = httpx.get(u, timeout=5); print(u, r.status_code, r.text[:60].replace('\\n', ' '))\n    except Exception as e: print(u, 'ERR', type(e).__name__)\n"
@@ -1777,20 +1767,11 @@ def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep,
     env_gw, env_mem, env_gov = env_of("agentgateway"), env_of("memory"), env_of("governance")
     clients = {"agentgateway_otlp": env_gw.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"), "agentgateway_ssl_cert_file": env_gw.get("SSL_CERT_FILE"), "memory_otlp": env_mem.get("OTEL_EXPORTER_OTLP_ENDPOINT"), "memory_otlp_cert": env_mem.get("OTEL_EXPORTER_OTLP_CERTIFICATE"), "governance_clickhouse": env_gov.get("GOV_CLICKHOUSE_URL")}
     clients_ok = str(clients["agentgateway_otlp"]).startswith("https://otel-collector:4318") and clients["agentgateway_ssl_cert_file"] == "/etc/platform/ca/ca.crt" and str(clients["memory_otlp"]).startswith("https://") and clients["memory_otlp_cert"] == "/etc/platform/ca/ca.crt" and str(clients["governance_clickhouse"]).startswith("https://clickhouse:8443")
-    # chyby TLS v lozích Collectoru a ClickHouse od startu harnessu
-    col_log = kubectl(a, "-n", NS, "logs", "deploy/otel-collector", f"--since-time={since_iso}", timeout=120).stdout
-    ch_log = kubectl(a, "-n", NS, "logs", "clickhouse-0", f"--since-time={since_iso}", timeout=120).stdout
-    # bez stop vlastních negativních sond harnessu: port-forward (127.0.0.1 – sonda proti veřejným CA utne handshake) a plaintext na TLS porty z podu („HTTP request to an HTTPS server“, ClickHouse „SSL routines::http request“)
-    own = lambda l: "127.0.0.1:" in l or "HTTP request to an HTTPS server" in l or "http request" in l
-    tls_err = {"collector": [l[:160] for l in col_log.splitlines() if re.search(r"tls|certificate|handshake|x509", l, re.I) and not own(l)][:5], "clickhouse": [l[:160] for l in ch_log.splitlines() if re.search(r"<Error>.*(SSL|certificate|handshake)", l, re.I) and not own(l)][:5]}
     ok_certs = all(v["ready"] == "True" and v["issuer"] == "platform-ca" and v["chain_ok"] is True and v["sans_ok"] and v["ip"] == ["127.0.0.1"] and (v["days_left"] or 0) > 30 for v in certs.values())
     e11a = ok_certs and ch_ok.get("http") == 200 and "error" in ch_pub and ch_sel.get("http") == 200 and col_ok.get("http") in (200, 400, 415) and "error" in col_pub and plain_ok and svc == {"clickhouse": [8443, 9440], "otel-collector": [4317, 4318]} \
         and all(col_tls.values()) and "secure=true" in col_exp and ":9440" in col_exp and "<https_port>8443</https_port>" in ch_cfg and '<http_port remove="1"/>' in ch_cfg and '<tcp_port remove="1"/>' in ch_cfg and clients_ok
     rep.add("E11a", "TLS ClickHouse a OTEL Collectoru z interní CA (cert-manager Certificate clickhouse-tls/otel-collector-tls, ClusterIssuer platform-ca): ClickHouse jen https 8443 + native secure 9440 (config.d/tls.xml maže http_port/tcp_port), Collector OTLP gRPC 4317 i HTTP 4318 s TLS (reload_interval 1 m) a export do ClickHouse `secure=true`; HTTPS ověřené proti rootu platformy (proti veřejným CA odmítnuto), plaintext zevnitř clusteru odmítnut (8123 bez Service, TLS porty 400/utnutí), Service jen TLS porty; klienti: agentgateway → https Collector (SSL_CERT_FILE), paměť → OTLP https (OTEL_EXPORTER_OTLP_CERTIFICATE), Governance MCP → https ClickHouse",
             "PASS" if e11a else "FAIL", {"certs": certs, "clickhouse": {"https_root": ch_ok, "https_public_ca": ch_pub, "select": ch_sel}, "collector": {"https_root": col_ok, "https_public_ca": col_pub, "receivers_tls": col_tls, "exporter": col_exp}, "plaintext_from_pod": plain, "services": svc, "clients": clients})
-    e11b = bool(spans.get("agentgateway")) and bool(spans.get("memory-server")) and not tls_err["collector"] and not tls_err["clickhouse"]
-    rep.add("E11b", "Telemetrie přes TLS v provozu: od startu harnessu dorazily do ClickHouse (přes Collector) spany gateway (agentgateway → OTLP/HTTP https) i serveru paměti (Python OTLP exporter https), v lozích Collectoru ani ClickHouse žádná chyba TLS/certifikátu",
-            "PASS" if e11b else "FAIL", {"spans_since_start": spans, "tls_errors": tls_err, "since": since_iso})
     # --- E11c: Postgres Flexible Server verify-full -------------------------------------------------------------------------------------------
     dsns = {"agentgateway-secrets/AGW_DATABASE_URL": secret("agentgateway-secrets", "AGW_DATABASE_URL"), "zakazka-finops/P0_FINOPS_DSN": secret("zakazka-finops", "P0_FINOPS_DSN"), "zakazka-finops/P0_REGISTRY_DSN": secret("zakazka-finops", "P0_REGISTRY_DSN"),
             "memory-db/MEMORY_DB_URI": secret("memory-db", "MEMORY_DB_URI"), "governance-db/GOV_DSN": secret("governance-db", "GOV_DSN"), "dapr-components/statestore": secret("dapr-components", "statestore\\.yaml")}
@@ -1841,6 +1822,34 @@ def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep,
     e11c = all(dsn_state.values()) and bundle_ok and pod_ok and runner_ok
     rep.add("E11c", "Postgres Flexible Server s ověřením certifikátu (sslmode=verify-full, sslrootcert = bundle platform-ca s rooty Azure DigiCert Global Root G2 + Microsoft RSA Root CA 2017, host = FQDN serveru) u všech klientů – agentgateway (sqlx), aplikace (FinOps/registr), daprd (state store), paměť, Governance MCP, Keycloak JDBC; z podu aplikace DSN projde a stejný DSN s aliasem `postgres` padne na ověření jména; z runneru chain ověřen proti certifi + root platformy a odmítnut proti rootu platformy samotnému; harness sám jede verify-full/verify-ca",
             "PASS" if e11c else "FAIL", {"dsn_verify_full": dsn_state, "bundle_subjects": subjects, "pod": {"fqdn": pod_fqdn[:160], "alias": pod_alias[:200], "restarted_for_new_dsn": restarted}, "runner": runner, "server_cert": server_cert})
+
+
+def e11b_check(a, rep, ca_file, since_iso):
+    """E11b (P3-6): telemetrie přes TLS v provozu – až po tocích rolí (první LLM requesty přes gateway jdou teprve z podů rolí; v P2-1 jsou od startu
+    jen spany paměti – 1. měření E11 to ukázalo: E11b v 08:45 vidělo jen memory-server, agentgateway spany až s E4a)."""
+    import ssl
+    ctx_root = ssl.create_default_context(cafile=ca_file)
+    # spany od startu harnessu podle služby – gateway (agentgateway → https Collector → secure ClickHouse) i paměť (OTLP https s OTEL_EXPORTER_OTLP_CERTIFICATE)
+    q = f"SELECT ServiceName, count() FROM otel.otel_traces WHERE Timestamp > parseDateTimeBestEffort('{since_iso}') GROUP BY ServiceName FORMAT JSONCompact"
+    spans, pf_ch = {}, PortForward(a, "clickhouse", 18445, 8443)
+    try:
+        for _ in range(6):
+            try:
+                r = httpx.post("https://127.0.0.1:18445/", content=q, verify=ctx_root, timeout=30)
+                spans = {row[0]: row[1] for row in r.json().get("data", [])} if r.status_code == 200 else {"error": f"http {r.status_code}"}
+            except Exception as e: spans = {"error": type(e).__name__}
+            if spans.get("agentgateway") and spans.get("memory-server"): break
+            time.sleep(10)
+    finally: pf_ch.stop()
+    # chyby TLS v lozích Collectoru a ClickHouse od startu harnessu
+    col_log = kubectl(a, "-n", NS, "logs", "deploy/otel-collector", f"--since-time={since_iso}", timeout=120).stdout
+    ch_log = kubectl(a, "-n", NS, "logs", "clickhouse-0", f"--since-time={since_iso}", timeout=120).stdout
+    # bez stop vlastních negativních sond harnessu: port-forward (127.0.0.1 – sonda proti veřejným CA utne handshake) a plaintext na TLS porty z podu („HTTP request to an HTTPS server“, ClickHouse „SSL routines::http request“)
+    own = lambda l: "127.0.0.1:" in l or "HTTP request to an HTTPS server" in l or "http request" in l
+    tls_err = {"collector": [l[:160] for l in col_log.splitlines() if re.search(r"tls|certificate|handshake|x509", l, re.I) and not own(l)][:5], "clickhouse": [l[:160] for l in ch_log.splitlines() if re.search(r"<Error>.*(SSL|certificate|handshake)", l, re.I) and not own(l)][:5]}
+    e11b = bool(spans.get("agentgateway")) and bool(spans.get("memory-server")) and not tls_err["collector"] and not tls_err["clickhouse"]
+    rep.add("E11b", "Telemetrie přes TLS v provozu: od startu harnessu dorazily do ClickHouse (přes Collector) spany gateway (agentgateway → OTLP/HTTP https, LLM requesty podů rolí) i serveru paměti (Python OTLP exporter https), v lozích Collectoru ani ClickHouse žádná chyba TLS/certifikátu",
+            "PASS" if e11b else "FAIL", {"spans_since_start": spans, "tls_errors": tls_err, "since": since_iso})
 
 
 def e1_checks(a, rep, kj, pre):
@@ -2231,6 +2240,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if e3: e3_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E3: strop v gateway + navýšení z GUI
         if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E4: per-request ledger → ClickHouse
         if e6: e6_flow(a, rep, http, led, APP, kj, zid[:-2])   # P3-6 E6: verzování workflow (restart podu aplikace – až po všech tocích s pody rolí)
+        if e11: e11b_check(a, rep, ca_file, t_bao0)   # P3-6 E11b: spany gateway i paměti přes TLS – až po LLM provozu rolí
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
         if images:
