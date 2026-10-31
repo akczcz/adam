@@ -1,0 +1,74 @@
+# P3-6 E11: OTEL Collector jen s TLS – OTLP gRPC 4317 i HTTP 4318 s certifikátem otel-collector-tls (tls-internal.yaml), `reload_interval` 1 m
+# (rotace z cert-manageru bez restartu), min TLS 1.2; export do ClickHouse přes native secure 9440 (`secure=true`, ověření proti SSL_CERT_FILE =
+# ConfigMap platform-ca). Celý otelcol.yaml z base/otel-collector s doplněným TLS (strategic-merge patch nahrazuje klíč ConfigMapy).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  otelcol.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            tls:
+              cert_file: /etc/otel/tls/tls.crt
+              key_file: /etc/otel/tls/tls.key
+              min_version: "1.2"
+              reload_interval: 1m
+          http:
+            endpoint: 0.0.0.0:4318
+            tls:
+              cert_file: /etc/otel/tls/tls.crt
+              key_file: /etc/otel/tls/tls.key
+              min_version: "1.2"
+              reload_interval: 1m
+    processors:
+      gen_ai_normalizer:
+        sources:
+          - name: openinference
+          - name: openllmetry
+      redaction:
+        allow_all_keys: true
+        blocked_values:
+          - "sk-[A-Za-z0-9]+"
+        summary: debug
+      batch:
+        timeout: 1s
+    exporters:
+      clickhouse:
+        endpoint: tcp://clickhouse:9440?secure=true&dial_timeout=10s
+        database: otel
+        username: default
+        create_schema: true
+        ttl: 0
+        timeout: 10s
+        sending_queue:
+          queue_size: 100
+        retry_on_failure:
+          enabled: true
+          initial_interval: 1s
+          max_interval: 5s
+          max_elapsed_time: 60s
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    service:
+      extensions: [health_check]
+      telemetry:
+        logs:
+          level: warn
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [gen_ai_normalizer, redaction, batch]
+          exporters: [clickhouse]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [clickhouse]
+        logs:
+          receivers: [otlp]
+          processors: [redaction, batch]
+          exporters: [clickhouse]

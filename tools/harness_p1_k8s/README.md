@@ -755,6 +755,57 @@ Nálezy:
   paměti, `Gui.relogin` a jedno opakování stopu při 401. 2. běh: U2 338 s. Otevřené pro GUI: po neúspěšném refreshi by měl GUI uživatele odhlásit
   (zobrazit login), ne pokračovat bez tokenu.
 
+## P3-6 E11 – TLS uvnitř clusteru: ClickHouse, OTEL Collector, Postgres verify-full (2026-10-31, AKS, `--step p3-6` = … + **E11a–c**)
+
+- **Problém**: po E7 zbyla datová vrstva v plaintextu – ClickHouse (ledger spanů s tenanty, zakázkami a cenou) na 8123/9000, OTEL Collector
+  přijímal OTLP po HTTP; Postgres Flexible Server měl `sslmode=require` = šifrování bez ověření identity serveru (klient přijme jakýkoli certifikát,
+  host `postgres` byl alias ExternalName).
+- **Řešení**: cert-manager Certificate `clickhouse-tls`/`otel-collector-tls` z ClusterIssuer `platform-ca`; ClickHouse drop-in `config.d/tls.xml`
+  (`https_port 8443`, `tcp_port_secure 9440`, `http_port`/`tcp_port` `remove="1"`), Service jen TLS porty, init skripty na AKS pryč (databázi `otel`
+  zakládá Collector `create_schema`); Collector OTLP gRPC/HTTP s `tls` (`reload_interval 1m`), export `tcp://clickhouse:9440?secure=true`
+  (Go ctí `SSL_CERT_FILE` = ConfigMap `platform-ca`). Klienti: agentgateway `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://otel-collector:4318`
+  (env má v agentgateway 1.6.0 přednost před `otlpEndpoint`; https → backend TLS se systémovými rooty = rustls-native-certs: `SSL_CERT_FILE` root
+  platformy + `SSL_CERT_DIR` veřejné CA obrazu pro upstream – ověřeno ve zdroji `types/local.rs`, `http/backendtls.rs`), paměť
+  `OTEL_EXPORTER_OTLP_CERTIFICATE` (Python exporter přes requests nectí `SSL_CERT_FILE`), Governance MCP `GOV_CLICKHOUSE_URL=https://clickhouse:8443`.
+  Postgres: všechny DSN (ESO šablony `agentgateway-secrets`, `zakazka-finops`, `memory-db`, `governance-db`, `dapr-components`, Keycloak
+  `KC_DB_URL(_PROPERTIES)`) `sslmode=verify-full&sslrootcert=/etc/platform/ca/ca.crt` s hostem `${PG_HOST}` (FQDN = SAN certifikátu serveru);
+  Bundle `platform-ca` = root platformy + rooty Azure **DigiCert Global Root G2** a **Microsoft RSA Root CA 2017** (inLine, veřejné, otisky
+  v `infra/k8s/trust/pki.yaml`); daprd, Keycloak a agentgateway dostaly mount `platform-ca`. Žádná změna obrazů ani Terraformu. Detail: `infra/README.md` E11.
+- **Měření**: E11a – certifikáty (Ready, podpis rootem, SAN, platnost), ClickHouse `/ping` + `SELECT` a Collector `/v1/traces` přes HTTPS
+  ověřené rootem / odmítnuté veřejnými CA, plaintext z podu aplikace odmítnut, Service porty, config Collectoru (tls, secure) a ClickHouse,
+  env klientů; E11b – od startu harnessu spany gateway i paměti v ClickHouse (celá cesta přes TLS), žádná TLS chyba v lozích Collectoru/ClickHouse;
+  E11c – všechny DSN verify-full + FQDN (jen booleany, hodnoty nesou hesla), bundle s rooty Azure, z podu aplikace DSN projde a s aliasem `postgres`
+  padne na ověření jména, z runneru chain proti certifi + root OK a proti rootu platformy samotnému odmítnut, serverový certifikát (issuer, SAN, TLS verze);
+  harness sám jede `verify-full` (přímo) / `verify-ca` (socat), při selhání spadne na `require` a E11c to ukáže.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E11a | ClickHouse a Collector jen TLS z platform-ca, plaintext odmítnut, klienti na https | ✅ |
+| E11b | spany gateway i paměti dorazily přes TLS, bez TLS chyb v lozích | ✅ |
+| E11c | Postgres verify-full u všech klientů, rooty Azure v bundle, alias `postgres` odmítnut, chain ověřen | ✅ |
+
+Výsledek: **AKS 72/72 + 13 INFO** (`measure` run 41193518735, 4 měřicí běhy). 1. běh 41177730039 66/72: TLS samo prošlo (certifikáty, verify-full
+z podů i runneru, veřejné CA a alias `postgres` odmítnuty), FAIL jen na straně harnessu – viz nálezy. 2. běh 41184838669 71/72: E11b bez spanů gateway,
+protože se vyhodnocoval v P2-1 před prvním LLM provozem rolí (od startu harnessu jen spany paměti). 3. běh 41189317696 spadl mimo E11 v GUI toku
+(H1 nepřišel: GUI 50 min v „error Failed to fetch“ – viz nálezy). Dva běhy mezi tím (41182493916, 41183288835) jely bez harnessu – spuštění přes
+GitHub MCP bez `inputs` = výchozí hodnoty (`s1=true`, `e2e=none`), stejně „stop“ clusteru byl jen `status`.
+
+Nálezy:
+
+- **Kolize lokálních portů harnessu**: ClickHouse port-forward dostal 18443 = port hlavního port-forwardu Keycloaku (běží celý běh) → dotazy
+  ClickHouse odpovídal Keycloak (Quarkus 404 „Unable to find matching target resource method“, 302), E11a/E11b/O3d/E4a bez spanů. ClickHouse → 18445;
+  registr portů harnessu: 18443 Keycloak, 18444 Keycloak dočasný (E7), 18445 ClickHouse, 14318 Collector, 14100 gateway, 18204 OpenBao, 15432 socat Postgres.
+- **E11b až po provozu rolí**: spany agentgateway vznikají jen z LLM requestů podů rolí (E4a), v P2-1 je od startu jen paměť → check běží po `e6_flow`.
+- **E1b** vyžadoval v DSN gateway alias `@postgres` – po přechodu na FQDN kontroluje jen heslo z Key Vaultu v DSN; **E11c** jsonpath klíč
+  `statestore.yaml` je nutné escapovat (`statestore\.yaml`), jinak Dapr DSN vypadal jako bez verify-full.
+- **Certifikát Flexible Serveru**: subject `CN=<id>.database.azure.com`, FQDN serveru v SAN, issuer **Microsoft TLS G2 RSA CA** (řetězec do DigiCert
+  Global Root G2) – bundle s rooty Azure stačí, legacy DigiCert Global Root CA není potřeba; z runneru chain proti rootu platformy samotnému odmítnut.
+- **Chyby TLS v lozích Collectoru/ClickHouse** byly jen z negativních sond harnessu (veřejné CA přes 127.0.0.1, plaintext na TLS porty) → filtr vlastních sond.
+- **GUI po síťovém výpadku streamu přestane zkoušet** (App.tsx `start()`: 30 pokusů po 3 s ≈ 90 s) a zůstane v „error Failed to fetch“; workflow přitom
+  čekal na odpověď dialogu Account (ledger `NOTIFY DIALOG_WAIT`), harness čekal do timeoutu dialogu (30 min) + H1 (20 min). Harness: `Gui._recover`
+  po ~100 s trvajícího síťového „error“ obnoví port-forward a znovu otevře thread (nový run-pohled; zdroj pravdy je ledger), počet obnov v U1h.
+  Pro GUI samotné zbývá retry bez limitu s backoffem (změna obrazu aplikace – mimo E11).
+
 ## Spuštění
 
 ```bash

@@ -1,0 +1,28 @@
+# P3-6 E11: ClickHouse jen přes TLS z interní CA (Certificate clickhouse-tls, tls-internal.yaml). Drop-in config.d: plaintext porty 8123/9000
+# odebrány (`remove="1"` maže klíč z hlavního config.xml), https 8443 + native secure 9440; klíč PKCS8 ze Secretu (fsGroup 101 = uid clickhouse).
+# ClickHouse certifikát znovu načte při `SYSTEM RELOAD CONFIG` nebo restartu podu (cert-manager obnoví leaf 30 dní před koncem) – harness E7c
+# rotaci neměří, obnova = restart StatefulSetu. Init skripty (clickhouse-init) overlay odebírá: entrypoint by chtěl plaintext native port
+# (clickhouse-client --port tcp_port) – databázi otel zakládá Collector (clickhouse exporter create_schema: true).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-config
+data:
+  tls.xml: |
+    <clickhouse>
+        <http_port remove="1"/>
+        <tcp_port remove="1"/>
+        <https_port>8443</https_port>
+        <tcp_port_secure>9440</tcp_port_secure>
+        <openSSL>
+            <server>
+                <certificateFile>/etc/clickhouse-server/tls/tls.crt</certificateFile>
+                <privateKeyFile>/etc/clickhouse-server/tls/tls.key</privateKeyFile>
+                <verificationMode>none</verificationMode>
+                <loadDefaultCAFile>false</loadDefaultCAFile>
+                <cacheSessions>true</cacheSessions>
+                <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+                <preferServerCiphers>true</preferServerCiphers>
+            </server>
+        </openSSL>
+    </clickhouse>

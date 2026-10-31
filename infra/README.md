@@ -282,6 +282,29 @@ má tvar `repo:akczcz@<owner_id>/adam@<repo_id>:environment:dev` (s id, ne jen j
 přidat `repository_id`. Výhled: stejnou roli může dostat člověk-operátor (OIDC Keycloak/Entra → `auth/oidc`), root token pak zůstane jen
 break-glass v Key Vaultu.
 
+## P3-6 E11: TLS uvnitř clusteru – ClickHouse, OTEL Collector, Postgres verify-full (2026-10-31)
+
+`overlays/aks/tls-internal.yaml` + Certificate `clickhouse-tls`, `otel-collector-tls` (ClusterIssuer `platform-ca`, SAN Service + localhost/127.0.0.1).
+**ClickHouse** (`clickhouse-aks.yaml`, patch StatefulSetu v `kustomization.yaml`): drop-in `config.d/tls.xml` – `https_port 8443`, `tcp_port_secure 9440`,
+`http_port`/`tcp_port` `remove="1"` (plaintext pryč), `openSSL.server` cert/klíč ze Secretu (fsGroup 101), probe HTTPS, Service jen 8443/9440;
+init skripty (`clickhouse-init`) overlay odebírá – entrypoint by chtěl plaintext native port; databázi `otel` zakládá Collector (`create_schema: true`).
+Reload certifikátu: `SYSTEM RELOAD CONFIG` nebo restart podu (`kubectl -n platform-data rollout restart statefulset/clickhouse`).
+**OTEL Collector** (`otel-collector-aks.yaml`): receivery OTLP gRPC 4317 / HTTP 4318 s `tls` (`min_version 1.2`, `reload_interval 1m` – rotace bez restartu),
+exporter `tcp://clickhouse:9440?secure=true` (ověření přes `SSL_CERT_FILE` = ConfigMap `platform-ca`, fsGroup 10001).
+**Klienti**: agentgateway `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://otel-collector:4318` (env přebíjí `otlpEndpoint` z configu rolegen; https = backend TLS
+se systémovými rooty – rustls-native-certs čte `SSL_CERT_FILE` (root platformy) i `SSL_CERT_DIR=/etc/ssl/certs` (veřejné CA obrazu pro api.anthropic.com)),
+paměť `OTEL_EXPORTER_OTLP_ENDPOINT=https://…` + `OTEL_EXPORTER_OTLP_CERTIFICATE`, Governance MCP `GOV_CLICKHOUSE_URL=https://clickhouse:8443` (httpx + `SSL_CERT_FILE`).
+**Postgres Flexible Server verify-full**: DSN v ESO šablonách (`secrets-eso.yaml`: `AGW_DATABASE_URL`, `P0_FINOPS_DSN`, `P0_REGISTRY_DSN`, `MEMORY_DB_URI`,
+`GOV_DSN`, Dapr `connectionString`) a Keycloak `KC_DB_URL=jdbc:postgresql://${PG_HOST}:5432/keycloak` + `KC_DB_URL_PROPERTIES=?sslmode=verify-full&sslrootcert=…`
+mají `sslmode=verify-full&sslrootcert=/etc/platform/ca/ca.crt` a **host = `${PG_HOST}`** (FQDN serveru = SAN certifikátu; alias `postgres` by na ověření
+jména padl – Service ExternalName zůstává pro harness a sondy). Bundle `platform-ca` (`trust/pki.yaml`) = root platformy + **DigiCert Global Root G2**
++ **Microsoft RSA Root Certificate Authority 2017** (inLine PEM, SHA-256 v komentáři; zdroj Mozilla store, požadavek Microsoftu pro verify-full);
+mount `platform-ca` přibyl daprd (pgx `sslrootcert`), Keycloaku (pgjdbc) a agentgateway (sqlx). Legacy DigiCert Global Root CA (G1) záměrně ne –
+E11c hlásí issuer serverového certifikátu (měřeno: **Microsoft TLS G2 RSA CA** → DigiCert Global Root G2). Harness: `dsn()` verify-full proti certifi
++ root platformy (přes socat verify-ca), ClickHouse port-forward 18445→8443 https (18443 patří Keycloaku – kolize v 1. běhu).
+Měření: `measure` s `e2e=p3-6` (E11a–c) – **AKS 72/72 + 13 INFO 2026-10-31** (run 41193518735, 4 běhy; FAIL dřívějších běhů jen v harnessu/GUI: kolize portů,
+E11b před provozem rolí, GUI bez retry po výpadku streamu). Bez změny obrazů a Terraformu. Zbývá (P4): mTLS mesh, interní porty (ClickHouse interserver 9009, Dapr placement/scheduler, SPIRE) a OPA.
+
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);
   realm sám issuer nenese (`KC_HOSTNAME`).
