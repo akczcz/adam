@@ -806,6 +806,27 @@ Nálezy:
   po ~100 s trvajícího síťového „error“ obnoví port-forward a znovu otevře thread (nový run-pohled; zdroj pravdy je ledger), počet obnov v U1h.
   Pro GUI samotné zbývá retry bez limitu s backoffem (změna obrazu aplikace – mimo E11).
 
+## P3-6 E12 – Flexible Server jen přes private endpoint (2026-10-31, AKS, `--step p3-6` = … + **E12a**)
+
+- **Problém**: Postgres Flexible Server (paměť, ledger, registr, Dapr stav, Keycloak) měl veřejný endpoint s pravidlem „Allow Azure services“
+  (0.0.0.0–0.0.0.0) = dosažitelný heslem z jakéhokoli Azure tenantu; TLS z E11 chrání kanál, ne dosažitelnost. Harness toho využíval (přímé spojení z runneru).
+- **Řešení** (Terraform `infra/terraform/network.tf`, bez změny obrazů): vlastní VNet `vnet-platform-pe` 192.168.250.0/24 v `rg-platform-dev`, peering
+  obousměrně s managed VNet AKS (10.224.0.0/12 v node RG), privátní DNS zóna `privatelink.postgres.database.azure.com` s linkem na VNet AKS, private
+  endpoint `postgresqlServer` s DNS zone group (A záznam serveru), `public_network_access_enabled = false`, firewall pravidlo pryč. FQDN serveru a
+  DSN beze změny (veřejné DNS → CNAME `privatelink.…` → v VNet AKS privátní IP), `verify-full` z E11 drží. Flux substitute `PE_SUBNET_CIDR` → NetworkPolicy
+  `agentgateway-egress` povolí TCP 5432 na CIDR private endpointu (gateway jinak privátní sítě blokuje). RBAC: Network Contributor pro identitu Actions
+  jen na node RG (peering + DNS link; `infra/bootstrap/azure-oidc.sh`). Harness: `pg_via` vždy `socat` (přímé spojení z runneru selže, záloha je teď cesta).
+  Detail: `infra/README.md` E12.
+- **Měření** E12a (`az` z runneru + sonda z podu): `publicNetworkAccess == Disabled`, žádné firewall pravidlo, private endpoint `Approved` s IP v CIDR
+  VNet platformy, peering `Connected` na obou stranách, zóna s A záznamem serveru == IP endpointu a link na VNet AKS `Completed`, pod aplikace přeloží
+  FQDN serveru jen na privátní IP (z runneru veřejná odpověď bez cesty), runner se na 5432 nepřipojí a harness jede přes socat.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E12a | Flexible Server jen přes private endpoint: public off, bez firewall, PE/peering/DNS v pořádku, pod → privátní IP, runner nedosáhne | doplním |
+
+Výsledek: **doplním po měření**.
+
 ## Spuštění
 
 ```bash
