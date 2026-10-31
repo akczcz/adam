@@ -265,6 +265,23 @@ otočí admin API (`reset-password`) na hodnotu Secretu. Rotace = nová hodnota 
 do 1 h → restart aplikace (role) resp. další běh harnessu (Keycloak). Dev literály zůstávají jen v base pro kind. Měření: `measure` s `e2e=p3-6`
 (E9a–b, E1b).
 
+## P3-6 E10: operátor OpenBao se scoped tokenem (2026-10-30)
+
+Harness jako operátor OpenBao už nepracuje s root tokenem: přihlašuje se **auth metodou `jwt`** OIDC tokenem běhu GitHub Actions
+(issuer `https://token.actions.githubusercontent.com`, publikum `openbao-platform`, role `operator` vázaná na `repository = akczcz/adam`,
+metadata run_id/workflow/actor/ref v tokenu → v auditu OpenBao) a dostane policy **`operator`** – jen cesty pro setup (mount transit/secret,
+klíč `approval`, policy `approval-signer`, auth kubernetes a role `zakazka`) a měření (čtení `secret/data/zakazky/*`, vlastní policy/role,
+lookup-self); bez `sys/raw`, `sys/seal`, generate-root, rekey, zápisu vlastní policy/role, `auth/token/create`, zápisu KV, exportu klíče.
+Root token z Key Vaultu (`openbao-init`) se čte a použije **jen při bootstrapu** (první běh: enable `auth/jwt`, config discovery, policy a role
+operátora; dál jen při driftu policy/role/config vůči verzi v harnessu) nebo při ručním unsealu; jinak harness čte jen atributy secretu. Auth/jwt
+konfiguraci drží harness (`BAO_OPERATOR_POLICY`, `BAO_OPERATOR_ROLE` v `tools/harness_p1_k8s/harness.py`) – změna = bootstrap rootem v dalším běhu
+(E10b to vypíše). OpenBao pod potřebuje egress na GitHub (OIDC discovery + JWKS; TLS přes systémové CA podu – jako k Key Vaultu). kind bez
+OIDC zůstává na dev root tokenu. Měření: `measure` s `e2e=p3-6` (E10a–b) – **AKS 69/69 + 13 INFO** (run 41130143802, 2 běhy): 1. běh bootstrap
+(5 zápisů rootem, login po něm 200), 2. běh bez jediného požadavku root tokenem, hodnota `openbao-init` nečtena. Nález: `sub` claim GitHub OIDC
+má tvar `repo:akczcz@<owner_id>/adam@<repo_id>:environment:dev` (s id, ne jen jméno) – role váže claim `repository`; proti převzetí jména lze
+přidat `repository_id`. Výhled: stejnou roli může dostat člověk-operátor (OIDC Keycloak/Entra → `auth/oidc`), root token pak zůstane jen
+break-glass v Key Vaultu.
+
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);
   realm sám issuer nenese (`KC_HOSTNAME`).

@@ -794,7 +794,7 @@ def dialog_then(g, zid, timeout_s):
     return out
 
 
-def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_root_token):
+def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_token):
     """U-2 (P3-3): GUI nad celou firmou – pohledy z Governance MCP (org.*, RLS), posun autonomie, stop tenanta, governance report, export, dialog Account."""
     import psycopg, yaml as _yg
     sys.path.insert(0, str(HERE)); from gui_checks import Gui, ROLES
@@ -855,14 +855,18 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
             gb.login("bea", "bea"); zb2 = f"{tag}-beta2"; gb.create_thread(zb2, f"Druhá zakázka beta {zb2} – test stopu tenanta."); w2 = gb.wait_any_interrupt(1200)
         finally: gb.close()
         g = Gui(f"{APP}/gui/", shots=gui_shots / "gov").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); g.login("platform-admin", "platform-admin")
-        beta_z = [z_ for z_ in sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})]
-        def status(z):   # zakázek beta přibývá každým během (ledger na PVC) – timeout nesmí shodit celý běh (3. běh E8), pomalost ukáže detail
+        beta_all = sorted({e["zakazka"] for e in led() if e.get("kind") == "ZAKAZKA_START" and e.get("tenant") == "beta"})
+        beta_z = [z_ for z_ in beta_all if z_.startswith(tag)]   # 1. běh E10: GET /zakazky/<id> (stav z Dapru + ledger) pro ~155 historických zakázek beta 3× za sebou protáhl scénář na 38 min → GUI přišlo o token (refresh selhal, stop bez Authorization → 401); stavy jen pro zakázky tohoto běhu
+        def status(z):   # timeout nesmí shodit celý běh (3. běh E8), pomalost ukáže detail
             for i in range(3):
                 try: r = http("GET", f"{APP}/zakazky/{z}", timeout=60); return r.json().get("status") if r.status_code == 200 else f"http{r.status_code}"
                 except httpx.ReadTimeout:
                     if i == 2: return "timeout"
-        before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING" and z_.startswith(tag)]   # jen zakázky tohoto běhu: instance ze starého obrazu po pause/resume končí FAILED (změna kódu workflow = nedeterministický replay)
+        timing = {"wait_beta2_s": w2.get("waited_s"), "u2a_g_s": round(time.time() - t_g, 1)}; t_s = time.time()
+        before = {z_: status(z_) for z_ in beta_z}; running_before = [z_ for z_, v in before.items() if v == "RUNNING"]   # jen zakázky tohoto běhu: instance ze starého obrazu po pause/resume končí FAILED (změna kódu workflow = nedeterministický replay)
+        timing["status_before_s"] = round(time.time() - t_s, 1); t_s = time.time()
         st = g.tenant_stop("beta", "Zákazník beta pozastavil spolupráci do vyjasnění smlouvy – stop celého tenanta.")
+        timing["stop_s"] = round(time.time() - t_s, 1); t_s = time.time()
         after = {z_: status(z_) for z_ in beta_z}
         import yaml as _yk
         keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
@@ -870,7 +874,7 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
         blocked_cm = bool(beta_keys) and all((k.get("metadata") or {}).get("blocked") == "tenant-stop" and all(b["limit"]["amount"] == 0 for b in k.get("budgets", [])) for k in beta_keys)
         safe = re.sub(r"[^a-z0-9-]", "-", zb2.lower()).strip("-")[:40]; pf_b = PortForward(a, "openbao", 18204, 8200); pf_gw = PortForward(a, "agentgateway", 14100, 4100); gw_http = None
         try:
-            kv = http("GET", f"https://127.0.0.1:18204/v1/secret/data/zakazky/{safe}/gateway-keys", headers={"X-Vault-Token": init_root_token}, timeout=10)
+            kv = http("GET", f"https://127.0.0.1:18204/v1/secret/data/zakazky/{safe}/gateway-keys", headers={"X-Vault-Token": bao_token}, timeout=10)
             key = (((kv.json().get("data") or {}).get("data") or {}) if kv.status_code == 200 else {}).get("account")
             t_k = time.time()
             while key and time.time() - t_k < 120:   # propagace ConfigMapy → sidecar merge → hot reload (řádově 10–60 s)
@@ -878,6 +882,8 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
                 if gw_http == 429: break
                 time.sleep(5)
         finally: pf_b.stop(); pf_gw.stop()
+        timing["after_keys_s"] = round(time.time() - t_s, 1); t_s = time.time()
+        tb, ta = tok("bea", "bea"), tok("adam", "adam")   # tokeny z úvodu scénáře po 15 min vyprší (1. běh E10: ExpiredSignatureError) → čerstvé těsně před kontrolou paměti
         mem = http("POST", f"http://127.0.0.1:19900/tools/search_memory", json={"query": "test", "limit": 1}, headers={"Authorization": f"Bearer {tb}"}, timeout=15)
         mem_a = http("POST", f"http://127.0.0.1:19900/tools/search_memory", json={"query": "test", "limit": 1}, headers={"Authorization": f"Bearer {ta}"}, timeout=15)
         ents = kubectl(a, "-n", NS, "exec", "spire-server-0", "-c", "spire-server", "--", SPIRE_SERVER_BIN, "entry", "show", "-socketPath", "/tmp/spire-server/private/api.sock").stdout
@@ -885,14 +891,12 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init
             tst = c.execute("SELECT status FROM org.tenants WHERE tenant_id = 'beta'").fetchone()[0]; evs = c.execute("SELECT count(*) FROM org.agent_events WHERE tenant_id = 'beta' AND kind = 'suspended'").fetchone()[0]
         stop_led = next((e for e in reversed(led()) if e["kind"] == "STOP_TENANT" and e.get("tenant") == "beta"), {})
         rs = g.tenant_stop("beta", "Test hotov – tenant beta zpět do provozu (resume).", resume=True)
-        after_resume = {z_: status(z_) for z_ in beta_z}
+        after_resume = {z_: status(z_) for z_ in beta_z}; timing["resume_s"] = round(time.time() - t_s, 1)
         cond = {"stop_gui_ok": bool(st["ok"]), "disabled_empty": bool(st["disabled_empty"]), "second_interrupt": w2.get("kind") in ("dialog", "approval"), "running_before": bool(running_before),
                 "suspended": all(after[z_] == "SUSPENDED" for z_ in running_before), "keys_blocked_cm": blocked_cm, "gateway_429": gw_http == 429, "memory_beta_denied": mem.status_code == 403 and "tenant_stopped" in mem.text,
                 "memory_acme_ok": mem_a.status_code == 200, "spire_beta_entries": "spiffe://platform/role/account/beta" in ents, "tenant_stopped": tst == "stopped", "events_suspended": evs >= 1, "resume_gui_ok": bool(rs["ok"]),
                 "running_after_resume": all(after_resume[z_] == "RUNNING" for z_ in running_before)}   # 4. běh E8: FAIL bez čitelné příčiny (detail uříznutý seznamem ~100 zakázek beta) → podmínky jmenovitě, stavy jen pro zakázky běhu
-        def hist(d): return {"run": {z_: v for z_, v in d.items() if z_.startswith(tag)}, "others": dict(collections.Counter(v for z_, v in d.items() if not z_.startswith(tag)))}
-        before, after, after_resume = hist(before), hist(after), hist(after_resume)
-        rep.add("U2d","Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "before": before, "after_stop": after, "after_resume": after_resume, "stop_gui": st, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
+        rep.add("U2d","Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "before": before, "after_stop": after, "after_resume": after_resume, "beta_older_n": len(beta_all) - len(beta_z), "timing": timing, "stop_gui": st, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
         rep.add("U2h", "GUI nad firmou: čas scénáře, screenshoty", "INFO", {"wall_s": round(time.time() - t_g, 1), "shots": sorted(p.name for p in (gui_shots / "gov").glob("*.png")) if (gui_shots / "gov").exists() else []})
     finally:
         g.close()
@@ -945,7 +949,7 @@ def e5_probe(a, kj, duration_s=75):
     return out
 
 
-def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, init_root_token):
+def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_token):
     """O-3 (P3-5): multi-tenant harness v clusteru – M-E3 izolace paměti přes PEP identitou podu (SVID role × tenant), stop tenanta uprostřed běžící role
     s checkpointem (SIGTERM → sync-up), resume → role znovu od checkpointu a další HITL v GUI, spany paměti bez cizího tenanta (ClickHouse), útrata per tenant."""
     import psycopg, uuid as _uu
@@ -1415,6 +1419,146 @@ def kv_set(kv_name, name, value, content_type):
     return r.returncode == 0 or (r.stderr or "")[-300:]
 
 
+def kv_attrs(kv_name, name):
+    """Jen atributy tajemství (enabled, contentType) – hodnotu harness nedrží (P3-6 E10: root token OpenBao se čte jen při bootstrapu); None když chybí."""
+    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "{contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+
+
+# --- P3-6 E10: operátor OpenBao se scoped tokenem (auth/jwt z OIDC tokenu běhu GitHub Actions), root token z Key Vaultu jen pro bootstrap -----
+GH_OIDC_ISS = "https://token.actions.githubusercontent.com"
+BAO_OIDC_AUD = "openbao-platform"
+BAO_REPO = "akczcz/adam"
+BAO_OPERATOR_POLICY = """# P3-6 E10: operátor platformy = harness identitou běhu GitHub Actions (auth/jwt, OIDC repo akczcz/adam) – jen cesty, které setup a měření potřebují.
+# Záměrně ne: sys/raw, sys/seal, sys/generate-root, sys/rekey, zápis vlastní policy a role (eskalace), auth/token/create (child tokeny), zápis KV, export klíče.
+path "sys/mounts" { capabilities = ["read"] }
+path "sys/mounts/transit" { capabilities = ["create", "update", "read"] }
+path "sys/mounts/secret" { capabilities = ["create", "update", "read"] }
+path "sys/audit" { capabilities = ["read", "sudo"] }
+path "transit/keys/approval" { capabilities = ["create", "update", "read"] }
+path "sys/policies/acl/approval-signer" { capabilities = ["create", "update", "read"] }
+path "sys/policies/acl/operator" { capabilities = ["read"] }
+path "sys/auth" { capabilities = ["read", "sudo"] }
+path "sys/auth/kubernetes" { capabilities = ["create", "update", "read", "sudo"] }
+path "auth/kubernetes/config" { capabilities = ["create", "update", "read"] }
+path "auth/kubernetes/role/zakazka" { capabilities = ["create", "update", "read"] }
+path "auth/jwt/config" { capabilities = ["read"] }
+path "auth/jwt/role/operator" { capabilities = ["read"] }
+path "secret/data/zakazky/*" { capabilities = ["read"] }
+path "secret/metadata/zakazky/*" { capabilities = ["read", "list"] }
+path "auth/token/lookup-self" { capabilities = ["read"] }
+"""
+BAO_OPERATOR_ROLE = {"role_type": "jwt", "bound_audiences": [BAO_OIDC_AUD], "bound_claims": {"repository": BAO_REPO}, "bound_claims_type": "string", "user_claim": "sub",
+                     "claim_mappings": {"repository": "repository", "ref": "ref", "workflow": "workflow", "run_id": "run_id", "actor": "actor"},
+                     "token_policies": ["operator"], "token_ttl": "3h", "token_max_ttl": "3h"}
+BAO_BOOTSTRAP_PATHS = {"sys/auth", "sys/auth/jwt", "auth/jwt/config", "sys/policies/acl/operator", "auth/jwt/role/operator"}
+
+
+def gh_oidc_token(aud):
+    """OIDC token běhu GitHub Actions (permissions id-token: write) pro publikum `aud`; None mimo Actions (kind, lokálně)."""
+    url, tok = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL"), os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    if not url or not tok: return None
+    r = httpx.get(url, params={"audience": aud}, headers={"Authorization": f"Bearer {tok}"}, timeout=20); r.raise_for_status()
+    return r.json()["value"]
+
+
+def bao_operator(BAO, load_init):
+    """Token operátora OpenBao (P3-6 E10): v GitHub Actions login `auth/jwt` OIDC tokenem běhu (role `operator` vázaná na repo + audience, policy
+    `operator` = scoped), root token z Key Vaultu (`load_init()`) jen pro bootstrap – auth/jwt nenamountovaná, role/policy/config chybí nebo se liší
+    od verze v harnessu – a každé jeho použití se hlásí (E10b). Mimo Actions (kind) root token jako dřív. Hodnoty tokenů se nelogují."""
+    info = {"method": None, "login": None, "drift": None, "bootstrap": False, "root_used": []}
+    jwt = gh_oidc_token(BAO_OIDC_AUD)
+    if not jwt:
+        info["method"] = "root (mimo GitHub Actions – bez OIDC tokenu běhu)"; return load_init()["root_token"], info
+    def login():
+        r = httpx.post(f"{BAO}/v1/auth/jwt/login", json={"role": "operator", "jwt": jwt}, timeout=30)
+        try: return r.status_code, r.json()
+        except Exception: return r.status_code, {"errors": [r.text[:200]]}
+    def drift(tok):
+        H = {"X-Vault-Token": tok}; out = []
+        p = httpx.get(f"{BAO}/v1/sys/policies/acl/operator", headers=H, timeout=10)
+        if p.status_code != 200 or ((p.json().get("data") or {}).get("policy") or "").strip() != BAO_OPERATOR_POLICY.strip(): out.append("policy operator")
+        r = httpx.get(f"{BAO}/v1/auth/jwt/role/operator", headers=H, timeout=10); d = (r.json().get("data") or {}) if r.status_code == 200 else {}
+        for k, v in BAO_OPERATOR_ROLE.items():
+            got = d.get(k)
+            if k in ("token_ttl", "token_max_ttl") and isinstance(got, int): got = f"{got // 3600}h"
+            if (sorted(got) if isinstance(got, list) else got) != (sorted(v) if isinstance(v, list) else v): out.append(f"role operator: {k}")
+        c = httpx.get(f"{BAO}/v1/auth/jwt/config", headers=H, timeout=10); cd = (c.json().get("data") or {}) if c.status_code == 200 else {}
+        if cd.get("oidc_discovery_url") != GH_OIDC_ISS or cd.get("bound_issuer") != GH_OIDC_ISS: out.append("config jwt")
+        return out
+    st, body = login(); info["login"] = st
+    tok = (body.get("auth") or {}).get("client_token") if st == 200 else None
+    info["drift"] = drift(tok) if tok else [f"login {st}: {str((body.get('errors') or [''])[0])[:120]}"]
+    if info["drift"]:
+        info["bootstrap"] = True; H = {"X-Vault-Token": load_init()["root_token"]}
+        def api(m, path, js=None):
+            r = httpx.request(m, f"{BAO}/v1/{path}", json=js, headers=H, timeout=30); info["root_used"].append(f"{m} {path} → {r.status_code}"); return r
+        if "jwt/" not in api("GET", "sys/auth").json(): api("POST", "sys/auth/jwt", {"type": "jwt"})
+        api("POST", "auth/jwt/config", {"oidc_discovery_url": GH_OIDC_ISS, "bound_issuer": GH_OIDC_ISS, "default_role": "operator"})
+        api("PUT", "sys/policies/acl/operator", {"policy": BAO_OPERATOR_POLICY})
+        api("POST", "auth/jwt/role/operator", BAO_OPERATOR_ROLE)
+        st, body = login(); info["login_after"] = st
+        assert st == 200, f"login operátora do OpenBao (auth/jwt) po bootstrapu selhal: {st} {str(body.get('errors'))[:300]}"
+        tok = body["auth"]["client_token"]; info["drift_after"] = drift(tok)
+    au = body.get("auth") or {}
+    info.update(method="auth/jwt (OIDC token běhu GitHub Actions)", policies=au.get("policies"), ttl=au.get("lease_duration"), meta={k: v for k, v in (au.get("metadata") or {}).items() if k in ("repository", "ref", "workflow", "run_id", "actor", "role")})
+    return tok, info
+
+
+def e10_checks(a, rep, BAO, tok, op, since_iso):
+    """E10 (P3-6): harness jako operátor OpenBao pracuje se scoped tokenem z auth/jwt (OIDC běhu GitHub Actions), ne s root tokenem; root jen pro bootstrap."""
+    H = {"X-Vault-Token": tok}
+    look = httpx.get(f"{BAO}/v1/auth/token/lookup-self", headers=H, timeout=10).json().get("data", {})
+    # co operátor nesmí (403; probe cesty neexistující/neškodné – nic se nezmění ani při chybě policy)
+    denied = {"policy operator write": httpx.put(f"{BAO}/v1/sys/policies/acl/operator", headers=H, json={"policy": BAO_OPERATOR_POLICY}, timeout=10).status_code,
+              "role operator write": httpx.post(f"{BAO}/v1/auth/jwt/role/operator", headers=H, json=BAO_OPERATOR_ROLE, timeout=10).status_code,
+              "token create": httpx.post(f"{BAO}/v1/auth/token/create", headers=H, json={"policies": ["default"], "ttl": "1m"}, timeout=10).status_code,
+              "kv write": httpx.post(f"{BAO}/v1/secret/data/zakazky/e10-probe/gateway-keys", headers=H, json={"data": {"probe": "x"}}, timeout=10).status_code,
+              "transit export": httpx.get(f"{BAO}/v1/transit/export/signing-key/approval", headers=H, timeout=10).status_code,
+              "policies list": httpx.request("LIST", f"{BAO}/v1/sys/policies/acl", headers=H, timeout=10).status_code,
+              "mount delete": httpx.delete(f"{BAO}/v1/sys/mounts/e10-probe", headers=H, timeout=10).status_code,
+              "root policy read": httpx.get(f"{BAO}/v1/sys/policies/acl/root", headers=H, timeout=10).status_code}
+    allowed = {"policy operator read": httpx.get(f"{BAO}/v1/sys/policies/acl/operator", headers=H, timeout=10).status_code,
+               "role operator read": httpx.get(f"{BAO}/v1/auth/jwt/role/operator", headers=H, timeout=10).status_code,
+               "transit key read": httpx.get(f"{BAO}/v1/transit/keys/approval", headers=H, timeout=10).status_code}
+    # negativní login: OIDC token s jiným publikem a token s pozměněným payloadem (podpis nesedí)
+    def try_login(j):
+        r = httpx.post(f"{BAO}/v1/auth/jwt/login", json={"role": "operator", "jwt": j}, timeout=30)
+        try: return {"http": r.status_code, "error": str((r.json().get("errors") or [""])[0])[:100]}
+        except Exception: return {"http": r.status_code, "error": r.text[:100]}
+    j_bad = gh_oidc_token("not-openbao"); j_ok = gh_oidc_token(BAO_OIDC_AUD)
+    neg = {"wrong_audience": try_login(j_bad) if j_bad else "no-oidc"}
+    if j_ok:
+        import base64 as _b
+        h_, p_, s_ = j_ok.split("."); pl = json.loads(_b.urlsafe_b64decode(p_ + "=" * (-len(p_) % 4))); pl["repository"] = "someone-else/repo"
+        p2 = _b.urlsafe_b64encode(json.dumps(pl).encode()).decode().rstrip("="); neg["tampered_payload"] = try_login(f"{h_}.{p2}.{s_}")
+    # audit device OpenBao (stdout → logy podu): login auth/jwt s metadaty běhu, requesty root tokenem jen bootstrap
+    logs = kubectl(a, "-n", NS, "logs", "openbao-0", "-c", "openbao", f"--since-time={since_iso}", timeout=120).stdout
+    ents = []
+    for l in logs.splitlines():
+        l = l.strip()
+        if l.startswith("{"):
+            try: ents.append(json.loads(l))
+            except Exception: pass
+    resp = [e for e in ents if e.get("type") == "response"]
+    def au(e): return e.get("auth") or {}
+    def path(e): return (e.get("request") or {}).get("path") or ""
+    logins = [e for e in resp if path(e) == "auth/jwt/login"]
+    login_ok = [e for e in logins if "operator" in (au(e).get("policies") or []) and (au(e).get("metadata") or {}).get("repository") == BAO_REPO]
+    root_paths = sorted({path(e) for e in resp if "root" in (au(e).get("policies") or [])})
+    by_name = collections.Counter((au(e).get("display_name") or "-").split("-")[0] for e in resp)
+    policies = sorted(look.get("policies") or [])
+    ok = (op.get("method", "").startswith("auth/jwt") and policies == ["default", "operator"] and (look.get("display_name") or "").startswith("jwt-") and (look.get("meta") or {}).get("repository") == BAO_REPO
+          and all(v == 403 for v in denied.values()) and all(v == 200 for v in allowed.values())
+          and isinstance(neg["wrong_audience"], dict) and neg["wrong_audience"]["http"] in (400, 403) and neg.get("tampered_payload", {}).get("http") in (400, 403)
+          and len(login_ok) >= 1 and set(root_paths) <= BAO_BOOTSTRAP_PATHS and (op.get("bootstrap") or not root_paths) and (op.get("bootstrap") or op.get("kv_root_read") is False) and not op.get("drift_after"))
+    rep.add("E10a", "Operátor OpenBao se scoped tokenem místo root tokenu: harness se přihlásí `auth/jwt` OIDC tokenem běhu GitHub Actions (role `operator`: bound_audiences + bound_claims repository akczcz/adam, claim_mappings run_id/workflow/actor/ref do metadat tokenu) a dostane token s policies [default, operator] (TTL 3 h); setup transitu, policy aplikace, auth kubernetes i čtení KV klíčů zakázek jdou tímto tokenem; operátor nesmí zapsat vlastní policy/roli (eskalace), vydat child token, zapsat KV, exportovat klíč, listovat policy ani číst policy root (403), smí číst svou policy/roli a klíč transit; OIDC token s jiným publikem i pozměněným payloadem odmítnut; audit OpenBao (stdout → log podu) eviduje login auth/jwt s metadaty repozitáře a od startu harnessu žádný request root tokenem (při bootstrapu jen sys/auth, auth/jwt/config, policy a role operátora); hodnota `openbao-init` z Key Vaultu se mimo bootstrap vůbec nečte", "PASS" if ok else "FAIL",
+            {"operator": {"method": op.get("method"), "login": op.get("login"), "policies": policies, "display_name": look.get("display_name"), "ttl": look.get("ttl"), "meta": {k: v for k, v in (look.get("meta") or {}).items() if k != "role"}}, "denied": denied, "allowed": allowed, "negative_login": neg,
+             "audit": {"since": since_iso, "entries": len(resp), "jwt_logins": len(logins), "jwt_logins_ok": len(login_ok), "root_paths": root_paths, "by_display_name": dict(by_name)}, "bootstrap_this_run": op.get("bootstrap"), "root_used": op.get("root_used"), "kv_root_read": op.get("kv_root_read"), "drift": op.get("drift"), "drift_after": op.get("drift_after")})
+    rep.add("E10b", "E10: bootstrap auth/jwt operátora (jen první běh nebo drift policy/role), požadavky root tokenem v tomto běhu a rozložení požadavků v auditu OpenBao podle identity (jwt = operátor, kubernetes = aplikace, root = bootstrap)", "INFO",
+            {"bootstrap": op.get("bootstrap"), "drift": op.get("drift"), "root_used": op.get("root_used"), "login_after_bootstrap": op.get("login_after"), "audit_by_display_name": dict(by_name), "audit_root_paths": root_paths, "token_meta": op.get("meta")})
+
+
 def e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, kc_adm, led):
     """E9 (P3-6): žádný literál hesla z Gitu v běžící platformě – admin Keycloaku (`admin-dev`) a DB role memory_app/org_reader/org_writer
     (`role:role` v DSN) mají hesla z Key Vaultu (Terraform random_password → ESO: Secrety keycloak-admin, memory-db, governance-db a
@@ -1465,17 +1609,17 @@ def e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, kc_adm, led):
     rep.add("E9b", "E9: migrace admina Keycloaku v tomto běhu (login Secretem / dev literálem, rotace admin API) a synchronizace hesel DB rolí aplikací", "INFO", {"keycloak_admin": kc_adm, "db_roles_sync_events": len(sync), "last_sync": last_sync})
 
 
-def e8_checks(a, rep, kj, kv_name, BAO, init, seal0, migrated, secret):
+def e8_checks(a, rep, kj, kv_name, BAO, init, seal0, migrated, secret, kv_meta):
     """E8 (P3-6): bootstrap OpenBao (root token + recovery klíč z `sys/init`) žije jen v Key Vaultu platformy (secret `openbao-init`, zapsal operátor =
-    harness identitou runneru), v clusteru žádný Secret; unseal dělá Key Vault (seal azurekeyvault) bez operátora; root token z Key Vaultu platný."""
+    harness identitou runneru), v clusteru žádný Secret; unseal dělá Key Vault (seal azurekeyvault) bez operátora. P3-6 E10: hodnota (root token)
+    se čte jen při bootstrapu – `init` je None, když ji tento běh nepotřeboval; platnost root tokenu se už neověřuje lookupem (root se nepoužívá)."""
     r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", "openbao-init", "--query", "{contentType:contentType,enabled:attributes.enabled,created:attributes.created,updated:attributes.updated,recoveryLevel:attributes.recoveryLevel}", "-o", "json"], capture_output=True, text=True, timeout=120)
     meta = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stderr or "")[-200:]}
     k8s_secret = secret("openbao-init", "init\\.json")
     by_kubectl = sorted(s_["metadata"]["name"] for s_ in kj("-n", NS, "get", "secrets").get("items", []) if any(m.get("manager", "").startswith("kubectl") for m in s_["metadata"].get("managedFields", [])))
-    try: look = httpx.get(f"{BAO}/v1/auth/token/lookup-self", headers={"X-Vault-Token": init.get("root_token", "")}, timeout=10); look_j = look.json().get("data", {}) if look.status_code == 200 else {"http": look.status_code}
-    except Exception as e: look_j = {"error": type(e).__name__}
+    init = init or {}
     seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
-    rep.add("E8a", "Bootstrap OpenBao jen v Key Vaultu: `sys/init` (recovery_shares 1) provádí operátor (harness identitou runneru, OIDC) a výsledek ukládá do Key Vault secretu `openbao-init` (contentType, soft-delete/purge protection Key Vaultu), ne do Kubernetes Secretu – v platform-data žádný Secret `openbao-init` ani jiný se stopou kubectl; při startu clusteru unseal zajistí seal azurekeyvault (při příchodu harnessu už unsealed, type azurekeyvault, recovery seal); root token z Key Vaultu platný (lookup-self policies root); migrace ze staršího Secretu proběhla jednorázově a Secret byl smazán", "PASS" if meta.get("enabled") is True and meta.get("contentType") and not k8s_secret and not by_kubectl and seal0.get("sealed") is False and seal0.get("type") == "azurekeyvault" and seal0.get("recovery_seal") is True and "root" in (look_j.get("policies") or []) and len(init.get("recovery_keys_base64") or init.get("keys_base64") or []) == 1 and not seal.get("sealed") else "FAIL", {"keyvault": {"name": kv_name, "secret": meta}, "k8s_secret_openbao_init": bool(k8s_secret), "secrets_by_kubectl": by_kubectl, "seal_at_start": {k: seal0.get(k) for k in ("sealed", "type", "recovery_seal", "initialized")}, "root_token": {"policies": look_j.get("policies"), "ttl": look_j.get("ttl"), "error": look_j.get("error") or look_j.get("http")}, "recovery_keys": len(init.get("recovery_keys_base64") or init.get("keys_base64") or []), "recovery_keys_origin": "recovery" if init.get("recovery_keys_base64") else "shamir→azurekeyvault migrace (keys_base64)", "migrated_this_run": migrated})
+    rep.add("E8a", "Bootstrap OpenBao jen v Key Vaultu: `sys/init` (recovery_shares 1) provádí operátor (harness identitou runneru, OIDC) a výsledek ukládá do Key Vault secretu `openbao-init` (contentType, soft-delete/purge protection Key Vaultu), ne do Kubernetes Secretu – v platform-data žádný Secret `openbao-init` ani jiný se stopou kubectl; při startu clusteru unseal zajistí seal azurekeyvault (při příchodu harnessu už unsealed, type azurekeyvault, recovery seal); hodnota (root token, recovery klíč) se čte jen při bootstrapu (E10), ne každý běh; migrace ze staršího Secretu proběhla jednorázově a Secret byl smazán", "PASS" if meta.get("enabled") is True and meta.get("contentType") and not k8s_secret and not by_kubectl and seal0.get("sealed") is False and seal0.get("type") == "azurekeyvault" and seal0.get("recovery_seal") is True and (not init or len(init.get("recovery_keys_base64") or init.get("keys_base64") or []) == 1) and not seal.get("sealed") else "FAIL", {"keyvault": {"name": kv_name, "secret": meta}, "k8s_secret_openbao_init": bool(k8s_secret), "secrets_by_kubectl": by_kubectl, "seal_at_start": {k: seal0.get(k) for k in ("sealed", "type", "recovery_seal", "initialized")}, "value_read_this_run": bool(init), "recovery_keys": (len(init.get("recovery_keys_base64") or init.get("keys_base64") or []) if init else "nečteno (E10: jen při bootstrapu)"), "recovery_keys_origin": ("recovery" if init.get("recovery_keys_base64") else "shamir→azurekeyvault migrace (keys_base64)") if init else None, "migrated_this_run": migrated})
     r = subprocess.run(["az", "keyvault", "secret", "list", "--vault-name", kv_name, "--query", "[].{name:name,contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
     rep.add("E8b", "E8: inventář tajemství platformy v Key Vaultu (Terraform secrets.tf + bootstrap OpenBao); runner čte/zapisuje jako Key Vault Secrets Officer, pody přes ESO jako Secrets User", "INFO", {"secrets": json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else (r.stderr or "")[-200:]})
 
@@ -1663,7 +1807,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -1751,22 +1895,31 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     seal_type = seal0.get("type")
     st = httpx.get(f"{BAO}/v1/sys/init", timeout=10).json()
     # P3-6 E8: bootstrap (root token + recovery klíč) žije v Key Vaultu platformy (secret openbao-init), ne v Kubernetes Secretu; zapisuje/čte operátor = runner (az, OIDC)
+    # P3-6 E10: hodnota (root token, recovery klíč) se čte líně – jen při init, migraci, ručním unsealu nebo bootstrapu auth/jwt (load_init); provoz jde scoped tokenem operátora
     kv_name = kv_name_of(kj); assert kv_name, "KV_NAME v substitute kustomizace platform-trust chybí"
-    init_s = kv_get(kv_name, "openbao-init"); legacy_s = secret("openbao-init", "init\\.json"); bao_init_migrated = False
+    kv_meta = kv_attrs(kv_name, "openbao-init"); legacy_s = secret("openbao-init", "init\\.json"); bao_init_migrated = False
     KV_CT = "OpenBao sys/init: root token + recovery klíč (bootstrap; operátor, ne pody)"
+    bao_state = {"init": None, "kv_root_read": False}
+    def load_init():
+        if bao_state["init"] is None:
+            s_ = kv_get(kv_name, "openbao-init"); bao_state["kv_root_read"] = True
+            assert s_, "OpenBao je inicializovaný, ale Key Vault secret openbao-init chybí – smazat PVC data-openbao-0 a pod openbao-0, nebo tajemství do Key Vaultu doplnit"
+            bao_state["init"] = json.loads(s_)
+        return bao_state["init"]
     if not st.get("initialized"):
         body = {"recovery_shares": 1, "recovery_threshold": 1} if seal_type and seal_type != "shamir" else {"secret_shares": 1, "secret_threshold": 1}   # auto-unseal (P2-3): recovery klíče místo unseal klíčů
         init = httpx.post(f"{BAO}/v1/sys/init", json=body, timeout=30).json(); assert "root_token" in init, f"init selhal: {init}"
         ok_kv = kv_set(kv_name, "openbao-init", json.dumps(init), KV_CT); assert ok_kv is True, f"zápis openbao-init do Key Vaultu selhal: {ok_kv}"
-        init_s = json.dumps(init)
-    elif not init_s and legacy_s:   # migrace z P2-3: Secret openbao-init z clusteru → Key Vault (jednorázově)
+        bao_state.update(init=init, kv_root_read=True); kv_meta = kv_attrs(kv_name, "openbao-init")
+    elif not kv_meta and legacy_s:   # migrace z P2-3: Secret openbao-init z clusteru → Key Vault (jednorázově)
         ok_kv = kv_set(kv_name, "openbao-init", legacy_s, KV_CT); assert ok_kv is True, f"migrace openbao-init do Key Vaultu selhala: {ok_kv}"
-        init_s = legacy_s; bao_init_migrated = True
-    assert init_s, "OpenBao je inicializovaný, ale Key Vault secret openbao-init chybí (a v clusteru není ani starý Secret) – smazat PVC data-openbao-0 a pod openbao-0, nebo tajemství do Key Vaultu doplnit"
+        bao_state.update(init=json.loads(legacy_s), kv_root_read=True); bao_init_migrated = True; kv_meta = kv_attrs(kv_name, "openbao-init")
+    assert kv_meta, "OpenBao je inicializovaný, ale Key Vault secret openbao-init chybí (a v clusteru není ani starý Secret) – smazat PVC data-openbao-0 a pod openbao-0, nebo tajemství do Key Vaultu doplnit"
     if legacy_s: kubectl(a, "-n", NS, "delete", "secret", "openbao-init", "--ignore-not-found")   # bootstrap už jen v Key Vaultu
-    init = json.loads(init_s); bao_migrated = False
+    bao_migrated = False
     seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
     if seal.get("sealed"):
+        init = load_init()
         if seal.get("type") not in (None, "shamir") and init.get("keys_base64"):   # storage z shamir, config už s azurekeyvault → migrace (klíče se stanou recovery klíči)
             httpx.post(f"{BAO}/v1/sys/unseal", json={"key": init["keys_base64"][0], "migrate": True}, timeout=60); bao_migrated = True
         elif init.get("keys_base64"): httpx.post(f"{BAO}/v1/sys/unseal", json={"key": init["keys_base64"][0]}, timeout=30)
@@ -1774,13 +1927,16 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             if not httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json().get("sealed"): break
             time.sleep(2)
     seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
-    o2m.BAO = BAO; bao_app = o2m.bao_setup(init["root_token"], LOGS / "openbao-audit-aks.log")
+    t_bao0 = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
+    bao_tok, bao_op = bao_operator(BAO, load_init); bao_op["kv_root_read"] = bao_state["kv_root_read"]   # P3-6 E10: scoped token operátora (auth/jwt), root jen bootstrap
+    o2m.BAO = BAO; o2m.bao_setup(bao_tok, LOGS / "openbao-audit-aks.log", app_token=False)   # aplikace má auth/kubernetes – token aplikace se nevydává
     # P2-3: auth metoda kubernetes pro aplikaci (SA zakazka) – žádný token OpenBao v Secretu; TokenReview vlastním SA tokenem OpenBao (auth-delegator)
-    Hb = {"X-Vault-Token": init["root_token"]}
+    Hb = {"X-Vault-Token": bao_tok}
     if "kubernetes/" not in httpx.get(f"{BAO}/v1/sys/auth", headers=Hb, timeout=10).json(): httpx.post(f"{BAO}/v1/sys/auth/kubernetes", json={"type": "kubernetes"}, headers=Hb, timeout=10)
     httpx.post(f"{BAO}/v1/auth/kubernetes/config", json={"kubernetes_host": "https://kubernetes.default.svc:443"}, headers=Hb, timeout=10)
     httpx.post(f"{BAO}/v1/auth/kubernetes/role/zakazka", json={"bound_service_account_names": ["zakazka"], "bound_service_account_namespaces": [NS], "token_policies": ["approval-signer"], "token_ttl": "1h", "token_max_ttl": "4h"}, headers=Hb, timeout=10)
-    if e8: e8_checks(a, rep, kj, kv_name, BAO, init, seal0, bao_init_migrated, secret)   # P3-6 E8: bootstrap OpenBao jen v Key Vaultu
+    if e8: e8_checks(a, rep, kj, kv_name, BAO, bao_state["init"], seal0, bao_init_migrated, secret, kv_meta)   # P3-6 E8: bootstrap OpenBao jen v Key Vaultu
+    if e10: e10_checks(a, rep, BAO, bao_tok, bao_op, t_bao0)   # P3-6 E10: operátor se scoped tokenem, root jen bootstrap
     # Postgres = Flexible Server: admin `platform`, heslo ze Secretu postgres-auth (Flux substitute), TLS; z runneru přímo (pravidlo Allow Azure services),
     # jinak přes socat pod + port-forward
     pg_host = kubectl(a, "-n", NS, "get", "svc", "postgres", "-o", "jsonpath={.spec.externalName}").stdout.strip(); pg_pw = secret("postgres-auth", "POSTGRES_PASSWORD")
@@ -1939,9 +2095,9 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         got_block = {(k.get("metadata") or {}).get("role"): next((b["limit"]["amount"] for b in k.get("budgets", []) if b["name"].endswith("24h-block")), None) for k in mine}
         sec_keys = kubectl(a, "-n", NS, "get", "secret", f"zakazka-keys-{zid.lower()}", "-o", "jsonpath={.metadata.name}").stdout.strip()
         if tenant: tenant_flow(a, rep, http, led, APP, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-2: T1a–T1f
-        if gov: gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-3: U2a–U2h
+        if gov: gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", bao_tok)   # P3-3: U2a–U2h
         if klas: klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-4: K1a–K1g
-        if o3: o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", init["root_token"])   # P3-5: O3a–O3f
+        if o3: o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", bao_tok)   # P3-5: O3a–O3f
         if e3: e3_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E3: strop v gateway + navýšení z GUI
         if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E4: per-request ledger → ClickHouse
         if e6: e6_flow(a, rep, http, led, APP, kj, zid[:-2])   # P3-6 E6: verzování workflow (restart podu aplikace – až po všech tocích s pody rolí)
@@ -2037,7 +2193,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if finops:
             # P2-6 – FinOps naostro: klíče role × zakázka z OpenBao (KV), cena zakázky = součet klíčů z budget_usage, strop zakázky vynucuje orchestrátor, registr org.zakazky
             safe_zid = re.sub(r"[^a-z0-9-]", "-", zid.lower()).strip("-")[:40]
-            pf_bao3 = PortForward(a, "openbao", 18203, 8200); Hb3 = {"X-Vault-Token": init["root_token"]}
+            pf_bao3 = PortForward(a, "openbao", 18203, 8200); Hb3 = {"X-Vault-Token": bao_tok}   # P3-6 E10: scoped token operátora (čtení secret/data/zakazky/*)
             try: kv = http("GET", f"https://127.0.0.1:18203/v1/secret/data/zakazky/{safe_zid}/gateway-keys", headers=Hb3, timeout=10)
             finally: pf_bao3.stop()
             kv_keys = ((kv.json().get("data") or {}).get("data") or {}) if kv.status_code == 200 else {}
@@ -2178,7 +2334,7 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

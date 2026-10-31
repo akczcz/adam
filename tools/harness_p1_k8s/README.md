@@ -715,6 +715,46 @@ Migrace admina proběhla v 1. běhu bez výpadku (ESO Secret → rotace admin AP
 nastavuje aplikace při startu, Governance MCP a paměť se připojují per request → při rotaci hesla v Key Vaultu je okno do restartu aplikace
 (ESO refresh 1 h + rollout) – rotace zatím není automatizovaná.
 
+## P3-6 E10 – operátor OpenBao se scoped tokenem (2026-10-30, AKS, `--step p3-6` = … + **E10a–b**)
+
+- **Problém**: harness jako operátor pracoval s **root tokenem** OpenBao (z Key Vaultu, E8) – pro setup transitu, policy aplikace, auth
+  kubernetes i čtení KV klíčů zakázek. Root nemá hranice ani identitu toho, kdo ho použil; každý běh ho četl z Key Vaultu.
+- **Řešení**: OpenBao **auth metoda `jwt`** s OIDC discovery `https://token.actions.githubusercontent.com`; role `operator` vázaná na
+  `bound_audiences` (`openbao-platform`) a `bound_claims.repository = akczcz/adam`, `claim_mappings` (run_id, workflow, actor, ref) do metadat
+  tokenu → audit OpenBao nese, který běh co udělal. Policy **`operator`** (`BAO_OPERATOR_POLICY` v harnessu) povoluje jen cesty, které setup
+  a měření potřebují (mount transit/secret, klíč `approval`, policy `approval-signer`, auth kubernetes + role `zakazka`, čtení
+  `secret/data/zakazky/*`, čtení vlastní policy/role, lookup-self); záměrně ne `sys/raw`, `sys/seal`, generate-root, rekey, zápis vlastní
+  policy a role, `auth/token/create`, zápis KV, export klíče. Harness (`bao_operator`) si vyžádá OIDC token běhu (`ACTIONS_ID_TOKEN_REQUEST_URL`,
+  `permissions: id-token: write`), přihlásí se, a **root token z Key Vaultu použije jen pro bootstrap** (auth/jwt chybí, nebo se policy/role/config
+  liší od verze v harnessu – drift se zjistí čtením přes operátorský token) a každé jeho použití vypíše. Hodnota Key Vault secretu `openbao-init`
+  se mimo bootstrap/unseal **vůbec nečte** (`kv_attrs` jen atributy). Token aplikace se na AKS nevydává (`bao_setup(app_token=False)`; aplikace má
+  auth kubernetes). kind (bez OIDC) zůstává na dev root tokenu.
+- **Měření**: E10a – lookup-self operátora (policies `[default, operator]`, display_name `jwt-…`, metadata repository), setup prošel tímto tokenem,
+  8 zakázaných operací → 403, 3 povolené → 200, OIDC token s jiným publikem a s pozměněným payloadem odmítnut, audit (stdout → log podu) eviduje
+  login auth/jwt s metadaty běhu a od startu harnessu žádný request root tokenem mimo bootstrap, hodnota `openbao-init` mimo bootstrap nečtena;
+  E10b (INFO) – bootstrap/drift, požadavky root tokenem, rozložení auditu podle identity. E8a už root token neověřuje lookupem.
+- Ověřeno lokálně proti `bao server -dev` 2.7.1 (vlastní RSA issuer, claims jako GitHub OIDC): policy prošla všemi kroky setupu, zakázané 403.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E10a | operátor se scoped tokenem z auth/jwt (OIDC běhu), root jen bootstrap, zakázané operace 403, audit | ✅ login 200, policies `[default, operator]`, display_name `jwt-repo:akczcz@…/adam@…:environment:dev`, TTL 3 h, metadata run_id/workflow/actor/ref; 8 zakázaných → 403, 3 povolené → 200; cizí publikum i pozměněný payload odmítnuty; audit: 1. běh root 5 požadavků (jen bootstrap cesty), 2. běh root 0, jwt 23 |
+| E10b | bootstrap, drift, požadavky rootem, audit podle identity | ℹ️ 1. běh `bootstrap: true` (auth/jwt chyběla → login 403 → root: `sys/auth/jwt`, `auth/jwt/config`, policy a role operátora → login 200); 2. běh `bootstrap: false`, `drift: []`, `root_used: []`, hodnota `openbao-init` nečtena |
+
+Výsledek: **AKS 69/69 + 13 INFO** (`measure` run 41130143802, 2 běhy; 1. běh 41116682713: E10a/E10b v pořádku už napoprvé, FAIL jen U2d – viz nálezy).
+
+Nálezy:
+
+- **`sub` claim GitHub OIDC nese id** (`repo:akczcz@51314480/adam@1386473812:environment:dev`, ne `repo:akczcz/adam:…` z dokumentace) – proto role váže
+  `bound_claims.repository` (jméno), ne `sub`; pro ochranu proti přejmenování/převzetí jména lze přidat `repository_id` (ověřeno měřením 2026-10-30).
+- **Discovery/JWKS z podu OpenBao na GitHub prošlo** napoprvé (systémové CA, egress NetworkPolicy platform-data ho nepotřebuje blokovat); bootstrap
+  v prvním běhu trval jen pět zápisů root tokenem a login po něm 200.
+- **U2d (stop tenanta z GUI) FAIL v 1. běhu, bez vztahu k E10**: `GET /zakazky/<id>` (stav z Dapru + ledger) pro ~155 historických zakázek beta
+  3× za sebou protáhl scénář U2 z 16 na 38 min → GUI přišlo o token (neúspěšný refresh → `ensureFresh` token zahodí, stav `user` v paměti zůstane →
+  stop bez Authorization → 401 „chybí Bearer token“) a tokeny bea/adam z úvodu scénáře vypršely (15 min, `ExpiredSignatureError`). Harness
+  (`gui_checks.py`, `gov_flow`): stavy jen zakázek tohoto běhu (+ počet starších), časování kroků v detailu, čerstvé tokeny těsně před kontrolou
+  paměti, `Gui.relogin` a jedno opakování stopu při 401. 2. běh: U2 338 s. Otevřené pro GUI: po neúspěšném refreshi by měl GUI uživatele odhlásit
+  (zobrazit login), ne pokračovat bez tokenu.
+
 ## Spuštění
 
 ```bash

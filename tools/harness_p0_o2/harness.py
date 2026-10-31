@@ -221,9 +221,11 @@ def start_bao(bao_bin, env):
     return p, root, bao_setup(root, audit), audit
 
 
-def bao_setup(root, audit):
+def bao_setup(root, audit, app_token=True):
     """Idempotentní příprava OpenBao (lokální dev i externí v clusteru): mount transit, klíč approval (ed25519, neexportovatelný),
-    audit device z configu, policy approval-signer a token aplikace jen na sign/verify."""
+    audit device z configu, policy approval-signer a token aplikace jen na sign/verify. `root` = token operátora: lokálně/kind root token,
+    na AKS (P3-6 E10) scoped token z auth/jwt (policy `operator` – smí jen tyto cesty); app_token=False = token aplikace nevydávat
+    (AKS: aplikace se přihlašuje auth/kubernetes; non-root token by child token s cizí policy stejně nevydal)."""
     H = {"X-Vault-Token": root}
     def api(method, path, body=None, ok=(200, 204)):
         r = httpx.request(method, f"{BAO}/v1/{path}", json=body, headers=H, timeout=10); assert r.status_code in ok, f"{path}: {r.status_code} {r.text[:200]}"; return r
@@ -235,6 +237,7 @@ def bao_setup(root, audit):
     api("PUT", "sys/policies/acl/approval-signer", {"policy": 'path "transit/sign/approval" { capabilities = ["update"] }\npath "transit/verify/approval" { capabilities = ["update"] }\n'
                                                               'path "secret/data/zakazky/*" { capabilities = ["create", "read", "update"] }\npath "secret/metadata/zakazky/*" { capabilities = ["read", "list"] }\n'   # P2-6
                                                               'path "sys/tools/random/*" { capabilities = ["update"] }'})
+    if not app_token: return None
     return api("POST", "auth/token/create", {"policies": ["approval-signer"], "no_default_policy": True, "ttl": "2h", "display_name": "zakazka-app"}).json()["auth"]["client_token"]
 
 
