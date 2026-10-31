@@ -300,8 +300,10 @@ mají `sslmode=verify-full&sslrootcert=/etc/platform/ca/ca.crt` a **host = `${PG
 jména padl – Service ExternalName zůstává pro harness a sondy). Bundle `platform-ca` (`trust/pki.yaml`) = root platformy + **DigiCert Global Root G2**
 + **Microsoft RSA Root Certificate Authority 2017** (inLine PEM, SHA-256 v komentáři; zdroj Mozilla store, požadavek Microsoftu pro verify-full);
 mount `platform-ca` přibyl daprd (pgx `sslrootcert`), Keycloaku (pgjdbc) a agentgateway (sqlx). Legacy DigiCert Global Root CA (G1) záměrně ne –
-E11c hlásí issuer serverového certifikátu. Harness: `dsn()` verify-full proti certifi + root platformy (přes socat verify-ca), ClickHouse port-forward 18443→8443 https.
-Měření: `measure` s `e2e=p3-6` (E11a–c). Bez změny obrazů a Terraformu. Zbývá (P4): mTLS mesh, interní porty (ClickHouse interserver 9009, Dapr placement/scheduler, SPIRE) a OPA.
+E11c hlásí issuer serverového certifikátu (měřeno: **Microsoft TLS G2 RSA CA** → DigiCert Global Root G2). Harness: `dsn()` verify-full proti certifi
++ root platformy (přes socat verify-ca), ClickHouse port-forward 18445→8443 https (18443 patří Keycloaku – kolize v 1. běhu).
+Měření: `measure` s `e2e=p3-6` (E11a–c) – **AKS 72/72 + 13 INFO 2026-10-31** (run 41189317696, 3 běhy; FAIL dřívějších běhů jen v harnessu: kolize portů,
+E11b před provozem rolí). Bez změny obrazů a Terraformu. Zbývá (P4): mTLS mesh, interní porty (ClickHouse interserver 9009, Dapr placement/scheduler, SPIRE) a OPA.
 
 ## Pasti (AKS + Flux)
 - Změna issueru Keycloaku (http → https) zneplatní všechny vydané tokeny a cache JWKS klientů – nasazení = restart klientů (harness `restart_pods`);

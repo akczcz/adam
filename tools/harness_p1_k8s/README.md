@@ -780,11 +780,26 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| E11a | ClickHouse a Collector jen TLS z platform-ca, plaintext odmítnut, klienti na https | ⏳ |
-| E11b | spany gateway i paměti dorazily přes TLS, bez TLS chyb v lozích | ⏳ |
-| E11c | Postgres verify-full u všech klientů, rooty Azure v bundle, alias `postgres` odmítnut, chain ověřen | ⏳ |
+| E11a | ClickHouse a Collector jen TLS z platform-ca, plaintext odmítnut, klienti na https | ✅ |
+| E11b | spany gateway i paměti dorazily přes TLS, bez TLS chyb v lozích | ✅ |
+| E11c | Postgres verify-full u všech klientů, rooty Azure v bundle, alias `postgres` odmítnut, chain ověřen | ✅ |
 
-Výsledek: ⏳ (doplním po měření).
+Výsledek: **AKS 72/72 + 13 INFO** (`measure` run 41189317696, 3 měřicí běhy). 1. běh 41177730039 66/72: TLS samo prošlo (certifikáty, verify-full
+z podů i runneru, veřejné CA a alias `postgres` odmítnuty), FAIL jen na straně harnessu – viz nálezy. 2. běh 41184838669 71/72: E11b bez spanů gateway,
+protože se vyhodnocoval v P2-1 před prvním LLM provozem rolí (od startu harnessu jen spany paměti). Dva běhy mezi tím (41182493916, 41183288835)
+jely bez harnessu – spuštění přes GitHub MCP bez `inputs` = výchozí hodnoty (`s1=true`, `e2e=none`), stejně „stop“ clusteru byl jen `status`.
+
+Nálezy:
+
+- **Kolize lokálních portů harnessu**: ClickHouse port-forward dostal 18443 = port hlavního port-forwardu Keycloaku (běží celý běh) → dotazy
+  ClickHouse odpovídal Keycloak (Quarkus 404 „Unable to find matching target resource method“, 302), E11a/E11b/O3d/E4a bez spanů. ClickHouse → 18445;
+  registr portů harnessu: 18443 Keycloak, 18444 Keycloak dočasný (E7), 18445 ClickHouse, 14318 Collector, 14100 gateway, 18204 OpenBao, 15432 socat Postgres.
+- **E11b až po provozu rolí**: spany agentgateway vznikají jen z LLM requestů podů rolí (E4a), v P2-1 je od startu jen paměť → check běží po `e6_flow`.
+- **E1b** vyžadoval v DSN gateway alias `@postgres` – po přechodu na FQDN kontroluje jen heslo z Key Vaultu v DSN; **E11c** jsonpath klíč
+  `statestore.yaml` je nutné escapovat (`statestore\.yaml`), jinak Dapr DSN vypadal jako bez verify-full.
+- **Certifikát Flexible Serveru**: subject `CN=<id>.database.azure.com`, FQDN serveru v SAN, issuer **Microsoft TLS G2 RSA CA** (řetězec do DigiCert
+  Global Root G2) – bundle s rooty Azure stačí, legacy DigiCert Global Root CA není potřeba; z runneru chain proti rootu platformy samotnému odmítnut.
+- **Chyby TLS v lozích Collectoru/ClickHouse** byly jen z negativních sond harnessu (veřejné CA přes 127.0.0.1, plaintext na TLS porty) → filtr vlastních sond.
 
 ## Spuštění
 
