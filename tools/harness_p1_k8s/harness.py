@@ -1864,8 +1864,13 @@ def e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw):
     pg_name = pg_host.split(".")[0]
     srv = az("postgres", "flexible-server", "show", "-g", rg, "-n", pg_name, "--query", "{public:network.publicNetworkAccess, delegated:network.delegatedSubnetResourceId, state:state}")
     fw = az("postgres", "flexible-server", "firewall-rule", "list", "-g", rg, "--server-name", pg_name, "--query", "[].name")
-    pes = az("network", "private-endpoint", "list", "-g", rg, "--query", "[].{name:name, state:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status, target:privateLinkServiceConnections[0].privateLinkServiceId, ip:customDnsConfigs[0].ipAddresses[0], fqdn:customDnsConfigs[0].fqdn, subnet:subnet.id}")
+    # server bez veřejného přístupu firewall pravidla nemá vůbec (az: „Firewall rule operations are not supported for a server without public access enabled“)
+    fw_none = fw == [] or (isinstance(fw, dict) and "without public access" in fw.get("error", ""))
+    pes = az("network", "private-endpoint", "list", "-g", rg, "--query", "[].{name:name, state:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status, target:privateLinkServiceConnections[0].privateLinkServiceId, nic:networkInterfaces[0].id, fqdn:customDnsConfigs[0].fqdn, subnet:subnet.id}")
     pe = next((p for p in (pes if isinstance(pes, list) else []) if str(p.get("target", "")).endswith(f"/flexibleServers/{pg_name}")), {})
+    # IP endpointu je na jeho NIC (customDnsConfigs je při private_dns_zone_group prázdné – záznam vede zóna)
+    if pe.get("nic"): pe["ip"] = az("network", "nic", "show", "--ids", pe["nic"], "--query", "ipConfigurations[0].privateIPAddress")
+    if not isinstance(pe.get("ip"), str): pe["ip"] = None
     zones = az("network", "private-dns", "zone", "list", "-g", rg, "--query", "[].{name:name, links:numberOfVirtualNetworkLinks, records:numberOfRecordSets}")
     zone = next((z for z in (zones if isinstance(zones, list) else []) if z.get("name") == "privatelink.postgres.database.azure.com"), {})
     recs = az("network", "private-dns", "record-set", "a", "list", "-g", rg, "-z", "privatelink.postgres.database.azure.com", "--query", "[].{name:name, ip:aRecords[0].ipv4Address}") if zone else []
@@ -1888,7 +1893,7 @@ def e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw):
     try:
         so = socket.create_connection((pg_host, 5432), timeout=8); so.close(); runner_connect = "connected"
     except Exception as e: runner_connect = f"{type(e).__name__}"
-    cond = {"public_disabled": (srv or {}).get("public") == "Disabled", "no_firewall_rules": fw == [], "pe_approved": pe.get("state") == "Approved" and in_pe(pe.get("ip") or ""), "dns_zone_record": in_pe(rec.get("ip") or "") and rec.get("ip") == pe.get("ip"),
+    cond = {"public_disabled": (srv or {}).get("public") == "Disabled", "no_firewall_rules": fw_none, "pe_approved": pe.get("state") == "Approved" and in_pe(pe.get("ip") or ""), "dns_zone_record": in_pe(rec.get("ip") or "") and rec.get("ip") == pe.get("ip"),
             "zone_linked_to_aks": any(str(l_.get("vnet", "")).lower().find(f"/resourcegroups/{node_rg}/".lower()) >= 0 and l_.get("state") == "Completed" for l_ in (links if isinstance(links, list) else [])),
             "peering_connected": bool(vnet_pe.get("peerings")) and all(p_.get("state") == "Connected" for p_ in vnet_pe.get("peerings", [])) and any(p_.get("state") == "Connected" for p_ in (peer_aks if isinstance(peer_aks, list) else [])),
             "pod_resolves_private_ip": bool(pod_ips) and all(in_pe(ip) for ip in pod_ips), "runner_cannot_connect": runner_connect != "connected" and not pg_via.startswith("direct")}
