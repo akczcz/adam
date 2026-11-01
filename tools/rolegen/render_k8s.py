@@ -27,6 +27,23 @@ ROOT = HERE.parents[1]
 OUT = ROOT / "infra/k8s/rolegen"
 IMG = ROOT / "infra/images/roles"   # P2-2: Dockerfile + devcontainer.json + etc/platform per role (az acr build v images.yml)
 HEADER = "# GENEROVÁNO: python tools/rolegen/render_k8s.py z knowledge/organization/roles/*.yaml – neupravovat ručně (CI kontroluje `--check`).\n"
+LIVE_MODELS = ["claude-haiku-4-5", "claude-sonnet-4-5"]   # P4-2: aliasy live-<model> v gateway (ostrý upstream); P0_MODEL zakázky musí být z tohoto seznamu
+GITHUB_REPO = "akczcz/adam"                                # P4-2: jediný repozitář, kam smí routa github-api (== P0_GITHUB_REPO aplikace, infra/k8s/base/zakazka)
+
+
+def github_egress(cfg):
+    """P4-2: GitHub API pro ostrý běh jen přes gateway – listener github.platform.internal (HTTPS, cert platformy) → routa /api/* → api.github.com
+    s TLS k backendu; PAT vkládá gateway (backendAuth ze Secretu agentgateway-github-token, watched), aplikace žádný token nemá. Autorizace v gateway
+    = PEP: jen cesty repozitáře platformy a metody, které publikace potřebuje (issue, blob/tree/commit/ref, PR, merge). Pody rolí ji nepotřebují
+    (PR vzniká z artefaktů přes data API aplikace), proto není v egress_allow rolí ani v srt."""
+    tls = cfg["gateways"]["secure"]["listeners"][0]["tls"]
+    cfg["gateways"]["secure"]["listeners"].insert(-1, {"name": "github", "hostname": "github.platform.internal", "protocol": "HTTPS", "tls": tls})   # před public-egress ('*')
+    cfg["routes"].append({"name": "github-api", "gateways": "secure/github", "matches": [{"path": {"pathPrefix": "/api"}}],
+                          "policies": {"authorization": {"rules": [{"allow": f'(request.path.startsWith("/api/repos/{GITHUB_REPO}/") || request.path.startsWith("/repos/{GITHUB_REPO}/")) && (request.method == "GET" || request.method == "POST" || request.method == "PATCH" || request.method == "PUT")'}]},   # cesta před i po přepisu prefixu (pořadí politik v gateway neověřeno)
+                                       "urlRewrite": {"path": {"prefix": "/"}, "authority": {"full": "api.github.com"}},
+                                       "backendAuth": {"key": {"value": {"file": "/etc/platform-egress/github/token"}, "location": {"header": {"name": "Authorization", "prefix": "Bearer "}}}},
+                                       "requestHeaderModifier": {"set": {"user-agent": "adam-platform-agentgateway"}}},
+                          "backends": [{"host": "$GITHUB_API_BACKEND_HOST", "policies": {"backendTLS": {"hostname": "api.github.com"}}}]})
 
 
 def render(tenant="acme"):
@@ -67,8 +84,12 @@ def render(tenant="acme"):
     base_cm = next(d for d in yaml.safe_load_all((ROOT / "infra/k8s/base/agentgateway/agentgateway.yaml").read_text()) if d and d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "agentgateway-config")
     cfg = yaml.safe_load(base_cm["data"]["config.yaml"])
     cfg["llm"]["models"][0]["params"]["baseUrl"] = "$LLM_UPSTREAM_URL"   # env gateway (Deployment): aks mock-upstream v clusteru / živé API
+    # P4-2: ostrý běh zakázky = alias modelu live-<model> → vždy živé API ($LLM_LIVE_URL, klíč $ANTHROPIC_API_KEY z Key Vaultu); mock ('*') zůstává
+    # pro ostatní zakázky i měření. Alias vybírá pod role podle flagu zakázky (P0_MODEL), klíče, rozpočty a ledger gateway platí pro oba stejně.
+    cfg["llm"]["models"] = [{"name": f"live-{m}", "provider": "anthropic", "params": {"model": m, "apiKey": "$ANTHROPIC_API_KEY", "baseUrl": "$LLM_LIVE_URL"}} for m in LIVE_MODELS] + cfg["llm"]["models"]
     cfg["llm"]["policies"] = {"apiKey": {"mode": "optional", "location": tpl["policies"]["apiKey"]["location"], "keys": []}}   # klíče doplní aplikace per zakázka
     cfg |= eg
+    github_egress(cfg)
     gw_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "agentgateway-config"}, "data": {"config.yaml": yaml.safe_dump(cfg, sort_keys=False)}}
     # P3-2: SPIRE server smí atestovat sidecar agenta jen z SA role-<role> v namespacech tenantů (P3-6 E2: SA per role) (k8s_psat service_account_allow_list v base spire.yaml – řádek s markerem)
     spire_path = ROOT / "infra/k8s/base/spire/spire.yaml"; spire_src = spire_path.read_text()

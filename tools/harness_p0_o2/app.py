@@ -298,7 +298,7 @@ def agent_run_local(role, z, prompt, tool_names):
     if os.environ.get("ANTHROPIC_WORKSPACE_ID"): cli_env["ANTHROPIC_WORKSPACE_ID"] = os.environ["ANTHROPIC_WORKSPACE_ID"]
     opts_src = os.path.join(os.environ["P0_ROLE_OPTIONS_DIR"], f"{role}.json") if os.environ.get("P0_ROLE_OPTIONS_DIR") else None
     role_opts = json.loads(open(opts_src).read()) if opts_src and os.path.exists(opts_src) else {"tools": [], "strict_mcp_config": True, "setting_sources": []}
-    opts = ClaudeAgentOptions(model=os.environ.get("P0_MODEL", "claude-haiku-4-5"), env=cli_env, mcp_servers={"harness": server},
+    opts = ClaudeAgentOptions(model=("live-" if z.get("live") else "") + os.environ.get("P0_MODEL", "claude-haiku-4-5"), env=cli_env, mcp_servers={"harness": server},   # P4-2: alias live-<model> = živé API přes gateway
                               allowed_tools=[f"mcp__harness__{n}" for n in tool_names],
                               tools=role_opts["tools"], strict_mcp_config=role_opts["strict_mcp_config"], setting_sources=role_opts.get("setting_sources", []), cwd=work,
                               permission_mode="bypassPermissions", max_turns=int(os.environ.get("P0_MAX_TURNS", "8")),
@@ -410,17 +410,32 @@ def _disclosure(role, channel):
 GH_API = os.environ.get("P0_GITHUB_API", "https://api.github.com")   # mock GitHub pro scénář github-hitl
 
 
-def gh_api(method, path, payload=None):
+GH_API_LIVE = os.environ.get("P0_GITHUB_API_LIVE", "https://github.platform.internal/api")   # P4-2: ostrý běh – GitHub API přes terminovanou routu gateway (PAT vkládá gateway)
+GH_PROXY = os.environ.get("P0_GITHUB_PROXY", "")                                              # P4-2: CONNECT proxy gateway (SNI github.platform.internal → listener); prázdné = přímo
+
+
+def gh_request(method, path, payload=None, *, live=False):
+    """Jeden HTTP request na GitHub API. Mock/dřívější ostrý běh z Macu: přímo s GITHUB_TOKEN. P4-2 ostrý běh (live): přes gateway
+    (https://github.platform.internal/api přes CONNECT proxy, cert platformy = SSL_CERT_FILE) bez Authorization – PAT vloží gateway
+    z Key Vaultu (backendAuth), aplikace žádný token GitHubu nemá a nemůže ho ani zalogovat."""
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    if live:
+        with httpx.Client(proxy=GH_PROXY or None, timeout=30) as c: return c.request(method, f"{GH_API_LIVE}{path}", json=payload, headers=headers)
     tok = os.environ.get("GITHUB_TOKEN")
     if not tok: raise RuntimeError("GITHUB_TOKEN chybí – publikace do GitHubu vyžaduje token s právem issues/contents/pull_requests")
-    r = httpx.request(method, f"{GH_API}{path}", json=payload, headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, timeout=30)
+    return httpx.request(method, f"{GH_API}{path}", json=payload, headers={"Authorization": f"Bearer {tok}", **headers}, timeout=30)
+
+
+def gh_api(method, path, payload=None, *, live=False):
+    r = gh_request(method, path, payload, live=live)
     if r.status_code >= 300: raise RuntimeError(f"GitHub {method} {path} → {r.status_code}: {r.text[:200]}")
     return r.json() if r.text else {}
 
 
 def _publish(z, kind, payload, approval_hash=None):
     """Jediné místo, kde platforma píše do GitHubu. Suchý běh = JSON soubor + ledger; živě jen s P0_GITHUB_PUBLISH=1 a GITHUB_TOKEN."""
-    rec = {"kind": kind, "zakazka": z["id"], "repo": GH_REPO, "approval_hash": approval_hash, "payload": payload, "published": bool(GH_PUBLISH)}
+    live = bool(z.get("live"))   # P4-2: ostrý běh zakázky → skutečný GitHub přes gateway (PAT jen v gateway); jinak mock-github / token z env
+    rec = {"kind": kind, "zakazka": z["id"], "repo": GH_REPO, "approval_hash": approval_hash, "payload": payload, "published": bool(GH_PUBLISH), "live": live}
     os.makedirs(GH_DRYRUN_DIR, exist_ok=True)
     p = os.path.join(GH_DRYRUN_DIR, f"{z['id']}-{kind}.json")   # záznam payloadu v obou režimech (checky G1–G3 ho čtou; ostrý běh 2026-10-24 ho dřív nepsal → falešné FAIL)
     if not GH_PUBLISH:
@@ -428,26 +443,27 @@ def _publish(z, kind, payload, approval_hash=None):
         ledger("PUBLISH_DRYRUN", zakazka=z["id"], publish_kind=kind, file=p, approval_hash=approval_hash)
         return {"dry_run": True, "file": p}
     o, r = GH_REPO.split("/")
+    g = lambda m, path, pl=None: gh_api(m, path, pl, live=live)
     if kind == "issue":
-        res = gh_api("POST", f"/repos/{o}/{r}/issues", {"title": payload["title"], "body": payload["body"], "labels": payload.get("labels", [])})
+        res = g("POST", f"/repos/{o}/{r}/issues", {"title": payload["title"], "body": payload["body"], "labels": payload.get("labels", [])})
         out = {"number": res["number"], "url": res["html_url"]}
     elif kind == "pull_request":
-        base = gh_api("GET", f"/repos/{o}/{r}/git/ref/heads/{payload['base']}")["object"]["sha"]
-        base_tree = gh_api("GET", f"/repos/{o}/{r}/git/commits/{base}")["tree"]["sha"]
-        blobs = [{"path": f["path"], "mode": "100644", "type": "blob", "sha": gh_api("POST", f"/repos/{o}/{r}/git/blobs", {"content": f["content"], "encoding": "utf-8"})["sha"]} for f in payload["files"]]
-        tree = gh_api("POST", f"/repos/{o}/{r}/git/trees", {"base_tree": base_tree, "tree": blobs})["sha"]
-        commit = gh_api("POST", f"/repos/{o}/{r}/git/commits", {"message": payload["commit_message"], "tree": tree, "parents": [base]})["sha"]
-        try: gh_api("POST", f"/repos/{o}/{r}/git/refs", {"ref": f"refs/heads/{payload['head']}", "sha": commit})
-        except RuntimeError: gh_api("PATCH", f"/repos/{o}/{r}/git/refs/heads/{payload['head']}", {"sha": commit, "force": True})
-        res = gh_api("POST", f"/repos/{o}/{r}/pulls", {"title": payload["title"], "body": payload["body"], "head": payload["head"], "base": payload["base"]})
+        base = g("GET", f"/repos/{o}/{r}/git/ref/heads/{payload['base']}")["object"]["sha"]
+        base_tree = g("GET", f"/repos/{o}/{r}/git/commits/{base}")["tree"]["sha"]
+        blobs = [{"path": f["path"], "mode": "100644", "type": "blob", "sha": g("POST", f"/repos/{o}/{r}/git/blobs", {"content": f["content"], "encoding": "utf-8"})["sha"]} for f in payload["files"]]
+        tree = g("POST", f"/repos/{o}/{r}/git/trees", {"base_tree": base_tree, "tree": blobs})["sha"]
+        commit = g("POST", f"/repos/{o}/{r}/git/commits", {"message": payload["commit_message"], "tree": tree, "parents": [base]})["sha"]
+        try: g("POST", f"/repos/{o}/{r}/git/refs", {"ref": f"refs/heads/{payload['head']}", "sha": commit})
+        except RuntimeError: g("PATCH", f"/repos/{o}/{r}/git/refs/heads/{payload['head']}", {"sha": commit, "force": True})
+        res = g("POST", f"/repos/{o}/{r}/pulls", {"title": payload["title"], "body": payload["body"], "head": payload["head"], "base": payload["base"]})
         out = {"number": res["number"], "url": res["html_url"], "head_sha": commit}
     elif kind == "merge":
-        res = gh_api("PUT", f"/repos/{o}/{r}/pulls/{payload['number']}/merge", {"merge_method": "merge", "commit_title": payload["title"]})
+        res = g("PUT", f"/repos/{o}/{r}/pulls/{payload['number']}/merge", {"merge_method": "merge", "commit_title": payload["title"]})
         out = {"merged": res.get("merged"), "sha": res.get("sha")}
     else:
         raise RuntimeError(f"neznámý druh publikace {kind}")
     open(p, "w").write(json.dumps(rec | {"response": out}, ensure_ascii=False, indent=1))
-    ledger("PUBLISHED", zakazka=z["id"], publish_kind=kind, approval_hash=approval_hash, **out)
+    ledger("PUBLISHED", zakazka=z["id"], publish_kind=kind, approval_hash=approval_hash, live=live, **out)
     return out
 
 
@@ -782,9 +798,10 @@ def create_zakazka(b: dict, *, by=None, channel="api", by_sub=None, subject=None
     sla = {k: float(v) for k, v in (b.get("sla") or {}).items() if k in SLA_DEFAULT_S} if isinstance(b.get("sla"), dict) else {}   # P3-4: SLA bodů (s) – harness/K1f; jinak procesy.md
     z = {"id": b["id"], "poptavka": b["poptavka"], "tenant": tenant, "stopped": False, "hitl_timeout_s": b.get("hitl_timeout_s", HITL_TIMEOUT_S), "budget_timeout_s": b.get("budget_timeout_s", BUDGET_TIMEOUT_S),
          "budget_usd": float(b.get("budget_usd", ZAKAZKA_BUDGET_USD)), "by": by, "klasifikace": ({k: bool(kl.get(k)) for k in KLAS_KEYS} if kl is not None else None), "klasifikace_by": by if kl is not None else None, "klasifikace_sub": by_sub if kl is not None else None,
-         "sla": sla, "contact": b.get("contact"), "memory_probe": b.get("memory_probe") if isinstance(b.get("memory_probe"), list) else None, "subject": subject}   # P2-6: strop zakázky (30d) = součet útraty klíčů; P3-5: memory_probe = dotazy sondy izolace paměti z podu role (harness O3a)
+         "sla": sla, "contact": b.get("contact"), "memory_probe": b.get("memory_probe") if isinstance(b.get("memory_probe"), list) else None, "subject": subject,   # P2-6: strop zakázky (30d) = součet útraty klíčů; P3-5: memory_probe = dotazy sondy izolace paměti z podu role (harness O3a)
+         "live": bool(b.get("live"))}   # P4-2: ostrý běh – role na živém modelu (alias live-<model> v gateway), artefakty do skutečného GitHubu přes gateway; rozhodnutí zadavatele při založení, neměnné
     client().schedule_new_workflow(wf_versions.NAME, input=z, instance_id=z["id"])   # P3-6 E6: podle jména; verzi (latest) vybere runtime při prvním běhu a zapíše do historie instance
-    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500], klasifikace=z["klasifikace"], sla=sla or None, wf_version=wf_versions.latest(rt))
+    ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500], klasifikace=z["klasifikace"], sla=sla or None, wf_version=wf_versions.latest(rt), live=z["live"])
     finops.registry_upsert(z["id"], tenant=tenant, budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
     if subject: subject_set(z["id"], subject, by=by, source="create", channel=channel)   # P4-1: zadavatel = první mandát
     return z
@@ -991,6 +1008,34 @@ async def mandat_get(zid: str):
             "usable": bool(cur.get("token")) and float(cur.get("exp") or 0) > time.time() + 20}
 
 
+@app.get("/_live/github")
+async def live_github(path: str = ""):
+    """P4-2 (předletová kontrola ostrého běhu, bez tajemství): GET repozitáře platformy přes gateway (github.platform.internal/api → api.github.com,
+    PAT vkládá gateway). 200 = PAT z Key Vaultu platí; 401 „Bad credentials“ = zapojení (CONNECT, TLS, přepis, hlavička) funguje, jen PAT je
+    výchozí/neplatný; cokoli jiného = chyba cesty. `path` mimo repozitář platformy (měření) musí gateway odmítnout (autorizace routy = PEP).
+    Tělo odpovědi zkráceno, hlavičky se nevracejí."""
+    path = path or f"/repos/{GH_REPO}"
+    try:
+        r = gh_request("GET", path, live=True)
+        return {"ok": r.status_code == 200, "status": r.status_code, "wired": r.status_code in (200, 401), "path": path, "repo": GH_REPO, "via": GH_API_LIVE, "proxy": bool(GH_PROXY), "body": r.text[:160]}
+    except Exception as e:
+        return {"ok": False, "status": None, "wired": False, "path": path, "repo": GH_REPO, "via": GH_API_LIVE, "proxy": bool(GH_PROXY), "error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
+@app.get("/_live/model")
+async def live_model():
+    """P4-2 (předletová kontrola): 1 token na alias live-<P0_MODEL> přes gateway → api.anthropic.com s klíčem z Key Vaultu. 200 = klíč platí (placená
+    zanedbatelná výzva); 401 authentication_error = cesta k živému API funguje, klíč je výchozí (mock); jiný stav = chyba zapojení/TLS."""
+    model = f"live-{os.environ.get('P0_MODEL', 'claude-haiku-4-5')}"
+    try:
+        r = httpx.post(f"{os.environ['P0_LLM_URL']}/v1/messages", json={"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]},
+                       headers={"anthropic-version": "2023-06-01", "x-zakazka": "_live-preflight"}, timeout=60)   # bez x-api-key: apiKey policy gateway je optional (bez role), klíč upstreamu vkládá gateway
+        body = r.text[:200]
+        return {"ok": r.status_code == 200, "status": r.status_code, "wired": r.status_code == 200 or (r.status_code == 401 and "authentication_error" in body), "model": model, "body": body}
+    except Exception as e:
+        return {"ok": False, "status": None, "wired": False, "model": model, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
 @app.post("/_wf/unregister")
 async def wf_unregister(req: Request):
     """P3-6 E13: odebrání ne-latest verze orchestrátoru za běhu (simulace obrazu bez snímku) – instance této verze při dalším work itemu STALLED.
@@ -1133,7 +1178,7 @@ agui.CTX.update({
     "ledger": ledger, "read_ledger": _ledger, "wf_state": _wf_state, "root_dir": "/tmp/p0-o2",
     "wf_versions": lambda: {**wf_versions.report(rt, [e for e in _ledger() if e.get("kind") == "ZAKAZKA_START"], _wf_state), "registered": {**WF, "versions": wf_versions.registered_versions(rt)}},   # P3-6 E13: karta verzí ve Firmě (tenant platform)
     "disclosure": lambda role, channel: _disclosure(role, channel),
-    "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s", "klasifikace", "sla", "contact") if k in fp}}, by=u["name"], channel="agui", by_sub=u["sub"], subject=subject_of(u)),
+    "create": lambda zid, poptavka, u, fp: create_zakazka({"id": zid, "poptavka": poptavka, "tenant": u["tenant"], **{k: fp[k] for k in ("budget_usd", "hitl_timeout_s", "budget_timeout_s", "klasifikace", "sla", "contact", "live") if k in fp}}, by=u["name"], channel="agui", by_sub=u["sub"], subject=subject_of(u)),   # P4-2: live = ostrý běh z formuláře
     "classify": lambda zid, u, answers, reason: classify_zakazka(zid, by=u["name"], answers=answers, reason=reason, channel="agui", sub=u["sub"]),
     "klas_questions": KLAS_QUESTIONS,
     "approve": lambda zid, bod, hh, u, reason, budget=None: approve_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"], budget_usd=budget, subject=subject_of(u)),

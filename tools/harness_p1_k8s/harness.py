@@ -1915,6 +1915,148 @@ def m1_flow(a, rep, http, led, APP, KC, dsn, tag, shots):
     rep.add("M1d", "M1: čas", "INFO", {"wall_s": round(time.time() - t_m, 1)})
 
 
+def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots):
+    """P4-2 L1: zapojení ostrého běhu ověřené BEZ ostrých tajemství (Key Vault má výchozí neplatné hodnoty): živé API modelu a GitHub jsou za gateway,
+    která vkládá klíč/PAT z Key Vaultu (ESO) – aplikace ani pody je nemají. Důkaz zapojení = odmítnutí skutečným upstreamem (401 authentication_error
+    z api.anthropic.com, 401 Bad credentials z api.github.com), ne mock. Flag `live` zakázky z GUI: viditelný (badge), v ledgeru, pod role dostane
+    alias modelu live-<model>; bez platného klíče role selže viditelně (nic se tiše nemockuje)."""
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui
+    t_l = time.time(); z = f"{tag}-l1"
+    def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
+    def L(z_): return [e for e in led() if e.get("zakazka") == z_]
+    def wait_led(pred, timeout):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            e = next((e for e in L(z) if pred(e)), None)
+            if e: return e
+            time.sleep(3)
+    def J(r): return r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:160]}
+    gw = kj("-n", NS, "get", "deploy", "agentgateway"); gw_env = {e["name"]: e.get("value") for e in ((gw.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("env") or [])}
+    gw_mounts = [m.get("mountPath") for m in ((gw.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("volumeMounts") or [])]
+    # L1a: alias live-<model> → api.anthropic.com (klíč z Key Vaultu = výchozí mock → 401 authentication_error = cesta, TLS a vložení klíče fungují)
+    t0 = time.time(); lm = J(http("GET", f"{APP}/_live/model", timeout=120)); lm["s"] = round(time.time() - t0, 1)
+    mock_ok = J(http("GET", f"{APP}/health", timeout=10))   # mock upstream dál slouží ostatním (P21b to měří rolemi)
+    ok_a = bool(lm.get("wired")) and lm.get("model") == f"live-{a.model}" and str(gw_env.get("LLM_LIVE_URL", "")).startswith("https://api.anthropic.com") and str(gw_env.get("LLM_UPSTREAM_URL", "")).startswith("http://mock-upstream")
+    rep.add("L1a", "Živý model jen přes gateway: alias live-<model> (config z rolegen) míří na $LLM_LIVE_URL = api.anthropic.com s klíčem $ANTHROPIC_API_KEY z Key Vaultu (ESO), mock '*' zůstává pro ostatní zakázky; bez ostrého klíče skutečné API odpoví 401 authentication_error (= CONNECT/TLS/klíč zapojené, nic se nemockuje), s ostrým klíčem 200 (1 token)", "PASS" if ok_a else "FAIL",
+            {"preflight": lm, "gateway_env": {k: gw_env.get(k) for k in ("LLM_UPSTREAM_URL", "LLM_LIVE_URL", "GITHUB_API_BACKEND_HOST")}, "health": mock_ok})
+    # L1b: GitHub API přes gateway (listener github.platform.internal → api.github.com, PAT ze souboru ESO); mimo repozitář platformy gateway odmítne (PEP)
+    t0 = time.time(); lg = J(http("GET", f"{APP}/_live/github", timeout=120)); lg["s"] = round(time.time() - t0, 1)
+    deny = J(http("GET", f"{APP}/_live/github", params={"path": "/repos/akczcz/jiny-repozitar"}, timeout=60))
+    es = kj("-n", NS, "get", "externalsecret", "agentgateway-github-token"); es_ready = next((c.get("status") for c in es.get("status", {}).get("conditions", []) if c.get("type") == "Ready"), None)
+    sec = kubectl(a, "-n", NS, "get", "secret", "agentgateway-github-token", "-o", "jsonpath={.data.token}").stdout.strip()
+    cert = kj("-n", NS, "get", "certificate", "agentgateway-tls"); dns = cert.get("spec", {}).get("dnsNames") or []
+    ok_b = bool(lg.get("wired")) and lg.get("proxy") is True and deny.get("status") == 403 and es_ready == "True" and bool(sec) and "github.platform.internal" in dns and "/etc/platform-egress/github" in gw_mounts
+    rep.add("L1b", "GitHub jen přes gateway: aplikace volá https://github.platform.internal/api přes CONNECT gateway (cert platformy), routa github-api přepíše cestu a authority na api.github.com (TLS k backendu) a vloží PAT ze Secretu agentgateway-github-token (ESO ← Key Vault github-token, Ready); bez ostrého PAT GitHub odpoví 401 Bad credentials (= zapojení funguje), s ostrým 200; cesta mimo repozitář platformy → 403 (autorizace routy = PEP, PAT nelze použít jinde)", "PASS" if ok_b else "FAIL",
+            {"preflight": lg, "deny_other_repo": deny, "externalsecret_ready": es_ready, "secret_present": bool(sec), "cert_dns": dns, "gateway_mount": "/etc/platform-egress/github" in gw_mounts})
+    # L1c: zakázka „ostrý běh“ z GUI – flag viditelně (badge seznam + detail), v ledgeru, pod Account s aliasem modelu; bez klíče selže viditelně; pak stop
+    gui = {}; g = None; pod = {}; run = {}; stp = {}
+    try:
+        g = Gui(f"{APP}/gui/", shots=shots / "l1").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
+        g.login("adam", "adam")
+        gui["create"] = g.create_thread(z, f"Přidej do repa platformy soubor zakazky/{z}/NOTES.md s poznámkou, že tato zakázka byla založena jako ostrý běh (P4-2 L1, bez ostrého klíče).", budget=1, live=True)
+        gui["state_live_badge"] = g.page.locator("[data-testid=state-live]").count() > 0
+        tok = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": "adam", "password": "adam"}, timeout=15).json()["access_token"]
+        st = http("GET", f"{APP}/agui/threads/{z}", headers={"Authorization": f"Bearer {tok}"}, timeout=15); gui["state_live"] = (st.json().get("state") or {}).get("live") if st.status_code == 200 else {"http": st.status_code}
+        g.shot("l1-live-detail")
+        g.threads_list(); gui["row_live_badge"] = g.page.locator(f"[data-testid=thread-row-{z}] [data-testid=thread-live]").count() > 0; g.shot("l1-live-list")
+    except Exception as e: gui["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    start = wait_led(lambda e: K(e) == "ZAKAZKA_START", 60) or {}
+    pod = wait_led(lambda e: K(e) == "ROLE_POD" and e.get("role") == "account", 1200) or {}
+    run = wait_led(lambda e: K(e) == "AGENT_RUN" and e.get("role") == "account", 120) or {}
+    h1 = wait_led(lambda e: K(e) == "HITL_WAIT" and e.get("bod") == "H1", 90)   # pozorování: po selhání role workflow pokračuje k H1 s prázdným artefaktem (file_exists false) – člověk to vidí v GUI
+    try: stp = J(http("POST", f"{APP}/zakazky/{z}/stop", json={"by": "harness", "reason": "L1c: ostrý běh bez klíče – úklid po měření"}, timeout=60))
+    except Exception as e: stp = {"error": f"{type(e).__name__}: {str(e)[:160]}"}
+    try:
+        if g: g.close()
+    except Exception: pass
+    failed_visibly = bool(run.get("is_error") or run.get("error")) and not run.get("budget_exceeded")
+    ok_c = gui.get("state_live") is True and gui.get("state_live_badge") is True and gui.get("row_live_badge") is True and start.get("live") is True and pod.get("live") is True and pod.get("model") == f"live-{a.model}" and failed_visibly and stp.get("ok") is True
+    rep.add("L1c", "Zakázka „ostrý běh“ z GUI (zaškrtávátko při založení): flag live v ZAKAZKA_START, badge „ostrý“ v seznamu i detailu, stav AG-UI live=true; pod Account dostal P0_MODEL = live-<model> (ROLE_POD.model/live) a bez ostrého klíče selhal viditelně (AGENT_RUN is_error/error, ne rozpočet – nic se tiše nemockuje); stop zakázky po měření", "PASS" if ok_c else "FAIL",
+            {"zakazka": z, "gui": gui, "start_live": start.get("live"), "pod": {k: pod.get(k) for k in ("phase", "model", "live", "exit_code", "result_received")}, "agent_run": {k: run.get(k) for k in ("is_error", "error", "budget_exceeded", "num_turns")}, "h1_after_failure": bool(h1), "stop": stp})
+    rep.add("L1d", "L1: čas", "INFO", {"wall_s": round(time.time() - t_l, 1)})
+
+
+def live_flow(a, rep, http, led, APP, KC, dsn, kj, tag, shots):
+    """P4-2 ostrý běh (jen na vyžádání, platí se): předletová kontrola (klíč modelu i PAT z Key Vaultu platí → 200) a teprve pak zakázka
+    s flagem live řízená z GUI jako člověk (adam): Account dialog → H1 → architekt → H2 → vývojář → PR → H4 → merge-executor → H5 → Dokonceno.
+    Role běží na živém modelu přes gateway (alias live-<model>, rozpočet zakázky = strop), issue/PR/merge jdou do skutečného repozitáře
+    platformy přes gateway (PAT jen tam). Ověření z nezávislého zdroje: veřejné GitHub API z runneru (bez tokenu)."""
+    import psycopg
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui, ROLES
+    t_v = time.time(); z = f"{tag}-live"
+    def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
+    def L(z_): return [e for e in led() if e.get("zakazka") == z_]
+    def J(r): return r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:160]}
+    def gh_public(path):
+        try:
+            r = httpx.get(f"https://api.github.com{path}", headers={"Accept": "application/vnd.github+json", "User-Agent": "adam-platform-harness"}, timeout=30)
+            return {"status": r.status_code, "json": r.json() if r.status_code == 200 else r.text[:160]}
+        except Exception as e: return {"status": None, "error": f"{type(e).__name__}: {str(e)[:160]}"}
+    lm = J(http("GET", f"{APP}/_live/model", timeout=120)); lg = J(http("GET", f"{APP}/_live/github", timeout=120))
+    pre_ok = lm.get("ok") is True and lg.get("ok") is True
+    rep.add("V1a", "Předletová kontrola ostrého běhu: klíč modelu v Key Vaultu platí (alias live-<model> → api.anthropic.com → 200, 1 token) a PAT platí (github.platform.internal/api → api.github.com → 200 repozitář platformy) – obojí vkládá gateway, harness ani aplikace tajemství nemají; bez obou 200 se zakázka nezakládá (nic se neutratí)", "PASS" if pre_ok else "FAIL", {"model": lm, "github": lg})
+    if not pre_ok:
+        rep.add("V1b", "Ostrý běh zakázky z GUI", "FAIL", {"reason": "předletová kontrola neprošla – ostrá tajemství v Key Vaultu nejsou (anthropic-api-key, github-token) nebo ESO ještě nesynchronizovalo (refresh 1 h; vynutit: kubectl annotate externalsecret ... force-sync=$(date +%s))"})
+        return
+    gui = {}; g = None; dlg = []; fin = {}; st = {}
+    def status(z_):
+        r = http("GET", f"{APP}/zakazky/{z_}", timeout=15); return r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+    try:
+        g = Gui(f"{APP}/gui/", shots=shots / "live").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10); t1 = time.time()
+        g.login("adam", "adam")
+        gui["create"] = g.create_thread(z, f"Přidej do repa platformy soubor zakazky/{z}/NOTES.md s krátkou poznámkou (česky), že tuto zakázku provedla multiagentní platforma naostro: role s živým modelem přes gateway, artefakty přes gateway do GitHubu (P4-2). Žádné jiné soubory neměň.", budget=3, live=True)
+        dlg = dialog_then(g, z, 1800)
+        def wait_i(bod, timeout):
+            t0 = time.time()
+            while True:
+                r = g.wait_interrupt(bod, min(60, max(1, timeout - (time.time() - t0))))
+                if r["interrupt"] or r["run_status"] in ("finished", "cancelled") or time.time() - t0 >= timeout: r["waited_s"] = round(time.time() - t0, 1); return r
+                try: http("GET", f"{APP}/health", timeout=10)
+                except Exception: pass
+        h1 = wait_i("H1", 1500); assert h1["interrupt"], f"H1 nepřišel: {h1['run_status']} {h1.get('error')} ledger={[(K(e), e.get('role'), (e.get('error') or '')[:80]) for e in L(z)][-8:]}"
+        gui["H1"] = g.decide("Zadání odpovídá poptávce ostrého běhu (jen NOTES.md zakázky) – schvaluji vstup zakázky.")
+        h2 = wait_i("H2", 1500); assert h2["interrupt"], f"H2 nepřišel: {h2['run_status']} {h2.get('error')}"
+        gui["H2"] = g.decide("Návrh je minimální a v rozpočtu – schvaluji ADR.")
+        h4 = wait_i("H4", 2400); assert h4["interrupt"], f"H4 nepřišel: {h4['run_status']} {h4.get('error')}"
+        gui["H4"] = g.decide("Review bez vad, PR mění jen zakazky/<id>/NOTES.md – schvaluji merge (N1).")
+        h5 = wait_i("H5", 900); assert h5["interrupt"], f"H5 nepřišel: {h5['run_status']} {h5.get('error')}"
+        gui["H5"] = g.decide("Nasazení je bez dopadu (dokumentační soubor) – schvaluji deploy (N2).")
+        fin = g.wait_finished(900); st = status(z); g.shot("live-done")
+        gui["wall_s"] = round(time.time() - t1, 1)
+    except Exception as e: gui["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    try:
+        if g: g.close()
+    except Exception: pass
+    Lz = L(z)
+    pub = {e.get("publish_kind"): e for e in Lz if K(e) == "PUBLISHED"}
+    issue, pr, merge = pub.get("issue") or {}, pub.get("pull_request") or {}, pub.get("merge") or {}
+    o, r_ = "akczcz", "adam"
+    gh = {"issue": gh_public(f"/repos/{o}/{r_}/issues/{issue.get('number')}") if issue.get("number") else None,
+          "pr": gh_public(f"/repos/{o}/{r_}/pulls/{pr.get('number')}") if pr.get("number") else None,
+          "merge_commit": gh_public(f"/repos/{o}/{r_}/commits/{merge.get('sha')}") if merge.get("sha") else None,
+          "notes_on_main": gh_public(f"/repos/{o}/{r_}/contents/zakazky/{z}/NOTES.md?ref=main")}
+    gh_issue = (gh["issue"] or {}).get("json") if isinstance((gh["issue"] or {}).get("json"), dict) else {}
+    gh_pr = (gh["pr"] or {}).get("json") if isinstance((gh["pr"] or {}).get("json"), dict) else {}
+    ok_b = fin.get("state", {}).get("stav") == "Dokonceno" and (st.get("output") or {}).get("stav") == "Dokonceno" and all(x.get("live") is True for x in (issue, pr, merge)) and bool(issue.get("url")) and bool(pr.get("url")) and merge.get("merged") is True \
+        and gh_issue.get("number") == issue.get("number") and "AI agent" in (gh_issue.get("body") or "") and gh_pr.get("merged") is True and (gh["merge_commit"] or {}).get("status") == 200 and gh["notes_on_main"].get("status") == 200
+    rep.add("V1b", "Ostrý běh zakázky z GUI (člověk adam, HITL H1/H2/H4/H5 s důvodem): Dokonceno; PUBLISHED issue → PR → merge s live=true; nezávisle z veřejného GitHub API (runner, bez tokenu): issue existuje s disclosure „AI agent“, PR merged, merge commit na main, soubor zakazky/<id>/NOTES.md na main", "PASS" if ok_b else "FAIL",
+            {"zakazka": z, "gui": {k: v for k, v in gui.items() if k != "create"}, "dialog_rounds": len(dlg), "final": {"stav": (st.get("output") or {}).get("stav"), "status": st.get("status"), "failure": st.get("failure")}, "subagents": fin.get("subagents"),
+             "published": {k: {kk: v.get(kk) for kk in ("number", "url", "head_sha", "merged", "sha", "live")} for k, v in pub.items()}, "github_public": {k: ({"status": v.get("status"), "number": (v.get("json") or {}).get("number") if isinstance(v.get("json"), dict) else None, "merged": (v.get("json") or {}).get("merged") if isinstance(v.get("json"), dict) else None, "html_url": (v.get("json") or {}).get("html_url") if isinstance(v.get("json"), dict) else None} if v else None) for k, v in gh.items()}})
+    # V1c: cena a identita – skutečná útrata z gateway (ledger požadavků → org.zakazky.spent_usd), náklady per role z AGENT_RUN, mandát (on_behalf_of) rolí, alias modelu v podech
+    runs = {e["role"]: {"cost_usd": e.get("cost_usd"), "num_turns": e.get("num_turns"), "is_error": e.get("is_error"), "usage": {k: (e.get("usage") or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}} for e in Lz if K(e) == "AGENT_RUN"}
+    pods = {e["role"]: {"model": e.get("model"), "live": e.get("live"), "phase": e.get("phase"), "on_behalf_of": ((e.get("identity") or {}).get("delegation") or {}).get("sub")} for e in Lz if K(e) == "ROLE_POD"}
+    try:
+        with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
+            row = c.execute("SELECT budget_usd, spent_usd, status FROM org.zakazky WHERE zakazka_id = %s", (z,)).fetchone()
+            ag = {x[0]: x[1] for x in c.execute("SELECT role_id, on_behalf_of FROM org.agents WHERE zakazka_id = %s", (z,)).fetchall()}
+        spent = {"budget_usd": float(row[0]) if row and row[0] is not None else None, "spent_usd": float(row[1]) if row and row[1] is not None else None, "status": row[2] if row else None}
+    except Exception as e: spent = {"error": f"{type(e).__name__}: {str(e)[:160]}"}; ag = {}
+    cost_sum = sum(float(v["cost_usd"] or 0) for v in runs.values())
+    ok_c = (spent.get("spent_usd") or 0) > 0 and (spent.get("spent_usd") or 0) <= (spent.get("budget_usd") or 0) and all(pods.get(r, {}).get("model") == f"live-{a.model}" and pods.get(r, {}).get("live") is True for r in ROLES) and all(bool(ag.get(r)) for r in ("architekt", "vyvojar", "reviewer")) and cost_sum > 0
+    rep.add("V1c", "Ostrý běh: každá role běžela v podu s aliasem live-<model> (živé API, klíč jen v gateway), útrata zakázky z ledgeru gateway (org.zakazky.spent_usd) > 0 a pod stropem, náklady per role z Agent SDK, role po HITL jednaly s mandátem schvalovatele (org.agents.on_behalf_of)", "PASS" if ok_c else "FAIL",
+            {"spent": spent, "agent_runs": runs, "pods": pods, "on_behalf_of": ag, "cost_sum_usd": round(cost_sum, 4), "model": a.model, "wall_s": round(time.time() - t_v, 1)})
+
+
 def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep, pg_tls, since_iso):
     """E11 (P3-6): TLS zbytku datové vrstvy uvnitř clusteru – ClickHouse (https 8443, native 9440) a OTEL Collector (OTLP gRPC/HTTP s TLS) z interní CA,
     plaintext porty pryč; Postgres Flexible Server s sslmode=verify-full (host = FQDN, rooty Azure v bundle platform-ca) u všech klientů."""
@@ -2175,7 +2317,13 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False):
+def step_live(a, rep, env):
+    """P4-2 ostrý běh (`--step p4-2-live`): základ p3-1 (platforma z Gitu, zakázka z GUI proti mockům jako regresní kontrola) + live_flow – zakázka
+    s živým modelem a skutečným GitHubem. Jen na vyžádání s ostrými tajemstvími v Key Vaultu; bez nich předletová kontrola V1a skončí FAIL a nic se neutratí."""
+    return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
+
+
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -2400,7 +2548,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if kc_migr or spire_reload: print(f"  kc_ensure={kc_migr} spire_reload={spire_reload}")
         with psycopg.connect(dsn("dapr_state"), autocommit=True, connect_timeout=10) as c:
             dapr_tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
-        gw_ok = all(config_from_git.values()) and gw_cfg.get("llm", {}).get("models", [{}])[0].get("params", {}).get("baseUrl") == "$LLM_UPSTREAM_URL" and "apiKey" in (gw_cfg.get("llm", {}).get("policies") or {}) and "apikeys-template.yaml" in (cfg_cluster["rolegen-build"] or {}) and any(k.startswith("srt-") for k in (cfg_cluster["rolegen-build"] or {}))
+        gw_models = {m.get("name"): (m.get("params") or {}).get("baseUrl") for m in gw_cfg.get("llm", {}).get("models", [])}   # P4-2: '*' = mock/env upstream, live-<model> = živé API
+        gw_ok = all(config_from_git.values()) and gw_models.get("*") == "$LLM_UPSTREAM_URL" and gw_models.get(f"live-{a.model}") == "$LLM_LIVE_URL" and "apiKey" in (gw_cfg.get("llm", {}).get("policies") or {}) and "apikeys-template.yaml" in (cfg_cluster["rolegen-build"] or {}) and any(k.startswith("srt-") for k in (cfg_cluster["rolegen-build"] or {}))
         rep.add("P21a", "AKS: Flux kustomizations platform + roles Ready na HEAD; ConfigMapy agentgateway-config a rolegen-build v clusteru == render infra/k8s/overlays/aks z HEAD (konfigurace z Gitu, harness nic nerenderuje); gateway má apiKey policy a upstream z env LLM_UPSTREAM_URL; rolegen-build nese apikeys-template a srt; platforma vč. mock-upstream Ready; OpenBao init/unseal/transit; schéma paměti M1 na Flexible Serveru; harness dodal jen tajemství", "PASS" if all(v == "True" for v in flux.values()) and gw_ok and all(rolls.values()) and all(v == 200 for v in health.values()) and dapr_tables else "FAIL", {"flux": flux, "flux_rev": flux_rev, "config_from_git": config_from_git, "config_diff": config_diff, "gateway_upstream_env": gw_env.get("LLM_UPSTREAM_URL"), "rolegen_build_keys": sorted(cfg_cluster["rolegen-build"] or {}), "rollouts": rolls, "health": health, "pg": {"host": pg_host, "version": pg_ver, "via": pg_via}, "dapr_state_tables": dapr_tables, "rollout_s": round(time.time() - t0, 1)})
 
         if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
@@ -2483,6 +2632,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if e6: e6_flow(a, rep, http, led, APP, kj, zid[:-2])   # P3-6 E6: verzování workflow (restart podu aplikace – až po všech tocích s pody rolí)
         if e13: e13_flow(a, rep, http, led, APP, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E13: STALLED (chybějící verze) v GUI a obnova – po E6 (stejné podmínky: bez podů rolí)
         if m1: m1_flow(a, rep, http, led, APP, KC, dsn, zid[:-2], LOGS / "gui-shots")   # P4-1 M1: obnova mandátu z GUI (pody account + architekt)
+        if l1: l1_flow(a, rep, http, led, APP, KC, kj, zid[:-2], LOGS / "gui-shots")   # P4-2 L1: zapojení ostrého běhu bez tajemství (živé API 401, GitHub 401, flag live viditelně)
+        if live: live_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P4-2 ostrý běh: živý model + skutečný GitHub (jen p4-2-live, platí se)
         if e11: e11b_check(a, rep, ca_file, t_bao0)   # P3-6 E11b: spany gateway i paměti přes TLS – až po LLM provozu rolí
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
@@ -2691,7 +2842,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -2702,7 +2853,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -2718,7 +2869,9 @@ def main():
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
      "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True),
-     "p4-1": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p4-1": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True),
+     "p4-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True),
+     "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

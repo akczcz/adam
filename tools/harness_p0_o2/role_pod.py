@@ -69,6 +69,7 @@ def manifests(run_id, role, z, prompt, tool_names, *, token, key, role_opts_json
     rc = os.environ.get("P0_ROLE_RUNTIME_CLASS", "kata-vm-isolation")
     env = {k: os.environ[k] for k in ("P0_LLM_URL", "P0_MEMORY_URL", "P0_MODEL", "P0_MAX_TURNS", "P0_CLI_MAX_RETRIES", "P0_GITHUB_REPO",
                                       "ANTHROPIC_WORKSPACE_ID", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST") if os.environ.get(k)}
+    if z.get("live"): env["P0_MODEL"] = f"live-{os.environ.get('P0_MODEL', 'claude-haiku-4-5')}"   # P4-2: ostrý běh – alias modelu, který gateway posílá na živé API (klíč jen v gateway); pod jinak beze změny
     z_env = {k: v for k, v in z.items() if k != "subject"} | ({"subject": {k: v for k, v in (z.get("subject") or {}).items() if k != "token"}} if z.get("subject") else {})   # P3-6 E2: token subjektu jen v Secretu
     env |= {"P0_ROLE_RUNTIME": "local", "P0_ROLE": role, "P0_ZAKAZKA": json.dumps(z_env, ensure_ascii=False), "P0_PROMPT": prompt, "P0_TOOLS": ",".join(tool_names),
             "P0_RUN_ID": run_id, "P0_ARTIFACT_API": os.environ.get("P0_ARTIFACT_API", "http://zakazka:8010"),
@@ -238,7 +239,8 @@ def pod_run(role, z, prompt, tool_names, *, token, key, ledger, root_dir, subjec
            egress_probe=(res or {}).get("egress_probe"), pod_uid=(res or {}).get("uid"), pod_srt=(res or {}).get("srt"), log_tail=None if res is not None else logs[-800:],
            image=info["image"], template=info["template"], overrides=info["overrides"], image_tools=(res or {}).get("image_tools"), image_role=(res or {}).get("image_role"),
            resources=pod["spec"]["containers"][0].get("resources"), identity=(res or {}).get("identity"), svid_sidecar=bool(pod["spec"].get("initContainers")), svid_sidecar_state=sidecar, git_probe=(res or {}).get("git_probe"), work_info=(res or {}).get("work_info"),
-           stopped=bool((res or {}).get("stopped")), checkpoint=(res or {}).get("checkpoint"), memory_probe=(res or {}).get("memory_probe"))   # P2-4: sonda egressu; P3-5: checkpoint při stopu, sonda paměti
+           stopped=bool((res or {}).get("stopped")), checkpoint=(res or {}).get("checkpoint"), memory_probe=(res or {}).get("memory_probe"),   # P2-4: sonda egressu; P3-5: checkpoint při stopu, sonda paměti
+           model=next((e.get("value") for e in pod["spec"]["containers"][0].get("env", []) if e.get("name") == "P0_MODEL"), None), live=bool(z.get("live")))   # P4-2: alias modelu (live-<model> = živé API) – audit, s čím role běžela
     if not os.environ.get("P0_ROLE_KEEP_PODS"):
         for kind in ("pods", "secrets"):
             try: k8s("DELETE", f"/api/v1/namespaces/{ns}/{kind}/{name}")

@@ -14,19 +14,25 @@ data:
     \ 'apiKey != null ? string(apiKey.tenant) : \"\"'\n        zakazka: 'apiKey !=\
     \ null ? string(apiKey.zakazka) : \"\"'\n        role: 'apiKey != null ? string(apiKey.role)\
     \ : \"\"'\n        llm.cost.total: llm.cost.total\nllm:\n  port: 4100\n  models:\n\
-    \  - name: '*'\n    provider: anthropic\n    params:\n      baseUrl: $LLM_UPSTREAM_URL\n\
-    \      apiKey: $ANTHROPIC_API_KEY\n  policies:\n    apiKey:\n      mode: optional\n\
-    \      location:\n        header:\n          name: x-api-key\n      keys: []\n\
-    binds:\n- port: 3128\n  tunnelProtocol: connect\n  listeners: []\ngateways:\n\
-    \  secure:\n    port: 443\n    listeners:\n    - name: git\n      hostname: git.platform.internal\n\
-    \      protocol: HTTPS\n      tls:\n        cert: /etc/platform-tls/tls.crt\n\
-    \        key: /etc/platform-tls/tls.key\n    - name: mirror\n      hostname: mirror.platform.internal\n\
-    \      protocol: HTTPS\n      tls:\n        cert: /etc/platform-tls/tls.crt\n\
-    \        key: /etc/platform-tls/tls.key\n    - name: public-egress\n      hostname:\
-    \ '*'\n      protocol: TLS\nroutes:\n- name: git-acme\n  gateways: secure/git\n\
-    \  matches:\n  - path:\n      pathPrefix: /acme/\n  policies:\n    authorization:\n\
-    \      rules:\n      - allow: request.method == \"GET\" || request.method == \"\
-    POST\"\n    backendAuth:\n      key:\n        value:\n          file: /etc/platform-egress/git/token\n\
+    \  - name: live-claude-haiku-4-5\n    provider: anthropic\n    params:\n     \
+    \ model: claude-haiku-4-5\n      apiKey: $ANTHROPIC_API_KEY\n      baseUrl: $LLM_LIVE_URL\n\
+    \  - name: live-claude-sonnet-4-5\n    provider: anthropic\n    params:\n    \
+    \  model: claude-sonnet-4-5\n      apiKey: $ANTHROPIC_API_KEY\n      baseUrl:\
+    \ $LLM_LIVE_URL\n  - name: '*'\n    provider: anthropic\n    params:\n      baseUrl:\
+    \ $LLM_UPSTREAM_URL\n      apiKey: $ANTHROPIC_API_KEY\n  policies:\n    apiKey:\n\
+    \      mode: optional\n      location:\n        header:\n          name: x-api-key\n\
+    \      keys: []\nbinds:\n- port: 3128\n  tunnelProtocol: connect\n  listeners:\
+    \ []\ngateways:\n  secure:\n    port: 443\n    listeners:\n    - name: git\n \
+    \     hostname: git.platform.internal\n      protocol: HTTPS\n      tls: &id001\n\
+    \        cert: /etc/platform-tls/tls.crt\n        key: /etc/platform-tls/tls.key\n\
+    \    - name: mirror\n      hostname: mirror.platform.internal\n      protocol:\
+    \ HTTPS\n      tls:\n        cert: /etc/platform-tls/tls.crt\n        key: /etc/platform-tls/tls.key\n\
+    \    - name: github\n      hostname: github.platform.internal\n      protocol:\
+    \ HTTPS\n      tls: *id001\n    - name: public-egress\n      hostname: '*'\n \
+    \     protocol: TLS\nroutes:\n- name: git-acme\n  gateways: secure/git\n  matches:\n\
+    \  - path:\n      pathPrefix: /acme/\n  policies:\n    authorization:\n      rules:\n\
+    \      - allow: request.method == \"GET\" || request.method == \"POST\"\n    backendAuth:\n\
+    \      key:\n        value:\n          file: /etc/platform-egress/git/token\n\
     \        location:\n          header:\n            name: Authorization\n     \
     \       prefix: 'Bearer '\n  backends:\n  - host: $GIT_BACKEND_HOST\n- name: git-beta\n\
     \  gateways: secure/git\n  matches:\n  - path:\n      pathPrefix: /beta/\n  policies:\n\
@@ -37,4 +43,15 @@ data:
     \  - host: $GIT_BACKEND_HOST\n- name: mirror-shared\n  gateways: secure/mirror\n\
     \  matches:\n  - path:\n      pathPrefix: /\n  policies:\n    authorization:\n\
     \      rules:\n      - allow: request.method == \"GET\"\n  backends:\n  - host:\
-    \ $MIRROR_BACKEND_HOST\n"
+    \ $MIRROR_BACKEND_HOST\n- name: github-api\n  gateways: secure/github\n  matches:\n\
+    \  - path:\n      pathPrefix: /api\n  policies:\n    authorization:\n      rules:\n\
+    \      - allow: (request.path.startsWith(\"/api/repos/akczcz/adam/\") || request.path.startsWith(\"\
+    /repos/akczcz/adam/\"))\n          && (request.method == \"GET\" || request.method\
+    \ == \"POST\" || request.method\n          == \"PATCH\" || request.method == \"\
+    PUT\")\n    urlRewrite:\n      path:\n        prefix: /\n      authority:\n  \
+    \      full: api.github.com\n    backendAuth:\n      key:\n        value:\n  \
+    \        file: /etc/platform-egress/github/token\n        location:\n        \
+    \  header:\n            name: Authorization\n            prefix: 'Bearer '\n \
+    \   requestHeaderModifier:\n      set:\n        user-agent: adam-platform-agentgateway\n\
+    \  backends:\n  - host: $GITHUB_API_BACKEND_HOST\n    policies:\n      backendTLS:\n\
+    \        hostname: api.github.com\n"

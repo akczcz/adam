@@ -4,6 +4,7 @@ kind: Kustomization
 namespace: platform-data
 resources:
 - namespace.yaml
+- github-token-dev.yaml   # P4-2: dev PAT pro routu github-api gateway (AKS: ESO z Key Vaultu)
 - ../../base/postgres
 - ../../base/clickhouse
 - ../../base/otel-collector

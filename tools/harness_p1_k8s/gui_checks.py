@@ -81,11 +81,12 @@ class Gui:
         self.shot("threads")
         return out
 
-    def create_thread(self, zid, poptavka, budget=None, klasifikace=None):
-        """Nová zakázka z GUI: poptávka + dotazník K1–K6 (P3-4; výchozí vše „ne“) → první run s forwardedProps.klasifikace."""
+    def create_thread(self, zid, poptavka, budget=None, klasifikace=None, live=False):
+        """Nová zakázka z GUI: poptávka + dotazník K1–K6 (P3-4; výchozí vše „ne“) → první run s forwardedProps.klasifikace; live (P4-2) = ostrý běh."""
         self.page.goto(self.base + "#/"); self.t("new-id").wait_for(); self.t("new-k-form").wait_for(timeout=30_000)
         self.t("new-id").fill(zid); self.t("new-poptavka").fill(poptavka); self.cur = zid
         if budget is not None: self.t("new-budget").fill(str(budget))
+        if live: self.t("new-live").check()
         for k, v in (klasifikace or {}).items():
             if v: self.t(f"new-k-{k}").check()
         if self.keepalive:

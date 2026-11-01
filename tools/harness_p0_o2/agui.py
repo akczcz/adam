@@ -181,7 +181,7 @@ def state_of(zid, entries):
     return {"id": zid, "tenant": start.get("tenant") or os.environ.get("P0_TENANT", "acme"), "status": st.get("status"), "stav": "zaseknuto – chybí verze orchestrátoru" if stalled else (out.get("stav") or ("čeká na " + w["bod"] if w else ("běží" if st.get("status") == "RUNNING" else st.get("status")))),
             "bod": w.get("bod") if w else out.get("bod"), "budget_usd": (cap or start).get("budget_usd"), "spent_usd": bud.get("spent_usd"), "roles": roles, "started": start.get("ts"), "poptavka": start.get("poptavka"),
             "profile": kl.get("profile"), "sensitivity": kl.get("sensitivity"), "sla_breaches": [e.get("bod") for e in sla], "wf_version": start.get("wf_version"),
-            "mandat": mandat, "roles_mandat": roles_mandat,
+            "mandat": mandat, "roles_mandat": roles_mandat, "live": bool(start.get("live")),   # P4-2: ostrý běh (živý model, skutečný GitHub)
             "stalled": ({"wf_version": start.get("wf_version"), "hint": f"instance běží na verzi orchestrátoru {start.get('wf_version') or '?'}, kterou nasazená aplikace neregistruje – nic se neztratilo; pokračuje po nasazení obrazu se snímkem wf_versions/zakazka_{start.get('wf_version') or '?'}.py"} if stalled else None)}
 
 

@@ -87,6 +87,12 @@ variable "anthropic_api_key" {
   sensitive   = true
   description = "Výchozí (mock) hodnota tajemství anthropic-api-key v Key Vaultu; ostrý klíč se nastaví v Key Vaultu, Terraform ho pak nepřepisuje (P3-6 E1)"
 }
+variable "github_token" {
+  type        = string
+  default     = "mock-github-token"
+  sensitive   = true
+  description = "Výchozí (neplatná) hodnota tajemství github-token v Key Vaultu; ostrý fine-grained PAT (jen repo platformy: contents, issues, pull_requests RW) nastaví Adam v Key Vaultu na dobu ostrého běhu a pak ho revokuje – Terraform ho nepřepisuje (P4-2)"
+}
 variable "role_clients" {
   type        = list(string)
   default     = ["account", "architekt", "vyvojar", "reviewer", "sre"]
