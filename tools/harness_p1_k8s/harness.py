@@ -2588,7 +2588,11 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
         if e11: e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep, pg_tls, t_bao0)   # P3-6 E11: TLS ClickHouse/Collector, Postgres verify-full
         if e12: e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw)   # P3-6 E12: Flexible Server jen přes private endpoint
-        def led(): return http("GET", f"{APP}/_debug/ledger", timeout=20).json()
+        _led = {"items": []}
+        def led():   # P4-2 běh 4: celý ledger (desítky MB) při každém volání přes port-forward dusil aplikaci (readiness, GUI, POST výsledku podu) → jen přírůstek od offsetu (ledger je append-only; total < offset = soubor vyměněn → znovu od nuly)
+            r = http("GET", f"{APP}/_debug/ledger", params={"offset": len(_led["items"])}, timeout=120).json()
+            if r["total"] < len(_led["items"]): _led["items"] = []; r = http("GET", f"{APP}/_debug/ledger", params={"offset": 0}, timeout=120).json()
+            _led["items"].extend(r["items"]); return list(_led["items"])
         if e9: e9_checks(a, rep, http, KC, secret, kv_name, rendered, dsn, (kc_migr or {}).get("admin"), led)   # P3-6 E9: žádný literál hesla z Gitu (admin Keycloaku, DB role)
         def hash_of(zid, typ):
             for e in reversed(led()):

@@ -348,7 +348,7 @@ class Gui:
         try: self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         except Exception:
             if self.keepalive: self.keepalive()
-            self.page.reload(); self.t("tstop-tenant").wait_for(); self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(reason)
+            self.page.reload(); self.t("tstop-tenant").wait_for(timeout=120_000); self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(reason)   # P4-2 běh 4: po reloadu formulář do 30 s nebyl (aplikace dušená dumpem ledgeru) → shodilo celý běh
             seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None; self.t("tresume-submit" if resume else "tstop-submit").click()
             self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")

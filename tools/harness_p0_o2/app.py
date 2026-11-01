@@ -34,6 +34,7 @@ import httpx
 import finops   # P2-6: cena a strop zakázky z budget_usage gateway, registr org.zakazky
 import dapr.ext.workflow as wf
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 
 OPA = os.environ.get("O1_OPA_URL", "http://127.0.0.1:8181/v1/data/org/decision")
 SECRET = os.environ.get("O1_APPROVAL_SECRET", "o1-transit-key").encode()
@@ -606,6 +607,7 @@ def verify_approval(ctx, inp):
 
 
 _LEDGER_CACHE = {"pos": 0, "ino": None, "items": []}
+_LEDGER_LOCK = __import__("threading").Lock()   # P4-2: /_debug/ledger běží v threadpoolu (sync handler) vedle event loopu → přírůstek čte vždy jen jeden
 
 
 def _ledger():
@@ -613,18 +615,19 @@ def _ledger():
     blokovalo event loop aplikace na sekundy → timeouty readiness proby i harnessu). Proto se čte jen přírůstek od minulého volání (cache v procesu);
     celý soubor znovu jen po výměně/zkrácení souboru. Rozepsaný poslední řádek bez konce se nechá na příště (zápis z jiného procesu uprostřed)."""
     if not os.path.exists(LEDGER): return []
-    c = _LEDGER_CACHE; st = os.stat(LEDGER)
-    if st.st_ino != c["ino"] or st.st_size < c["pos"]: c.update(pos=0, ino=st.st_ino, items=[]); _LEDGER_BAD["lines"] = 0
-    if st.st_size > c["pos"]:
-        with open(LEDGER, "rb") as f:
-            f.seek(c["pos"]); buf = f.read()
-        end = buf.rfind(b"\n") + 1
-        for l in buf[:end].splitlines():
-            if not l.strip(): continue
-            try: c["items"].append(json.loads(l))
-            except ValueError: _LEDGER_BAD["lines"] += 1   # utržený/slepený řádek (viz _ledger_repair) – přeskočit, API ledgeru musí fungovat dál
-        c["pos"] += end
-    return c["items"]
+    with _LEDGER_LOCK:
+        c = _LEDGER_CACHE; st = os.stat(LEDGER)
+        if st.st_ino != c["ino"] or st.st_size < c["pos"]: c.update(pos=0, ino=st.st_ino, items=[]); _LEDGER_BAD["lines"] = 0
+        if st.st_size > c["pos"]:
+            with open(LEDGER, "rb") as f:
+                f.seek(c["pos"]); buf = f.read()
+            end = buf.rfind(b"\n") + 1
+            for l in buf[:end].splitlines():
+                if not l.strip(): continue
+                try: c["items"].append(json.loads(l))
+                except ValueError: _LEDGER_BAD["lines"] += 1   # utržený/slepený řádek (viz _ledger_repair) – přeskočit, API ledgeru musí fungovat dál
+            c["pos"] += end
+        return c["items"]
 
 
 # --- P3-4: klasifikační brána (P1a, T9/T15), SLA bodů (procesy.md), kanály k lidem (čl. 50(1) T7, T8) --------------------------------
@@ -1098,10 +1101,14 @@ async def resume(zid: str, req: Request):
 
 
 @app.get("/_debug/ledger")
-async def dbg(zakazka: str | None = None):
-    """Celý ledger, nebo jen záznamy jedné zakázky (P4-2 nález: celý ledger přes port-forward > 20 s → ReadTimeout harnessu uprostřed čekání na pod)."""
+def dbg(zakazka: str | None = None, offset: int | None = None):
+    """Celý ledger, jen záznamy jedné zakázky, nebo přírůstek od `offset` jako {total, items} (P4-2 nález, běhy 1–4: harness stahoval celý ledger
+    – desítky MB – přes port-forward každých pár sekund; serializace v async handleru blokovala event loop → readiness proba, GUI i POST výsledku
+    podu role vypršely). Sync handler běží v threadpoolu a odpověď serializuje přímo (bez jsonable_encoder)."""
     L = _ledger()
-    return [e for e in L if e.get("zakazka") == zakazka] if zakazka else L
+    if offset is not None: body = {"total": len(L), "items": L[max(offset, 0):]}
+    else: body = [e for e in L if e.get("zakazka") == zakazka] if zakazka else L
+    return Response(json.dumps(body, ensure_ascii=False), media_type="application/json")
 
 
 # --- API pro pody rolí (P1-6): artefakty zakázky a výsledek běhu; autentizace tokenem běhu ze Secretu podu ---------------------
