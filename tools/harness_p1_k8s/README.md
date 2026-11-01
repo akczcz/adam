@@ -866,7 +866,7 @@ Výsledek: **AKS 73/73 + 13 INFO 2026-10-31** (`measure` run 41226790285, 2 běh
 | E13b | GUI: badge „zaseknuto“ v seznamu, detail run `stalled` + karta s verzí a nápovědou, Firma: karta verzí (počet zaseknutých, chybějící verze, řádek verze) | ✅ seznam `badge stalled` „zaseknuto – chybí verze orchestrátoru“, detail run `stalled` + karta s verzí instance, Firma (platform-admin): zaseknuté 1, chybějící verze = kandidát, řádek registered=ne s odkazem |
 | E13c | obnova po registraci verze bez nového eventu (`recovered_by` sama / restart podu), event z doby zaseknutí zpracován → COMPLETED/Odmitnuto na své verzi, GUI dokončeno | ✅ **`recovered_by: restart`**: po `POST /_wf/register` instance 120 s stojí; po restartu podu aplikace (`rollout` 0,5 s) pokračuje sama – klasifikace z doby zaseknutí zpracována, COMPLETED/Odmitnuto na kandidátské verzi, `KLASIFIKACE_DONE` s ní až po obnově, report bez `stalled`, GUI COMPLETED |
 
-Výsledek: **AKS RUNRESULT** (`measure` run RUNID, RUNCOUNT běhy).
+Výsledek: **AKS 76/76 + 13 INFO** (`measure` run 41252208507, 3 běhy).
 
 Nálezy:
 
