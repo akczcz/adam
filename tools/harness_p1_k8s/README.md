@@ -970,6 +970,12 @@ Nálezy:
    nedoručil výsledek POSTem (`/runs/<id>/result` vypršel) – aplikace ho vzala ze záložního `RESULT::` v logu, ale bez TOOL záznamů ledgeru →
    `memory_calls_200 = 0`. Oprava: `?offset=` vrací `{total, items}` jen od offsetu (ledger je append-only), handler sync (threadpool) se zámkem nad
    cache, harness drží lokální kopii a dotahuje přírůstky; `?zakazka=` zůstává. Důsledek pro provoz: debug endpoint bez stránkování je DoS na sebe sama.
+   **Běh 5** (T1f FAIL znovu, pád O3 „Failed to fetch“ v GUI, readiness opět `context deadline exceeded`) ukázal hlavního viníka: `GET /threads` (seznam
+   zakázek v GUI) volal pro každou z ~280 zakázek **synchronní gRPC na Dapr** (`get_workflow_state`) a 280× filtroval celý ledger – v async handleru,
+   tedy desítky sekund stojícího event loopu při každém načtení seznamu (platform-admin vidí vše); stejně SSE smyčka každou sekundu per stream a
+   `GET /zakazky/{id}` (pollují harness i GUI). Roste s počtem zakázek v ledgeru – proto běhy 2–3 prošly a 4–5 ne. Oprava: seznam threadů jedním
+   průchodem ledgeru + stavy z Dapru paralelně ve vláknech přes `asyncio.to_thread`, SSE a snapshot stavu totéž, `GET /zakazky/{id}` sync handler;
+   pod role opakuje POST výsledku 3×. Architektonicky: stav instancí patří do indexu (DB/state store), ne do N dotazů na Dapr při každém načtení.
 
 ## Spuštění
 
