@@ -8,7 +8,9 @@ export type ThreadState = {
   budget_usd: number | null; spent_usd: number | null; roles: Record<string, string>; started: number | null; poptavka?: string;
   profile?: string | null; sensitivity?: string | null; sla_breaches?: string[];
   wf_version?: string | null; stalled?: { wf_version: string | null; hint: string } | null;   // P3-6 E13: STALLED = chybí verze orchestrátoru
+  mandat?: Mandat | null; roles_mandat?: Record<string, { sub: string | null; name: string | null; source: string | null }>;   // P4-1: mandát (subject pro exchange rolí)
 };
+export type Mandat = { sub: string | null; name: string | null; exp: number | null; by: string | null; source: string | null; auto: boolean | null; expired: boolean; expires_in_s: number | null };
 export type KlasQuestion = { id: string; text: string; yes: string };
 
 const BASE = (import.meta.env.VITE_AGUI_BASE as string | undefined) ?? "";
@@ -61,6 +63,21 @@ export async function threadState(id: string): Promise<ThreadState> {
   const r = await fetch(`${BASE}/agui/threads/${encodeURIComponent(id)}`, { headers: auth() });
   if (!r.ok) throw new Error(`thread ${r.status}`);
   return (await r.json()).state as ThreadState;
+}
+
+/** P4-1: obnova mandátu – aktuální access token přihlášeného člověka se stane subjektem pro exchange dalších rolí zakázky; auto = keepalive (držitel má GUI otevřené). */
+export async function renewMandat(id: string, auto = false): Promise<{ mandat: Mandat; state: ThreadState }> {
+  await ensureFresh();
+  const r = await fetch(`${BASE}/agui/threads/${encodeURIComponent(id)}/mandat`, { method: "POST", headers: { "Content-Type": "application/json", ...auth() }, body: JSON.stringify({ auto }) });
+  if (!r.ok) { let d = `${r.status}`; try { d = `${r.status}: ${(await r.json()).detail}`; } catch { /* */ } throw new Error(d); }
+  return r.json();
+}
+
+/** P4-1 keepalive: živý mandát držitele (sub == přihlášený) s méně než 10 min do konce se prodlouží sám, dokud má GUI otevřené; vypršelý obnoví jen člověk kliknutím. */
+export const KEEPALIVE_S = 600;
+export function needsKeepalive(t: ThreadState, user: User): boolean {
+  const m = t.mandat;
+  return t.status === "RUNNING" && user.tenant !== "platform" && !!m && m.sub === user.sub && !m.expired && m.expires_in_s != null && m.expires_in_s < KEEPALIVE_S;
 }
 
 export async function listThreads(): Promise<{ tenant: string; threads: ThreadState[] }> {
