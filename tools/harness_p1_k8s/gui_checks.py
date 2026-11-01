@@ -178,8 +178,13 @@ class Gui:
             self.page.wait_for_timeout(1000)
         return {"waited_s": round(time.time() - t0, 1), "status": "timeout"}
 
-    def decide(self, reason, decision="approve", budget=None):
-        """Tlačítka jsou bez důvodu (≥ 10 znaků) zakázaná – důkaz T6 v GUI; pak klik a čekání na nový run. budget (P3-6 E3): nový strop u bodu rozpocet."""
+    def decide(self, reason, decision="approve", budget=None, _retry=True):
+        """Tlačítka jsou bez důvodu (≥ 10 znaků) zakázaná – důkaz T6 v GUI; pak klik a čekání na nový run. budget (P3-6 E3): nový strop u bodu rozpocet.
+        P4-2 běhy 5–6 (O3): po minutách bez provozu přes port-forward (sonda E5) tunel na AKS umřel → klik = „Failed to fetch“, nový run nepřišel;
+        proto napřed keepalive (obnoví port-forward) a při síťové chybě (ne HTTP kód) jednou znovu otevřít thread a rozhodnout znovu."""
+        if self.keepalive:
+            try: self.keepalive()
+            except Exception: pass
         btn = self.t("approve-submit" if decision == "approve" else "reject-submit")
         if budget is not None: self.t("budget-new").fill(str(budget))
         self.t("approve-reason").fill(""); d0 = btn.is_disabled()
@@ -191,6 +196,13 @@ class Gui:
             self.page.wait_for_function(f"document.querySelector('[data-testid=run-id]') && document.querySelector('[data-testid=run-id]').textContent !== {json.dumps(rid0)}", timeout=60_000)
         except Exception as e:
             err = self.t("run-error").inner_text() if self.t("run-error").count() else None; self.shot("decide-failed")
+            if _retry and self.cur and err and not re.match(r"^\d{3}", err.strip()):   # síťový výpadek (ne odpověď serveru) → obnovit tunel a pohled, rozhodnout znovu
+                self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": err[:120], "where": "decide"})
+                if self.keepalive:
+                    try: self.keepalive()
+                    except Exception: pass
+                self.open_thread(self.cur); self.t("approve-submit" if decision == "approve" else "reject-submit").wait_for(timeout=60_000)
+                return {**self.decide(reason, decision, budget, _retry=False), "retried_after": err[:120]}
             raise AssertionError(f"rozhodnutí {decision} nespustilo nový run (run-error: {err!r}, status {self.t('run-status').inner_text() if self.t('run-status').count() else '?'})") from e
         return {"disabled_empty": d0, "disabled_short": d1, "disabled_with_reason": d2, "new_run": self.t("run-id").inner_text() != rid0, "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
 
