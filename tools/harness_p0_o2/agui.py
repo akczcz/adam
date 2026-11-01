@@ -185,13 +185,24 @@ def state_of(zid, entries):
             "stalled": ({"wf_version": start.get("wf_version"), "hint": f"instance běží na verzi orchestrátoru {start.get('wf_version') or '?'}, kterou nasazená aplikace neregistruje – nic se neztratilo; pokračuje po nasazení obrazu se snímkem wf_versions/zakazka_{start.get('wf_version') or '?'}.py"} if stalled else None)}
 
 
+def _threads_sync(u):
+    """P4-2 nález (běhy 4–5): seznam threadů pro ~280 zakázek = 280× synchronní gRPC na Dapr (stav instance) + 280× filtr celého ledgeru (10^5 řádků)
+    v async handleru → event loop stál desítky sekund (readiness proba, SSE, POST výsledku podu role). Jeden průchod ledgerem (seskupení per zakázka),
+    stavy z Dapru paralelně ve vláknech; volá se přes asyncio.to_thread."""
+    from concurrent.futures import ThreadPoolExecutor
+    L = CTX["read_ledger"](); by_z: dict = {}
+    for e in L:
+        z = e.get("zakazka")
+        if z is not None: by_z.setdefault(z, []).append(e)
+    zids = [e["zakazka"] for e in L if e.get("kind") == "ZAKAZKA_START" and ((e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == u["tenant"] or u["tenant"] == PLATFORM_TENANT)]
+    with ThreadPoolExecutor(max_workers=8) as ex: out = list(ex.map(lambda z: state_of(z, by_z.get(z, [])), zids))
+    return {"tenant": u["tenant"], "threads": sorted(out, key=lambda t: -(t.get("started") or 0)), "tenants": [t["id"] for t in CTX.get("tenants") or []]}
+
+
 @router.get("/threads")
 async def threads(req: Request):
     u = user_from_request(req)
-    L = CTX["read_ledger"](); out = []
-    for s in [e for e in L if e.get("kind") == "ZAKAZKA_START" and ((e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == u["tenant"] or u["tenant"] == PLATFORM_TENANT)]:
-        zid = s["zakazka"]; out.append(state_of(zid, [e for e in L if e.get("zakazka") == zid]))
-    return {"tenant": u["tenant"], "threads": sorted(out, key=lambda t: -(t.get("started") or 0)), "tenants": [t["id"] for t in CTX.get("tenants") or []]}
+    return await asyncio.to_thread(_threads_sync, u)
 
 
 # --- ledger → AG-UI události --------------------------------------------------------------------------------------------
@@ -341,7 +352,7 @@ async def run(req: Request):
         yield enc.encode(RunStartedEvent(type=EventType.RUN_STARTED, thread_id=zid, run_id=run_id, protocol_version=PROTOCOL_VERSION, parent_run_id=inp.parent_run_id, timestamp=int(t0 * 1000)))
         ents = thread_entries(zid)
         for e in events_for(zid, ents, 0, subagents): yield enc.encode(e)
-        yield enc.encode(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state_of(zid, ents)))
+        yield enc.encode(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=await asyncio.to_thread(state_of, zid, ents)))   # P4-2: stav z Dapru je sync gRPC → mimo event loop
         if created: yield enc.encode(CustomEvent(type=EventType.CUSTOM, name="thread_created", value={"threadId": zid, "by": u["name"]}))
         if stopped is not None:
             yield enc.encode(CustomEvent(type=EventType.CUSTOM, name="stopped", value=stopped))
@@ -353,7 +364,7 @@ async def run(req: Request):
             ents = thread_entries(zid)
             if len(ents) > n:
                 for e in events_for(zid, ents, n, subagents): yield enc.encode(e)
-                n = len(ents); yield enc.encode(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=state_of(zid, ents)))
+                n = len(ents); yield enc.encode(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=await asyncio.to_thread(state_of, zid, ents)))
             w = pending_interrupt(ents)
             if w and interrupt_id(w) not in resolved:
                 art = next((e for e in reversed(ents) if e.get("kind") == "HANDOFF" and e.get("hash") == w.get("artifact_hash")), {})
@@ -376,7 +387,7 @@ async def run(req: Request):
                                               **({"role": exc.get("role") or w.get("artifact_hash"), "source": exc.get("source"), "limit_usd": bud.get("limit_usd"), "spent_usd": bud.get("spent_usd")} if w["bod"] == "rozpocet" else {})})
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedInterruptOutcome(type="interrupt", interrupts=[itr]), result=state_of(zid, ents)))
                 return
-            st = CTX["wf_state"](zid) or {}
+            st = await asyncio.to_thread(CTX["wf_state"], zid) or {}   # P4-2: každou sekundu per otevřený stream – sync gRPC nesmí stát v event loopu
             if st.get("status") in ("COMPLETED", "FAILED", "TERMINATED"):
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedSuccessOutcome(type="success"), result=state_of(zid, ents)))
                 return
@@ -414,7 +425,7 @@ async def thread_get(zid: str, req: Request):
     if not thread_of_tenant(zid, u): raise HTTPException(404, "thread neexistuje")
     ents = thread_entries(zid)
     w = pending_interrupt(ents)
-    return {"state": state_of(zid, ents), "interrupt": ({"id": interrupt_id(w), "bod": w["bod"], "artifact_hash": w.get("artifact_hash")} if w else None), "entries": len(ents)}
+    return {"state": await asyncio.to_thread(state_of, zid, ents), "interrupt": ({"id": interrupt_id(w), "bod": w["bod"], "artifact_hash": w.get("artifact_hash")} if w else None), "entries": len(ents)}
 
 
 # --- governance (P3-3): čtení přes Governance MCP (org_reader, RLS per tenant), akce přes aplikaci (zápis org.*) -----------------------

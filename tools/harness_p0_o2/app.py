@@ -959,7 +959,7 @@ def thread_exists(zid):
 
 
 @app.get("/zakazky/{zid}")
-async def get(zid: str):
+def get(zid: str):   # sync handler = threadpool: get_workflow_state je synchronní gRPC a harness/GUI stav pollují (P4-2 nález: blokoval event loop)
     st = client().get_workflow_state(zid, fetch_payloads=True)
     if not st: raise HTTPException(404)
     start = next((e for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid), {})

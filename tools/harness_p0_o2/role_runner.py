@@ -261,8 +261,11 @@ def main():
     except Exception: image_role = None
     out |= {"egress_probe": probe, "pod": os.environ.get("HOSTNAME"), "srt": os.environ.get("P0_SRT"), "uid": os.getuid(), "agent_s": agent_s, "uploaded": len(up), "kernel": os.uname().release,
             "image_tools": {"present": tools_present, "absent": tools_absent}, "image_role": image_role, "identity": identity, "git_probe": git_probe, "work_info": work_info, "memory_probe": mprobe}
-    try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": led}, headers=H, timeout=120)
-    except Exception as e: print(f"result post error: {e}", flush=True)
+    for i in range(3):   # P4-2 běh 4–5: aplikace dušená dlouhými handlery neodpověděla → výsledek šel jen ze záložního RESULT:: v logu bez ledgeru podu (TOOL záznamy) → T1f bez paměti
+        try: httpx.post(f"{api}/runs/{rid}/result", json={"result": out, "ledger": led}, headers=H, timeout=120); break
+        except Exception as e:
+            print(f"result post error ({i + 1}/3): {e}", flush=True)
+            if i < 2: time.sleep(10)
     print("RESULT::" + json.dumps(out, ensure_ascii=False)[:30000], flush=True)
 
 
