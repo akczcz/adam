@@ -2571,6 +2571,9 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
                 if i == 11: raise
                 time.sleep(5)
                 for pf in pfs.values(): pf.start()
+            except httpx.ReadTimeout:   # P4-2 běh 3: keepalive GET /health (10 s) vypršel uprostřed U2d a shodil celý běh; GET je idempotentní → zopakovat (aplikace občas blokuje event loop, E8 nález)
+                if i == 11 or method != "GET": raise
+                time.sleep(5)
     try:
         health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
         kc_migr = kc_ensure(a, http, KC) if (gui or tenant) else None   # P3-2: realm v běžícím clusteru doplnit admin API (klient platform-gui, lidé tenantů)
