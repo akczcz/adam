@@ -1904,9 +1904,14 @@ def m1_flow(a, rep, http, led, APP, KC, dsn, tag, shots):
         if g: g.close()
     except Exception: pass
     timeline = [(e.get("state"), e.get("role"), e.get("source"), e.get("auto"), e.get("reason"), round(e["ts"] - t_h1, 1)) for e in L(z) if K(e) == "MANDAT"] + [("ROLE_POD", e.get("role"), (e.get("identity") or {}).get("delegation") is not None, None, None, round(e["ts"] - t_h1, 1)) for e in L(z) if K(e) == "ROLE_POD"]
-    ok_b = bool(w1) and used.get("source") == "renew" and used.get("sub") == adam_sub and pod_b.get("phase") == "Succeeded" and deleg_b.get("sub") == adam_sub and deleg_b.get("azp") == "agent-architekt-acme" and not deleg_b.get("error") and ag.get("account") is None and ag.get("architekt") == adam_sub and (gui2.get("roles") or {}).get("architekt") == adam_sub
-    rep.add("M1b", "Další role jedná s obnoveným mandátem: H1 schválen interním API bez subjektu → jediný živý subject je obnova z GUI; ledger MANDAT used (zdroj renew, sub = adam) před startem architekta, pod architekta exchange sub = adam, azp = agent-architekt-acme; org.agents.on_behalf_of: account null (běžel bez mandátu), architekt = adam; GUI u role architekt „jménem adam“", "PASS" if ok_b else "FAIL",
-            {"h1": bool(w1), "side_before_h1": side_h1, "timeline_s_from_h1": timeline, "used": {k: used.get(k) for k in ("state", "role", "source", "sub", "expires_in_s")}, "pod_architekt": {"phase": pod_b.get("phase"), "delegation": {k: deleg_b.get(k) for k in ("sub", "azp", "exp_in_s", "error")}}, "org_agents": ag, "gui": gui2})
+    # 3. běh: Account běží dvakrát (1. kolo bez mandátu → DIALOG_WAIT → odpověď → 2. kolo už po obnově z GUI, tedy s mandátem); org.agents drží u role jen poslední běh
+    # (historie je v ledgeru ROLE_POD/MANDAT) → očekávaný on_behalf_of account = podle posledního ROLE_POD account (delegace → adam, bez delegace → null)
+    pods_acc = [e for e in L(z) if K(e) == "ROLE_POD" and e.get("role") == "account"]
+    acc_runs = [(e.get("identity") or {}).get("delegation") is not None for e in pods_acc]
+    exp_acc = adam_sub if acc_runs and acc_runs[-1] else None
+    ok_b = bool(w1) and used.get("source") == "renew" and used.get("sub") == adam_sub and pod_b.get("phase") == "Succeeded" and deleg_b.get("sub") == adam_sub and deleg_b.get("azp") == "agent-architekt-acme" and not deleg_b.get("error") and bool(acc_runs) and acc_runs[0] is False and ag.get("account") == exp_acc and ag.get("architekt") == adam_sub and (gui2.get("roles") or {}).get("architekt") == adam_sub
+    rep.add("M1b", "Další role jedná s obnoveným mandátem: H1 schválen interním API bez subjektu → jediný živý subject je obnova z GUI; ledger MANDAT used (zdroj renew, sub = adam) před startem architekta, pod architekta exchange sub = adam, azp = agent-architekt-acme; org.agents.on_behalf_of: architekt = adam, account podle posledního běhu (1. kolo bez mandátu; kolo dialogu po obnově už s mandátem adam – registr drží poslední běh, historie v ledgeru); GUI u role architekt „jménem adam“", "PASS" if ok_b else "FAIL",
+            {"h1": bool(w1), "side_before_h1": side_h1, "timeline_s_from_h1": timeline, "account_runs_with_mandat": acc_runs, "used": {k: used.get(k) for k in ("state", "role", "source", "sub", "expires_in_s")}, "pod_architekt": {"phase": pod_b.get("phase"), "delegation": {k: deleg_b.get(k) for k in ("sub", "azp", "exp_in_s", "error")}}, "org_agents": ag, "gui": gui2})
     rep.add("M1d", "M1: čas", "INFO", {"wall_s": round(time.time() - t_m, 1)})
 
 
