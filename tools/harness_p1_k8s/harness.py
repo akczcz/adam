@@ -1931,8 +1931,10 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots):
     last_led = []
     def L(z_):
         nonlocal last_led
-        try: last_led = led()
-        except Exception: pass   # dočasný výpadek čtení ledgeru (ReadTimeout přes port-forward) – další otočka to zkusí znovu, mezitím poslední známý stav
+        try:
+            r = http("GET", f"{APP}/_debug/ledger", params={"zakazka": z_}, timeout=60)   # jen záznamy zakázky (celý ledger přes port-forward > 20 s → ReadTimeout, běhy 1–2)
+            if r.status_code == 200: last_led = r.json()
+        except Exception: pass   # dočasný výpadek – další otočka to zkusí znovu, mezitím poslední známý stav
         return [e for e in last_led if e.get("zakazka") == z_]
     def wait_led(pred, timeout):
         t0 = time.time()
@@ -1964,7 +1966,8 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots):
         g = Gui(f"{APP}/gui/", shots=shots / "l1").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
         g.login("adam", "adam")
         gui["create"] = g.create_thread(z, f"Přidej do repa platformy soubor zakazky/{z}/NOTES.md s poznámkou, že tato zakázka byla založena jako ostrý běh (P4-2 L1, bez ostrého klíče).", budget=1, live=True)
-        gui["state_live_badge"] = g.page.locator("[data-testid=state-live]").count() > 0
+        try: g.page.locator("[data-testid=state-live]").first.wait_for(timeout=30_000); gui["state_live_badge"] = True   # badge až se STATE_SNAPSHOT (běh 2: count() hned po založení = 0)
+        except Exception: gui["state_live_badge"] = False
         tok = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": "adam", "password": "adam"}, timeout=15).json()["access_token"]
         st = http("GET", f"{APP}/agui/threads/{z}", headers={"Authorization": f"Bearer {tok}"}, timeout=15); gui["state_live"] = (st.json().get("state") or {}).get("live") if st.status_code == 200 else {"http": st.status_code}
         g.shot("l1-live-detail")
@@ -1973,16 +1976,26 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots):
     start = wait_led(lambda e: K(e) == "ZAKAZKA_START", 60) or {}
     pod = wait_led(lambda e: K(e) == "ROLE_POD" and e.get("role") == "account", 1200) or {}
     run = wait_led(lambda e: K(e) == "AGENT_RUN" and e.get("role") == "account", 120) or {}
-    h1 = wait_led(lambda e: K(e) == "HITL_WAIT" and e.get("bod") == "H1", 90)   # pozorování: po selhání role workflow pokračuje k H1 s prázdným artefaktem (file_exists false) – člověk to vidí v GUI
+    # po selhání role workflow pokračuje s prázdným artefaktem k publish_issue (issue = nosič H1) → skutečný GitHub bez ostrého PAT odpoví 401 → aktivita selže
+    # a instance končí FAILED s příčinou v Dapr failureDetails (běh 2: „GitHub POST /repos/akczcz/adam/issues → 401 Bad credentials“) – viditelné, nic se nemockuje
+    t0 = time.time(); wf = {}
+    while time.time() - t0 < 300:
+        try:
+            r = http("GET", f"{APP}/zakazky/{z}", timeout=30); wf = r.json() if r.status_code == 200 else {"status": f"http{r.status_code}"}
+        except Exception as e: wf = {"status": f"{type(e).__name__}"}
+        if wf.get("status") in ("FAILED", "COMPLETED", "TERMINATED") or next((e for e in L(z) if K(e) == "HITL_WAIT"), None): break
+        time.sleep(5)
+    fail_msg = str((wf.get("failure") or {}).get("message") or "")
+    github_401 = wf.get("status") == "FAILED" and "401" in fail_msg and "/repos/akczcz/adam/" in fail_msg
     try: stp = J(http("POST", f"{APP}/zakazky/{z}/stop", json={"by": "harness", "reason": "L1c: ostrý běh bez klíče – úklid po měření"}, timeout=60))
     except Exception as e: stp = {"error": f"{type(e).__name__}: {str(e)[:160]}"}
     try:
         if g: g.close()
     except Exception: pass
     failed_visibly = bool(run.get("is_error") or run.get("error")) and not run.get("budget_exceeded")
-    ok_c = gui.get("state_live") is True and gui.get("state_live_badge") is True and gui.get("row_live_badge") is True and start.get("live") is True and pod.get("live") is True and pod.get("model") == f"live-{a.model}" and failed_visibly and stp.get("ok") is True
-    rep.add("L1c", "Zakázka „ostrý běh“ z GUI (zaškrtávátko při založení): flag live v ZAKAZKA_START, badge „ostrý“ v seznamu i detailu, stav AG-UI live=true; pod Account dostal P0_MODEL = live-<model> (ROLE_POD.model/live) a bez ostrého klíče selhal viditelně (AGENT_RUN is_error/error, ne rozpočet – nic se tiše nemockuje); stop zakázky po měření", "PASS" if ok_c else "FAIL",
-            {"zakazka": z, "gui": gui, "start_live": start.get("live"), "pod": {k: pod.get(k) for k in ("phase", "model", "live", "exit_code", "result_received")}, "agent_run": {k: run.get(k) for k in ("is_error", "error", "budget_exceeded", "num_turns")}, "h1_after_failure": bool(h1), "stop": stp})
+    ok_c = gui.get("state_live") is True and gui.get("state_live_badge") is True and gui.get("row_live_badge") is True and start.get("live") is True and pod.get("live") is True and pod.get("model") == f"live-{a.model}" and failed_visibly and github_401 and stp.get("ok") is True
+    rep.add("L1c", "Zakázka „ostrý běh“ z GUI (zaškrtávátko při založení): flag live v ZAKAZKA_START, badge „ostrý“ v seznamu i detailu, stav AG-UI live=true; pod Account dostal P0_MODEL = live-<model> (ROLE_POD.model/live) a bez ostrého klíče selhal viditelně (AGENT_RUN is_error/error, ne rozpočet); publikace issue (nosič H1) šla na skutečný GitHub přes gateway a bez ostrého PAT skončila 401 → instance FAILED s příčinou v failureDetails (nic se tiše nemockuje); stop po měření", "PASS" if ok_c else "FAIL",
+            {"zakazka": z, "gui": gui, "start_live": start.get("live"), "pod": {k: pod.get(k) for k in ("phase", "model", "live", "exit_code", "result_received")}, "agent_run": {k: run.get(k) for k in ("is_error", "error", "budget_exceeded", "num_turns")}, "workflow": {"status": wf.get("status"), "failure": fail_msg[:300], "github_401": github_401}, "stop": stp})
     rep.add("L1d", "L1: čas", "INFO", {"wall_s": round(time.time() - t_l, 1)})
 
 
@@ -1998,8 +2011,10 @@ def live_flow(a, rep, http, led, APP, KC, dsn, kj, tag, shots):
     last_led = []
     def L(z_):
         nonlocal last_led
-        try: last_led = led()
-        except Exception: pass   # dočasný výpadek čtení ledgeru (ReadTimeout přes port-forward) – další otočka to zkusí znovu, mezitím poslední známý stav
+        try:
+            r = http("GET", f"{APP}/_debug/ledger", params={"zakazka": z_}, timeout=60)   # jen záznamy zakázky (celý ledger přes port-forward > 20 s → ReadTimeout, běhy 1–2)
+            if r.status_code == 200: last_led = r.json()
+        except Exception: pass   # dočasný výpadek – další otočka to zkusí znovu, mezitím poslední známý stav
         return [e for e in last_led if e.get("zakazka") == z_]
     def J(r): return r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:160]}
     def gh_public(path):
@@ -2274,7 +2289,7 @@ def e1_checks(a, rep, kj, pre):
     cms = {ns: get(ns, "configmap", "platform-ca") for ns in [NS] + tenants}
     cm_ok = {ns: ((c.get("metadata") or {}).get("labels") or {}).get("trust.cert-manager.io/bundle") == "platform-ca" and root.strip() in (c.get("data") or {}).get("ca.crt", "") for ns, c in cms.items()}   # P3-6 E11: bundle = root platformy + rooty Azure (Flexible Server verify-full), ne jen root
     days = round((leaf.not_valid_after_utc - leaf.not_valid_before_utc).days, 0) if leaf else None
-    rep.add("E1a", "TLS egressu gateway z cert-manageru (interní CA: self-signed root platform-root-ca → ClusterIssuer platform-ca): Certificate agentgateway-tls Ready, Secret s anotacemi cert-manageru, SAN git/mirror.platform.internal, podpis ověřen proti root CA, ca.crt v Secretu == root; trust-manager rozdal CA jako ConfigMap platform-ca (label bundle) do platform-data i všech ns tenantů; HelmReleasy cert-manager/trust-manager Ready; Secret bez stopy kubectl", "PASS" if ready(cert) == "True" and ann.get("cert-manager.io/issuer-name") == "platform-ca" and ann.get("cert-manager.io/issuer-kind") == "ClusterIssuer" and sans == ["git.platform.internal", "mirror.platform.internal"] and chain_ok is True and ca_in_tls.strip() == root.strip() and root and cm_ok and all(cm_ok.values()) and all(hr.get(k, {}).get("ready") == "True" for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")) and not any(m.startswith("kubectl") for m in managers(tls)) else "FAIL", {"certificate_ready": ready(cert), "issuer": [ann.get("cert-manager.io/issuer-kind"), ann.get("cert-manager.io/issuer-name")], "sans": sans, "issuer_cn": leaf.issuer.rfc4514_string() if leaf else None, "validity_days": days, "chain_ok": chain_ok, "ca_matches_root": ca_in_tls.strip() == root.strip(), "platform_ca_configmaps": cm_ok, "secret_managers": managers(tls), "helm": {k: hr.get(k) for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")}, "legacy_removed": pre.get("legacy_removed")})
+    rep.add("E1a", "TLS egressu gateway z cert-manageru (interní CA: self-signed root platform-root-ca → ClusterIssuer platform-ca): Certificate agentgateway-tls Ready, Secret s anotacemi cert-manageru, SAN git/github/mirror.platform.internal (P4-2 přidal github), podpis ověřen proti root CA, ca.crt v Secretu == root; trust-manager rozdal CA jako ConfigMap platform-ca (label bundle) do platform-data i všech ns tenantů; HelmReleasy cert-manager/trust-manager Ready; Secret bez stopy kubectl", "PASS" if ready(cert) == "True" and ann.get("cert-manager.io/issuer-name") == "platform-ca" and ann.get("cert-manager.io/issuer-kind") == "ClusterIssuer" and sans == ["git.platform.internal", "github.platform.internal", "mirror.platform.internal"] and chain_ok is True and ca_in_tls.strip() == root.strip() and root and cm_ok and all(cm_ok.values()) and all(hr.get(k, {}).get("ready") == "True" for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")) and not any(m.startswith("kubectl") for m in managers(tls)) else "FAIL", {"certificate_ready": ready(cert), "issuer": [ann.get("cert-manager.io/issuer-kind"), ann.get("cert-manager.io/issuer-name")], "sans": sans, "issuer_cn": leaf.issuer.rfc4514_string() if leaf else None, "validity_days": days, "chain_ok": chain_ok, "ca_matches_root": ca_in_tls.strip() == root.strip(), "platform_ca_configmaps": cm_ok, "secret_managers": managers(tls), "helm": {k: hr.get(k) for k in ("cert-manager/cert-manager", "cert-manager/trust-manager")}, "legacy_removed": pre.get("legacy_removed")})
     # E1b – ESO z Key Vaultu přes workload identitu
     css = get(None, "clustersecretstore", "azure-kv"); ess = {x["metadata"]["name"]: x for x in kj("-n", NS, "get", "externalsecrets").get("items", [])}
     want = ["postgres-auth", "agentgateway-secrets", "zakazka-secrets", "zakazka-finops", "agentgateway-git-token", "dapr-components", "keycloak-admin", "memory-db", "governance-db"]   # P3-6 E9: + admin Keycloaku, DSN paměti a Governance MCP

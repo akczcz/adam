@@ -1098,8 +1098,10 @@ async def resume(zid: str, req: Request):
 
 
 @app.get("/_debug/ledger")
-async def dbg():
-    return _ledger()
+async def dbg(zakazka: str | None = None):
+    """Celý ledger, nebo jen záznamy jedné zakázky (P4-2 nález: celý ledger přes port-forward > 20 s → ReadTimeout harnessu uprostřed čekání na pod)."""
+    L = _ledger()
+    return [e for e in L if e.get("zakazka") == zakazka] if zakazka else L
 
 
 # --- API pro pody rolí (P1-6): artefakty zakázky a výsledek běhu; autentizace tokenem běhu ze Secretu podu ---------------------
