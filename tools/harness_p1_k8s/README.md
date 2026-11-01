@@ -964,6 +964,12 @@ Nálezy:
 6. **ConfigMap `agentgateway-keys` u limitu** (E4d INFO běh 2: 1 003 888 B, 1365 klíčů, 273 zakázek; limit API serveru 1 MiB): GC maže jen klíče
    ukončených zakázek, 147 instancí je SUSPENDED (stopy z měření) a jejich klíče zůstávají → riziko 422 při vydávání klíčů v dalších bězích.
    Kandidát: GC i pro pozastavené zakázky starší N dní (klíč se při resume vydá znovu) nebo Secret místo ConfigMap.
+7. **Dump ledgeru dusil aplikaci** (běh 3 pád `ReadTimeout` keepalive `/health`, běh 4 T1f FAIL + pád U2d): harness volal `GET /_debug/ledger`
+   (celý JSONL, desítky MB) při každém `led()` – i v pollovacích smyčkách každých pár sekund; serializace v async handleru blokovala event loop
+   aplikace → readiness proba `zakazka` padala (`context deadline exceeded`), reload GUI ve stopu tenanta neukázal formulář do 30 s a pod role beta
+   nedoručil výsledek POSTem (`/runs/<id>/result` vypršel) – aplikace ho vzala ze záložního `RESULT::` v logu, ale bez TOOL záznamů ledgeru →
+   `memory_calls_200 = 0`. Oprava: `?offset=` vrací `{total, items}` jen od offsetu (ledger je append-only), handler sync (threadpool) se zámkem nad
+   cache, harness drží lokální kopii a dotahuje přírůstky; `?zakazka=` zůstává. Důsledek pro provoz: debug endpoint bez stránkování je DoS na sebe sama.
 
 ## Spuštění
 
