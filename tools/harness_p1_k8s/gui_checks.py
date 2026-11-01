@@ -104,14 +104,32 @@ class Gui:
     def open_thread(self, zid):
         """Otevře thread s NOVÝM runem: navigace jen změnou hashe na tutéž URL stránku nereloaduje (React komponenta zůstane se starým stavem – po resume
         tenanta GUI ukazovalo run „cancelled“ ze stopu; nález P3-5 O3c) → nejdřív seznam, pak thread."""
-        if self.page.url.endswith(f"#/t/{zid}"): self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
-        self.page.goto(self.base + f"#/t/{zid}"); self.cur = zid
-        self.page.wait_for_function("document.querySelector('[data-testid=run-status]') && !['idle','connecting'].includes(document.querySelector('[data-testid=run-status]').textContent)", timeout=60_000)
-        return {"status": self.t("run-status").inner_text(), "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
+        for attempt in range(2):
+            if self.page.url.endswith(f"#/t/{zid}"): self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
+            self.page.goto(self.base + f"#/t/{zid}"); self.cur = zid
+            self.page.wait_for_function("document.querySelector('[data-testid=run-status]') && !['idle','connecting'].includes(document.querySelector('[data-testid=run-status]').textContent)", timeout=60_000)
+            st, err = self.t("run-status").inner_text(), (self.t("run-error").inner_text() if self.t("run-error").count() else None)
+            if st != "error" or re.match(r"^\d{3}", (err or "").strip()) or not self.keepalive or attempt: break
+            try: self.keepalive()   # „Failed to fetch“ hned při otevření = spadlý port-forward (2. běh P4-1, E13b) → obnovit a otevřít znovu
+            except Exception: pass
+            self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": zid, "error": (err or "")[:120], "where": "open_thread"})
+        return {"status": st, "error": err}
+
+    def relogin_as(self, user, pw):
+        """Odhlášení a přihlášení jiným člověkem: napřed obnova port-forwardu (keepalive) a návrat z případné chybové stránky prohlížeče
+        (po ERR_CONNECTION_REFUSED nejde číst sessionStorage – 2. běh P4-1, E13b/E13c), pak sessionStorage pryč → login."""
+        if self.keepalive:
+            try: self.keepalive()
+            except Exception: pass
+        self.page.goto(self.base + "#/")
+        try: self.page.evaluate("sessionStorage.clear()")
+        except Exception: pass
+        self.page.reload(); self.t("login-user").wait_for()
+        return self.login(user, pw)
 
     # --- průběh ------------------------------------------------------------------------------------------------------------
     def snapshot(self):
-        subs = [{"name": s.get_attribute("data-testid")[len("subagent-"):], "status": s.get_attribute("data-status")} for s in self.page.locator("[data-testid^=subagent-]").all()]
+        subs = [{"name": s.get_attribute("data-testid")[len("subagent-"):], "status": s.get_attribute("data-status")} for s in self.page.locator("[data-testid^=subagent-]").all() if s.get_attribute("data-status") is not None]   # jen řádky subagentů (mají data-status), ne vnořené prvky s podobným prefixem
         msgs = []
         for m in self.page.locator("[data-testid^=msg-]").all():
             d = m.locator("[data-testid=disclosure]")
@@ -268,9 +286,10 @@ class Gui:
 
     # --- P4-1 mandát (subject pro exchange rolí) -----------------------------------------------------------------------------------
     def mandat_view(self):
-        """Mandát v detailu: badge state-mandat (data-expired/sub/source/expires-in), karta mandat-card, per role „jménem“ (subagent-mandat-<role>)."""
+        """Mandát v detailu: badge state-mandat (data-expired/sub/source/expires-in), karta mandat-card, per role „jménem“ (mandat-role-<role>; 2. běh P4-1:
+        prefix subagent-mandat-* se pletl do výčtu subagentů U1b → přejmenováno)."""
         m, c = self.t("state-mandat"), self.t("mandat-card")
-        roles = {x.get_attribute("data-testid")[len("subagent-mandat-"):]: (x.get_attribute("data-sub") or None) for x in self.page.locator("[data-testid^=subagent-mandat-]").all()}
+        roles = {x.get_attribute("data-testid")[len("mandat-role-"):]: (x.get_attribute("data-sub") or None) for x in self.page.locator("[data-testid^=mandat-role-]").all()}
         ei = m.get_attribute("data-expires-in") if m.count() else None
         return {"present": m.count() == 1, "expired": (m.get_attribute("data-expired") == "true") if m.count() else None, "sub": (m.get_attribute("data-sub") or None) if m.count() else None,
                 "source": (m.get_attribute("data-source") or None) if m.count() else None, "expires_in_s": int(ei) if ei not in (None, "") else None, "text": m.inner_text().strip() if m.count() else None,

@@ -67,8 +67,9 @@ def _load(path: Path, modname: str):
 
 
 def _wrap(fn):
-    """Čerstvý objekt funkce pro každou registraci: SDK si na funkci zapisuje `_workflow_registered` a druhou registraci odmítá – a `app` se
-    importuje i podruhé (aktivity rolí: `import app` v gateway_keys/role_runner vedle `__main__`), s vlastním WorkflowRuntime, který nikdy nestartuje."""
+    """Čerstvý objekt funkce pro každou registraci: SDK si na funkci zapisuje `_workflow_registered` a druhou registraci odmítá. Do P4-1 se `app`
+    importoval i podruhé (`import app` v gateway_keys vedle `__main__`) s vlastním WorkflowRuntime, který nikdy nestartoval – od P4-1 app.py
+    registruje `__main__` i jako sys.modules["app"] (nález M1b: druhá kopie měla vlastní _SUBJECTS a přepsala agui.CTX); wrap zůstává pro jistotu."""
     def zakazka(ctx, z): return (yield from fn(ctx, z))
     return zakazka
 

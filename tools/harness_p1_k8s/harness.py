@@ -1769,9 +1769,14 @@ def e13_flow(a, rep, http, led, APP, kj, tag, shots):
     try:
         g = Gui(f"{APP}/gui/", shots=shots / "e13").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
         g.login("adam", "adam"); gui["row"] = g.thread_status(z); gui["detail"] = g.stalled_view(z)
-        g.page.evaluate("sessionStorage.clear()"); g.page.reload(); g.t("login-user").wait_for(); g.login("platform-admin", "platform-admin"); gui["firma"] = g.wf_versions_card()
-        gui["console"] = g.log[-10:]
+        g.relogin_as("platform-admin", "platform-admin"); gui["firma"] = g.wf_versions_card()   # 2. běh P4-1: po spadlém port-forwardu byl prohlížeč na chybové stránce → relogin_as napřed obnoví tunel
+        gui["console"] = g.log[-10:]; gui["recoveries"] = g.recoveries[-5:]
     except Exception as e: gui["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    try:   # 2. běh P4-1: port-forward aplikace spadl uprostřed E13b (ERR_CONNECTION_REFUSED) – zaznamenat restarty podu aplikace a konec logu tunelu
+        pods_app = kj("-n", NS, "get", "pods", "-l", "app=zakazka").get("items", [])
+        gui["app_pod"] = [{"name": p_["metadata"]["name"], "phase": (p_.get("status") or {}).get("phase"), "restarts": [c.get("restartCount") for c in (p_.get("status") or {}).get("containerStatuses", [])], "started": (p_.get("status") or {}).get("startTime")} for p_ in pods_app]
+        gui["pf_log_tail"] = (LOGS / "pf-zakazka.log").read_text(errors="replace").splitlines()[-4:] if (LOGS / "pf-zakazka.log").exists() else None
+    except Exception as e: gui["app_pod_error"] = f"{type(e).__name__}: {str(e)[:120]}"
     row, det, fm = gui.get("row") or {}, gui.get("detail") or {}, gui.get("firma") or {}
     ok_b = row.get("found") and row.get("status") == "STALLED" and "zaseknuto" in (row.get("stav") or "") and "stalled" in (row.get("class") or "") and det.get("run_status") == "stalled" and det.get("notice") and det.get("notice_wf_version") == old and old in (det.get("notice") or "") and det.get("state_wf_version") == old and "zaseknuto" in ((det.get("state") or {}).get("stav") or "") and not det.get("error") and fm.get("stalled", 0) >= 1 and old in (fm.get("missing") or []) and (fm.get("rows") or {}).get(old, {}).get("registered") is False and (fm.get("rows") or {}).get(old, {}).get("stalled", 0) >= 1 and not fm.get("error")
     rep.add("E13b", "STALLED v GUI: seznam zakázek ukazuje badge „zaseknuto – chybí verze orchestrátoru“ (status STALLED), detail zakázky končí run stavem `stalled` s kartou (verze orchestrátoru instance + nápověda: nasadit obraz se snímkem, nic se neztratilo) a verzí ve stavu; Firma (tenant platform) má kartu verzí orchestrátoru: počet zaseknutých, chybějící verze, řádek verze registered=ne se zaseknutou zakázkou (odkaz)", "PASS" if ok_b else "FAIL", gui)
@@ -1801,7 +1806,7 @@ def e13_flow(a, rep, http, led, APP, kj, tag, shots):
     gui2 = {}
     try:
         if g:
-            g.page.evaluate("sessionStorage.clear()"); g.page.reload(); g.t("login-user").wait_for(); g.login("adam", "adam"); gui2["row"] = g.thread_status(z)
+            g.relogin_as("adam", "adam"); gui2["row"] = g.thread_status(z)
             g.open_thread(z); gui2["detail"] = {**g.wait_run_status(("finished", "cancelled", "stalled"), 60), **{k: v for k, v in g.snapshot().items() if k in ("state", "error")}}
     except Exception as e: gui2["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     finally:
@@ -1873,15 +1878,18 @@ def m1_flow(a, rep, http, led, APP, KC, dsn, tag, shots):
         if g:
             ren = g.mandat_renew(); ren["state"] = state(H).get("mandat")
             kx = http("POST", f"{APP}/_mandat/expire", json={"zakazka": z, "exp_in_s": 300, "by": "harness", "reason": "M1c: mandát brzy vyprší → keepalive GUI"}, timeout=15); keep["expiring"] = kx.json() if kx.status_code == 200 else {"http": kx.status_code}
-            t_k = time.time(); keep["view"] = g.wait_mandat(lambda m: m.get("present") and m.get("expired") is False and (m.get("expires_in_s") or 0) > 600, 120); keep["s"] = round(time.time() - t_k, 1)
+            t_k = time.time(); keep["view_expiring"] = g.wait_mandat(lambda m: m.get("present") and (m.get("expires_in_s") or 9999) <= 310, 90)   # 2. běh: GUI ještě ukazovalo 30 min z obnovy → čekání na > 600 projde hned naprázdno; napřed refresh (poll 30 s)
+            keep["view"] = g.wait_mandat(lambda m: m.get("present") and m.get("expired") is False and (m.get("expires_in_s") or 0) > 600, 120); keep["s"] = round(time.time() - t_k, 1)
+            keep["side"] = (lambda r: r.json() if r.status_code == 200 else {"http": r.status_code})(http("GET", f"{APP}/_mandat/{z}", timeout=15))   # slovník aktivit rolí (diagnostika: 2. běh M1b – obnova z GUI šla do kopie modulu app)
             keep["ledger"] = [{k: e.get(k) for k in ("state", "by", "source", "auto")} for e in L(z) if K(e) == "MANDAT" and e.get("state") in ("renewed", "expiring")]
             keep["state"] = state(H).get("mandat")
     except Exception as e: keep["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     rs, ks = ren.get("state") or {}, keep.get("state") or {}
-    ok_c = ren.get("msg", "").startswith("mandát obnoven") and rs.get("sub") == adam_sub and rs.get("expired") is False and rs.get("source") == "renew" and rs.get("auto") is False and (keep.get("expiring") or {}).get("expires_in_s") == 300 and (keep.get("view") or {}).get("expired") is False and ((keep.get("view") or {}).get("expires_in_s") or 0) > 600 and ks.get("auto") is True and ks.get("source") == "renew" and ks.get("sub") == adam_sub and any(x.get("auto") for x in keep.get("ledger") or [])
+    ok_c = ren.get("msg", "").startswith("mandát obnoven") and rs.get("sub") == adam_sub and rs.get("expired") is False and rs.get("source") == "renew" and rs.get("auto") is False and (keep.get("expiring") or {}).get("expires_in_s") == 300 and ((keep.get("view_expiring") or {}).get("expires_in_s") or 9999) <= 310 and (keep.get("view") or {}).get("expired") is False and (keep.get("side") or {}).get("usable") is True and (keep.get("side") or {}).get("source") == "renew" and ((keep.get("view") or {}).get("expires_in_s") or 0) > 600 and ks.get("auto") is True and ks.get("source") == "renew" and ks.get("sub") == adam_sub and any(x.get("auto") for x in keep.get("ledger") or [])
     rep.add("M1c", "Obnova a keepalive z GUI: kliknutí „Obnovit mandát“ → MANDAT renewed (by člověk, zdroj renew, auto false), stav „mandát platí“; mandát držitele s < 10 min do konce (simulace exp_in_s 300) GUI s otevřeným detailem prodlouží samo jeho aktuálním tokenem (MANDAT renewed auto true) – vypršelý mandát sám neobnovuje (M1a karta zůstala, dokud člověk neklikl)", "PASS" if ok_c else "FAIL", {"renew": {k: v_ for k, v_ in ren.items() if k in ("msg", "state", "expired", "source")}, "keepalive": keep})
     # M1b: další role s obnoveným mandátem – H1 schválen interním API bez subjektu (jediný živý subject = obnova z GUI) → architekt exchange sub = adam
     w1 = drive("H1", 600) or {}
+    side_h1 = (lambda r: r.json() if r.status_code == 200 else {"http": r.status_code})(http("GET", f"{APP}/_mandat/{z}", timeout=15)); t_h1 = time.time()
     if w1: http("POST", f"{APP}/zakazky/{z}/approve/H1", json={"by": "adam", "by_kind": "human", "artifact_hash": w1.get("artifact_hash"), "exp_s": 86400}, timeout=15)
     used = wait_led(lambda e: K(e) == "MANDAT" and e.get("state") == "used" and e.get("role") == "architekt", 300) or {}
     pod_b = wait_led(lambda e: K(e) == "ROLE_POD" and e.get("role") == "architekt", 1200) or {}
@@ -1895,9 +1903,10 @@ def m1_flow(a, rep, http, led, APP, KC, dsn, tag, shots):
     try:
         if g: g.close()
     except Exception: pass
+    timeline = [(e.get("state"), e.get("role"), e.get("source"), e.get("auto"), e.get("reason"), round(e["ts"] - t_h1, 1)) for e in L(z) if K(e) == "MANDAT"] + [("ROLE_POD", e.get("role"), (e.get("identity") or {}).get("delegation") is not None, None, None, round(e["ts"] - t_h1, 1)) for e in L(z) if K(e) == "ROLE_POD"]
     ok_b = bool(w1) and used.get("source") == "renew" and used.get("sub") == adam_sub and pod_b.get("phase") == "Succeeded" and deleg_b.get("sub") == adam_sub and deleg_b.get("azp") == "agent-architekt-acme" and not deleg_b.get("error") and ag.get("account") is None and ag.get("architekt") == adam_sub and (gui2.get("roles") or {}).get("architekt") == adam_sub
     rep.add("M1b", "Další role jedná s obnoveným mandátem: H1 schválen interním API bez subjektu → jediný živý subject je obnova z GUI; ledger MANDAT used (zdroj renew, sub = adam) před startem architekta, pod architekta exchange sub = adam, azp = agent-architekt-acme; org.agents.on_behalf_of: account null (běžel bez mandátu), architekt = adam; GUI u role architekt „jménem adam“", "PASS" if ok_b else "FAIL",
-            {"h1": bool(w1), "used": {k: used.get(k) for k in ("state", "role", "source", "sub", "expires_in_s")}, "pod_architekt": {"phase": pod_b.get("phase"), "delegation": {k: deleg_b.get(k) for k in ("sub", "azp", "exp_in_s", "error")}}, "org_agents": ag, "gui": gui2})
+            {"h1": bool(w1), "side_before_h1": side_h1, "timeline_s_from_h1": timeline, "used": {k: used.get(k) for k in ("state", "role", "source", "sub", "expires_in_s")}, "pod_architekt": {"phase": pod_b.get("phase"), "delegation": {k: deleg_b.get(k) for k in ("sub", "azp", "exp_in_s", "error")}}, "org_agents": ag, "gui": gui2})
     rep.add("M1d", "M1: čas", "INFO", {"wall_s": round(time.time() - t_m, 1)})
 
 

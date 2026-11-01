@@ -284,7 +284,7 @@ function Thread({ id, user }: { id: string; user: User }) {
         <div className="roles" style={{ marginTop: 10 }} data-testid="subagents">
           {subs.map((s) => (
             <div className="role" key={s.id} data-testid={`subagent-${s.name}`} data-status={s.status}>
-              <div><b>{s.name}</b> <span className={`badge ${s.status}`}>{s.status}</span>{state?.roles_mandat?.[s.name] && <span className="muted" data-testid={`subagent-mandat-${s.name}`} data-sub={state.roles_mandat[s.name].sub ?? ""}> {state.roles_mandat[s.name].sub ? `jménem ${state.roles_mandat[s.name].name ?? state.roles_mandat[s.name].sub}` : "bez mandátu"}</span>}</div>
+              <div><b>{s.name}</b> <span className={`badge ${s.status}`}>{s.status}</span>{state?.roles_mandat?.[s.name] && <span className="muted" data-testid={`mandat-role-${s.name}`} data-sub={state.roles_mandat[s.name].sub ?? ""}> {state.roles_mandat[s.name].sub ? `jménem ${state.roles_mandat[s.name].name ?? state.roles_mandat[s.name].sub}` : "bez mandátu"}</span>}</div>
               {s.result && <div className="muted">cena {s.result.cost_usd ?? "?"} USD · nástroje {s.result.tool_uses ?? "?"} · {s.result.via ?? ""}</div>}
               {s.message && <div className="err">{s.message}</div>}
             </div>))}

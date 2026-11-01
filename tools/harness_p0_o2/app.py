@@ -24,7 +24,10 @@ import hmac
 import json
 import os
 import re
+import sys
 import time
+
+if __name__ == "__main__": sys.modules.setdefault("app", sys.modules[__name__])   # P4-1 nález (M1b, 2. běh): `import app` z gateway_keys/aktivit jinak vytvoří DRUHOU kopii modulu (vlastní _SUBJECTS, vlastní runtime) a její agui.CTX.update přepíše callbacky GUI → obnova mandátu z GUI šla do jiného slovníku než subject_for_role rolí
 
 import httpx
 
@@ -977,6 +980,15 @@ async def mandat_expire(req: Request):
     cur = _SUBJECTS.get(zid) or {}; exp_in = float(b.get("exp_in_s", -1)); exp = time.time() + exp_in
     out = subject_set(zid, {"sub": cur.get("sub"), "exp": exp, "token": cur.get("token") if exp_in > 0 else None}, by=b.get("by", "harness"), source="expire", channel="api", state="expired" if exp_in <= 0 else "expiring")
     return {**out, "expires_in_s": round(exp_in), "reason": b.get("reason")}
+
+
+@app.get("/_mandat/{zid}")
+async def mandat_get(zid: str):
+    """P4-1 (diagnostika měření): poslední známý mandát zakázky z pohledu aktivit rolí (tentýž slovník jako subject_for_role) – bez tokenu, jen zda je."""
+    cur = _SUBJECTS.get(zid)
+    if not cur: return {"zakazka": zid, "present": False, "module": __name__}
+    return {"zakazka": zid, "present": True, "module": __name__, **{k: v for k, v in cur.items() if k != "token"}, "has_token": bool(cur.get("token")), "expires_in_s": round(float(cur.get("exp") or 0) - time.time()),
+            "usable": bool(cur.get("token")) and float(cur.get("exp") or 0) > time.time() + 20}
 
 
 @app.post("/_wf/unregister")
