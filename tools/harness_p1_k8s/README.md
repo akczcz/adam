@@ -834,6 +834,51 @@ Výsledek: **AKS 73/73 + 13 INFO 2026-10-31** (`measure` run 41226790285, 2 běh
   záloha, ale jediná cesta harnessu k DB.
 - E4b v 1. běhu FAIL na timeoutu tabulek FinOps v GUI (přímá volání Governance MCP `ledger` v témže checku prošla); ve 2. běhu prošlo, žádné události
   K8s mimo běžný rozsah – příčina nezjištěna; detail E4b nově nese `page_errors` (texty `.err` ze stránky) pro příští výskyt.
+  → **Příčina nalezena v E13 běhu 2** díky `page_errors`: ClickHouse `Code: 241 (total) memory limit exceeded: would use 1.00 GiB` –
+  `max_server_memory_usage_to_ram_ratio 0.5` (z harnessu O1) × limit kontejneru 2Gi = 1 GiB; dotaz ledgeru filtroval jen přes Map sloupec
+  `SpanAttributes['zakazka']` a četl tak spany všech služeb za 30 dní (tabulka bez TTL roste každým během). Oprava: filtr `ServiceName = 'agentgateway'`
+  (prefix primárního klíče tabulky exportéru → čtou se jen granule gateway) a poměr paměti na výchozích 0.9 (projeví se restartem podu = příští start clusteru).
+
+## P3-6 E13 – STALLED (chybějící verze orchestrátoru) v GUI (2026-10-31, AKS, `--step p3-6` = … + **E13a–c**)
+
+- **Problém** (otevřená otázka E6, `knowledge/frameworks/durable-execution.md`): instance workflow, jejíž verze orchestrátoru v nasazené aplikaci
+  chybí (smazaný snímek `wf_versions/zakazka_<verze>.py`, obraz bez něj), je v Dapru 1.17+ **STALLED** (`ExecutionStalled reason=VERSION_NAME_MISMATCH`,
+  docs v1.18 `workflow-versioning.md`), ne FAILED – ale na AKS to nebylo změřeno a GUI znalo jen Running/Pozastaveno/FAILED: zaseknutá zakázka
+  by vypadala jako běžící a provoz by nevěděl, že má nasadit verzi. Docs k obnově říkají jen „once a stalled workflow is scheduled on a new
+  replica, it will continue executing“ – zda stačí verzi zaregistrovat, nebo je třeba nový pod, a co s eventem doručeným v době zaseknutí, neříkají.
+- **Řešení** (obrazy aplikace + GUI, bez Terraformu): SDK 1.18.3 při `VersionNotRegisteredException` vrací Dapru akci `version_not_available`
+  (`worker.py set_version_not_registered` → `ORCHESTRATION_STATUS_STALLED`). Aplikace: `GET /zakazky/<id>` a AG-UI stav nesou `STALLED`
+  (`stav` „zaseknuto – chybí verze orchestrátoru“, `wf_version`, `stalled.hint`), run AG-UI nad zaseknutou zakázkou končí `RUN_FINISHED`
+  s `metadata.stalled` (run je pohled; instance nic nevyprodukuje), `org.zakazky.status` „Zaseknuto“; `GET /_wf/versions` nově `stalled`
+  (instance) a `missing` (neregistrovaná verze s živými instancemi); `GET /agui/gov/wf/versions` (jen tenant platform). Interní API pro měření:
+  `POST /_wf/unregister` (odebrání ne-latest verze za běhu = obraz bez snímku) a `POST /_wf/register` (verze zpět ze snímku = nasazení obrazu).
+  GUI: badge `stalled` v seznamu zakázek, detail s kartou „Zakázka je zaseknutá“ (verze instance + nápověda: nasadit obraz se snímkem, nic se
+  neztratilo) a dotazem na stav každých 5 s (po obnově sám otevře nový run-pohled), Firma (platform): karta **Verze orchestrátoru** – latest,
+  obraz, počet zaseknutých, chybějící verze, řádek per verze (registrovaná, instance per stav, odkazy na zaseknuté zakázky, drained).
+- **Měření** (`e13_flow`, hned po E6 – stejné podmínky bez podů rolí): zakázka na kandidátské (ne-latest) verzi čeká na klasifikaci → `POST /_wf/unregister`
+  kandidáta → `POST …/classify` K1 → instance STALLED (ne FAILED, bez `failure`), report verzí `missing`/`stalled`; Playwright: seznam (adam),
+  detail, Firma (platform-admin); obnova `POST /_wf/register` → čekání 120 s, zda instance pokračuje sama; pokud ne, restart podu aplikace
+  (nová replika); pokud ani pak ne, event znovu (= event z doby zaseknutí se ztratil → E13c FAIL, „nic se neztratilo“ by neplatilo).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| E13a | chybějící verze = STALLED, ne FAILED; `wf_version` zůstává; `GET /_wf/versions` hlásí verzi registered=false, `missing`, `stalled` | ✅ event do instance bez verze → `STALLED` za 0,6 s, `failure: null`, `wf_version` kandidáta; report: verze `registered: false`, `missing: true`, `stalled: [zakázka]` |
+| E13b | GUI: badge „zaseknuto“ v seznamu, detail run `stalled` + karta s verzí a nápovědou, Firma: karta verzí (počet zaseknutých, chybějící verze, řádek verze) | ✅ seznam `badge stalled` „zaseknuto – chybí verze orchestrátoru“, detail run `stalled` + karta s verzí instance, Firma (platform-admin): zaseknuté 1, chybějící verze = kandidát, řádek registered=ne s odkazem |
+| E13c | obnova po registraci verze bez nového eventu (`recovered_by` sama / restart podu), event z doby zaseknutí zpracován → COMPLETED/Odmitnuto na své verzi, GUI dokončeno | ✅ **`recovered_by: restart`**: po `POST /_wf/register` instance 120 s stojí; po restartu podu aplikace (`rollout` 0,5 s) pokračuje sama – klasifikace z doby zaseknutí zpracována, COMPLETED/Odmitnuto na kandidátské verzi, `KLASIFIKACE_DONE` s ní až po obnově, report bez `stalled`, GUI COMPLETED |
+
+Výsledek: **AKS 76/76 + 13 INFO** (`measure` run 41252208507, 3 běhy).
+
+Nálezy:
+
+- **Obnova STALLED = nová replika, ne nová registrace** (odpověď na otevřenou otázku E6): Dapr označí instanci STALLED při work itemu, na který
+  worker odpoví `version_not_available`; samotné doplnění verze do registru běžícího workeru (`POST /_wf/register` = snímek v obrazu) instanci
+  nerozběhne – Dapr jí nový work item nepošle (120 s nic). Až restart podu (nový proces = nová replika v docs: „once a stalled workflow is scheduled
+  on a new replica“) instanci přehraje a ona pokračuje. **Event doručený v době zaseknutí se neztratí** – klasifikace K1 poslaná do zaseknuté
+  instance po obnově proběhla bez opakování (`event_again: null`). V provozu to platí samo: verze přibývá jen novým obrazem = rollout podů.
+- `registered.versions` v `GET /_wf/versions` byl seznam ze startu aplikace (E13a běh 1 FAIL: odregistrovaná verze v něm zůstala) → živě z registru.
+- E4b běh 2 FAIL bez vztahu k E13: dotaz ledgeru překročil paměťový limit ClickHouse (1 GiB) – příčina opakovaného E4b z E12 (viz nálezy E12);
+  opraveno filtrem `ServiceName` a poměrem paměti 0.9. Otevřené: tabulka `otel_traces` bez TTL (`ttl: 0` v exportéru) roste s každým během –
+  retence je rozhodnutí FinOps/auditu (ledger čte okno 30 dní), exportér TTL nastaví jen při založení tabulky.
 
 ## Spuštění
 

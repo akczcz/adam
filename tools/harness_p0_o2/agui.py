@@ -171,9 +171,11 @@ def state_of(zid, entries):
     out = st.get("output") or {}
     kl = next((e for e in reversed(entries) if e.get("kind") == "KLASIFIKACE"), {}); sla = [e for e in entries if e.get("kind") == "SLA_BREACH"]
     cap = next((e for e in reversed(entries) if e.get("kind") == "BUDGET_CAP"), None)   # P3-6 E3: navýšený strop
-    return {"id": zid, "tenant": start.get("tenant") or os.environ.get("P0_TENANT", "acme"), "status": st.get("status"), "stav": out.get("stav") or ("čeká na " + w["bod"] if w else ("běží" if st.get("status") == "RUNNING" else st.get("status"))),
+    stalled = st.get("status") == "STALLED"   # P3-6 E13: verze orchestrátoru instance není v běžící aplikaci (Dapr VERSION_NAME_MISMATCH) – nic se neztratilo, čeká na nasazení
+    return {"id": zid, "tenant": start.get("tenant") or os.environ.get("P0_TENANT", "acme"), "status": st.get("status"), "stav": "zaseknuto – chybí verze orchestrátoru" if stalled else (out.get("stav") or ("čeká na " + w["bod"] if w else ("běží" if st.get("status") == "RUNNING" else st.get("status")))),
             "bod": w.get("bod") if w else out.get("bod"), "budget_usd": (cap or start).get("budget_usd"), "spent_usd": bud.get("spent_usd"), "roles": roles, "started": start.get("ts"), "poptavka": start.get("poptavka"),
-            "profile": kl.get("profile"), "sensitivity": kl.get("sensitivity"), "sla_breaches": [e.get("bod") for e in sla]}
+            "profile": kl.get("profile"), "sensitivity": kl.get("sensitivity"), "sla_breaches": [e.get("bod") for e in sla], "wf_version": start.get("wf_version"),
+            "stalled": ({"wf_version": start.get("wf_version"), "hint": f"instance běží na verzi orchestrátoru {start.get('wf_version') or '?'}, kterou nasazená aplikace neregistruje – nic se neztratilo; pokračuje po nasazení obrazu se snímkem wf_versions/zakazka_{start.get('wf_version') or '?'}.py"} if stalled else None)}
 
 
 @router.get("/threads")
@@ -373,6 +375,9 @@ async def run(req: Request):
             if st.get("status") == "SUSPENDED":
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedCancelledOutcome(type="cancelled"), result=state_of(zid, ents)))
                 return
+            if st.get("status") == "STALLED":   # P3-6 E13: run je jen pohled – instance nic nevyprodukuje, dokud se verze nenasadí; GUI stav sleduje dotazem na thread
+                yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedSuccessOutcome(type="success"), result=state_of(zid, ents), metadata={"stalled": True}))
+                return
             if time.time() - t0 > RUN_MAX_S:
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedSuccessOutcome(type="success"), result=state_of(zid, ents), metadata={"continues": True}))
                 return
@@ -413,6 +418,14 @@ async def gov_tool(name: str, req: Request):
     r = await asyncio.to_thread(httpx.post, f"{GOV_URL}/tools/{name}", json=args or {}, headers={"Authorization": req.headers.get("Authorization", "")}, timeout=30)
     body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {"detail": r.text[:300]}
     return body if r.status_code == 200 else JSONResponse(body, status_code=r.status_code)
+
+
+@router.get("/gov/wf/versions")
+async def gov_wf_versions(req: Request):
+    """P3-6 E13: verze orchestrátoru v běžící aplikaci a instance per verze (STALLED = chybí verze → nasadit obraz se snímkem) – jen tenant platform (provoz)."""
+    u = user_from_request(req)
+    if u["tenant"] != PLATFORM_TENANT: raise HTTPException(403, "jen tenant platform")
+    return await asyncio.to_thread(CTX["wf_versions"])
 
 
 @router.get("/gov/export.jsonl")

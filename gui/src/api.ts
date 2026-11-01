@@ -7,6 +7,7 @@ export type ThreadState = {
   id: string; tenant: string; status: string | null; stav: string | null; bod: string | null;
   budget_usd: number | null; spent_usd: number | null; roles: Record<string, string>; started: number | null; poptavka?: string;
   profile?: string | null; sensitivity?: string | null; sla_breaches?: string[];
+  wf_version?: string | null; stalled?: { wf_version: string | null; hint: string } | null;   // P3-6 E13: STALLED = chybí verze orchestrátoru
 };
 export type KlasQuestion = { id: string; text: string; yes: string };
 
@@ -82,6 +83,13 @@ export async function govPost(path: string, body: Record<string, unknown>): Prom
   const r = await fetch(`${BASE}/agui/gov/${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...auth() }, body: JSON.stringify(body) });
   let j: any = null; try { j = await r.json(); } catch { /* */ }
   return { ok: r.ok, status: r.status, body: j };
+}
+
+export async function govGet<T = any>(path: string): Promise<T> {
+  await ensureFresh();
+  const r = await fetch(`${BASE}/agui/gov/${path}`, { headers: auth() });
+  if (!r.ok) { let d = `${r.status}`; try { d = `${r.status}: ${(await r.json()).detail}`; } catch { /* */ } throw new Error(d); }
+  return r.json();
 }
 
 export async function govExport(): Promise<string> {

@@ -238,6 +238,50 @@ class Gui:
         self.shot(f"page-{page}")
         return out
 
+    # --- P3-6 E13: zaseknutá zakázka (Dapr STALLED – chybí verze orchestrátoru) -----------------------------------------------------
+    def thread_status(self, zid):
+        """Řádek zakázky v seznamu: text badge stavu + status workflow (data-status) – STALLED má badge „zaseknuto – chybí verze orchestrátoru“."""
+        self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
+        self.page.wait_for_function("document.querySelector('[data-testid=threads-table]') || document.querySelector('[data-testid=threads-empty]')")
+        b = self.page.locator(f"[data-testid=thread-row-{zid}] [data-testid=thread-stav]")
+        self.shot(f"threads-{zid}")
+        return {"found": b.count() == 1, "stav": b.inner_text().strip() if b.count() else None, "status": b.get_attribute("data-status") if b.count() else None, "class": b.get_attribute("class") if b.count() else None}
+
+    def wait_run_status(self, want, timeout_s=90):
+        """Čeká, až run-status je v `want` (např. stalled/finished); mezitím obnova pohledu po síťovém výpadku jako wait_interrupt."""
+        t0 = time.time(); rs = ""
+        while time.time() - t0 < timeout_s:
+            rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
+            if rs in want: break
+            self._recover(rs); self.page.wait_for_timeout(1500)
+        return {"waited_s": round(time.time() - t0, 1), "run_status": rs}
+
+    def stalled_view(self, zid, timeout_s=90):
+        """Detail zaseknuté zakázky: run skončí stavem `stalled`, karta stalled-notice nese verzi orchestrátoru a nápovědu, stav „zaseknuto…“."""
+        self.open_thread(zid); w = self.wait_run_status(("stalled", "finished", "cancelled"), timeout_s)
+        n = self.t("stalled-notice")
+        try: n.wait_for(timeout=10_000)
+        except Exception: pass
+        self.shot(f"stalled-{zid}")
+        return {**w, "notice": n.inner_text()[:300] if n.count() else None, "notice_wf_version": n.get_attribute("data-wf-version") if n.count() else None,
+                "state_wf_version": self.t("state-wf-version").inner_text().strip() if self.t("state-wf-version").count() else None, **{k: v for k, v in self.snapshot().items() if k in ("state", "error", "interrupt")}}
+
+    def wf_versions_card(self, timeout_s=60):
+        """Firma (tenant platform): karta verzí orchestrátoru – souhrn (zaseknuté, chybějící verze) a řádky per verze."""
+        self.page.goto(self.base + "#/firma"); self.page.wait_for_timeout(500); out = {"rows": {}}
+        try:
+            self.page.wait_for_function("document.querySelector('[data-testid=wf-versions]')", timeout=timeout_s * 1000)
+            s = self.t("wf-summary"); out["stalled"] = int(s.get_attribute("data-stalled") or 0); out["missing"] = [m for m in (s.get_attribute("data-missing") or "").split(",") if m]
+            out["missing_text"] = self.t("wf-missing").inner_text()[:200] if self.t("wf-missing").count() else None
+            for r in self.page.locator("[data-testid^=wf-version-]").all():
+                out["rows"][r.get_attribute("data-testid")[len("wf-version-"):]] = {"registered": r.get_attribute("data-registered") == "true", "stalled": int(r.get_attribute("data-stalled") or 0), "missing": r.get_attribute("data-missing") == "true", "cells": [c.strip()[:120] for c in r.locator("td").all_inner_texts()]}
+        except Exception as e:
+            out["error"] = f"{type(e).__name__}"
+            try: out["page_errors"] = sorted({t.strip()[:160] for t in self.page.locator(".err").all_inner_texts() if t.strip()})
+            except Exception: pass
+        self.shot("wf-versions")
+        return out
+
     def autonomy(self, role, tenant, level, reason):
         self.page.goto(self.base + "#/firma"); self.t("auto-role").wait_for()
         self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
