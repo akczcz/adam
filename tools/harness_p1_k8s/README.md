@@ -880,6 +880,27 @@ Nálezy:
   opraveno filtrem `ServiceName` a poměrem paměti 0.9. Otevřené: tabulka `otel_traces` bez TTL (`ttl: 0` v exportéru) roste s každým během –
   retence je rozhodnutí FinOps/auditu (ledger čte okno 30 dní), exportér TTL nastaví jen při založení tabulky.
 
+## P4-1 M1 – obnova mandátu z GUI (2026-11-01, AKS, `--step p4-1` = p3-6 + **M1a–c**)
+
+- **Problém** (E2 nález 5, uzavření `act` 2026-11-01): mandát role = access token člověka z posledního HITL (30 min) uložený ve stavu workflow; role bez HITL
+  před sebou (architekt po dlouhém dialogu, reviewer po vývojáři) ho dostala vypršelý → exchange 400 → `on_behalf_of null`. Degradace byla tichá: GUI
+  mandát neznalo. Keycloak delegace (`act`) to nevyřeší ani po GA (souhlas per session), offline/refresh token člověka v aplikaci nechceme.
+- **Řešení** (obrazy aplikace + GUI, bez Terraformu): aplikace drží **poslední známý mandát** zakázky mimo stav workflow (`_SUBJECTS`, soubor 0600 na
+  PVC; zapisuje založení, každé schválení a obnova z GUI – pořadí podle času zápisu, ne podle `exp`); `agent_run` před startem role vybere ten, vypršelý
+  (≤ 20 s) nepoužije → ledger `MANDAT state=missing` (jinak `used` se zdrojem). `POST /agui/threads/<id>/mandat` (člověk tenanta zakázky, ne platform;
+  `auto` = keepalive) = nový access token přihlášeného se stane mandátem. GUI: stav „mandát <kdo> · N min“ / „vypršel“, karta **Role bez mandátu**
+  s tlačítkem *Obnovit mandát*, u každé role „jménem …“ / „bez mandátu“, sloupec v seznamu; **keepalive**: živý mandát držitele (sub = přihlášený)
+  s < 10 min do konce GUI každých 30 s prodlouží samo (detail i seznam), vypršelý **ne** – to je rozhodnutí člověka. Měření: `POST /_mandat/expire`
+  (simulace plynutí času: `exp_in_s` −1 = vypršel, 300 = brzy vyprší), `POST /zakazky/<id>/dialog` (odpověď bez subjektu).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| M1a | vypršelý mandát = Account bez subjektu (ledger `MANDAT missing`, pod bez delegace), GUI: vypršel, karta + tlačítko, role „bez mandátu“, seznam | doplním |
+| M1c | kliknutí → `MANDAT renewed` (zdroj renew, auto false); „brzy vyprší“ → GUI držitele prodlouží samo (auto true); vypršelý samo neobnovuje | doplním |
+| M1b | H1 schválen interním API bez subjektu → architekt jede na obnoveném mandátu (`used` zdroj renew, exchange sub = adam), `org.agents.on_behalf_of`: account null, architekt adam; GUI „jménem adam“ | doplním |
+
+Výsledek: **doplním po měření**.
+
 ## Spuštění
 
 ```bash

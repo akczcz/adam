@@ -91,6 +91,14 @@ Nově oproti původnímu checklistu: **GUI nad celou firmou** (AG-UI 1.0 vlastn�
 | P3-5 O-3 multi-tenant harness (M-E3 přes dva tenanty v clusteru, stop a resume per tenant) | ✅ AKS 2026-10-27 49/49 ([p3-zakaznik.md](p3-zakaznik.md)): izolace paměti identitou podů (SVID) a ve spanech, stop tenanta uprostřed Kata podu s checkpointem, resume s novým během role a HITL v GUI, útrata per tenant z gateway |
 | P3-6 Produkční hrany (token exchange SVID→Keycloak, cap v gateway, ledger do ClickHouse, cert-manager + ESO, SPIRE bundle, VNet) | ✅ E3 cap v gateway + navýšení z GUI ✅ AKS 2026-10-27 51/51; E4 ledger → ClickHouse ✅ AKS 2026-10-27 53/53 + 8 INFO; E1 cert-manager + trust-manager + ESO (Key Vault) ✅ AKS 2026-10-28 56/56 + 8 INFO; E2 token exchange (mandát schvalovatele v tokenu role) ✅ AKS 2026-10-28 59/59 + 8 INFO; E5 SPIRE identita agenta per pod ✅ AKS 2026-10-29 60/60 + 9 INFO; E6 verzování workflow (Dapr named versioning, instance běží dál na své verzi přes nasazení) ✅ AKS 2026-10-29 63/63 + 9 INFO; E7 TLS OpenBao a Keycloaku z interní CA (issuer https, rotace bez restartu) ✅ AKS 2026-10-29 66/66 + 9 INFO; E8 bootstrap OpenBao (`sys/init`) jen v Key Vaultu, žádný Secret z harnessu ✅ AKS 2026-10-30 67/67 + 11 INFO; E9 žádný literál hesla z Gitu (admin Keycloaku a hesla DB rolí z Key Vaultu přes ESO, hesla rolí nastavuje aplikace) ✅ AKS 2026-10-30 68/68 + 12 INFO; E10 operátor OpenBao se scoped tokenem (`auth/jwt` z OIDC běhu GitHub Actions, root jen bootstrap) ✅ AKS 2026-10-30 69/69 + 13 INFO; E11 TLS uvnitř clusteru (ClickHouse + OTEL Collector z interní CA, Postgres `verify-full`) ✅ AKS 2026-10-31 72/72 + 13 INFO; E12 Flexible Server jen přes private endpoint (VNet + peering na VNet AKS, privátní DNS, veřejný přístup vypnutý) ✅ AKS 2026-10-31 73/73 + 13 INFO; E13 STALLED v GUI (zaseknutá zakázka bez verze orchestrátoru viditelná, karta verzí ve Firmě, obnova novou replikou bez ztráty eventu) ✅ AKS 2026-10-31 76/76 + 13 INFO ([p3-zakaznik.md](p3-zakaznik.md)); delegace `act` uzavřena 2026-11-01 bez nasazení (Keycloak 26.8.1 latest, GA 27.0 souhlas per session nezruší → `sub + azp` + SVID cílový tvar). **P3-6 kompletní, P3 hotovo.** |
 
+## P4 – provoz s zákazníkem
+
+Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; položky přibývají po jedné (Adamovo zadání), každá = PR + měření na AKS.
+
+| Krok | Stav |
+|---|---|
+| P4-1 Obnova mandátu z GUI (subject token člověka 30 min; role bez HITL před sebou jednala bez mandátu) | 🟡 kód hotov 2026-11-01, měření AKS RUNRESULT ([p4-provoz.md](p4-provoz.md)) |
+
 ## Changelog
 - 2026-10-27: P3-6 E3 hotovo na AKS (51/51); další položky P3-6 (E4 ledger → ClickHouse, E1 ESO/cert-manager, E2 token exchange) po jednom PR.
 - 2026-10-27: P3-6 E4 hotovo na AKS (53/53 + 8 INFO) – per-request ledger z gateway (ClickHouse) jako nezávislý zdroj FinOps; odhalil dvojí započtení útraty od E3 (opraveno).
