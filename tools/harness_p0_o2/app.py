@@ -299,7 +299,9 @@ def agent_run_local(role, z, prompt, tool_names):
     if os.environ.get("ANTHROPIC_WORKSPACE_ID"): cli_env["ANTHROPIC_WORKSPACE_ID"] = os.environ["ANTHROPIC_WORKSPACE_ID"]
     opts_src = os.path.join(os.environ["P0_ROLE_OPTIONS_DIR"], f"{role}.json") if os.environ.get("P0_ROLE_OPTIONS_DIR") else None
     role_opts = json.loads(open(opts_src).read()) if opts_src and os.path.exists(opts_src) else {"tools": [], "strict_mcp_config": True, "setting_sources": []}
-    opts = ClaudeAgentOptions(model=("live-" if z.get("live") else "") + os.environ.get("P0_MODEL", "claude-haiku-4-5"), env=cli_env, mcp_servers={"harness": server},   # P4-2: alias live-<model> = živé API přes gateway
+    model = os.environ.get("P0_MODEL", "claude-haiku-4-5")
+    if z.get("live") and not model.startswith("live-"): model = f"live-{model}"   # P4-2: alias live-<model> = živé API přes gateway; v podu role už prefix nese env z role_pod (běh 7: dvojí prefix live-live-… → gateway alias nenašla → catch-all '*' = mock, tiše)
+    opts = ClaudeAgentOptions(model=model, env=cli_env, mcp_servers={"harness": server},
                               allowed_tools=[f"mcp__harness__{n}" for n in tool_names],
                               tools=role_opts["tools"], strict_mcp_config=role_opts["strict_mcp_config"], setting_sources=role_opts.get("setting_sources", []), cwd=work,
                               permission_mode="bypassPermissions", max_turns=int(os.environ.get("P0_MAX_TURNS", "8")),
@@ -330,7 +332,8 @@ def agent_run_local(role, z, prompt, tool_names):
             if rel.startswith(".") or n == "health.py": continue
             files.append({"path": rel, "sha256": hashlib.sha256(open(fp, "rb").read()).hexdigest()[:16]})
     ledger("AGENT_RUN", zakazka=z["id"], role=role, tool_uses=tool_uses, calls=calls, usage=usage, cost_usd=cost, files=files if role == "vyvojar" else None,
-           role_options_source=opts_src, num_turns=getattr(result, "num_turns", None) if result else None, is_error=is_err, error=error, result_text=text[:600], budget_exceeded=budget_exceeded)
+           role_options_source=opts_src, num_turns=getattr(result, "num_turns", None) if result else None, is_error=is_err, error=error, result_text=text[:600], budget_exceeded=budget_exceeded,
+           model=model)   # P4-2: model skutečně poslaný do gateway (alias live-<model> u ostrého běhu) – důkaz, že role nešla na mock
     return {"text": text, "cost": cost, "files": files, "work": work, "arts": arts, "error": error, "budget_exceeded": budget_exceeded}
 
 
