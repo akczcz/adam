@@ -108,7 +108,7 @@ flowchart LR
 | GUI bez i18n, bez mobilu, jeden design systém; A2UI renderer za vlastním modulem | A2UI v1.0 renderery jen „planned“; vlastní formulářový fallback | po stabilizaci A2UI v1.0 |
 | Dapr bez operátoru, HTTP uvnitř clusteru, mTLS jen tam, kde je SPIRE + gateway | dev cluster; plná mTLS mesh (Cilium/Dapr) je samostatná změna | P4 |
 | SLA jako timery + eskalace, ne jako smluvní reporting | nejdřív měřit; smlouva se zákazníkem až po O-3 | P4 |
-| Mandát role = access token člověka z posledního HITL (30 min); role bez HITL před sebou jedná bez mandátu (`on_behalf_of null`, degradace, ne pád) | Keycloak delegace `act` nepoužitelná ani po GA (souhlas per session, 1 actor/login – keycloak.md 2026-11-01); obnova subjektu z GUI = vlastní tok (refresh u člověka, ne v aplikaci) | P4 |
+| Mandát role = access token člověka z posledního HITL (30 min); role bez HITL před sebou jedná bez mandátu (`on_behalf_of null`, degradace, ne pád) | Keycloak delegace `act` nepoužitelná ani po GA (souhlas per session, 1 actor/login – keycloak.md 2026-11-01); obnova subjektu z GUI = vlastní tok (refresh u člověka, ne v aplikaci) | ~~P4~~ ✅ **P4-1 2026-11-01** ([p4-provoz.md](p4-provoz.md)): poslední známý mandát mimo workflow, vypršelý viditelně („role bez mandátu“), obnova a keepalive z GUI |
 | Čl. 50 T8 pro kód (značení) | otevřená otázka guidelines 20.7.2026 (regulace.md); metadata artefaktu stačí | až po výkladu |
 
 ## Rizika

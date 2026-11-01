@@ -12,7 +12,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 
 | Krok | Co | Stav |
 |---|---|---|
-| **P4-1** Obnova mandátu z GUI | mandát role = access token člověka (30 min) – role bez HITL před sebou jednala bez mandátu (E2 nález 5); Keycloak `act` nepomůže ani po GA | 🟡 kód 2026-11-01, měření AKS RUNRESULT (`measure` run RUNID, RUNCOUNT běhy) |
+| **P4-1** Obnova mandátu z GUI | mandát role = access token člověka (30 min) – role bez HITL před sebou jednala bez mandátu (E2 nález 5); Keycloak `act` nepomůže ani po GA | ✅ 2026-11-01 AKS RUN4_RESULT (`measure` run RUN4_ID, 4 běhy) |
 | kandidát | ostrý běh s živým modelem a GitHubem (PAT/klíč jen v Key Vaultu) | ⬜ |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
@@ -37,7 +37,20 @@ Tok: GUI → `POST /agui/threads/<id>/mandat` (token člověka tenanta zakázky;
 ledger `MANDAT` bez tokenu) → `agent_run` → Secret podu `P0_SUBJECT_TOKEN` → exchange v podu (E2) → paměť `on_behalf_of`, `org.agents.on_behalf_of`.
 Měření `tools/harness_p1_k8s --step p4-1` (M1a–c): vypršení se simuluje `POST /_mandat/expire` (plynutí času), ne čekáním 30 min.
 
-Výsledek: **doplním po měření** (`measure` run RUNID). Nálezy: doplním.
+Výsledek: **RUN4_RESULT** (`measure` run RUN4_ID, 4 běhy; detail a tabulka běhů v [harness README](../../tools/harness_p1_k8s/README.md#p4-1-m1--obnova-mandátu-z-gui-2026-11-01-aks---step-p4-1--p3-6--m1ac)).
+Ověřeno: vypršelý mandát = role bez mandátu **viditelně** (ledger `MANDAT missing`, GUI karta), kliknutí obnoví, keepalive prodlouží jen živý mandát
+držitele, další role (architekt) jedná s obnoveným mandátem (`sub` adam v exchange podu, `org.agents.on_behalf_of`).
+
+Nálezy:
+
+- **Stav v modulu aplikace = jedna kopie modulu, jedna replika.** Aplikace běží jako `__main__`, líný `import app` z aktivit rolí vytvořil druhou kopii
+  modulu s vlastním slovníkem mandátů a přepsal callbacky AG-UI → obnova z GUI šla jinam, než odkud role čtou (běh 2). Opraveno aliasem
+  `sys.modules["app"]`. Důsledek pro návrh: Deployment aplikace má `replicas: 1` (Recreate); škálování aplikace vyžaduje mandát ve sdíleném úložišti
+  (Dapr state / Postgres) – kandidát, až bude potřeba víc replik.
+- **Registr agentů drží poslední běh role**, ne historii: Account po odpovědi na dialog běží druhé kolo už s obnoveným mandátem → `on_behalf_of` adam.
+  Otázka „kdo kdy jednal bez mandátu“ se odpovídá z ledgeru (`MANDAT`, `ROLE_POD`), ne z registru (běh 3).
+- Měřicí: Playwright v `measure.yml` jen pro `p3-*` (běh 1), kolize prefixu `data-testid` v GUI (U1b), stará hodnota v GUI prošla kontrolou keepalive
+  (M1c), pád port-forwardu aplikace během GUI části (E13b/c, harness ho obnoví) – vše v harness README.
 
 ## Rizika
 
@@ -48,4 +61,5 @@ Výsledek: **doplním po měření** (`measure` run RUNID). Nálezy: doplním.
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
-- 2026-11-01: založeno; P4-1 návrh a kód (obnova mandátu z GUI), měření doplním.
+- 2026-11-01: založeno; P4-1 návrh a kód (obnova mandátu z GUI).
+- 2026-11-01: P4-1 hotovo na AKS (RUN4_RESULT, 4 běhy) – nálezy: dvojí import `app.py` (stav v modulu ⇒ jedna replika), registr = poslední běh role.
