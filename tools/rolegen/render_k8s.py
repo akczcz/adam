@@ -39,7 +39,7 @@ def github_egress(cfg):
     tls = cfg["gateways"]["secure"]["listeners"][0]["tls"]
     cfg["gateways"]["secure"]["listeners"].insert(-1, {"name": "github", "hostname": "github.platform.internal", "protocol": "HTTPS", "tls": tls})   # před public-egress ('*')
     cfg["routes"].append({"name": "github-api", "gateways": "secure/github", "matches": [{"path": {"pathPrefix": "/api"}}],
-                          "policies": {"authorization": {"rules": [{"allow": f'(request.path.startsWith("/api/repos/{GITHUB_REPO}/") || request.path.startsWith("/repos/{GITHUB_REPO}/")) && (request.method == "GET" || request.method == "POST" || request.method == "PATCH" || request.method == "PUT")'}]},   # cesta před i po přepisu prefixu (pořadí politik v gateway neověřeno)
+                          "policies": {"authorization": {"rules": [{"allow": f'(request.path == "/api/repos/{GITHUB_REPO}" || request.path.startsWith("/api/repos/{GITHUB_REPO}/") || request.path == "/repos/{GITHUB_REPO}" || request.path.startsWith("/repos/{GITHUB_REPO}/")) && (request.method == "GET" || request.method == "POST" || request.method == "PATCH" || request.method == "PUT")'}]},   # repozitář sám (preflight GET /repos/<repo>) i cesty pod ním; cesta před i po přepisu prefixu (L1b běh 1: GET /repos/<repo> bez lomítka na konci odmítnut 403)
                                        "urlRewrite": {"path": {"prefix": "/"}, "authority": {"full": "api.github.com"}},
                                        "backendAuth": {"key": {"value": {"file": "/etc/platform-egress/github/token"}, "location": {"header": {"name": "Authorization", "prefix": "Bearer "}}}},
                                        "requestHeaderModifier": {"set": {"user-agent": "adam-platform-agentgateway"}}},

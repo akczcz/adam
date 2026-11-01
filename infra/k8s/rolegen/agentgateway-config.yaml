@@ -45,13 +45,14 @@ data:
     \      rules:\n      - allow: request.method == \"GET\"\n  backends:\n  - host:\
     \ $MIRROR_BACKEND_HOST\n- name: github-api\n  gateways: secure/github\n  matches:\n\
     \  - path:\n      pathPrefix: /api\n  policies:\n    authorization:\n      rules:\n\
-    \      - allow: (request.path.startsWith(\"/api/repos/akczcz/adam/\") || request.path.startsWith(\"\
-    /repos/akczcz/adam/\"))\n          && (request.method == \"GET\" || request.method\
-    \ == \"POST\" || request.method\n          == \"PATCH\" || request.method == \"\
-    PUT\")\n    urlRewrite:\n      path:\n        prefix: /\n      authority:\n  \
-    \      full: api.github.com\n    backendAuth:\n      key:\n        value:\n  \
-    \        file: /etc/platform-egress/github/token\n        location:\n        \
-    \  header:\n            name: Authorization\n            prefix: 'Bearer '\n \
-    \   requestHeaderModifier:\n      set:\n        user-agent: adam-platform-agentgateway\n\
+    \      - allow: (request.path == \"/api/repos/akczcz/adam\" || request.path.startsWith(\"\
+    /api/repos/akczcz/adam/\")\n          || request.path == \"/repos/akczcz/adam\"\
+    \ || request.path.startsWith(\"/repos/akczcz/adam/\"))\n          && (request.method\
+    \ == \"GET\" || request.method == \"POST\" || request.method\n          == \"\
+    PATCH\" || request.method == \"PUT\")\n    urlRewrite:\n      path:\n        prefix:\
+    \ /\n      authority:\n        full: api.github.com\n    backendAuth:\n      key:\n\
+    \        value:\n          file: /etc/platform-egress/github/token\n        location:\n\
+    \          header:\n            name: Authorization\n            prefix: 'Bearer\
+    \ '\n    requestHeaderModifier:\n      set:\n        user-agent: adam-platform-agentgateway\n\
     \  backends:\n  - host: $GITHUB_API_BACKEND_HOST\n    policies:\n      backendTLS:\n\
     \        hostname: api.github.com\n"

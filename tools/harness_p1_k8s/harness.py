@@ -1827,7 +1827,12 @@ def m1_flow(a, rep, http, led, APP, KC, dsn, tag, shots):
     def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
     def claims(t): return json.loads(_b64.urlsafe_b64decode(t.split(".")[1] + "==").decode())
     def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
-    def L(z_): return [e for e in led() if e.get("zakazka") == z_]
+    last_led = []
+    def L(z_):
+        nonlocal last_led
+        try: last_led = led()
+        except Exception: pass   # dočasný výpadek čtení ledgeru (ReadTimeout přes port-forward) – další otočka to zkusí znovu, mezitím poslední známý stav
+        return [e for e in last_led if e.get("zakazka") == z_]
     def state(H): r = http("GET", f"{APP}/agui/threads/{z}", headers=H, timeout=15); return (r.json().get("state") or {}) if r.status_code == 200 else {"http": r.status_code}
     def wait_led(pred, timeout):
         t0 = time.time()
@@ -1923,7 +1928,12 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots):
     sys.path.insert(0, str(HERE)); from gui_checks import Gui
     t_l = time.time(); z = f"{tag}-l1"
     def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
-    def L(z_): return [e for e in led() if e.get("zakazka") == z_]
+    last_led = []
+    def L(z_):
+        nonlocal last_led
+        try: last_led = led()
+        except Exception: pass   # dočasný výpadek čtení ledgeru (ReadTimeout přes port-forward) – další otočka to zkusí znovu, mezitím poslední známý stav
+        return [e for e in last_led if e.get("zakazka") == z_]
     def wait_led(pred, timeout):
         t0 = time.time()
         while time.time() - t0 < timeout:
@@ -1985,7 +1995,12 @@ def live_flow(a, rep, http, led, APP, KC, dsn, kj, tag, shots):
     sys.path.insert(0, str(HERE)); from gui_checks import Gui, ROLES
     t_v = time.time(); z = f"{tag}-live"
     def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
-    def L(z_): return [e for e in led() if e.get("zakazka") == z_]
+    last_led = []
+    def L(z_):
+        nonlocal last_led
+        try: last_led = led()
+        except Exception: pass   # dočasný výpadek čtení ledgeru (ReadTimeout přes port-forward) – další otočka to zkusí znovu, mezitím poslední známý stav
+        return [e for e in last_led if e.get("zakazka") == z_]
     def J(r): return r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:160]}
     def gh_public(path):
         try:
