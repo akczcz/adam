@@ -947,7 +947,23 @@ Nálezy:
 
 Výsledek: **P42_RESULT** (`measure` run P42_ID, P42_RUNS).
 
-Nálezy: P42_FINDINGS
+Nálezy:
+
+1. **Autorizace routy a lomítko** (běh 1, L1b FAIL): předletová kontrola volá `GET /repos/akczcz/adam` (bez lomítka), pravidlo CEL mělo jen
+   `startsWith(".../adam/")` → gateway odmítla 403 `authorization failed` (stejně jako cizí repozitář – PEP funguje). Pravidlo povoluje i přesnou
+   cestu repozitáře; zda autorizace vidí cestu před, nebo po přepisu prefixu `/api`, zůstává neověřeno (pravidlo počítá s oběma).
+2. **Ledger přes port-forward** (běh 1 pád `httpx.ReadTimeout`, běh 2 tiše): `GET /_debug/ledger` vrací celý JSONL (stovky zakázek) a přes tunel
+   trvá > 20 s; v běhu 2 proto harness pod Account „neviděl“ (čekání 1200 s naprázdno), ač běžel. Endpoint má filtr `?zakazka=` a L1/V1 ho používají.
+3. **Publikace bez ostrého PAT = FAILED bez eskalace** (běh 2, L1c): role Account na živém aliasu bez klíče selže (401 z api.anthropic.com), workflow
+   pokračuje s prázdným artefaktem (nález P4-1) k `publish_issue` (issue = nosič H1) → skutečný GitHub odpoví 401 → aktivita selže a instance končí
+   `FAILED` s příčinou v Dapr `failureDetails` (`GitHub POST /repos/akczcz/adam/issues → 401 Bad credentials`). Viditelné (E6 `GET /zakazky/<id>.failure`,
+   GUI), ale bez retry a bez HITL – pro ostrý provoz kandidát: selhání publikace jako interrupt „publikace selhala“ (opakovat/zrušit) místo FAILED.
+4. **SAN certifikátu** (běh 2, E1a FAIL): cert-manager po přidání `github.platform.internal` vydal nový leaf sám (Certificate Ready, 3 SAN); E1a
+   očekávalo jen git/mirror – očekávání doplněno.
+5. **Badge „ostrý běh“ v detailu** přijde až se `STATE_SNAPSHOT` prvního runu (běh 2: `count()` hned po založení = 0, seznam badge měl) – harness čeká.
+6. **ConfigMap `agentgateway-keys` u limitu** (E4d INFO běh 2: 1 003 888 B, 1365 klíčů, 273 zakázek; limit API serveru 1 MiB): GC maže jen klíče
+   ukončených zakázek, 147 instancí je SUSPENDED (stopy z měření) a jejich klíče zůstávají → riziko 422 při vydávání klíčů v dalších bězích.
+   Kandidát: GC i pro pozastavené zakázky starší N dní (klíč se při resume vydá znovu) nebo Secret místo ConfigMap.
 
 ## Spuštění
 

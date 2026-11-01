@@ -85,7 +85,11 @@ strop zakázky je i strop ostrého běhu. Měření: `--step p4-2` = p4-1 + **L1
 bez klíče), `--step p4-2-live` = **V1a–c** (předletová kontrola 200/200, zakázka z GUI jako člověk, issue/PR/merge ověřené z veřejného
 GitHub API, útrata a mandát).
 
-Výsledek měření: **P42_RESULT** (`measure` run P42_ID, P42_RUNS). Nálezy: P42_FINDINGS
+Výsledek měření: **P42_RESULT** (`measure` run P42_ID, P42_RUNS). Nálezy (detail v [README harnessu](../../tools/harness_p1_k8s/README.md#p4-2-l1v1--ostrý-běh-s-živým-modelem-a-githubem-2026-11-01-aks---step-p4-2--p4-1--l1ac---step-p4-2-live--p3-1--v1ac)):
+(1) autorizace routy musí povolit i `GET /repos/<repo>` bez lomítka (předletová kontrola; cizí repozitář dál 403); (2) bez ostrého PAT skončí zakázka
+live po selhání role na `publish_issue` 401 → instance **FAILED** s příčinou ve `failureDetails`, bez retry/HITL – pro ostrý provoz kandidát „publikace
+selhala“ jako interrupt; (3) celý ledger přes port-forward > 20 s → endpoint má filtr per zakázka; (4) ConfigMap klíčů gateway je u limitu 1 MiB
+(1365 klíčů, 147 SUSPENDED instancí drží klíče) – kandidát GC i pro pozastavené zakázky.
 
 ### Postup ostrého běhu (jen na vyžádání, platí se)
 
