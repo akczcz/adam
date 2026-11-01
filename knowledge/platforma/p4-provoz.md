@@ -13,7 +13,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | Krok | Co | Stav |
 |---|---|---|
 | **P4-1** Obnova mandátu z GUI | mandát role = access token člověka (30 min) – role bez HITL před sebou jednala bez mandátu (E2 nález 5); Keycloak `act` nepomůže ani po GA | ✅ 2026-11-01 AKS 79/79 + 14 INFO (`measure` run 41297792885, 4 běhy) |
-| kandidát | ostrý běh s živým modelem a GitHubem (PAT/klíč jen v Key Vaultu) | ⬜ |
+| **P4-2** Ostrý běh s živým modelem a GitHubem | klíč modelu i PAT jen v Key Vaultu a jen v gateway; zakázka s flagem `live` z GUI; zapojení měřitelné bez tajemství | 🟡 kód 2026-11-01, měření AKS P42_RESULT (`measure` run P42_ID); ostrý běh na vyžádání |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -52,10 +52,63 @@ Nálezy:
 - Měřicí: Playwright v `measure.yml` jen pro `p3-*` (běh 1), kolize prefixu `data-testid` v GUI (U1b), stará hodnota v GUI prošla kontrolou keepalive
   (M1c), pád port-forwardu aplikace během GUI části (E13b/c, harness ho obnoví) – vše v harness README.
 
+## P4-2 Ostrý běh s živým modelem a GitHubem
+
+**Rozhodnutí:** ostrý běh je **vlastnost zakázky** (flag `live` při založení z GUI, neměnný), ne režim clusteru. Mocky zůstávají pro měření
+a ostatní zakázky; živé API modelu i GitHub jsou **jen za gateway** a tajemství (klíč modelu, PAT) vidí **jen gateway** – z Key Vaultu přes ESO,
+nikdy aplikace, pod role, Git ani harness. Zapojení se měří bez ostrých tajemství: skutečný upstream odpoví 401 (= cesta, TLS a vložení
+tajemství fungují), ostrý běh pak jen vymění hodnoty v Key Vaultu.
+
+| Varianta | Proč ne / proč ano |
+|---|---|
+| přepnutí celého clusteru (env gateway `LLM_UPSTREAM_URL` → živé API, `P0_GITHUB_API` → api.github.com) | změna v Gitu + Flux na každý ostrý běh; mocky pro měření by zmizely; PAT by musel do aplikace |
+| PAT a klíč v aplikaci (Secret z ESO) | aplikace by tajemství mohla zalogovat nebo předat podu; veřejné CA do bundle aplikace; porušuje „tajemství jen v gateway“ (P2-4 git token) |
+| ostrý běh z Adamova Macu s env proměnnými (jako 2026-10-24) | tajemství v shellu člověka, mimo platformu; neměřitelné z CI |
+| **flag zakázky + alias modelu + routa GitHub v gateway** (zvoleno) | per zakázka, bez redeploye; alias `live-<model>` → `$LLM_LIVE_URL`; listener `github.platform.internal` → `api.github.com` s `backendTLS`, `urlRewrite`, `backendAuth` (PAT ze souboru ESO, watched) a autorizací jen na repozitář platformy (PEP: PAT nejde použít jinde) |
+
+```mermaid
+flowchart LR
+  GUI[GUI: založení s „Ostrý běh“] --> APP[aplikace zakázky<br/>live=true v ZAKAZKA_START]
+  APP -->|P0_MODEL=live-claude-…| POD[pod role Kata]
+  POD -->|/v1/messages| GW[agentgateway 4100]
+  GW -->|alias live-* → $LLM_LIVE_URL<br/>x-api-key z Key Vaultu| ANT[api.anthropic.com]
+  GW -->|alias * → mock-upstream| MOCK[mock-upstream]
+  APP -->|CONNECT 3128, SNI github.platform.internal<br/>bez tokenu| GWE[agentgateway listener github]
+  GWE -->|/api/repos/akczcz/adam/* → api.github.com<br/>Authorization: Bearer PAT ze Secretu ESO| GH[api.github.com]
+  KV[(Key Vault<br/>anthropic-api-key, github-token)] -->|ESO 1 h| GW
+  KV -->|ESO 1 h| GWE
+```
+
+Pody rolí GitHub nepotřebují (PR vzniká z artefaktů přes data API aplikace, git sonda jede dál proti mock gitu), proto `github.platform.internal`
+není v `egress_allow` rolí ani v srt. Rozpočty, klíče per role × zakázka a ledger gateway platí pro živý alias stejně jako pro mock –
+strop zakázky je i strop ostrého běhu. Měření: `--step p4-2` = p4-1 + **L1a–c** (zapojení bez tajemství, flag viditelně, viditelné selhání
+bez klíče), `--step p4-2-live` = **V1a–c** (předletová kontrola 200/200, zakázka z GUI jako člověk, issue/PR/merge ověřené z veřejného
+GitHub API, útrata a mandát).
+
+Výsledek měření: **P42_RESULT** (`measure` run P42_ID, P42_RUNS). Nálezy: P42_FINDINGS
+
+### Postup ostrého běhu (jen na vyžádání, platí se)
+
+1. Adam nastaví v Key Vaultu platformy (Terraform `azurerm_key_vault.kv`) ostré hodnoty (portál nebo `az keyvault secret set`, nikdy do Gitu ani do chatu):
+   `anthropic-api-key` (klíč workspace s limitem útraty) a `github-token` (fine-grained PAT **jen** na `akczcz/adam`: Contents RW, Issues RW,
+   Pull requests RW; platnost 1 den). Terraform je nepřepíše (`ignore_changes`).
+2. Synchronizace ESO (do 1 h, nebo vynutit: `kubectl -n platform-data annotate externalsecret agentgateway-secrets agentgateway-github-token
+   zakazka-secrets force-sync=$(date +%s) --overwrite`); gateway soubor PAT sleduje (watched), klíč modelu z env Secretu vyžaduje restart podů gateway
+   (`rollout restart deploy/agentgateway`).
+3. Doporučení pro repozitář: ruleset na `main` „změny jen přes PR“ (merge-executor merguje PR přes API, přímý push PAT nejde) – kontrola na straně GitHubu,
+   gateway hlídá jen cesty a metody.
+4. `measure` s `e2e=p4-2-live` (cluster běží): V1a předletová kontrola → bez 200/200 se nic nezakládá a neutratí; jinak zakázka `<tag>-live`
+   z GUI, HITL H1/H2/H4/H5 schvaluje harness jako adam s důvodem, výsledek = issue, PR a merge v `akczcz/adam` (`zakazky/<id>/NOTES.md`).
+5. Po běhu: Adam PAT revokuje a klíč modelu rotuje/omezí; v Key Vaultu vrátí výchozí hodnoty (`mock-github-token`, `sk-ant-harness-mock`),
+   aby další měření neplatilo za 1 token předletové kontroly.
+
 ## Rizika
 
 | Riziko | Řešení |
 |---|---|
+| PAT v gateway smí víc než zakázka potřebuje | fine-grained PAT jen na repozitář platformy + autorizace routy gateway (cesta `/repos/akczcz/adam/`, metody GET/POST/PATCH/PUT) + ruleset `main`; revokace po běhu |
+| Živý model = útrata; alias `live-*` může použít kdokoli s klíčem role | klíče role × zakázka mají rozpočty (Block 24h/30d), strop zakázky (`zakazka-30d-block`), ledger gateway per request → FinOps; klíč modelu s limitem workspace |
+| Předletová kontrola `/_live/model` je placená (1 token) | jen na vyžádání v `p4-2-live` a v L1a (s výchozím klíčem 401, nic se neplatí) |
 | Mandát obnoví jiný člověk tenanta než schvalovatel → role jedná jeho jménem | ledger `MANDAT renewed by`, GUI ukazuje držitele; kdo klikne, přebírá odpovědnost (T1) – stejné jako schválení |
 | Keepalive = GUI otevřené v zapomenuté záložce drží mandát „navždy“ | jen dokud žije refresh token GUI (Keycloak SSO session); prodlužuje jen živý mandát držitele; zapsat do GUI timeout session (kandidát) |
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |

@@ -98,6 +98,7 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 | Krok | Stav |
 |---|---|
 | P4-1 Obnova mandátu z GUI (subject token člověka 30 min; role bez HITL před sebou jednala bez mandátu) | ✅ 2026-11-01 AKS 79/79 + 14 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
+| P4-2 Ostrý běh s živým modelem a GitHubem (flag zakázky, klíč i PAT jen v Key Vaultu a jen v gateway) | 🟡 kód 2026-11-01, měření AKS P42_RESULT ([p4-provoz.md](p4-provoz.md)); ostrý běh na vyžádání |
 
 ## Changelog
 - 2026-11-01: P4-1 hotovo na AKS (79/79 + 14 INFO) – poslední známý mandát mimo workflow, vypršelý viditelně „role bez mandátu“, tlačítko *Obnovit mandát* a keepalive v GUI; nález: stav v modulu aplikace ⇒ jedna replika.

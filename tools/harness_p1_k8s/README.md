@@ -929,6 +929,26 @@ Nálezy:
    harness očekával null. Historie „kdo kdy jednal jménem koho“ je v ledgeru (`MANDAT`, `ROLE_POD`), registr = poslední stav.
 6. Časování (běh 3): keepalive obnova z GUI → `MANDAT used` Accountu (2. kolo) za 10 s; schválení H1 → `used` architekta za 0,6 s → pod architekta hotov za 47,5 s.
 
+## P4-2 L1/V1 – ostrý běh s živým modelem a GitHubem (2026-11-01, AKS, `--step p4-2` = p4-1 + **L1a–c**, `--step p4-2-live` = p3-1 + **V1a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-2-ostrý-běh-s-živým-modelem-a-githubem)): ostrý běh = flag `live` zakázky
+  (GUI zaškrtávátko), ne režim clusteru. Živé API i GitHub jen za gateway; klíč modelu a PAT jen v gateway (Key Vault → ESO → Secret/soubor).
+  Alias modelu `live-<model>` → `$LLM_LIVE_URL`; listener `github.platform.internal` → routa `github-api` (`/api` → `api.github.com`, `backendTLS`,
+  `urlRewrite`, `backendAuth` Bearer ze souboru, autorizace jen `/repos/akczcz/adam/`). Aplikace volá GitHub přes CONNECT gateway bez tokenu.
+- **Měřitelné bez tajemství:** `GET /_live/model` (1 token na alias → 401 `authentication_error` z api.anthropic.com s výchozím klíčem, 200 s ostrým)
+  a `GET /_live/github` (→ 401 `Bad credentials` z api.github.com s výchozím PAT, 200 s ostrým; `?path=` mimo repozitář → 403 z gateway).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| L1a | alias `live-<model>` → api.anthropic.com s klíčem z Key Vaultu; s výchozím klíčem 401 authentication_error; mock `*` dál | P42_L1A |
+| L1b | GitHub API přes gateway (CONNECT, cert platformy, přepis na api.github.com, PAT ze Secretu ESO Ready); výchozí PAT → 401; jiný repozitář → 403 | P42_L1B |
+| L1c | zakázka „ostrý běh“ z GUI: flag v ledgeru, badge seznam + detail, pod Account `P0_MODEL=live-<model>`; bez klíče selže viditelně; stop | P42_L1C |
+| V1a–c | ostrý běh (jen `p4-2-live`): předletová kontrola 200/200, zakázka z GUI → Dokonceno, issue/PR/merge ověřené z veřejného GitHub API, útrata > 0 pod stropem, mandát rolí | na vyžádání |
+
+Výsledek: **P42_RESULT** (`measure` run P42_ID, P42_RUNS).
+
+Nálezy: P42_FINDINGS
+
 ## Spuštění
 
 ```bash
