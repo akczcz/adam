@@ -976,6 +976,17 @@ Nálezy:
    `GET /zakazky/{id}` (pollují harness i GUI). Roste s počtem zakázek v ledgeru – proto běhy 2–3 prošly a 4–5 ne. Oprava: seznam threadů jedním
    průchodem ledgeru + stavy z Dapru paralelně ve vláknech přes `asyncio.to_thread`, SSE a snapshot stavu totéž, `GET /zakazky/{id}` sync handler;
    pod role opakuje POST výsledku 3×. Architektonicky: stav instancí patří do indexu (DB/state store), ne do N dotazů na Dapr při každém načtení.
+8. **Tunel `kubectl port-forward` na AKS umírá v klidu** (běhy 5–6 pád O3 `g.decide`: „rozhodnutí approve nespustilo nový run (run-error: Failed to
+   fetch)“): během několikaminutové sondy E5 nejde na forward aplikace žádný provoz (SSE GUI zavřeno po interruptu) a tunel se tiše rozpadne; GUI pak
+   při kliknutí dostane `Failed to fetch`. Je to vlastnost měřicí cesty (runner → port-forward → AKS), ne platformy – harness před kliknutím pošle
+   keepalive (`GET /health` přes helper `http`, který forwardy obnoví) a při síťové chybě otevře thread znovu a rozhodnutí zopakuje jednou
+   (`retried_after` v detailu). Přes Ingress/VPN by problém nebyl.
+9. **Alias modelu dvakrát = tichý mock** (běh 7, L1c FAIL): `role_pod.py` dal podu `P0_MODEL=live-<model>` a Agent SDK v podu (sdílený kód `app.py`)
+   přidal podle flagu zakázky prefix podruhé → gateway dostala `live-live-claude-haiku-4-5`, alias nenašla a request spadl do catch-all `*` = mock
+   upstream. Role „uspěla“ (3 tahy, bez chyby), publikace issue nikdy nenastala – zakázka označená jako ostrý běh by tiše běžela na mocku. Check
+   L1c to odhalil (čekal viditelné selhání na 401). Oprava: prefix idempotentní, `AGENT_RUN.model` nese model skutečně poslaný do gateway a L1c/V1c
+   vyžadují přesně `live-<model>` u každé role. Pro provoz: catch-all `*` → mock je v produkční gateway nepřípustný – neznámý alias má skončit 404,
+   ne na levném/falešném upstreamu (kandidát pro konfiguraci ostrého prostředí).
 
 ## Spuštění
 

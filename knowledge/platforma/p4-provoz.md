@@ -91,7 +91,11 @@ live po selhání role na `publish_issue` 401 → instance **FAILED** s příči
 selhala“ jako interrupt; (3) aplikace s ~280 zakázkami v ledgeru stála desítky sekund: `GET /threads` volal pro každou zakázku synchronní gRPC na Dapr
 a filtroval celý ledger v async handleru, k tomu harness stahoval celý ledger (desítky MB) při každém dotazu – padala readiness proba, GUI i doručení
 výsledku podu role → seznam threadů a stav z Dapru ve vláknech, ledger přírůstkově; architektonicky patří stav instancí do indexu (state store), ne do
-N dotazů na Dapr při načtení seznamu; (4) ConfigMap klíčů gateway je u limitu 1 MiB (1365 klíčů, 147 SUSPENDED instancí drží klíče) – kandidát GC i pro pozastavené zakázky.
+N dotazů na Dapr při načtení seznamu; (4) ConfigMap klíčů gateway je u limitu 1 MiB (1365 klíčů, 147 SUSPENDED instancí drží klíče) – kandidát GC i pro pozastavené zakázky;
+(5) **alias modelu dvakrát = tichý mock**: pod role dostal `P0_MODEL=live-<model>` a sdílený kód Agent SDK přidal prefix podruhé → gateway alias
+`live-live-…` nenašla a request spadl do catch-all `*` = mock upstream; role „uspěla“ a zakázka označená jako ostrý běh by tiše běžela na mocku
+(odhalil check L1c, který čekal viditelné selhání na 401). Oprava: prefix idempotentní, `AGENT_RUN.model` = model skutečně poslaný do gateway,
+L1c/V1c ho vyžadují u každé role. **Pro ostrý provoz: catch-all `*` → mock do produkční gateway nepatří – neznámý alias má skončit 404.**
 
 ### Postup ostrého běhu (jen na vyžádání, platí se)
 
@@ -114,6 +118,7 @@ N dotazů na Dapr při načtení seznamu; (4) ConfigMap klíčů gateway je u li
 |---|---|
 | PAT v gateway smí víc než zakázka potřebuje | fine-grained PAT jen na repozitář platformy + autorizace routy gateway (cesta `/repos/akczcz/adam/`, metody GET/POST/PATCH/PUT) + ruleset `main`; revokace po běhu |
 | Živý model = útrata; alias `live-*` může použít kdokoli s klíčem role | klíče role × zakázka mají rozpočty (Block 24h/30d), strop zakázky (`zakazka-30d-block`), ledger gateway per request → FinOps; klíč modelu s limitem workspace |
+| Neznámý alias modelu (překlep, dvojí prefix) spadne do catch-all `*` = mock a zakázka „live“ běží tiše na mocku | `AGENT_RUN.model` v ledgeru + check L1c/V1c; pro ostré prostředí catch-all odstranit (neznámý model → 404), mock jen v měřicím profilu (kandidát) |
 | Předletová kontrola `/_live/model` je placená (1 token) | jen na vyžádání v `p4-2-live` a v L1a (s výchozím klíčem 401, nic se neplatí) |
 | Mandát obnoví jiný člověk tenanta než schvalovatel → role jedná jeho jménem | ledger `MANDAT renewed by`, GUI ukazuje držitele; kdo klikne, přebírá odpovědnost (T1) – stejné jako schválení |
 | Keepalive = GUI otevřené v zapomenuté záložce drží mandát „navždy“ | jen dokud žije refresh token GUI (Keycloak SSO session); prodlužuje jen živý mandát držitele; zapsat do GUI timeout session (kandidát) |
