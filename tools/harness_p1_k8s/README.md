@@ -561,8 +561,8 @@ Výsledek: **59/59 + 8 INFO** (`measure` run 40667386140, `results/p3-6-20261028
    mapperů → mappery zmizely (gui_aud jen memory). PUT bez `protocolMappers` a před mappery.
 4. **Pod v ns tenanta potřebuje FQDN** (`keycloak.platform-data.svc`), krátké jméno `keycloak` z `P0_KC_TOKEN_URL` nepřeloží.
 5. Zbývá: subject token žije 30 min (lifespan `platform-gui`) – role bez HITL před sebou (reviewer po dlouhém vývojáři) by exchange
-   nestihla → `delegation.error`, paměť zapíše `on_behalf_of null` (degradace, ne pád); řešení = Keycloak delegace (`act`) až opustí preview,
-   nebo obnova subjektu v GUI. Beta tenant (bea) má stejnou cestu, měří se jen acme. Klient `agent-<role>-<tenant>` na SPIFFE (A′) až
+   nestihla → `delegation.error`, paměť zapíše `on_behalf_of null` (degradace, ne pád); řešení = ~~Keycloak delegace (`act`) až opustí preview~~ (2026-11-01: nepřijde –
+   GA 27.0 souhlas per session nezruší, `knowledge/identity/keycloak.md`), zbývá obnova subjektu v GUI (kandidát P4). Beta tenant (bea) má stejnou cestu, měří se jen acme. Klient `agent-<role>-<tenant>` na SPIFFE (A′) až
    `spiffe` feature opustí preview.
 
 ## P3-6 E5 – identita agenta SPIRE per pod (2026-10-29, AKS, `--step p3-6` = … + **E5a–b**)

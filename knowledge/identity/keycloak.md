@@ -1,13 +1,18 @@
 ---
 tema: Keycloak 26.8 jako platformní authorization server – standard token exchange V2, downscope enforcer, delegace
-naposledy_overeno: 2026-10-29
-zralost: stable (V2 exchange supported, default on) / preview (delegace, `act`)
+naposledy_overeno: 2026-11-01
+zralost: stable (V2 exchange supported, default on) / preview (delegace `act`, `spiffe`) – GA delegace až 27.0 (Q1 2027) a souhlas per session zůstane
 primarni_zdroje:
   - https://github.com/keycloak/keycloak/blob/main/docs/guides/securing-apps/token-exchange.adoc
   - https://github.com/keycloak/keycloak/releases/tag/26.8.1
   - https://github.com/keycloak/keycloak/blob/main/LICENSE.txt
   - https://github.com/keycloak/keycloak/blob/26.8.1/quarkus/config-api/src/main/java/org/keycloak/config/HttpOptions.java
   - https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/server/hostname.adoc
+  - https://github.com/keycloak/keycloak/blob/main/common/src/main/java/org/keycloak/common/Profile.java
+  - https://github.com/keycloak/keycloak/issues/53161
+  - https://github.com/keycloak/keycloak/issues/53996
+  - https://github.com/keycloak/keycloak/issues/53040
+  - https://github.com/keycloak/keycloak/blob/main/docs/documentation/upgrading/topics/changes/changes-27_0_0.adoc
 ---
 
 # Keycloak
@@ -21,6 +26,7 @@ provádí **token exchange** pro gateway (user token → token pro konkrétní M
 - Standard token exchange **V2** (`token-exchange-standard:v2`) je **DEFAULT** feature; legacy V1 PREVIEW + deprecated;
   **delegace** (`token-exchange-delegation`) PREVIEW se závislostí `parameterized-scopes` (`Profile.java`, main @f7532e1).
 - Vše níže **změřeno harnessem** `tools/harness_identity_i2/` proti 26.8.1 (2026-10-22), nejen přečteno.
+- **2026-11-01 (identity-scout, GitHub `main` + releases/milestones):** 26.8.1 stále nejnovější; 26.9 neexistuje, další je **27.0** (milestone Dev due 2027-01-29, Release due 2027-03-31). `Profile.java` main: `token-exchange-delegation`, `parameterized-scopes` i `spiffe` PREVIEW; V2 exchange, `client-auth-federated`, `kubernetes-service-accounts`, FGAP V2 DEFAULT. Supported delegace = otevřený epic #53161 (0/5), multi-hop řetěz #53040 / PR #53285 bez milestonu.
 
 ## Klíčové koncepty (změřeno)
 
@@ -32,7 +38,7 @@ provádí **token exchange** pro gateway (user token → token pro konkrétní M
 | `scope` parametr | bez enforceru vydá **i scope, který subject token neměl** (alice bez `tickets:write` ho dostala) | **upscoping je default** – past |
 | `downscope-assertion-grant-enforcer` | client policy executor; odmítne scope **i audience**, které subject token nemá (`invalid_scope` / „Requested audience not available“) | buď uživatelův token nese aud všech MCP serverů (koliduje s RFC 8707 passthrough obranou), nebo enforcer vypnout a upscope hlídat konfigurací gateway |
 | `actor_token` bez feature | tiše ignorován, `act` nevzniká | žádná delegace |
-| `actor_token` s `token-exchange-delegation` | validován („Client is not within the token audience“); scope `delegation:client:<id>` vyžaduje **consent required** na klientovi, **souhlas uživatele při každém přihlášení** a **FGAP V2** permission `delegate`; direct grant ho odmítne | pro autonomní agenty s dlouhodobým mandátem **nepoužitelné**; `act` řetěz zbývá řešit jinak |
+| `actor_token` s `token-exchange-delegation` | klientská delegace (docs `token-exchange.adoc`, shodné na 26.8.1 i main): frontend klient žádá při loginu `scope=openid delegation:client:<actor>` (**Consent required ON**, souhlas **každou session**, FGAP V2 permission Users/`delegate` s Client policy pro actora, jinak scope tiše vypadne); `may_act={sub:<UUID SA usera actora>, client_id}` vzniká v login/refresh response, ne při exchange; exchange = `client_credentials` actor token + `actor_token`; výsledek jen access token (transient session, bez refresh), `aud`/scopes z konfigurace actora; **jeden `delegation:client` na request** = jeden actor na login; executor `may-act` souhlas nevypíná; direct grant odmítne | pro autonomní agenty s dlouhodobým mandátem **nepoužitelné i po GA** (#38279 plán: souhlas vždy; #50690 „durable delegated identity not supported yet“); `act.sub` je SA UUID, nestabilní při re-importu klienta (#53996) → vázat jen na `act.client_id` |
 | `resource` (RFC 8707) | nepodporován v exchange | audience jen přes `audience` |
 | Revokace řetězu | exchangovaný token přežije revokaci subject tokenu | krátké TTL |
 | `sub` claim | od KC 25 ho nese client scope `basic` | realm import s `clientScopes` vestavěné scopes **nevytvoří** – `basic` musí být v JSON |
@@ -45,11 +51,11 @@ Ověřeno z tagu `keycloak/keycloak@26.8.1` (docs + zdroje; identity-scout 2026-
 
 | Fakt | Stav 26.8.1 | Zdroj |
 |---|---|---|
-| `client-auth-federated`, `kubernetes-service-accounts` | **DEFAULT** (GA od 26.5): client authenticator `federated-jwt` („Signed JWT - Federated“), atributy `jwt.credential.issuer` (alias IdP) a `jwt.credential.sub`; klient se hledá podle `sub` assertion + alias IdP (`DefaultClientAssertionStrategy`), **ne podle `client_id`** → jeden SA = jeden klient | `Profile.java`, `authenticators/client/*.java`, `identity-broker/kubernetes.adoc` |
+| `client-auth-federated`, `kubernetes-service-accounts` | **DEFAULT** (preview 26.5, **supported od 26.6** – release notes 26.6; dřív zde „GA od 26.5“): client authenticator `federated-jwt` („Signed JWT - Federated“), atributy `jwt.credential.issuer` (alias IdP) a `jwt.credential.sub`; klient se hledá podle `sub` assertion + alias IdP (`DefaultClientAssertionStrategy`), **ne podle `client_id`** → jeden SA = jeden klient | `Profile.java`, `authenticators/client/*.java`, `identity-broker/kubernetes.adoc` |
 | IdP `kubernetes` | config `issuerDiscoveryUrl` (discovery při uložení → `issuer`, `jwksUrl`); assertion = projektovaný SA token s `aud` = issuer realmu, max 3600 s; `iss` nepovinné u SPIFFE varianty | `KubernetesIdentityProviderConfig.java`, `kubernetes.adoc` |
-| `spiffe` (JWT-SVID jako client assertion, `jwt-spiffe`) | **PREVIEW** – „specification is still a draft“; bundle endpoint může být JWKS spire-oidc | `spiffe.adoc`, `SpiffeIdentityProvider.java` |
+| `spiffe` (JWT-SVID jako client assertion, `jwt-spiffe`) | **PREVIEW** (feature flag `spiffe`, ne `client-auth-spiffe`) – „OAuth SPIFFE Client Authentication specification is still in draft status“ (26.6 notes), 27.0 draft beze změny; bundle endpoint může být JWKS spire-oidc | `spiffe.adoc`, `SpiffeIdentityProvider.java` |
 | Standard exchange V2 + federated klient | funguje: žadatel = klient role autentizovaný SA tokenem → `azp` = role, `sub` = člověk; subject token musí nést klienta role v `aud` (audience mapper na `platform-gui`) | měřeno E2a: exchange 94 ms, lifespan 1800 s |
-| Delegace (`act`) | PREVIEW `token-exchange-delegation` + `parameterized-scopes`; souhlas při každé login session; 27.0 notes beze změny | `26_8_0.adoc`, `27_0_0.adoc` |
+| Delegace (`act`) | PREVIEW `token-exchange-delegation` + `parameterized-scopes` (26.7 experimental → 26.8 preview); souhlas při každé login session; supported = epic #53161 (27.0 Dev), multi-hop #53040; 27.0 draft notes beze změny | `26_7_0.adoc`, `26_8_0.adoc`, `27_0_0.adoc`, #53161 |
 | Legacy exchange (external-to-internal) | PREVIEW + deprecated, vyžaduje FGAP V1 (DEPRECATED); náhrada = JWT Authorization Grant (DEFAULT, ale mapuje na **uživatele**) | `token-exchange.adoc`, `jwt-authorization-grant.adoc` |
 | Admin API past | `PUT /clients/{id}` s `protocolMappers` v reprezentaci mappery přepíše | měřeno E2 (2. běh) |
 
@@ -84,17 +90,27 @@ ne agentní kód. Viz [agentgateway-identity.md](agentgateway-identity.md) a dia
 ## Architektonické důsledky
 1. Identita agenta (I1) **nejde dnes vložit do tokenu uživatele** přes Keycloak `act`. Alternativy: (a) agent posílá JWT-SVID
    jako druhý credential a MCP server/gateway ho loguje (I4) a vyhodnocuje (I3) zvlášť; (b) Zitadel (downscope-only,
-   RFC 8707, `actor_token`) po právním posudku AGPL; (c) čekat na Keycloak delegation GA s client-credentials cestou.
+   RFC 8707, `actor_token`) po právním posudku AGPL; (c) ~~čekat na Keycloak delegation GA s client-credentials cestou~~ → 2026-11-01: GA (27.0, odhad Q1 2027) interaktivní souhlas per session ani limit jednoho actora na login neodstraní; použitelné nejdřív jako „orchestrátor = jediný actor + multi-hop řetěz (#53040)“ a jen v okně života subject tokenu. **Rozhodnutí (P3-6):** `sub + azp` z V2 exchange + SVID jako druhý credential zůstává cílový tvar, `act` není na cestě; sledovat #53161/#53040 před 27.0.
 2. Enforcer **nepoužívat** v kombinaci s per-MCP audience; upscope hlídá konfigurace gateway (`scopes: [...]` per route) + OPA.
 3. Realm jako kód: `configs/realm-platform.json` v harnessu je referenční import (scopes `basic`, `profile`, audience mappery, client policy).
 
+## Upgrade na 27.0 – watchlist (draft `changes-27_0_0.adoc`, 2026-11-01; do vydání se může změnit)
+- Klient `admin-permissions` je interní: `PUT`/`DELETE` vrací 403 (rolegen/harness ho dnes nemění – ověřeno grep 2026-11-01).
+- Změna default/optional client scopes realmu přes Admin API vyžaduje `manage-realm` (scoped operátorské tokeny).
+- `GET …/clients/{id}/service-account-user` odstraněn → `serviceAccountUserId` z ClientRepresentation (harness ho nepoužívá – grep 2026-11-01).
+- CIBA jen pro confidential klienty; smazaný required client scope → `Decision.Effect.INVALID` = deny (vlastní SPI).
+- Nic k Postgres, `--optimized`, `--import-realm`, exchange V2 ani Liquibase. SAML položky se netýkají.
+
 ## Otevřené otázky
-- [ ] V kterém releasu je `actor_token` delegace a zda vznikne cesta bez interaktivního souhlasu (client credentials actor) – 27.0 notes beze změny (2026-10-28).
+- [x] ~~V kterém releasu je `actor_token` delegace a zda vznikne cesta bez interaktivního souhlasu~~ → 2026-11-01: supported až epic #53161 (27.0), cesta bez souhlasu neexistuje ani v plánu (#38279, #50690); viz důsledek 1(c).
+- [ ] Podporuje aktuální agentgateway `actorToken` v `backendAuth.oauthTokenExchange`? (standardy.md to tvrdí; relevantní jen pokud by se `act` někdy zavedl.)
+- [ ] Chování parametrů `audience`/`scope` v delegačním exchange – docs mlčí; změřit harnessem I2, až bude relevantní.
 - [x] ~~Chování `actor_token` s JWT-SVID cizího issueru~~ – SVID se v Keycloaku nepoužívá jako actor, ale jako **client assertion** (`jwt-spiffe`, preview); K8s SA token totéž GA (E2, 2026-10-28).
-- [ ] Support policy 26.x / LTS – neověřeno.
+- [ ] Support policy 26.x / LTS – keycloak.org z prostředí nedostupný; jediný zdroj post 2024-10-08 (4 minor/rok, major každé 2–3 roky).
 - [ ] Cache exchange v agentgateway: změřeno p50 71–81 ms přes gateway vs. 58 ms exchange → cache pravděpodobně neúčinná; ověřit.
 
 ## Changelog
+- 2026-11-01: ověřeno z `main` a GitHubu (identity-scout) – 26.8.1 stále latest, 27.0 Q1 2027 (milestony); delegace i `spiffe` preview, GA epic #53161; přesný tvar delegovaného exchange, omezení 1 actor/login a souhlas per session, `act.sub` = SA UUID (#53996); oprava federated client auth supported od 26.6; watchlist upgradu 27.0; rozhodnutí P3-6: `act` se nezavádí, `sub + azp` + SVID zůstává.
 - 2026-10-29: P3-6 E7 – TLS jen HTTPS 8443 z interní CA (cert-manager), pevný issuer https přes `KC_HOSTNAME`, reload certifikátu periodou, management HTTP pro probe; ověřeno na tagu 26.8.1 a změřeno na AKS.
 - 2026-10-28: P3-6 E2 – federated client authentication (K8s SA token podu role) + standard exchange V2 změřeno na AKS; SPIFFE client auth a delegace `act` preview; past PUT klienta.
 - 2026-10-22: první verze; vše z harnessu I2 proti 26.8.1.
