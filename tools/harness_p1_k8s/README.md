@@ -897,16 +897,16 @@ Nálezy:
 |---|---|---|
 | M1a | vypršelý mandát = Account bez subjektu (ledger `MANDAT missing`, pod bez delegace), GUI: vypršel, karta + tlačítko, role „bez mandátu“, seznam | ✅ zakázka z AG-UI nese mandát (sub adam, zdroj create, expired false); po `/_mandat/expire` stav expired true, ledger `MANDAT missing reason=vypršel role=account`, pod Account Succeeded s `identity.delegation null`; GUI: řádek seznamu `data-expired=true`, detail karta „Role bez mandátu“ + tlačítko, role account „bez mandátu“ |
 | M1c | kliknutí → `MANDAT renewed` (zdroj renew, auto false); „brzy vyprší“ → GUI držitele prodlouží samo (auto true); vypršelý samo neobnovuje | ✅ kliknutí → „mandát obnoven“, stav sub adam, zdroj renew, auto false; `exp_in_s 300` → GUI do 30 s ukázalo ≤ 310 s, pak keepalive: `MANDAT renewed auto true`, stav > 600 s, slovník aplikace (`GET /_mandat/<id>`) usable, zdroj renew; vypršelý mandát z M1a GUI samo neobnovilo (karta zůstala do kliknutí) |
-| M1b | H1 schválen interním API bez subjektu → architekt jede na obnoveném mandátu (`used` zdroj renew, exchange sub = adam), `org.agents.on_behalf_of`: architekt adam, account podle posledního běhu; GUI „jménem adam“ | ✅ `MANDAT used role=architekt source=renew sub=adam` RUN4_USED_S s po schválení H1, pod architekta Succeeded, delegace `sub adam, azp agent-architekt-acme`; `org.agents`: architekt adam, account adam (2. kolo Account po odpovědi na dialog běželo už s obnoveným mandátem, 1. kolo bez); GUI role architekt „jménem adam“, karta „další role jednají jménem adam (zdroj renew, keepalive)“ |
+| M1b | H1 schválen interním API bez subjektu → architekt jede na obnoveném mandátu (`used` zdroj renew, exchange sub = adam), `org.agents.on_behalf_of`: architekt adam, account podle posledního běhu; GUI „jménem adam“ | ✅ `MANDAT used role=architekt source=renew sub=adam` 0,6 s po schválení H1 (běh 3; 4. běh detail zkrácen), pod architekta Succeeded, delegace `sub adam, azp agent-architekt-acme`; `org.agents`: architekt adam, account adam (2. kolo Account po odpovědi na dialog běželo už s obnoveným mandátem, 1. kolo bez); GUI role architekt „jménem adam“, karta „další role jednají jménem adam (zdroj renew, keepalive)“ |
 
-Výsledek: **RUN4_RESULT** (`measure` run RUN4_ID, 4 běhy; M1 RUN4_WALL s, celý krok p4-1 = p3-6 + M1 cca 68 min).
+Výsledek: **79/79 + 14 INFO** (`measure` run 41297792885, 4 běhy; M1 422 s, celý krok p4-1 = p3-6 + M1 82 min).
 
 | Běh | Výsledek | Co padlo a proč |
 |---|---|---|
 | 1 | bez výsledku | `measure.yml` instaloval Playwright jen pro kroky `p3-*` → harness spadl na `import playwright` ještě před prvním checkem |
 | 2 (41284661551) | 74/5 + 14 INFO | U1b, M1c, M1b, E13b, E13c – viz nálezy 1–4 |
 | 3 (41292612681) | 78/1 + 14 INFO | M1b – očekávání harnessu `org.agents.on_behalf_of account = null` (nález 5) |
-| 4 (RUN4_ID) | RUN4_RESULT | – |
+| 4 (41297792885) | 79/79 + 14 INFO | – |
 
 Nálezy:
 
@@ -927,7 +927,7 @@ Nálezy:
 5. **Account běží dvakrát, registr drží poslední běh** (běh 3, M1b): Account 1. kolo (bez mandátu) skončí `DIALOG_WAIT`, odpověď → 2. kolo už po obnově z GUI
    běží **s mandátem** (`MANDAT used role=account source=renew`), a `org.agents.on_behalf_of` je upsert per role → account = adam, ne null. Správné chování;
    harness očekával null. Historie „kdo kdy jednal jménem koho“ je v ledgeru (`MANDAT`, `ROLE_POD`), registr = poslední stav.
-6. Časování (běh 4): obnova z GUI → `used` Accountu RUN4_ACC_S s; schválení H1 → `used` architekta RUN4_USED_S s → pod architekta hotov RUN4_POD_S s.
+6. Časování (běh 3): keepalive obnova z GUI → `MANDAT used` Accountu (2. kolo) za 10 s; schválení H1 → `used` architekta za 0,6 s → pod architekta hotov za 47,5 s.
 
 ## Spuštění
 

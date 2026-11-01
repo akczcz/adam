@@ -97,10 +97,10 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 
 | Krok | Stav |
 |---|---|
-| P4-1 Obnova mandátu z GUI (subject token člověka 30 min; role bez HITL před sebou jednala bez mandátu) | ✅ 2026-11-01 AKS RUN4_RESULT, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
+| P4-1 Obnova mandátu z GUI (subject token člověka 30 min; role bez HITL před sebou jednala bez mandátu) | ✅ 2026-11-01 AKS 79/79 + 14 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
 
 ## Changelog
-- 2026-11-01: P4-1 hotovo na AKS (RUN4_RESULT) – poslední známý mandát mimo workflow, vypršelý viditelně „role bez mandátu“, tlačítko *Obnovit mandát* a keepalive v GUI; nález: stav v modulu aplikace ⇒ jedna replika.
+- 2026-11-01: P4-1 hotovo na AKS (79/79 + 14 INFO) – poslední známý mandát mimo workflow, vypršelý viditelně „role bez mandátu“, tlačítko *Obnovit mandát* a keepalive v GUI; nález: stav v modulu aplikace ⇒ jedna replika.
 - 2026-10-27: P3-6 E3 hotovo na AKS (51/51); další položky P3-6 (E4 ledger → ClickHouse, E1 ESO/cert-manager, E2 token exchange) po jednom PR.
 - 2026-10-27: P3-6 E4 hotovo na AKS (53/53 + 8 INFO) – per-request ledger z gateway (ClickHouse) jako nezávislý zdroj FinOps; odhalil dvojí započtení útraty od E3 (opraveno).
 - 2026-10-28: P3-6 E1 hotovo na AKS (56/56) – tajemství z Key Vaultu přes ESO, certifikáty z cert-manageru, CA bundle z trust-manageru; harness ani Flux substitute už žádné tajemství nenesou.
