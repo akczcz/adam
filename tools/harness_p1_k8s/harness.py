@@ -1811,6 +1811,96 @@ def e13_flow(a, rep, http, led, APP, kj, tag, shots):
     rep.add("E13c", "Obnova zaseknuté zakázky bez ztráty eventu: verze zpět (POST /_wf/register ze snímku = nasazení obrazu) → instance pokračuje bez nového eventu (sama, nebo po restartu podu aplikace – `recovered_by`), klasifikace z doby zaseknutí se zpracuje → COMPLETED/Odmitnuto na své (starší) verzi, KLASIFIKACE_DONE s touto verzí až po obnově; report verzí bez stalled; GUI: seznam ukazuje dokončenou zakázku", "PASS" if ok_c else "FAIL", {"register": re_, "recovered_by": recovered_by, "auto_s": t_auto, "restart": restart, "event_again": event_again, "final": {"status": fin.get("status"), "stav": (fin.get("output") or {}).get("stav"), "wf_version": fin.get("wf_version"), "failure": fin.get("failure"), "s": t_fin}, "events": ev, "report_old": vo2, "gui": gui2, "wall_s": round(time.time() - t_e, 1)})
 
 
+def m1_flow(a, rep, http, led, APP, KC, dsn, tag, shots):
+    """M1 (P4-1): obnova mandátu z GUI. Subject pro exchange role = access token člověka (30 min); role bez HITL před sebou ho dostávala vypršelý → bez mandátu
+    (E2 nález 5). Teď aplikace drží poslední známý mandát mimo stav workflow (založení, schválení, obnova z GUI), před startem role vybere ten a vypršelý
+    nepoužije (MANDAT missing); GUI mandát ukazuje (kdo, do kdy), vypršelý = karta + tlačítko „Obnovit mandát“, živý mandát držitele s < 10 min se
+    prodlužuje sám (keepalive), dokud má GUI otevřené. Vypršení simuluje POST /_mandat/expire (plynutí času), ne čekání 30 min."""
+    import base64 as _b64, psycopg
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui
+    t_m = time.time(); z = f"{tag}-m1"
+    def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
+    def claims(t): return json.loads(_b64.urlsafe_b64decode(t.split(".")[1] + "==").decode())
+    def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
+    def L(z_): return [e for e in led() if e.get("zakazka") == z_]
+    def state(H): r = http("GET", f"{APP}/agui/threads/{z}", headers=H, timeout=15); return (r.json().get("state") or {}) if r.status_code == 200 else {"http": r.status_code}
+    def wait_led(pred, timeout):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            e = next((e for e in L(z) if pred(e)), None)
+            if e: return e
+            time.sleep(3)
+    def drive(until_bod, timeout):
+        """Interní API bez subjektu (žádný nový mandát): dialog Account → odpověď, HITL bod < until_bod → schválení; vrátí HITL_WAIT bodu until_bod."""
+        t0 = time.time(); seen = set()
+        while time.time() - t0 < timeout:
+            waits = [e for e in L(z) if K(e) in ("DIALOG_WAIT", "HITL_WAIT")]
+            for w in waits:
+                key = (K(w), w.get("bod"), w.get("artifact_hash"), w.get("round"))
+                if key in seen: continue
+                seen.add(key)
+                if K(w) == "DIALOG_WAIT": http("POST", f"{APP}/zakazky/{z}/dialog", json={"by": "adam", "answer": "Soubor patří do zakazky/<id>/NOTES.md; rozpočet i termín výchozí."}, timeout=15)
+                elif w.get("bod") == until_bod: return w
+                else: http("POST", f"{APP}/zakazky/{z}/approve/{w['bod']}", json={"by": "adam", "by_kind": "human", "artifact_hash": w.get("artifact_hash"), "exp_s": 86400}, timeout=15)
+            time.sleep(3)
+    def db(sql, args=()):
+        with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c: return c.execute(sql, args or None).fetchall()
+    ta = tok("adam", "adam"); adam_sub = claims(ta)["sub"]; H = {"Authorization": f"Bearer {ta}"}
+    # založení přes AG-UI jako adam (subject = jeho token) bez dotazníku → interrupt klasifikace (žádná role ještě neběží)
+    r0 = http("POST", f"{APP}/agui/run", headers={**H, "Accept": "text/event-stream"}, json={"threadId": z, "runId": "m1-create", "protocolVersion": "1.0", "messages": [{"id": "m1", "role": "user", "content": f"Přidej do repa platformy soubor zakazky/{z}/NOTES.md s poznámkou, že mandát zakázky obnovil člověk z GUI (P4-1)."}], "tools": [], "context": [], "state": {}, "forwardedProps": {"hitl_timeout_s": 1800}}, timeout=90)
+    w_k = wait_led(lambda e: K(e) == "KLASIFIKACE_WAIT", 120) or {}
+    s0 = state(H); m0 = s0.get("mandat") or {}
+    # simulace vypršení (plynutí času) → klasifikace interním API (bez subjektu) → Account startuje bez mandátu
+    ex = http("POST", f"{APP}/_mandat/expire", json={"zakazka": z, "by": "harness", "reason": "M1a: simulace vypršení tokenu zadavatele"}, timeout=15); ex_j = ex.json() if ex.status_code == 200 else {"http": ex.status_code}
+    s1 = state(H); m1 = s1.get("mandat") or {}
+    http("POST", f"{APP}/zakazky/{z}/classify", json={"answers": {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}, "by": "harness", "reason": "M1a: standardní profil"}, timeout=15)
+    miss = wait_led(lambda e: K(e) == "MANDAT" and e.get("state") == "missing" and e.get("role") == "account", 300) or {}
+    pod_a = wait_led(lambda e: K(e) == "ROLE_POD" and e.get("role") == "account", 1200) or {}
+    deleg_a = (pod_a.get("identity") or {}).get("delegation")
+    gui = {}; g = None
+    try:
+        g = Gui(f"{APP}/gui/", shots=shots / "m1").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
+        g.login("adam", "adam"); gui["row"] = g.thread_status(z); row_m = g.page.locator(f"[data-testid=thread-row-{z}] [data-testid=thread-mandat]"); gui["row_mandat"] = {"text": row_m.inner_text().strip(), "expired": row_m.get_attribute("data-expired")} if row_m.count() else None
+        g.open_thread(z); gui["view"] = g.wait_mandat(lambda m: m.get("present") and "account" in (m.get("roles") or {}), 120)
+    except Exception as e: gui["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    v = gui.get("view") or {}
+    ok_a = m0.get("sub") == adam_sub and m0.get("expired") is False and m0.get("source") == "create" and ex.status_code == 200 and m1.get("expired") is True and miss.get("reason") == "vypršel" and pod_a.get("phase") == "Succeeded" and deleg_a is None and v.get("expired") is True and v.get("card") and v.get("card_expired") is True and "account" in (v.get("roles") or {}) and v["roles"]["account"] is None and (gui.get("row_mandat") or {}).get("expired") == "true"
+    rep.add("M1a", "Vypršelý mandát = role bez mandátu, viditelně: zakázka založená z GUI nese mandát zadavatele (sub, exp, zdroj create); po vypršení (simulace POST /_mandat/expire) startuje Account bez subjektu – ledger MANDAT missing (vypršel), pod bez delegace (identity.delegation null); GUI: stav „mandát vypršel“, karta „Role bez mandátu“ s tlačítkem, role account „bez mandátu“, seznam zakázek badge vypršel", "PASS" if ok_a else "FAIL",
+            {"zakazka": z, "mandat_create": m0, "expire": ex_j, "mandat_after": m1, "missing": {k: miss.get(k) for k in ("state", "role", "reason", "source")}, "pod_account": {"phase": pod_a.get("phase"), "delegation": deleg_a}, "gui": gui})
+    # M1c keepalive: ruční obnova kliknutím (mandát živý, zdroj renew), pak „brzy vyprší“ (exp_in_s 300) → GUI držitele ho do ~45 s prodlouží samo (auto)
+    ren = {}; keep = {}
+    try:
+        if g:
+            ren = g.mandat_renew(); ren["state"] = state(H).get("mandat")
+            kx = http("POST", f"{APP}/_mandat/expire", json={"zakazka": z, "exp_in_s": 300, "by": "harness", "reason": "M1c: mandát brzy vyprší → keepalive GUI"}, timeout=15); keep["expiring"] = kx.json() if kx.status_code == 200 else {"http": kx.status_code}
+            t_k = time.time(); keep["view"] = g.wait_mandat(lambda m: m.get("present") and m.get("expired") is False and (m.get("expires_in_s") or 0) > 600, 120); keep["s"] = round(time.time() - t_k, 1)
+            keep["ledger"] = [{k: e.get(k) for k in ("state", "by", "source", "auto")} for e in L(z) if K(e) == "MANDAT" and e.get("state") in ("renewed", "expiring")]
+            keep["state"] = state(H).get("mandat")
+    except Exception as e: keep["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    rs, ks = ren.get("state") or {}, keep.get("state") or {}
+    ok_c = ren.get("msg", "").startswith("mandát obnoven") and rs.get("sub") == adam_sub and rs.get("expired") is False and rs.get("source") == "renew" and rs.get("auto") is False and (keep.get("expiring") or {}).get("expires_in_s") == 300 and (keep.get("view") or {}).get("expired") is False and ((keep.get("view") or {}).get("expires_in_s") or 0) > 600 and ks.get("auto") is True and ks.get("source") == "renew" and ks.get("sub") == adam_sub and any(x.get("auto") for x in keep.get("ledger") or [])
+    rep.add("M1c", "Obnova a keepalive z GUI: kliknutí „Obnovit mandát“ → MANDAT renewed (by člověk, zdroj renew, auto false), stav „mandát platí“; mandát držitele s < 10 min do konce (simulace exp_in_s 300) GUI s otevřeným detailem prodlouží samo jeho aktuálním tokenem (MANDAT renewed auto true) – vypršelý mandát sám neobnovuje (M1a karta zůstala, dokud člověk neklikl)", "PASS" if ok_c else "FAIL", {"renew": {k: v_ for k, v_ in ren.items() if k in ("msg", "state", "expired", "source")}, "keepalive": keep})
+    # M1b: další role s obnoveným mandátem – H1 schválen interním API bez subjektu (jediný živý subject = obnova z GUI) → architekt exchange sub = adam
+    w1 = drive("H1", 600) or {}
+    if w1: http("POST", f"{APP}/zakazky/{z}/approve/H1", json={"by": "adam", "by_kind": "human", "artifact_hash": w1.get("artifact_hash"), "exp_s": 86400}, timeout=15)
+    used = wait_led(lambda e: K(e) == "MANDAT" and e.get("state") == "used" and e.get("role") == "architekt", 300) or {}
+    pod_b = wait_led(lambda e: K(e) == "ROLE_POD" and e.get("role") == "architekt", 1200) or {}
+    deleg_b = (pod_b.get("identity") or {}).get("delegation") or {}
+    reg = wait_led(lambda e: K(e) == "REGISTRY_AGENT" and e.get("role") == "architekt", 120)
+    ag = {r_[0]: r_[1] for r_ in db("SELECT role_id, on_behalf_of FROM org.agents WHERE zakazka_id = %s", (z,))} if reg else {}
+    gui2 = {}
+    try:
+        if g: g.open_thread(z); gui2 = g.wait_mandat(lambda m: "architekt" in (m.get("roles") or {}), 90); g.shot("m1-done")
+    except Exception as e: gui2["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    try:
+        if g: g.close()
+    except Exception: pass
+    ok_b = bool(w1) and used.get("source") == "renew" and used.get("sub") == adam_sub and pod_b.get("phase") == "Succeeded" and deleg_b.get("sub") == adam_sub and deleg_b.get("azp") == "agent-architekt-acme" and not deleg_b.get("error") and ag.get("account") is None and ag.get("architekt") == adam_sub and (gui2.get("roles") or {}).get("architekt") == adam_sub
+    rep.add("M1b", "Další role jedná s obnoveným mandátem: H1 schválen interním API bez subjektu → jediný živý subject je obnova z GUI; ledger MANDAT used (zdroj renew, sub = adam) před startem architekta, pod architekta exchange sub = adam, azp = agent-architekt-acme; org.agents.on_behalf_of: account null (běžel bez mandátu), architekt = adam; GUI u role architekt „jménem adam“", "PASS" if ok_b else "FAIL",
+            {"h1": bool(w1), "used": {k: used.get(k) for k in ("state", "role", "source", "sub", "expires_in_s")}, "pod_architekt": {"phase": pod_b.get("phase"), "delegation": {k: deleg_b.get(k) for k in ("sub", "azp", "exp_in_s", "error")}}, "org_agents": ag, "gui": gui2})
+    rep.add("M1d", "M1: čas", "INFO", {"wall_s": round(time.time() - t_m, 1)})
+
+
 def e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep, pg_tls, since_iso):
     """E11 (P3-6): TLS zbytku datové vrstvy uvnitř clusteru – ClickHouse (https 8443, native 9440) a OTEL Collector (OTLP gRPC/HTTP s TLS) z interní CA,
     plaintext porty pryč; Postgres Flexible Server s sslmode=verify-full (host = FQDN, rooty Azure v bundle platform-ca) u všech klientů."""
@@ -2071,7 +2161,7 @@ def e2_checks(a, rep, http, led, dsn, kj, KC, MEM, APP, zid, t_run):
     rep.add("E2c", "Registr agentů nese principala: org.agents.on_behalf_of = sub schvalovatele u každého běhu role zakázky (z identity.delegation podu, zapisuje workflow), nástroj Governance MCP `agents` ho vrací", "PASS" if ag and all(r_[1] == adam_sub for r_ in ag) and gj and all(x.get("on_behalf_of") == adam_sub for x in gj) else "FAIL", {"org_agents": [list(r_) for r_ in ag], "gov_tool": [(x.get("role_id"), x.get("on_behalf_of")) for x in gj], "http": g.status_code})
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -2378,6 +2468,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E4: per-request ledger → ClickHouse
         if e6: e6_flow(a, rep, http, led, APP, kj, zid[:-2])   # P3-6 E6: verzování workflow (restart podu aplikace – až po všech tocích s pody rolí)
         if e13: e13_flow(a, rep, http, led, APP, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E13: STALLED (chybějící verze) v GUI a obnova – po E6 (stejné podmínky: bez podů rolí)
+        if m1: m1_flow(a, rep, http, led, APP, KC, dsn, zid[:-2], LOGS / "gui-shots")   # P4-1 M1: obnova mandátu z GUI (pody account + architekt)
         if e11: e11b_check(a, rep, ca_file, t_bao0)   # P3-6 E11b: spany gateway i paměti přes TLS – až po LLM provozu rolí
         rep.add("P21b2", "Klíče gateway role × zakázka vydala aplikace při prvním běhu role (ne harness): hash + rozpočty z rolegen šablony do ConfigMapy agentgateway-keys (sidecar config-merge → hot reload), hodnoty do Secretu zakazka-keys-<id>; rozpočty Block 24h == knowledge/organization/roles/*.yaml; gateway klíč přijala (sonda 401 → 200)", "PASS" if issued and issued.get("probe_status") == 200 and set(ROLE_CLIENTS) <= set(issued.get("roles", [])) and len(mine) >= 4 and all(got_block.get(r) == want_block.get(r) for r in ROLE_CLIENTS) and (sec_keys or issued.get("keys_source") == "openbao") else "FAIL", {"issued": {k: issued.get(k) for k in ("roles", "propagation_s", "probe_status", "total_s", "hashes")} if issued else None, "keys_in_configmap_for_zakazka": len(mine), "budgets_block_24h": {"cluster": got_block, "roles_yaml": want_block}, "secret": sec_keys or None})
 
@@ -2586,7 +2677,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -2597,7 +2688,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -2612,7 +2703,8 @@ def main():
      "p3-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True),
      "p3-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True),
      "p3-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True),
-     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
+     "p3-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True),
+     "p4-1": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True)}[a.step](a, rep, env)   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
     n = {s: sum(1 for c in rep.checks if c["status"] == s) for s in ("PASS", "FAIL", "INFO", "SKIP")}

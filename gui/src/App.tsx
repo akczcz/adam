@@ -2,7 +2,7 @@
 // předání artefaktů jako zprávy s disclosure čl. 50, aktivity, stav), HITL = interrupt → formulář s povinným důvodem → resume, stop.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EventType } from "@ag-ui/core";
-import { hasToken, klasQuestions, listThreads, login, me, runAgent, setToken, threadState, type KlasQuestion, type ThreadState, type User } from "./api";
+import { hasToken, klasQuestions, listThreads, login, me, needsKeepalive, renewMandat, runAgent, setToken, threadState, type KlasQuestion, type ThreadState, type User } from "./api";
 import { AuditPage, FinopsPage, FirmaPage, GovernancePage, Nav, RegistrPage } from "./Firma";
 
 type Ev = Record<string, any>;
@@ -51,7 +51,7 @@ export function App() {
       <main>
         {err && <div className="card err">{err}</div>}
         {!m && <Nav page={page} />}
-        {m ? <Thread id={decodeURIComponent(m[1])} user={user} /> : page === "firma" ? <FirmaPage user={user} /> : page === "registr" ? <RegistrPage /> : page === "finops" ? <FinopsPage /> : page === "governance" ? <GovernancePage /> : page === "audit" ? <AuditPage /> : <Threads />}
+        {m ? <Thread id={decodeURIComponent(m[1])} user={user} /> : page === "firma" ? <FirmaPage user={user} /> : page === "registr" ? <RegistrPage /> : page === "finops" ? <FinopsPage /> : page === "governance" ? <GovernancePage /> : page === "audit" ? <AuditPage /> : <Threads user={user} />}
       </main>
     </>
   );
@@ -75,12 +75,17 @@ function Login({ onLogin }: { onLogin: (u: User) => void }) {
   );
 }
 
-function Threads() {
+// P4-1: keepalive mandátu – živý mandát přihlášeného držitele s < 10 min do konce se prodlouží jeho aktuálním tokenem (auto); vypršelý ne (to je rozhodnutí člověka)
+async function keepalive(ts: ThreadState[], user: User) {
+  for (const t of ts) if (needsKeepalive(t, user)) { try { await renewMandat(t.id, true); } catch { /* příští kolo */ } }
+}
+
+function Threads({ user }: { user: User }) {
   const [list, setList] = useState<ThreadState[] | null>(null); const [e, setE] = useState<string | null>(null);
   const [nid, setNid] = useState(() => `Z-${new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "")}`); const [pop, setPop] = useState(""); const [bud, setBud] = useState("");
   const [qs, setQs] = useState<KlasQuestion[]>([]); const [kl, setKl] = useState<Record<string, boolean>>({});
-  const load = () => listThreads().then((r) => { setList(r.threads); setE(null); }).catch((x) => setE(String(x.message ?? x)));
-  useEffect(() => { load(); klasQuestions().then(setQs).catch(() => setQs([])); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
+  const load = () => listThreads().then((r) => { setList(r.threads); setE(null); return r.threads; }).catch((x) => { setE(String(x.message ?? x)); return [] as ThreadState[]; });
+  useEffect(() => { load(); klasQuestions().then(setQs).catch(() => setQs([])); const t = setInterval(load, 5000); const k = setInterval(() => load().then((ts) => keepalive(ts, user)), 30000); return () => { clearInterval(t); clearInterval(k); }; }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
       <div className="card">
@@ -102,7 +107,7 @@ function Threads() {
         {e && <p className="err">{e}</p>}
         {list === null ? <p className="muted">načítám…</p> : list.length === 0 ? <p className="muted" data-testid="threads-empty">zatím žádná zakázka tohoto tenanta</p> : (
           <table data-testid="threads-table">
-            <thead><tr><th>ID</th><th>Tenant</th><th>Stav</th><th>Bod</th><th>Role</th><th>Rozpočet</th><th>Útrata</th><th>Založeno</th></tr></thead>
+            <thead><tr><th>ID</th><th>Tenant</th><th>Stav</th><th>Bod</th><th>Role</th><th>Mandát</th><th>Rozpočet</th><th>Útrata</th><th>Založeno</th></tr></thead>
             <tbody>{list.map((t) => (
               <tr key={t.id} data-testid={`thread-row-${t.id}`} data-tenant={t.tenant}>
                 <td><a href={`#/t/${encodeURIComponent(t.id)}`}>{t.id}</a></td>
@@ -110,6 +115,7 @@ function Threads() {
                 <td><span className={`badge ${t.status === "RUNNING" ? (t.bod ? "waiting" : "running") : t.status === "COMPLETED" ? "done" : t.status === "SUSPENDED" ? "error" : t.status === "STALLED" ? "stalled" : ""}`} data-testid="thread-stav" data-status={t.status ?? ""}>{t.stav ?? t.status ?? "?"}</span></td>
                 <td>{t.bod ?? ""}</td>
                 <td>{Object.entries(t.roles).map(([r, s]) => <span key={r} className={`badge ${s}`} style={{ marginRight: 4 }}>{r}</span>)}</td>
+                <td>{t.status === "RUNNING" && <span className={`badge ${!t.mandat || t.mandat.expired ? "error" : "done"}`} data-testid="thread-mandat" data-expired={String(!t.mandat || t.mandat.expired)}>{!t.mandat ? "bez mandátu" : t.mandat.expired ? "vypršel" : `${t.mandat.name ?? t.mandat.sub} · ${Math.max(0, Math.round((t.mandat.expires_in_s ?? 0) / 60))} min`}</span>}</td>
                 <td>{t.budget_usd ?? ""}</td><td>{t.spent_usd != null ? t.spent_usd.toFixed(4) : ""}</td>
                 <td className="muted">{t.started ? new Date(t.started * 1000).toLocaleString("cs-CZ") : ""}</td>
               </tr>))}</tbody>
@@ -191,6 +197,15 @@ function Thread({ id, user }: { id: string; user: User }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runStatus, id]);
 
+  // P4-1: mandát – držitel s otevřeným detailem prodlužuje živý mandát sám (každých 30 s kontrola); vypršelý obnoví jen kliknutím
+  const [mandatMsg, setMandatMsg] = useState<string | null>(null);
+  useEffect(() => {
+    const t = setInterval(() => threadState(id).then((s) => { setState((prev) => (runStatus === "running" ? prev : s)); if (needsKeepalive(s, user)) renewMandat(id, true).then((r) => setState(r.state)).catch(() => undefined); }).catch(() => undefined), 30000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, runStatus]);
+  const renew = () => renewMandat(id, false).then((r) => { setState(r.state); setMandatMsg(`mandát obnoven: ${r.mandat.name ?? r.mandat.sub}`); }).catch((x) => setMandatMsg(`obnova mandátu selhala: ${String(x.message ?? x)}`));
+
   const decide = (decision: "approve" | "reject") => {
     if (!interrupt) return;
     const extra = interrupt.metadata?.bod === "rozpocet" && decision === "approve" && budget.trim() ? { budget_usd: Number(budget) } : {};
@@ -249,7 +264,18 @@ function Thread({ id, user }: { id: string; user: User }) {
             <span>rozpočet <code data-testid="state-budget">{state.budget_usd ?? "?"}</code> USD</span>
             <span>útrata <code data-testid="state-spent">{state.spent_usd != null ? state.spent_usd.toFixed(4) : "-"}</code> USD</span>
             {state.wf_version && <span className="muted">orchestrátor <code data-testid="state-wf-version">{state.wf_version}</code></span>}
+            {state.status === "RUNNING" && <span>mandát <b data-testid="state-mandat" data-expired={String(!state.mandat || state.mandat.expired)} data-sub={state.mandat?.sub ?? ""} data-source={state.mandat?.source ?? ""} data-expires-in={String(state.mandat?.expires_in_s ?? "")} className={`badge ${!state.mandat || state.mandat.expired ? "error" : "done"}`}>{!state.mandat ? "žádný" : state.mandat.expired ? `vypršel (${state.mandat.name ?? state.mandat.sub})` : `${state.mandat.name ?? state.mandat.sub} · ${Math.max(0, Math.round((state.mandat.expires_in_s ?? 0) / 60))} min`}</b></span>}
             <span className="muted">tenant {state.tenant}</span>
+          </div>)}
+        {state?.status === "RUNNING" && user.tenant !== "platform" && (
+          <div className={`card ${!state.mandat || state.mandat.expired ? "interrupt" : ""}`} style={{ marginTop: 10 }} data-testid="mandat-card" data-expired={String(!state.mandat || state.mandat.expired)}>
+            {!state.mandat || state.mandat.expired
+              ? <><b>Role bez mandátu</b> – {state.mandat ? <>mandát <b>{state.mandat.name ?? state.mandat.sub}</b> vypršel</> : <>zakázka nemá mandát člověka</>}: další role budou jednat bez doloženého „jménem“ (paměť zapíše <code>on_behalf_of null</code>). Obnova = váš aktuální token se stane mandátem pro další role; nic se nezastavuje.</>
+              : <span className="muted">Mandát: další role jednají jménem <b>{state.mandat.name ?? state.mandat.sub}</b> (zdroj {state.mandat.source}{state.mandat.auto ? ", keepalive" : ""}), platí ještě {Math.max(0, Math.round((state.mandat.expires_in_s ?? 0) / 60))} min; dokud má držitel GUI otevřené, prodlužuje se sám.</span>}
+            <div className="row" style={{ marginTop: 6 }}>
+              <button className={!state.mandat || state.mandat.expired ? "primary" : ""} onClick={renew} data-testid="mandat-renew">Obnovit mandát</button>
+              {mandatMsg && <span className="muted" data-testid="mandat-msg">{mandatMsg}</span>}
+            </div>
           </div>)}
         {state?.stalled && (
           <div className="card interrupt" style={{ marginTop: 10 }} data-testid="stalled-notice" data-wf-version={state.stalled.wf_version ?? ""}>
@@ -258,7 +284,7 @@ function Thread({ id, user }: { id: string; user: User }) {
         <div className="roles" style={{ marginTop: 10 }} data-testid="subagents">
           {subs.map((s) => (
             <div className="role" key={s.id} data-testid={`subagent-${s.name}`} data-status={s.status}>
-              <div><b>{s.name}</b> <span className={`badge ${s.status}`}>{s.status}</span></div>
+              <div><b>{s.name}</b> <span className={`badge ${s.status}`}>{s.status}</span>{state?.roles_mandat?.[s.name] && <span className="muted" data-testid={`subagent-mandat-${s.name}`} data-sub={state.roles_mandat[s.name].sub ?? ""}> {state.roles_mandat[s.name].sub ? `jménem ${state.roles_mandat[s.name].name ?? state.roles_mandat[s.name].sub}` : "bez mandátu"}</span>}</div>
               {s.result && <div className="muted">cena {s.result.cost_usd ?? "?"} USD · nástroje {s.result.tool_uses ?? "?"} · {s.result.via ?? ""}</div>}
               {s.message && <div className="err">{s.message}</div>}
             </div>))}

@@ -171,10 +171,17 @@ def state_of(zid, entries):
     out = st.get("output") or {}
     kl = next((e for e in reversed(entries) if e.get("kind") == "KLASIFIKACE"), {}); sla = [e for e in entries if e.get("kind") == "SLA_BREACH"]
     cap = next((e for e in reversed(entries) if e.get("kind") == "BUDGET_CAP"), None)   # P3-6 E3: navýšený strop
+    mand = next((e for e in reversed(entries) if e.get("kind") == "MANDAT" and e.get("state") in ("set", "renewed", "expired", "expiring")), None)   # P4-1: poslední známý mandát (subject role)
+    now = time.time(); roles_mandat = {}
+    for e in entries:
+        if e.get("kind") == "MANDAT" and e.get("state") in ("used", "missing") and e.get("role"): roles_mandat[e["role"]] = {"sub": e.get("sub") if e["state"] == "used" else None, "name": _NAMES.get(e.get("sub") or "", e.get("sub")) if e["state"] == "used" else None, "source": e.get("source")}
+    mandat = ({"sub": mand.get("sub"), "name": _NAMES.get(mand.get("sub") or "", mand.get("sub")), "exp": mand.get("exp"), "by": mand.get("by"), "source": mand.get("source"), "auto": mand.get("auto"),
+               "expired": not mand.get("exp") or float(mand["exp"]) <= now + 20, "expires_in_s": round(float(mand["exp"]) - now) if mand.get("exp") else None} if mand else None)
     stalled = st.get("status") == "STALLED"   # P3-6 E13: verze orchestrátoru instance není v běžící aplikaci (Dapr VERSION_NAME_MISMATCH) – nic se neztratilo, čeká na nasazení
     return {"id": zid, "tenant": start.get("tenant") or os.environ.get("P0_TENANT", "acme"), "status": st.get("status"), "stav": "zaseknuto – chybí verze orchestrátoru" if stalled else (out.get("stav") or ("čeká na " + w["bod"] if w else ("běží" if st.get("status") == "RUNNING" else st.get("status")))),
             "bod": w.get("bod") if w else out.get("bod"), "budget_usd": (cap or start).get("budget_usd"), "spent_usd": bud.get("spent_usd"), "roles": roles, "started": start.get("ts"), "poptavka": start.get("poptavka"),
             "profile": kl.get("profile"), "sensitivity": kl.get("sensitivity"), "sla_breaches": [e.get("bod") for e in sla], "wf_version": start.get("wf_version"),
+            "mandat": mandat, "roles_mandat": roles_mandat,
             "stalled": ({"wf_version": start.get("wf_version"), "hint": f"instance běží na verzi orchestrátoru {start.get('wf_version') or '?'}, kterou nasazená aplikace neregistruje – nic se neztratilo; pokračuje po nasazení obrazu se snímkem wf_versions/zakazka_{start.get('wf_version') or '?'}.py"} if stalled else None)}
 
 
@@ -263,6 +270,7 @@ def events_for(zid, entries, start_idx=0, subagents=None):
         elif k == "SLA_BREACH": act(i, "sla", {"state": "breach", "bod": e.get("bod"), "sla_s": e.get("sla_s"), "escalated_to": e.get("escalated_to"), "registry": e.get("registry"), "result": e.get("result")})   # P3-4: SLA eskalace, zakázka čeká dál
         elif k in ("CHANNEL_SENT", "CHANNEL_DRYRUN", "CHANNEL_ERROR"): act(i, "channel", {"state": k[8:].lower(), "channel": e.get("channel"), "to": e.get("to"), "role": e.get("role"), "http": e.get("http"), "generated_by": e.get("generated_by"), "disclosure": e.get("disclosure"), "hash": e.get("hash"), "error": e.get("error")})   # P3-4: N3 čl. 50 naostro
         elif k == "REGISTRY_ZAKAZKA": act(i, "registry", {"status": e.get("status"), "spent_usd": e.get("spent_usd"), "written": e.get("written")})
+        elif k == "MANDAT": act(i, "mandat", {"state": e.get("state"), "sub": e.get("sub"), "by": e.get("by"), "source": e.get("source"), "auto": e.get("auto"), "role": e.get("role"), "exp": e.get("exp"), "reason": e.get("reason")}, subagents.get(role) if role else None)   # P4-1
     return ev
 
 
@@ -385,6 +393,19 @@ async def run(req: Request):
             await asyncio.sleep(1.0)
 
     return StreamingResponse(stream(), media_type=enc.get_content_type(), headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/threads/{zid}/mandat")
+async def thread_mandat(zid: str, req: Request):
+    """P4-1: obnova mandátu – přihlášený člověk tenanta zakázky dá svůj aktuální access token jako subject pro další role (keepalive GUI: auto=true).
+    Tenant platform mandát nedává (průřez, nejedná jménem zákazníka)."""
+    u = user_from_request(req)
+    if not thread_of_tenant(zid, u): raise HTTPException(404, "thread neexistuje")
+    if u["tenant"] == PLATFORM_TENANT: raise HTTPException(403, "mandát dává člověk tenanta zakázky, ne platform")
+    try: b = await req.json()
+    except Exception: b = {}
+    out = await asyncio.to_thread(CTX["mandat"], zid, u, bool((b or {}).get("auto")))
+    return {"mandat": out, "state": state_of(zid, thread_entries(zid))}
 
 
 @router.get("/threads/{zid}")

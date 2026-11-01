@@ -213,7 +213,7 @@ def agent_run(role, z, prompt, tool_names):
     if os.environ.get("P0_ROLE_RUNTIME") == "pod":
         import role_pod
         root = f"/tmp/p0-o2/{z['id']}"; os.makedirs(f"{root}/work", exist_ok=True); os.makedirs(f"{root}/artifacts", exist_ok=True)
-        return role_pod.pod_run(role, z, prompt, tool_names, token=role_token(role), key=role_key(role, z["id"], z.get("tenant"), cap_usd=z.get("budget_usd")), ledger=ledger, root_dir=root, subject=z.get("subject"))
+        return role_pod.pod_run(role, z, prompt, tool_names, token=role_token(role), key=role_key(role, z["id"], z.get("tenant"), cap_usd=z.get("budget_usd")), ledger=ledger, root_dir=root, subject=subject_for_role(z, role))   # P4-1: poslední známý mandát, vypršelý → bez mandátu
     return agent_run_local(role, z, prompt, tool_names)
 
 
@@ -719,6 +719,59 @@ def subject_of(u):
     return {"sub": u["sub"], "exp": u.get("exp"), "token": u["raw"]}
 
 
+# --- P4-1 mandát: poslední známý subject (access token člověka) per zakázka MIMO stav workflow – založení, každé schválení, obnova z GUI ------
+# Stav workflow nese subject jen z posledního HITL (replay); role bez HITL před sebou by ho dostala vypršelý (30 min) a jednala bez mandátu.
+# Aplikace proto před startem role sáhne po posledním subjektu, který jí dal člověk (ts, ne exp – obnova i simulace vypršení přepíší starší).
+# Soubor na PVC aplikace (0600; tokeny krátkodobé, stejné tokeny leží i v historii workflow v Postgresu). V ledgeru jen sub/exp/by, nikdy token.
+SUBJECTS_FILE = os.environ.get("P0_SUBJECTS_FILE", "/tmp/p0-o2/.subjects.json")
+_SUBJECTS: dict = {}
+
+
+def _subjects_load():
+    try:
+        with open(SUBJECTS_FILE) as f: _SUBJECTS.update({k: v for k, v in json.load(f).items() if isinstance(v, dict)})
+    except Exception: pass
+
+
+def _subjects_save():
+    os.makedirs(os.path.dirname(SUBJECTS_FILE), exist_ok=True)
+    now = time.time(); keep = {k: v for k, v in _SUBJECTS.items() if (v.get("ts") or 0) > now - 30 * 86400}
+    tmp = SUBJECTS_FILE + ".tmp"; fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f: json.dump(keep, f)
+    os.replace(tmp, SUBJECTS_FILE)
+
+
+_subjects_load()
+
+
+def subject_set(zid, subject, *, by, source, channel="agui", auto=False, state="set"):
+    """Zapíše poslední známý mandát zakázky (source: create | hitl | renew | expire) a řádek ledgeru MANDAT (bez tokenu)."""
+    _SUBJECTS[zid] = {"sub": subject.get("sub"), "exp": subject.get("exp"), "token": subject.get("token"), "by": by, "source": source, "auto": bool(auto), "ts": time.time()}
+    _subjects_save()
+    ledger("MANDAT", zakazka=zid, state=state, sub=subject.get("sub"), exp=subject.get("exp"), by=by, source=source, auto=bool(auto), channel=channel)
+    return {k: v for k, v in _SUBJECTS[zid].items() if k != "token"}
+
+
+def subject_for_role(z, role):
+    """Subject pro exchange v podu role: poslední známý mandát aplikace, jinak subject ze stavu workflow (poslední HITL). Vypršelý (≤ 20 s do exp)
+    nebo bez tokenu → role běží bez mandátu (paměť zapíše on_behalf_of null) a ledger MANDAT state=missing to říká; jinak state=used se zdrojem."""
+    side = _SUBJECTS.get(z["id"]); cand = side or z.get("subject") or None; src = (side or {}).get("source") if side else ("hitl" if z.get("subject") else None)
+    if cand and cand.get("token") and float(cand.get("exp") or 0) > time.time() + 20:
+        ledger("MANDAT", zakazka=z["id"], state="used", role=role, sub=cand.get("sub"), exp=cand.get("exp"), source=src, expires_in_s=round(float(cand["exp"]) - time.time()))
+        return cand
+    ledger("MANDAT", zakazka=z["id"], state="missing", role=role, sub=(cand or {}).get("sub"), exp=(cand or {}).get("exp"), source=src, reason="vypršel" if cand else "žádný subject (zakázka bez člověka)")
+    return None
+
+
+def renew_mandat(zid, u, *, auto=False):
+    """P4-1: obnova mandátu z GUI – nový access token přihlášeného člověka tenanta zakázky; auto = keepalive GUI (držitel má GUI otevřené), jinak kliknutí."""
+    st = _wf_state(zid) or {}
+    if st.get("status") in ("COMPLETED", "FAILED", "TERMINATED"): raise HTTPException(409, f"zakázka je ukončená ({st.get('status')})")
+    subj = subject_of(u)
+    if not subj: raise HTTPException(400, "bez tokenu člověka")
+    return {**subject_set(zid, subj, by=u["name"], source="renew", channel="agui", auto=auto, state="renewed"), "expires_in_s": round(float(subj.get("exp") or 0) - time.time())}
+
+
 def create_zakazka(b: dict, *, by=None, channel="api", by_sub=None, subject=None):
     """Založení zakázky (REST i AG-UI): tenant z poptávky (interní API) nebo z tokenu člověka (AG-UI), jinak P0_TENANT."""
     tenant = b.get("tenant") or os.environ.get("P0_TENANT", "acme")
@@ -730,6 +783,7 @@ def create_zakazka(b: dict, *, by=None, channel="api", by_sub=None, subject=None
     client().schedule_new_workflow(wf_versions.NAME, input=z, instance_id=z["id"])   # P3-6 E6: podle jména; verzi (latest) vybere runtime při prvním běhu a zapíše do historie instance
     ledger("ZAKAZKA_START", zakazka=z["id"], budget_usd=z["budget_usd"], tenant=tenant, by=by, channel=channel, poptavka=str(z["poptavka"])[:500], klasifikace=z["klasifikace"], sla=sla or None, wf_version=wf_versions.latest(rt))
     finops.registry_upsert(z["id"], tenant=tenant, budget_usd=z["budget_usd"], spent=None, status="Running", keys_source=None, key_hashes=None)
+    if subject: subject_set(z["id"], subject, by=by, source="create", channel=channel)   # P4-1: zadavatel = první mandát
     return z
 
 
@@ -752,6 +806,7 @@ def approve_zakazka(zid, bod, *, by, artifact_hash, reason=None, channel="api", 
     token = sign(payload)
     client().raise_workflow_event(zid, f"hitl:{bod}", data={"token": token, "by": by, **({"budget_usd": float(budget_usd)} if budget_usd else {}), **({"subject": subject} if subject else {})})   # P3-6 E2: subject = token schvalovatele pro exchange další role
     ledger("APPROVAL_RAISED", zakazka=zid, bod=bod, by=by, artifact_hash=artifact_hash, reason=reason, channel=channel, budget_usd=budget_usd)
+    if subject: subject_set(zid, subject, by=by, source="hitl", channel=channel)   # P4-1: schvalovatel = nový mandát (stejný token jde i do workflow eventu)
     if reason:
         limits = {"budget_usd_old": current_budget(zid), "budget_usd_new": float(budget_usd)} if budget_usd else None
         ok = finops.approval_insert(zid, tenant=tenant or os.environ.get("P0_TENANT", "acme"), bod=bod, action=action, artifact_sha=artifact_hash, approver=approver_sub or by, decision="approve", reason=reason, expires_at=payload["exp"], signature=token.split(".", 1)[-1][:120], channel=channel, limits_shown=limits)
@@ -913,6 +968,17 @@ async def wf_latest_set(req: Request):
     return r
 
 
+@app.post("/_mandat/expire")
+async def mandat_expire(req: Request):
+    """P4-1 (jen měření): simulace plynutí času – poslední mandát zakázky dostane exp = now + exp_in_s (výchozí −1 = vypršel, token zahozen; kladné =
+    „brzy vyprší“ pro keepalive GUI, token zůstává). V provozu mandát vyprší sám (lifespan tokenu člověka)."""
+    b = await req.json(); zid = b.get("zakazka") or ""
+    if not any(e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid for e in _ledger()): raise HTTPException(404, "zakázka neexistuje")
+    cur = _SUBJECTS.get(zid) or {}; exp_in = float(b.get("exp_in_s", -1)); exp = time.time() + exp_in
+    out = subject_set(zid, {"sub": cur.get("sub"), "exp": exp, "token": cur.get("token") if exp_in > 0 else None}, by=b.get("by", "harness"), source="expire", channel="api", state="expired" if exp_in <= 0 else "expiring")
+    return {**out, "expires_in_s": round(exp_in), "reason": b.get("reason")}
+
+
 @app.post("/_wf/unregister")
 async def wf_unregister(req: Request):
     """P3-6 E13: odebrání ne-latest verze orchestrátoru za běhu (simulace obrazu bez snímku) – instance této verze při dalším work itemu STALLED.
@@ -949,6 +1015,14 @@ async def classify(zid: str, req: Request):
     b = await req.json()  # {answers: {K1..K6: bool}, by, reason?}
     a = classify_zakazka(zid, by=b.get("by", "api"), answers=b.get("answers") or {}, reason=b.get("reason"), channel="api")
     return {"ok": True, "answers": a}
+
+
+@app.post("/zakazky/{zid}/dialog")
+async def dialog(zid: str, req: Request):
+    """P4-1 (harness): odpověď zadavatele na otázky Account interním API – stejný event jako AG-UI resume dialogu, bez subjektu (žádný nový mandát)."""
+    b = await req.json()  # {by, answer}
+    answer_dialog(zid, by=b.get("by", "api"), answer=b.get("answer") or "", channel="api")
+    return {"ok": True}
 
 
 @app.post("/zakazky/{zid}/stop")
@@ -1054,6 +1128,7 @@ agui.CTX.update({
     "reject": lambda zid, bod, hh, u, reason: reject_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
     "stop": lambda zid, u, reason: stop_zakazka(zid, by=u["name"], reason=reason, channel="agui"),
     "answer": lambda zid, u, answer: answer_dialog(zid, by=u["name"], answer=answer),
+    "mandat": lambda zid, u, auto: renew_mandat(zid, u, auto=auto),   # P4-1: obnova mandátu z GUI
     "stop_tenant": lambda tenant, u, reason: stop_tenant(tenant, by=u["name"], reason=reason),
     "resume_tenant": lambda tenant, u, reason: resume_tenant(tenant, by=u["name"], reason=reason),
     "autonomy": lambda role, tenant, level, u, reason: finops.autonomy_set(role, tenant, level, by=u["sub"], reason=reason),

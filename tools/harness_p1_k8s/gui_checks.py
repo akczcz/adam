@@ -266,6 +266,30 @@ class Gui:
         return {**w, "notice": n.inner_text()[:300] if n.count() else None, "notice_wf_version": n.get_attribute("data-wf-version") if n.count() else None,
                 "state_wf_version": self.t("state-wf-version").inner_text().strip() if self.t("state-wf-version").count() else None, **{k: v for k, v in self.snapshot().items() if k in ("state", "error", "interrupt")}}
 
+    # --- P4-1 mandát (subject pro exchange rolí) -----------------------------------------------------------------------------------
+    def mandat_view(self):
+        """Mandát v detailu: badge state-mandat (data-expired/sub/source/expires-in), karta mandat-card, per role „jménem“ (subagent-mandat-<role>)."""
+        m, c = self.t("state-mandat"), self.t("mandat-card")
+        roles = {x.get_attribute("data-testid")[len("subagent-mandat-"):]: (x.get_attribute("data-sub") or None) for x in self.page.locator("[data-testid^=subagent-mandat-]").all()}
+        ei = m.get_attribute("data-expires-in") if m.count() else None
+        return {"present": m.count() == 1, "expired": (m.get_attribute("data-expired") == "true") if m.count() else None, "sub": (m.get_attribute("data-sub") or None) if m.count() else None,
+                "source": (m.get_attribute("data-source") or None) if m.count() else None, "expires_in_s": int(ei) if ei not in (None, "") else None, "text": m.inner_text().strip() if m.count() else None,
+                "card": c.count() == 1, "card_expired": (c.get_attribute("data-expired") == "true") if c.count() else None, "card_text": c.inner_text()[:200] if c.count() else None, "roles": roles}
+
+    def wait_mandat(self, pred, timeout_s=90):
+        """Čeká, až mandat_view() splní pred (GUI čte stav každých 30 s = keepalive)."""
+        t0 = time.time(); m = {}
+        while time.time() - t0 < timeout_s:
+            m = self.mandat_view()
+            if pred(m): break
+            self.page.wait_for_timeout(2000)
+        return {**m, "waited_s": round(time.time() - t0, 1)}
+
+    def mandat_renew(self):
+        """Kliknutí „Obnovit mandát“ → zpráva mandat-msg."""
+        self.t("mandat-renew").click(); self.t("mandat-msg").wait_for(timeout=20_000); self.shot("mandat-renew")
+        return {"msg": self.t("mandat-msg").inner_text().strip(), **self.mandat_view()}
+
     def wf_versions_card(self, timeout_s=60):
         """Firma (tenant platform): karta verzí orchestrátoru – souhrn (zaseknuté, chybějící verze) a řádky per verze."""
         self.page.goto(self.base + "#/firma"); self.page.wait_for_timeout(500); out = {"rows": {}}
