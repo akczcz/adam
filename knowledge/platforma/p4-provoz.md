@@ -15,7 +15,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-1** Obnova mandátu z GUI | mandát role = access token člověka (30 min) – role bez HITL před sebou jednala bez mandátu (E2 nález 5); Keycloak `act` nepomůže ani po GA | ✅ 2026-11-01 AKS 79/79 + 14 INFO (`measure` run 41297792885, 4 běhy) |
 | **P4-2** Ostrý běh s živým modelem a GitHubem | klíč modelu i PAT jen v Key Vaultu a jen v gateway; zakázka s flagem `live` z GUI; zapojení měřitelné bez tajemství | ✅ kód 2026-11-01, měření AKS 2026-11-02 **82/82 + 15 INFO** (`measure` run 41366091027); ostrý běh `p4-2-live` na vyžádání (ostrá tajemství v Key Vaultu) |
 | **P4-3** Připravenost na ostrý provoz (nálezy P4-2) | gateway bez catch-all mocku (neznámý alias → 404), úklid klíčů gateway i pro pozastavené zakázky + obnova při resume, selhání publikace na GitHub jako rozhodovací bod `publikace` místo FAILED | ✅ 2026-11-02 AKS **84/84 + 17 INFO** (`measure` run 41438707088, 4 běhy) |
-| **P4-4** Vstup do platformy přes Cloudflare Tunnel | GUI a AG-UI dostupné zvenčí přes sidecar `cloudflared` u aplikace (žádná veřejná IP/LB, egress jen :7844); veřejný listener nese jen GUI + AG-UI; měření přes tunel místo `kubectl port-forward`; Ingress jako záloha | 🟡 kód 2026-11-02, měření AKS P44_RESULT (`measure` run P44_ID) |
+| **P4-4** Vstup do platformy přes Cloudflare Tunnel | GUI a AG-UI dostupné zvenčí přes sidecar `cloudflared` u aplikace (žádná veřejná IP/LB, egress jen :7844); veřejný listener nese jen GUI + AG-UI; měření přes tunel místo `kubectl port-forward`; Ingress jako záloha | ✅ 2026-11-02 AKS **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů); quick tunnel pro měření, pojmenovaný tunnel + Access na vyžádání |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -181,12 +181,15 @@ s výchozím `quick`, `ignore_changes`) → ESO → Secret `cloudflare-tunnel` �
 Secretu nebo z logu sidecaru, GUI klient harnessu jde přes tunel (všech 14 toků), N1a = hranice veřejného listeneru (GUI 200, AG-UI bez tokenu 401,
 interní cesty 404, `cf-ray`), N1b = SSE run přes Cloudflare.
 
-Výsledek měření: **P44_RESULT** (`measure` run P44_ID, P44_RUNS). Nálezy (detail v [README harnessu](../../tools/harness_p1_k8s/README.md#p4-4-n1--vstup-přes-cloudflare-tunnel-2026-11-02-aks---step-p4-4--p4-3--n1ab-gui-toky-přes-tunel)):
+Výsledek měření: **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů, 2026-11-02). Nálezy (detail v [README harnessu](../../tools/harness_p1_k8s/README.md#p4-4-n1--vstup-přes-cloudflare-tunnel-2026-11-02-aks---step-p4-4--p4-3--n1ab-gui-toky-přes-tunel)):
 (1) sidecar bez CA certifikátů padal a **pád sidecaru shodil readiness celého podu aplikace** – pomocný kontejner u kritického podu musí selhávat
 měkce (smyčka, žádná readiness proba), jinak je SPOF; (2) quick tunnel dostane **po každém restartu podu nový hostname** – pro měření harness URL
 hledá znovu, pro provoz je nutný pojmenovaný tunnel (stálý hostname ze Secretu); (3) hranice veřejného listeneru drží (interní API přes tunel 404,
 AG-UI bez tokenu 401); (4) čtení Key Vaultu z runneru jednou naráz selhalo a samo se vrátilo – měřicí cesta runner → Azure není deterministická,
-harness teď chyby `az keyvault` loguje; (5) zapomenutá instance Playwrightu po výjimce blokovala další toky – klient si po sobě uklízí.
+harness teď chyby `az keyvault` loguje; (5) zapomenutá instance Playwrightu po výjimce blokovala další toky – klient si po sobě uklízí;
+(6) tunel ukončovaného podu žije po `delete pod` ještě chvíli a odpovídá 200 → URL vždy z nejnovějšího běžícího podu, 5xx od Cloudflare = nová URL;
+rolling restart s pojmenovaným tunelem (až 25 replik `cloudflared`) tento problém nemá. Tři ze sedmi neúspěšných běhů byly chyby v obnově URL
+v GUI klientovi harnessu, ne platformy – cena za quick tunnel bez stálého hostname.
 
 ### Postup pojmenovaného tunelu s Access (až bude Adam chtít stabilní adresu)
 
@@ -214,6 +217,10 @@ harness teď chyby `az keyvault` loguje; (5) zapomenutá instance Playwrightu po
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-02: P4-4 hotovo na AKS (86/86 + 17 INFO, 8 běhů) – vstup do GUI/AG-UI přes Cloudflare Tunnel (sidecar `cloudflared`, veřejný listener
+  jen GUI + AG-UI + /health, žádná veřejná IP ani LB, egress :7844); měření přes tunel místo `kubectl port-forward`; quick tunnel bez účtu pro
+  měření, pojmenovaný tunnel + Access (token a hostname v Key Vaultu) pro stálou adresu. Nálezy: sidecar musí selhávat měkce (CA certifikáty,
+  smyčka), quick tunnel mění hostname s každým restartem podu, tunel ukončovaného podu chvíli přežívá.
 - 2026-11-02: P4-3 hotovo na AKS (84/84 + 17 INFO, 4 běhy) – gateway bez catch-all mocku (neznámý alias → 404), GC klíčů i pro pozastavené zakázky
   (první úklid 203 zakázek / 1015 klíčů) s obnovou klíčů při resume, selhání publikace na GitHub jako rozhodovací bod `publikace` (opakovat / pozastavit)
   místo FAILED; tři ze čtyř běhů padly na tunel port-forward měřicí cesty. Promo video (`tools/promo`, workflow `promo`) natočeno na témže clusteru.

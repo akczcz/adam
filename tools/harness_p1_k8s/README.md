@@ -1048,10 +1048,10 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| N1a | sidecar Ready, veřejná URL nalezena, `/health` přes Cloudflare (`cf-ray`), `/gui/` 200, `/agui/threads` bez tokenu 401, interní cesty (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) 404 | P44_N1A |
-| N1b | přihlášení + seznam threadů + AG-UI run jako SSE (`RUN_STARTED … RUN_FINISHED`) přes Cloudflare, `text/event-stream` | P44_N1B |
+| N1a | sidecar Ready, veřejná URL nalezena, `/health` přes Cloudflare (`cf-ray`), `/gui/` 200, `/agui/threads` bez tokenu 401, interní cesty (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) 404 | ✅ quick tunnel z logu sidecaru za 2,5 s (`*.trycloudflare.com`, `cf-ray` …-LAX, `server: cloudflare`), sidecar Ready bez restartu (`cloudflared:2026.10.7-1`), `/gui/` 200, `/agui/threads` 401, pět interních cest 404 |
+| N1b | přihlášení + seznam threadů + AG-UI run jako SSE (`RUN_STARTED … RUN_FINISHED`) přes Cloudflare, `text/event-stream` | ✅ login 200, threads 200, run 200 `text/event-stream` s `cf-ray`, události `RUN_STARTED … RUN_FINISHED`; URL během běhu 2× znovu zjištěna po restartech podu (E6, E13 – vždy ~2,8 s) |
 
-Výsledek: **P44_RESULT** (`measure` run P44_ID, P44_RUNS).
+Výsledek: **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů: 1 = CA certifikáty sidecaru, 2 = Key Vault z runneru, 3 = 79/7 nový hostname po restartu, 4 = rekurze v klientovi, 5 = 84/2 tunel ukončovaného podu, 6 = 85/1 relogin přes starý tunel, 7 = 84/2 základ bez `/gui/`, 8 = vše PASS). N1a–b a všechny GUI toky přes tunel procházejí od běhu 5; běhy 5–7 ladily jen obnovu URL v GUI klientovi harnessu.
 
 Nálezy:
 
