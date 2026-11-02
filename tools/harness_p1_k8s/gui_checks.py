@@ -81,11 +81,12 @@ class Gui:
         self.shot("threads")
         return out
 
-    def create_thread(self, zid, poptavka, budget=None, klasifikace=None):
-        """Nová zakázka z GUI: poptávka + dotazník K1–K6 (P3-4; výchozí vše „ne“) → první run s forwardedProps.klasifikace."""
+    def create_thread(self, zid, poptavka, budget=None, klasifikace=None, live=False):
+        """Nová zakázka z GUI: poptávka + dotazník K1–K6 (P3-4; výchozí vše „ne“) → první run s forwardedProps.klasifikace; live (P4-2) = ostrý běh."""
         self.page.goto(self.base + "#/"); self.t("new-id").wait_for(); self.t("new-k-form").wait_for(timeout=30_000)
         self.t("new-id").fill(zid); self.t("new-poptavka").fill(poptavka); self.cur = zid
         if budget is not None: self.t("new-budget").fill(str(budget))
+        if live: self.t("new-live").check()
         for k, v in (klasifikace or {}).items():
             if v: self.t(f"new-k-{k}").check()
         if self.keepalive:
@@ -177,8 +178,13 @@ class Gui:
             self.page.wait_for_timeout(1000)
         return {"waited_s": round(time.time() - t0, 1), "status": "timeout"}
 
-    def decide(self, reason, decision="approve", budget=None):
-        """Tlačítka jsou bez důvodu (≥ 10 znaků) zakázaná – důkaz T6 v GUI; pak klik a čekání na nový run. budget (P3-6 E3): nový strop u bodu rozpocet."""
+    def decide(self, reason, decision="approve", budget=None, _retry=True):
+        """Tlačítka jsou bez důvodu (≥ 10 znaků) zakázaná – důkaz T6 v GUI; pak klik a čekání na nový run. budget (P3-6 E3): nový strop u bodu rozpocet.
+        P4-2 běhy 5–6 (O3): po minutách bez provozu přes port-forward (sonda E5) tunel na AKS umřel → klik = „Failed to fetch“, nový run nepřišel;
+        proto napřed keepalive (obnoví port-forward) a při síťové chybě (ne HTTP kód) jednou znovu otevřít thread a rozhodnout znovu."""
+        if self.keepalive:
+            try: self.keepalive()
+            except Exception: pass
         btn = self.t("approve-submit" if decision == "approve" else "reject-submit")
         if budget is not None: self.t("budget-new").fill(str(budget))
         self.t("approve-reason").fill(""); d0 = btn.is_disabled()
@@ -190,6 +196,13 @@ class Gui:
             self.page.wait_for_function(f"document.querySelector('[data-testid=run-id]') && document.querySelector('[data-testid=run-id]').textContent !== {json.dumps(rid0)}", timeout=60_000)
         except Exception as e:
             err = self.t("run-error").inner_text() if self.t("run-error").count() else None; self.shot("decide-failed")
+            if _retry and self.cur and err and not re.match(r"^\d{3}", err.strip()):   # síťový výpadek (ne odpověď serveru) → obnovit tunel a pohled, rozhodnout znovu
+                self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": err[:120], "where": "decide"})
+                if self.keepalive:
+                    try: self.keepalive()
+                    except Exception: pass
+                self.open_thread(self.cur); self.t("approve-submit" if decision == "approve" else "reject-submit").wait_for(timeout=60_000)
+                return {**self.decide(reason, decision, budget, _retry=False), "retried_after": err[:120]}
             raise AssertionError(f"rozhodnutí {decision} nespustilo nový run (run-error: {err!r}, status {self.t('run-status').inner_text() if self.t('run-status').count() else '?'})") from e
         return {"disabled_empty": d0, "disabled_short": d1, "disabled_with_reason": d2, "new_run": self.t("run-id").inner_text() != rid0, "error": self.t("run-error").inner_text() if self.t("run-error").count() else None}
 
@@ -295,13 +308,22 @@ class Gui:
                 "source": (m.get_attribute("data-source") or None) if m.count() else None, "expires_in_s": int(ei) if ei not in (None, "") else None, "text": m.inner_text().strip() if m.count() else None,
                 "card": c.count() == 1, "card_expired": (c.get_attribute("data-expired") == "true") if c.count() else None, "card_text": c.inner_text()[:200] if c.count() else None, "roles": roles}
 
+    def _tunnel_tick(self, last, every_s=10):
+        """Pasivní čekání na GUI: tunel port-forward na AKS se v klidu rozpadne (běh 8 p4-2, M1c: GUI po ~20 s přestalo stav číst, fetch z prohlížeče
+        nemá retry) → každých `every_s` keepalive harnessu (GET /health přes helper `http`, který forwardy obnoví); GUI se pak samo chytí."""
+        if self.keepalive and time.time() - last >= every_s:
+            try: self.keepalive()
+            except Exception: pass
+            return time.time()
+        return last
+
     def wait_mandat(self, pred, timeout_s=90):
-        """Čeká, až mandat_view() splní pred (GUI čte stav každých 30 s = keepalive)."""
-        t0 = time.time(); m = {}
+        """Čeká, až mandat_view() splní pred (GUI čte stav každých 30 s = keepalive); mezitím drží tunel (_tunnel_tick)."""
+        t0 = time.time(); m = {}; tk = t0
         while time.time() - t0 < timeout_s:
             m = self.mandat_view()
             if pred(m): break
-            self.page.wait_for_timeout(2000)
+            self.page.wait_for_timeout(2000); tk = self._tunnel_tick(tk)
         return {**m, "waited_s": round(time.time() - t0, 1)}
 
     def mandat_renew(self):
@@ -347,7 +369,7 @@ class Gui:
         try: self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         except Exception:
             if self.keepalive: self.keepalive()
-            self.page.reload(); self.t("tstop-tenant").wait_for(); self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(reason)
+            self.page.reload(); self.t("tstop-tenant").wait_for(timeout=120_000); self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(reason)   # P4-2 běh 4: po reloadu formulář do 30 s nebyl (aplikace dušená dumpem ledgeru) → shodilo celý běh
             seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None; self.t("tresume-submit" if resume else "tstop-submit").click()
             self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")
@@ -365,11 +387,11 @@ class Gui:
         return {"gaps": int(self.t("report-gaps").inner_text()), "rows": out, "export_lines": int(self.t("export-lines").get_attribute("data-lines")), "export_preview": self.t("export-preview").inner_text()[:2000]}
 
     def wait_finished(self, timeout_s=600, want=("finished",)):
-        t0 = time.time()
+        t0 = time.time(); tk = t0
         while time.time() - t0 < timeout_s:
             rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
             if rs in want or rs in ("error",): break
-            self.page.wait_for_timeout(1500)
+            self.page.wait_for_timeout(1500); tk = self._tunnel_tick(tk, 15)
         self.shot("finished")
         return {"waited_s": round(time.time() - t0, 1), **self.snapshot()}
 

@@ -11,7 +11,7 @@ type Act = { id: string; type: string; content: Record<string, any>; sub?: strin
 type Sub = { id: string; name: string; status: "running" | "done" | "error"; result?: any; message?: string };
 type Interrupt = { id: string; reason: string; message?: string; metadata?: Record<string, any>; expiresAt?: string };
 
-const pendingCreate: Record<string, { poptavka: string; budget?: number; klasifikace?: Record<string, boolean> }> = {};
+const pendingCreate: Record<string, { poptavka: string; budget?: number; klasifikace?: Record<string, boolean>; live?: boolean }> = {};   // P4-2: live = ostrý běh
 
 // P3-4: dotazník klasifikační brány K1–K6 (autonomie.md) – checkboxy, výchozí „ne“; profil počítá platforma (deterministicky), ne GUI ani model
 function KlasForm({ qs, val, onChange, prefix }: { qs: KlasQuestion[]; val: Record<string, boolean>; onChange: (v: Record<string, boolean>) => void; prefix: string }) {
@@ -83,7 +83,7 @@ async function keepalive(ts: ThreadState[], user: User) {
 function Threads({ user }: { user: User }) {
   const [list, setList] = useState<ThreadState[] | null>(null); const [e, setE] = useState<string | null>(null);
   const [nid, setNid] = useState(() => `Z-${new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "")}`); const [pop, setPop] = useState(""); const [bud, setBud] = useState("");
-  const [qs, setQs] = useState<KlasQuestion[]>([]); const [kl, setKl] = useState<Record<string, boolean>>({});
+  const [qs, setQs] = useState<KlasQuestion[]>([]); const [kl, setKl] = useState<Record<string, boolean>>({}); const [live, setLive] = useState(false);
   const load = () => listThreads().then((r) => { setList(r.threads); setE(null); return r.threads; }).catch((x) => { setE(String(x.message ?? x)); return [] as ThreadState[]; });
   useEffect(() => { load(); klasQuestions().then(setQs).catch(() => setQs([])); const t = setInterval(load, 5000); const k = setInterval(() => load().then((ts) => keepalive(ts, user)), 30000); return () => { clearInterval(t); clearInterval(k); }; }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   return (
@@ -91,12 +91,16 @@ function Threads({ user }: { user: User }) {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Nová zakázka</h2>
         <p className="muted">První zpráva uživatele = poptávka; Account z ní sepíše Zadání, které schválíte (H1). Thread = zakázka.</p>
-        <form onSubmit={(ev) => { ev.preventDefault(); pendingCreate[nid] = { poptavka: pop, budget: bud ? Number(bud) : undefined, klasifikace: Object.fromEntries(qs.map((q) => [q.id, !!kl[q.id]])) }; window.location.hash = `#/t/${encodeURIComponent(nid)}`; }}>
+        <form onSubmit={(ev) => { ev.preventDefault(); pendingCreate[nid] = { poptavka: pop, budget: bud ? Number(bud) : undefined, klasifikace: Object.fromEntries(qs.map((q) => [q.id, !!kl[q.id]])), live }; window.location.hash = `#/t/${encodeURIComponent(nid)}`; }}>
           <div className="row">
             <div style={{ flex: 1 }}><label>ID zakázky</label><input data-testid="new-id" value={nid} onChange={(x) => setNid(x.target.value)} pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{2,39}" /></div>
             <div style={{ width: 160 }}><label>Rozpočet (USD, 30 d)</label><input data-testid="new-budget" value={bud} onChange={(x) => setBud(x.target.value)} placeholder="výchozí" /></div>
           </div>
           <label>Poptávka</label><textarea data-testid="new-poptavka" value={pop} onChange={(x) => setPop(x.target.value)} />
+          <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <input type="checkbox" data-testid="new-live" checked={live} onChange={(x) => setLive(x.target.checked)} style={{ width: "auto", marginTop: 3 }} />
+            <span><b>Ostrý běh</b> – role jednají s živým modelem (placené volání přes gateway, strop = rozpočet) a artefakty (issue, PR, merge) jdou do skutečného GitHubu repozitáře platformy. Bez zaškrtnutí běží zakázka proti mockům.</span>
+          </label>
           <label>Klasifikační brána P1a (AI Act) – zaškrtněte, co platí; profil rizika určí platforma</label>
           {qs.length ? <KlasForm qs={qs} val={kl} onChange={setKl} prefix="new-k" /> : <p className="muted">otázky brány nedostupné</p>}
           <div style={{ marginTop: 10 }}><button className="primary" type="submit" disabled={!pop.trim() || !nid || !qs.length} data-testid="new-submit">Založit a sledovat</button></div>
@@ -110,7 +114,7 @@ function Threads({ user }: { user: User }) {
             <thead><tr><th>ID</th><th>Tenant</th><th>Stav</th><th>Bod</th><th>Role</th><th>Mandát</th><th>Rozpočet</th><th>Útrata</th><th>Založeno</th></tr></thead>
             <tbody>{list.map((t) => (
               <tr key={t.id} data-testid={`thread-row-${t.id}`} data-tenant={t.tenant}>
-                <td><a href={`#/t/${encodeURIComponent(t.id)}`}>{t.id}</a></td>
+                <td><a href={`#/t/${encodeURIComponent(t.id)}`}>{t.id}</a>{t.live && <span className="badge error" data-testid="thread-live" style={{ marginLeft: 6 }} title="ostrý běh: živý model, skutečný GitHub">ostrý</span>}</td>
                 <td><span className="badge" data-testid="thread-tenant">{t.tenant}</span></td>
                 <td><span className={`badge ${t.status === "RUNNING" ? (t.bod ? "waiting" : "running") : t.status === "COMPLETED" ? "done" : t.status === "SUSPENDED" ? "error" : t.status === "STALLED" ? "stalled" : ""}`} data-testid="thread-stav" data-status={t.status ?? ""}>{t.stav ?? t.status ?? "?"}</span></td>
                 <td>{t.bod ?? ""}</td>
@@ -183,7 +187,7 @@ function Thread({ id, user }: { id: string; user: User }) {
 
   useEffect(() => {
     const c = pendingCreate[id]; delete pendingCreate[id];
-    start(c ? { messages: [{ id: crypto.randomUUID(), role: "user", content: c.poptavka }], forwardedProps: { ...(c.budget ? { budget_usd: c.budget } : {}), ...(c.klasifikace ? { klasifikace: c.klasifikace } : {}) } } : {});
+    start(c ? { messages: [{ id: crypto.randomUUID(), role: "user", content: c.poptavka }], forwardedProps: { ...(c.budget ? { budget_usd: c.budget } : {}), ...(c.klasifikace ? { klasifikace: c.klasifikace } : {}), ...(c.live ? { live: true } : {}) } } : {});
     return () => abort.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -258,6 +262,7 @@ function Thread({ id, user }: { id: string; user: User }) {
           <div className="row" style={{ marginTop: 8 }} data-testid="state">
             <span>stav <b data-testid="state-stav">{state.stav ?? state.status ?? "?"}</b></span>
             <span>workflow <code data-testid="state-status">{state.status ?? "?"}</code></span>
+            {state.live && <span><b className="badge error" data-testid="state-live" title="živý model přes gateway (placeno), artefakty do skutečného GitHubu">ostrý běh</b></span>}
             {state.bod && <span>bod <code data-testid="state-bod">{state.bod}</code></span>}
             {state.profile && <span>profil <b data-testid="state-profile" className={`badge ${state.profile === "standard" ? "done" : "error"}`}>{state.profile}</b></span>}
             {!!state.sla_breaches?.length && <span className="err" data-testid="state-sla">SLA překročeno: {state.sla_breaches.join(", ")}</span>}

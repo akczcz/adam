@@ -9,6 +9,7 @@ export type ThreadState = {
   profile?: string | null; sensitivity?: string | null; sla_breaches?: string[];
   wf_version?: string | null; stalled?: { wf_version: string | null; hint: string } | null;   // P3-6 E13: STALLED = chybí verze orchestrátoru
   mandat?: Mandat | null; roles_mandat?: Record<string, { sub: string | null; name: string | null; source: string | null }>;   // P4-1: mandát (subject pro exchange rolí)
+  live?: boolean;   // P4-2: ostrý běh – živý model a skutečný GitHub (přes gateway), rozhodnuto při založení
 };
 export type Mandat = { sub: string | null; name: string | null; exp: number | null; by: string | null; source: string | null; auto: boolean | null; expired: boolean; expires_in_s: number | null };
 export type KlasQuestion = { id: string; text: string; yes: string };

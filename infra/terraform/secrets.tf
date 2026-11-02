@@ -65,6 +65,18 @@ resource "azurerm_key_vault_secret" "anthropic_api_key" {
   lifecycle { ignore_changes = [value] }
 }
 
+# P4-2: PAT GitHubu pro ostrý běh – vidí ho jen agentgateway (routa github-api vkládá Authorization, aplikace token nemá); výchozí hodnota je
+# neplatná (GitHub → 401 Bad credentials = důkaz zapojení bez tajemství), ostrý PAT nastaví Adam v Key Vaultu a po běhu revokuje
+resource "azurerm_key_vault_secret" "github_token" {
+  name         = "github-token"
+  value        = var.github_token
+  key_vault_id = azurerm_key_vault.kv.id
+  content_type = "GitHub fine-grained PAT (repo platformy: contents, issues, pull_requests) pro ostrý běh – jen v gateway (backendAuth), ne v Gitu ani v aplikaci"
+  tags         = var.tags
+  depends_on   = [time_sleep.kv_rbac]
+  lifecycle { ignore_changes = [value] }
+}
+
 # client secrety service-account klientů rolí v Keycloaku (realm p0 z Gitu – dev hodnoty); rotace = změna v Keycloaku + tady
 resource "azurerm_key_vault_secret" "role_client_secrets" {
   name         = "role-client-secrets"

@@ -336,6 +336,7 @@ patches:
     - {op: add, path: /data/P0_ROLE_GIT_URL, value: https://git.platform.internal/acme/platform.git}
     - {op: add, path: /data/P0_ROLE_MIRROR_URL, value: https://mirror.platform.internal}
     - {op: add, path: /data/P0_ROLE_EGRESS_PROXY, value: http://agentgateway.platform-data.svc:3128}
+    - {op: add, path: /data/P0_GITHUB_PROXY, value: http://agentgateway.platform-data.svc:3128}   # P4-2: ostrý běh – GitHub API aplikace přes CONNECT gateway (github.platform.internal/api → api.github.com, PAT vkládá gateway)
 # P2-6: hodnoty klíčů gateway role × zakázka drží OpenBao (KV v2 secret/zakazky/<id>), ne Kubernetes Secret; aplikace přes auth kubernetes (P2-3)
 - target: {kind: ConfigMap, name: zakazka-env}
   patch: |

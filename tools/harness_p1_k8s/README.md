@@ -929,6 +929,67 @@ Nálezy:
    harness očekával null. Historie „kdo kdy jednal jménem koho“ je v ledgeru (`MANDAT`, `ROLE_POD`), registr = poslední stav.
 6. Časování (běh 3): keepalive obnova z GUI → `MANDAT used` Accountu (2. kolo) za 10 s; schválení H1 → `used` architekta za 0,6 s → pod architekta hotov za 47,5 s.
 
+## P4-2 L1/V1 – ostrý běh s živým modelem a GitHubem (2026-11-01, AKS, `--step p4-2` = p4-1 + **L1a–c**, `--step p4-2-live` = p3-1 + **V1a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-2-ostrý-běh-s-živým-modelem-a-githubem)): ostrý běh = flag `live` zakázky
+  (GUI zaškrtávátko), ne režim clusteru. Živé API i GitHub jen za gateway; klíč modelu a PAT jen v gateway (Key Vault → ESO → Secret/soubor).
+  Alias modelu `live-<model>` → `$LLM_LIVE_URL`; listener `github.platform.internal` → routa `github-api` (`/api` → `api.github.com`, `backendTLS`,
+  `urlRewrite`, `backendAuth` Bearer ze souboru, autorizace jen `/repos/akczcz/adam/`). Aplikace volá GitHub přes CONNECT gateway bez tokenu.
+- **Měřitelné bez tajemství:** `GET /_live/model` (1 token na alias → 401 `authentication_error` z api.anthropic.com s výchozím klíčem, 200 s ostrým)
+  a `GET /_live/github` (→ 401 `Bad credentials` z api.github.com s výchozím PAT, 200 s ostrým; `?path=` mimo repozitář → 403 z gateway).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| L1a | alias `live-<model>` → api.anthropic.com s klíčem z Key Vaultu; s výchozím klíčem 401 authentication_error; mock `*` dál | ✅ alias `live-claude-haiku-4-5` → 401 `authentication_error` („invalid x-api-key“) z api.anthropic.com za 0,7 s (`wired` true); `LLM_LIVE_URL` = api.anthropic.com/v1, `LLM_UPSTREAM_URL` = mock-upstream |
+| L1b | GitHub API přes gateway (CONNECT, cert platformy, přepis na api.github.com, PAT ze Secretu ESO Ready); výchozí PAT → 401; jiný repozitář → 403 | ✅ `GET /repos/akczcz/adam` přes `https://github.platform.internal/api` (CONNECT, cert platformy) → 401 `Bad credentials` z api.github.com (`wired` true); Secret `agentgateway-github-token` z ESO Ready; cizí repozitář 403 z gateway |
+| L1c | zakázka „ostrý běh“ z GUI: flag v ledgeru, badge seznam + detail, pod Account `P0_MODEL=live-<model>`; bez klíče selže viditelně; stop | ✅ zakázka P31-002119-l1: `ZAKAZKA_START.live` true, badge „ostrý“ v seznamu i detailu, AG-UI `live` true; pod Account Succeeded s `P0_MODEL=live-claude-haiku-4-5`, `AGENT_RUN.model` = tentýž alias (ne `live-live-…`), `is_error` true (ResultError, ne rozpočet); publikace issue přes gateway 401 → instance FAILED s příčinou ve `failureDetails` |
+| V1a–c | ostrý běh (jen `p4-2-live`): předletová kontrola 200/200, zakázka z GUI → Dokonceno, issue/PR/merge ověřené z veřejného GitHub API, útrata > 0 pod stropem, mandát rolí | na vyžádání |
+
+Výsledek: **82/82 + 15 INFO** (`measure` run 41366091027, 9 běhů; L1a–c i V1 poprvé všechny PASS v běhu 9 – běhy 1–6 padaly na zapojení routy a výkonu aplikace, běh 7 na dvojím prefixu aliasu, běh 8 na tunelu port-forward v M1c).
+
+Nálezy:
+
+1. **Autorizace routy a lomítko** (běh 1, L1b FAIL): předletová kontrola volá `GET /repos/akczcz/adam` (bez lomítka), pravidlo CEL mělo jen
+   `startsWith(".../adam/")` → gateway odmítla 403 `authorization failed` (stejně jako cizí repozitář – PEP funguje). Pravidlo povoluje i přesnou
+   cestu repozitáře; zda autorizace vidí cestu před, nebo po přepisu prefixu `/api`, zůstává neověřeno (pravidlo počítá s oběma).
+2. **Ledger přes port-forward** (běh 1 pád `httpx.ReadTimeout`, běh 2 tiše): `GET /_debug/ledger` vrací celý JSONL (stovky zakázek) a přes tunel
+   trvá > 20 s; v běhu 2 proto harness pod Account „neviděl“ (čekání 1200 s naprázdno), ač běžel. Endpoint má filtr `?zakazka=` a L1/V1 ho používají.
+3. **Publikace bez ostrého PAT = FAILED bez eskalace** (běh 2, L1c): role Account na živém aliasu bez klíče selže (401 z api.anthropic.com), workflow
+   pokračuje s prázdným artefaktem (nález P4-1) k `publish_issue` (issue = nosič H1) → skutečný GitHub odpoví 401 → aktivita selže a instance končí
+   `FAILED` s příčinou v Dapr `failureDetails` (`GitHub POST /repos/akczcz/adam/issues → 401 Bad credentials`). Viditelné (E6 `GET /zakazky/<id>.failure`,
+   GUI), ale bez retry a bez HITL – pro ostrý provoz kandidát: selhání publikace jako interrupt „publikace selhala“ (opakovat/zrušit) místo FAILED.
+4. **SAN certifikátu** (běh 2, E1a FAIL): cert-manager po přidání `github.platform.internal` vydal nový leaf sám (Certificate Ready, 3 SAN); E1a
+   očekávalo jen git/mirror – očekávání doplněno.
+5. **Badge „ostrý běh“ v detailu** přijde až se `STATE_SNAPSHOT` prvního runu (běh 2: `count()` hned po založení = 0, seznam badge měl) – harness čeká.
+6. **ConfigMap `agentgateway-keys` u limitu** (E4d INFO běh 2: 1 003 888 B, 1365 klíčů, 273 zakázek; limit API serveru 1 MiB): GC maže jen klíče
+   ukončených zakázek, 147 instancí je SUSPENDED (stopy z měření) a jejich klíče zůstávají → riziko 422 při vydávání klíčů v dalších bězích.
+   Kandidát: GC i pro pozastavené zakázky starší N dní (klíč se při resume vydá znovu) nebo Secret místo ConfigMap.
+7. **Dump ledgeru dusil aplikaci** (běh 3 pád `ReadTimeout` keepalive `/health`, běh 4 T1f FAIL + pád U2d): harness volal `GET /_debug/ledger`
+   (celý JSONL, desítky MB) při každém `led()` – i v pollovacích smyčkách každých pár sekund; serializace v async handleru blokovala event loop
+   aplikace → readiness proba `zakazka` padala (`context deadline exceeded`), reload GUI ve stopu tenanta neukázal formulář do 30 s a pod role beta
+   nedoručil výsledek POSTem (`/runs/<id>/result` vypršel) – aplikace ho vzala ze záložního `RESULT::` v logu, ale bez TOOL záznamů ledgeru →
+   `memory_calls_200 = 0`. Oprava: `?offset=` vrací `{total, items}` jen od offsetu (ledger je append-only), handler sync (threadpool) se zámkem nad
+   cache, harness drží lokální kopii a dotahuje přírůstky; `?zakazka=` zůstává. Důsledek pro provoz: debug endpoint bez stránkování je DoS na sebe sama.
+   **Běh 5** (T1f FAIL znovu, pád O3 „Failed to fetch“ v GUI, readiness opět `context deadline exceeded`) ukázal hlavního viníka: `GET /threads` (seznam
+   zakázek v GUI) volal pro každou z ~280 zakázek **synchronní gRPC na Dapr** (`get_workflow_state`) a 280× filtroval celý ledger – v async handleru,
+   tedy desítky sekund stojícího event loopu při každém načtení seznamu (platform-admin vidí vše); stejně SSE smyčka každou sekundu per stream a
+   `GET /zakazky/{id}` (pollují harness i GUI). Roste s počtem zakázek v ledgeru – proto běhy 2–3 prošly a 4–5 ne. Oprava: seznam threadů jedním
+   průchodem ledgeru + stavy z Dapru paralelně ve vláknech přes `asyncio.to_thread`, SSE a snapshot stavu totéž, `GET /zakazky/{id}` sync handler;
+   pod role opakuje POST výsledku 3×. Architektonicky: stav instancí patří do indexu (DB/state store), ne do N dotazů na Dapr při každém načtení.
+8. **Tunel `kubectl port-forward` na AKS umírá v klidu** (běhy 5–6 pád O3 `g.decide`: „rozhodnutí approve nespustilo nový run (run-error: Failed to
+   fetch)“): během několikaminutové sondy E5 nejde na forward aplikace žádný provoz (SSE GUI zavřeno po interruptu) a tunel se tiše rozpadne; GUI pak
+   při kliknutí dostane `Failed to fetch`. Je to vlastnost měřicí cesty (runner → port-forward → AKS), ne platformy – harness před kliknutím pošle
+   keepalive (`GET /health` přes helper `http`, který forwardy obnoví) a při síťové chybě otevře thread znovu a rozhodnutí zopakuje jednou
+   (`retried_after` v detailu). Běh 8 totéž v M1c: při pasivním čekání harnessu na keepalive mandátu z GUI (121 s jen čtení DOM) přestalo GUI
+   po ~20 s stav číst (fetch z prohlížeče nemá retry) – pasivní čekání (`wait_mandat`, `wait_finished`) teď drží tunel keepalivem každých 10–15 s.
+   Přes Ingress/VPN by problém nebyl.
+9. **Alias modelu dvakrát = tichý mock** (běh 7, L1c FAIL): `role_pod.py` dal podu `P0_MODEL=live-<model>` a Agent SDK v podu (sdílený kód `app.py`)
+   přidal podle flagu zakázky prefix podruhé → gateway dostala `live-live-claude-haiku-4-5`, alias nenašla a request spadl do catch-all `*` = mock
+   upstream. Role „uspěla“ (3 tahy, bez chyby), publikace issue nikdy nenastala – zakázka označená jako ostrý běh by tiše běžela na mocku. Check
+   L1c to odhalil (čekal viditelné selhání na 401). Oprava: prefix idempotentní, `AGENT_RUN.model` nese model skutečně poslaný do gateway a L1c/V1c
+   vyžadují přesně `live-<model>` u každé role. Pro provoz: catch-all `*` → mock je v produkční gateway nepřípustný – neznámý alias má skončit 404,
+   ne na levném/falešném upstreamu (kandidát pro konfiguraci ostrého prostředí).
+
 ## Spuštění
 
 ```bash

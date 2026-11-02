@@ -1,0 +1,9 @@
+# P4-2: dev hodnota PAT GitHubu pro kind (gateway routa github-api čte backendAuth ze souboru; bez Secretu by pod čekal na volume).
+# Na AKS ho vydává ESO z Key Vaultu (overlays/aks/secrets-eso.yaml), ostrý PAT jen tam.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentgateway-github-token
+type: Opaque
+stringData:
+  token: mock-github-token

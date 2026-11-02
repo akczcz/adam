@@ -103,7 +103,7 @@ flowchart LR
 
 | Zjednodušení | Proč zůstává | Kdy |
 |---|---|---|
-| Mock model, mock GitHub, mock mirror, mock e-mail/ticket adaptér v clusteru | měří se platforma, ne model; ostrý běh (živý model, GitHub, SMTP zákazníka) jen na vyžádání s PAT/klíčem | ostrý běh po P3-4 |
+| Mock model, mock GitHub, mock mirror, mock e-mail/ticket adaptér v clusteru | měří se platforma, ne model; ostrý běh (živý model, GitHub) jen na vyžádání – **P4-2** (2026-11-01): flag `live` zakázky, klíč i PAT jen v Key Vaultu a gateway ([p4-provoz.md](p4-provoz.md#p4-2-ostrý-běh-s-živým-modelem-a-githubem)); mock SMTP/ticket zůstává | ✅ P4-2 (SMTP zákazníka: na vyžádání) |
 | Jeden Keycloak realm, tenant jako atribut/skupina (ne realm per tenant) | realm per tenant = N× konfigurace, import, klienti; atributy stačí pro RLS/OPA/gateway; realm per tenant až když zákazník chce vlastní IdP federaci | P4 / na vyžádání |
 | GUI bez i18n, bez mobilu, jeden design systém; A2UI renderer za vlastním modulem | A2UI v1.0 renderery jen „planned“; vlastní formulářový fallback | po stabilizaci A2UI v1.0 |
 | Dapr bez operátoru, HTTP uvnitř clusteru, mTLS jen tam, kde je SPIRE + gateway | dev cluster; plná mTLS mesh (Cilium/Dapr) je samostatná změna | P4 |

@@ -98,8 +98,10 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 | Krok | Stav |
 |---|---|
 | P4-1 Obnova mandátu z GUI (subject token člověka 30 min; role bez HITL před sebou jednala bez mandátu) | ✅ 2026-11-01 AKS 79/79 + 14 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
+| P4-2 Ostrý běh s živým modelem a GitHubem (flag zakázky, klíč i PAT jen v Key Vaultu a jen v gateway) | ✅ kód 2026-11-01, měření AKS 2026-11-02 82/82 + 15 INFO ([p4-provoz.md](p4-provoz.md)); ostrý běh `p4-2-live` na vyžádání |
 
 ## Changelog
+- 2026-11-02: P4-2 hotovo na AKS (82/82 + 15 INFO) – zakázka „ostrý běh“ z GUI jde na živý model a skutečný GitHub výhradně přes gateway; klíč modelu i PAT drží jen Key Vault → ESO → gateway, aplikace ani pod role je nevidí; bez ostrých tajemství selže viditelně (401), nic se tiše nemockuje. Nález: neznámý alias modelu padá do catch-all mocku – pro ostré prostředí odstranit.
 - 2026-11-01: P4-1 hotovo na AKS (79/79 + 14 INFO) – poslední známý mandát mimo workflow, vypršelý viditelně „role bez mandátu“, tlačítko *Obnovit mandát* a keepalive v GUI; nález: stav v modulu aplikace ⇒ jedna replika.
 - 2026-10-27: P3-6 E3 hotovo na AKS (51/51); další položky P3-6 (E4 ledger → ClickHouse, E1 ESO/cert-manager, E2 token exchange) po jednom PR.
 - 2026-10-27: P3-6 E4 hotovo na AKS (53/53 + 8 INFO) – per-request ledger z gateway (ClickHouse) jako nezávislý zdroj FinOps; odhalil dvojí započtení útraty od E3 (opraveno).
