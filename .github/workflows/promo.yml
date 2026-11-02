@@ -1,0 +1,91 @@
+# Promo video (≤ 3 min, česky, technické publikum): komentovaný průlet řídicím pultem firmy na běžícím clusteru (tools/promo).
+# Natáčí Playwright přes kubectl port-forward (zakázka na mock modelu, nic se nepublikuje ven), komentář Azure AI Speech (dočasný resource
+# F0 vytvořený a smazaný v rámci běhu – klíč jen v env jednoho kroku, maskovaný), střih ffmpeg. Výstup = artifact promo-<run>.
+# Vyžaduje běžící cluster (cluster.yml start) a žádné souběžné měření (výkon aplikace, stop tenanta by průlet rozbily).
+name: promo
+on:
+  workflow_dispatch:
+    inputs:
+      speech_region:
+        description: region Azure AI Speech (F0; Poland Central Speech nenabízí)
+        type: string
+        default: westeurope
+      voice:
+        description: hlas TTS
+        type: choice
+        default: cs-CZ-AntoninNeural
+        options: [cs-CZ-AntoninNeural, cs-CZ-VlastaNeural]
+      keep_speech:
+        description: nechat Speech resource po běhu (jinak smazat + purge)
+        type: boolean
+        default: false
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  promo:
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      RG: ${{ vars.TF_STATE_RG }}
+      CLUSTER: aks-platform-dev
+      SPEECH_NAME: speech-promo-${{ vars.NAME_SUFFIX }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
+      - name: cluster běží? (aplikace zakázky Ready)
+        run: |
+          kubectl -n platform-data rollout status deploy/zakazka --timeout=120s
+          kubectl -n platform-data get pods -o wide | head -40
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: nástroje (Playwright, ffmpeg, fonty)
+        run: |
+          pip install -q httpx playwright
+          python -m playwright install --with-deps chromium >/dev/null
+          sudo apt-get install -y -q ffmpeg fonts-dejavu-core >/dev/null
+      - name: Azure AI Speech – dočasný resource (F0)
+        id: speech
+        run: |
+          state=$(az provider show -n Microsoft.CognitiveServices --query registrationState -o tsv 2>/dev/null || echo unknown)
+          if [ "$state" != "Registered" ]; then
+            echo "::error::Microsoft.CognitiveServices není registrovaný ($state). Registraci provede Adam z Macu: az provider register -n Microsoft.CognitiveServices (identita Actions providery neregistruje)."; exit 1
+          fi
+          az cognitiveservices account purge -g "$RG" -n "$SPEECH_NAME" -l "${{ inputs.speech_region }}" >/dev/null 2>&1 || true   # F0 kvóta: soft-deleted instance by blokovala
+          az cognitiveservices account create -g "$RG" -n "$SPEECH_NAME" -l "${{ inputs.speech_region }}" --kind SpeechServices --sku F0 --yes -o none
+          echo "speech=$SPEECH_NAME ($RG, ${{ inputs.speech_region }}, F0)" >> "$GITHUB_STEP_SUMMARY"
+      - name: natáčení průletu (Playwright přes port-forward, zakázka na mock modelu)
+        id: record
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tools/promo/record.py --context "$CLUSTER-admin" --out tools/promo/out 2>&1 | tee "$RUNNER_TEMP/record.log"
+      - name: komentář (TTS) a střih (ffmpeg)
+        run: |
+          set -o pipefail
+          SPEECH_KEY=$(az cognitiveservices account keys list -g "$RG" -n "$SPEECH_NAME" --query key1 -o tsv); echo "::add-mask::$SPEECH_KEY"
+          SPEECH_KEY="$SPEECH_KEY" python tools/promo/render.py --in tools/promo/out --speech-region "${{ inputs.speech_region }}" --voice "${{ inputs.voice }}" 2>&1 | tee "$RUNNER_TEMP/render.log"
+          { echo "## promo"; echo '```'; cat tools/promo/out/render.json; echo '```'; echo "natáčení: ${{ steps.record.outcome }}"; echo '```'; tail -5 "$RUNNER_TEMP/record.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: promo-${{ github.run_id }}
+          path: |
+            tools/promo/out/promo.mp4
+            tools/promo/out/promo.srt
+            tools/promo/out/render.json
+            tools/promo/out/scenes.json
+            tools/promo/out/cards/*.png
+            tools/promo/out/shots/*.png
+          if-no-files-found: ignore
+      - name: úklid Speech resource
+        if: always() && inputs.keep_speech != true
+        run: |
+          az cognitiveservices account delete -g "$RG" -n "$SPEECH_NAME" -o none 2>/dev/null || true
+          az cognitiveservices account purge -g "$RG" -n "$SPEECH_NAME" -l "${{ inputs.speech_region }}" -o none 2>/dev/null || true
