@@ -138,7 +138,13 @@ L1c/V1c ho vyžadují u každé role. **Pro ostrý provoz: catch-all `*` → moc
 Měření `--step p4-3` = p4-2 + **L2a–c**; L1c upraveno: bez ostrého PAT skončí zakázka live na bodu `publikace` (GUI: opakovat → znovu 401 →
 zamítnout → Pozastaveno), ne FAILED.
 
-Výsledek měření: **P43_RESULT** (`measure` run P43_ID, P43_RUNS). Nálezy: P43_FINDINGS
+Výsledek měření: **P43_RESULT** (`measure` run P43_ID, P43_RUNS). Nálezy (detail v [README harnessu](../../tools/harness_p1_k8s/README.md#p4-3-l2--připravenost-na-ostrý-provoz-2026-11-02-aks---step-p4-3--p4-2--l2ac-l1c-upraveno)):
+(1) první GC po změně odebral **203 pozastavených zakázek / 1015 klíčů** (ConfigMap z 1 MB na ~290 kB) – pozastavené stopy z měření držely
+klíče měsíc; obnova klíčů při dalším běhu role prošla (stejné hashe z OpenBao, sonda 200, role bez 401); (2) snímků orchestrátoru přibývá s každou
+změnou (tři) – drain starých verzí je provozní povinnost, harness vybírá testovacího kandidáta podle značky, ne podle abecedy; (3) druhé selhání
+publikace nad týmž artefaktem = nový interrupt (`…:1`), jinak run AG-UI po rozhodnutí považuje bod za vyřešený; (4) aktivity publikace vracejí
+`{error}` místo výjimky – mírnější kontrakt i pro instance starších verzí (bez bodu `publikace` by pokračovaly); (5) tři pády měřicí cesty, ne
+platformy: zakázka z API dostala otázky Account, okno logu gateway 40 min, pasivní čekání GUI bez keepalivu (podruhé – nález 8 P4-2).
 
 ## Rizika
 

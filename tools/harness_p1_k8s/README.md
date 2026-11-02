@@ -1011,7 +1011,29 @@ Výsledek: **P43_RESULT** (`measure` run P43_ID, P43_RUNS).
 
 Nálezy:
 
-P43_FINDINGS
+1. **Tři snímky orchestrátoru matou výběr „starší verze“** (běh 1, E6b/E6c/E13c FAIL): harness bral první ne-latest verzi podle abecedy – od P4-3
+   je to produkční verze z P3-6 (`572659d3b0d2`) se stovkami SUSPENDED instancí z měření a bez značek kandidáta → E6b bez `KLASIFIKACE_DONE`,
+   E6c `drained` False. Oprava: `candidate_version()` vybírá snímek se značkou `WORKFLOW_VERSION` (testovací kandidát `e8468f768abe`).
+   Pro provoz: snímků přibývá s každou změnou orchestrátoru; drain starých verzí (E6c) je reálná provozní povinnost, ne jen test.
+2. **Zakázka z interního API dostane otázky Account** (běh 1, L2b FAIL): L2b čekal jen na `HITL_WAIT H1`, Account vrátil `otazky` → `DIALOG_WAIT`
+   → po 1500 s bez odpovědi zakázka skončila timeoutem dialogu (Pozastaveno) a klíče se znovu nevydaly (57 min čekání naprázdno). Harness odpovídá
+   přes `POST /zakazky/<id>/dialog` (až 3 kola) jako ostatní API toky.
+3. **Okno logu gateway** (běh 1, P24d FAIL): `kubectl logs --since=40m` po hodině L1/L2 neobsahovalo git egress rolí (SNI počty 0) → okno 240 min,
+   `--tail=20000`. Měřicí artefakt, ne platforma.
+4. **P21a čekal catch-all** (běh 1): check ověřoval `'*' → $LLM_UPSTREAM_URL`; od P4-3 naopak vyžaduje, že `'*'` chybí a měřicí upstream má jen
+   explicitní alias `<model>`.
+5. **Pasivní čekání bez keepalivu podruhé** (běh 2, K1f FAIL): `wait_sla` 90 s četl jen DOM, tunel port-forward umřel a GUI stav SLA nenačetlo
+   (v běhu 1 za 19 s). Stejná třída jako nález 8 P4-2 – `_tunnel_tick` doplněn i do `wait_sla`/`wait_profile`. Všechna pasivní čekání GUI klienta
+   harnessu teď drží tunel.
+6. **GC klíčů v číslech** (L2c/E4d běh 1): první vydání klíčů v běhu odebralo **203 pozastavených zakázek / 1015 klíčů** (vše `SUSPENDED` z dřívějších
+   měření), ConfigMap z 1 003 888 B na ~290 kB (385 klíčů, 77 zakázek); v běhu 2 už jen 1–3 zakázky per GC. Obnova klíčů po úklidu (L2b): tytéž
+   hashe z OpenBao, sonda 200 na všech replikách, architekt proběhl bez 401.
+7. **Druhý interrupt téhož bodu nad týmž artefaktem** (návrh L1c): run AG-UI po rozhodnutí drží množinu `resolved` interruptů; opakovaná publikace
+   otevře `publikace` nad stejným hashem znovu → `pending_interrupt` počítá pořadí a id dostane příponu `:1`, jinak by GUI čekalo navždy.
+   Totéž by platilo pro `rozpocet` při druhém vyčerpání (dnes končí pauzou).
+8. **Kontrakt aktivit pro staré verze orchestrátoru**: `publish_*` už nevyhazují výjimku, ale vracejí `{error}`; instance starších verzí (bez bodu
+   `publikace`) by po selhání publikace pokračovaly dál (`publish_pr` → `{}`) místo FAILED. Netýká se žádné živé instance (jen stopy z měření),
+   ale je to změna kontraktu směrem k mírnějšímu chování (do `zakazka_wf.py` se nezapisuje – každá změna souboru = nová verze orchestrátoru).
 
 ## Spuštění
 
