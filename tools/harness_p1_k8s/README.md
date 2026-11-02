@@ -980,7 +980,9 @@ Nálezy:
    fetch)“): během několikaminutové sondy E5 nejde na forward aplikace žádný provoz (SSE GUI zavřeno po interruptu) a tunel se tiše rozpadne; GUI pak
    při kliknutí dostane `Failed to fetch`. Je to vlastnost měřicí cesty (runner → port-forward → AKS), ne platformy – harness před kliknutím pošle
    keepalive (`GET /health` přes helper `http`, který forwardy obnoví) a při síťové chybě otevře thread znovu a rozhodnutí zopakuje jednou
-   (`retried_after` v detailu). Přes Ingress/VPN by problém nebyl.
+   (`retried_after` v detailu). Běh 8 totéž v M1c: při pasivním čekání harnessu na keepalive mandátu z GUI (121 s jen čtení DOM) přestalo GUI
+   po ~20 s stav číst (fetch z prohlížeče nemá retry) – pasivní čekání (`wait_mandat`, `wait_finished`) teď drží tunel keepalivem každých 10–15 s.
+   Přes Ingress/VPN by problém nebyl.
 9. **Alias modelu dvakrát = tichý mock** (běh 7, L1c FAIL): `role_pod.py` dal podu `P0_MODEL=live-<model>` a Agent SDK v podu (sdílený kód `app.py`)
    přidal podle flagu zakázky prefix podruhé → gateway dostala `live-live-claude-haiku-4-5`, alias nenašla a request spadl do catch-all `*` = mock
    upstream. Role „uspěla“ (3 tahy, bez chyby), publikace issue nikdy nenastala – zakázka označená jako ostrý běh by tiše běžela na mocku. Check

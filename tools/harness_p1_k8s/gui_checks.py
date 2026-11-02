@@ -308,13 +308,22 @@ class Gui:
                 "source": (m.get_attribute("data-source") or None) if m.count() else None, "expires_in_s": int(ei) if ei not in (None, "") else None, "text": m.inner_text().strip() if m.count() else None,
                 "card": c.count() == 1, "card_expired": (c.get_attribute("data-expired") == "true") if c.count() else None, "card_text": c.inner_text()[:200] if c.count() else None, "roles": roles}
 
+    def _tunnel_tick(self, last, every_s=10):
+        """Pasivní čekání na GUI: tunel port-forward na AKS se v klidu rozpadne (běh 8 p4-2, M1c: GUI po ~20 s přestalo stav číst, fetch z prohlížeče
+        nemá retry) → každých `every_s` keepalive harnessu (GET /health přes helper `http`, který forwardy obnoví); GUI se pak samo chytí."""
+        if self.keepalive and time.time() - last >= every_s:
+            try: self.keepalive()
+            except Exception: pass
+            return time.time()
+        return last
+
     def wait_mandat(self, pred, timeout_s=90):
-        """Čeká, až mandat_view() splní pred (GUI čte stav každých 30 s = keepalive)."""
-        t0 = time.time(); m = {}
+        """Čeká, až mandat_view() splní pred (GUI čte stav každých 30 s = keepalive); mezitím drží tunel (_tunnel_tick)."""
+        t0 = time.time(); m = {}; tk = t0
         while time.time() - t0 < timeout_s:
             m = self.mandat_view()
             if pred(m): break
-            self.page.wait_for_timeout(2000)
+            self.page.wait_for_timeout(2000); tk = self._tunnel_tick(tk)
         return {**m, "waited_s": round(time.time() - t0, 1)}
 
     def mandat_renew(self):
@@ -378,11 +387,11 @@ class Gui:
         return {"gaps": int(self.t("report-gaps").inner_text()), "rows": out, "export_lines": int(self.t("export-lines").get_attribute("data-lines")), "export_preview": self.t("export-preview").inner_text()[:2000]}
 
     def wait_finished(self, timeout_s=600, want=("finished",)):
-        t0 = time.time()
+        t0 = time.time(); tk = t0
         while time.time() - t0 < timeout_s:
             rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
             if rs in want or rs in ("error",): break
-            self.page.wait_for_timeout(1500)
+            self.page.wait_for_timeout(1500); tk = self._tunnel_tick(tk, 15)
         self.shot("finished")
         return {"waited_s": round(time.time() - t0, 1), **self.snapshot()}
 
