@@ -988,7 +988,56 @@ Nálezy:
    upstream. Role „uspěla“ (3 tahy, bez chyby), publikace issue nikdy nenastala – zakázka označená jako ostrý běh by tiše běžela na mocku. Check
    L1c to odhalil (čekal viditelné selhání na 401). Oprava: prefix idempotentní, `AGENT_RUN.model` nese model skutečně poslaný do gateway a L1c/V1c
    vyžadují přesně `live-<model>` u každé role. Pro provoz: catch-all `*` → mock je v produkční gateway nepřípustný – neznámý alias má skončit 404,
-   ne na levném/falešném upstreamu (kandidát pro konfiguraci ostrého prostředí).
+   ne na levném/falešném upstreamu (→ P4-3 L2a).
+
+## P4-3 L2 – připravenost na ostrý provoz (2026-11-02, AKS, `--step p4-3` = p4-2 + **L2a–c**, L1c upraveno)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-3-připravenost-na-ostrý-provoz)): tři nálezy P4-2 uzavřít před prvním ostrým
+  během. Gateway bez catch-all `*` (rolegen: jen aliasy `live-<model>` a `<model>`; neznámý alias → 404 `model_not_found`, agentgateway 1.6
+  `model_router.rs`); GC klíčů gateway i pro SUSPENDED zakázky + opětovná registrace při dalším běhu role (`GATEWAY_KEYS_REISSUED`); selhání publikace
+  (issue/PR/merge) jako rozhodovací bod `publikace` (opakovat / pozastavit) místo FAILED – nová verze orchestrátoru, karta v GUI, druhé selhání = nový
+  interrupt `…:1`.
+- **Měření bez tajemství:** `GET /_live/model?alias=live-live-<model>` (404 z gateway), `POST /_gateway_keys/evict` (simulace GC jako `/_mandat/expire`
+  simuluje čas), L1c bez ostrého PAT prochází bodem `publikace` dvakrát (opakovat → zamítnout).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| L1c | zakázka „ostrý běh“ bez PAT: `PUBLISH_FAILED` 401 → bod `publikace` v GUI (karta s chybou), opakovat → znovu 401 → interrupt `:1`, zamítnout → Pozastaveno (bod publikace), ne FAILED | ✅ `PUBLISH_FAILED` (issue, 401 `/repos/akczcz/adam/issues`, live) → `HITL_WAIT publikace`, karta „Publikace selhala“ s chybou 401, schválení → druhé `PUBLISH_FAILED` a interrupt `hitl:publikace:<hash>:1`, zamítnutí → `HITL_REJECTED` → COMPLETED/Pozastaveno bod publikace; pod Account `live-claude-haiku-4-5`, `AGENT_RUN.model` tentýž |
+| L2a | konfigurace gateway bez `*`; `live-live-<model>` → 404 `model_not_found`; známé aliasy slouží dál | ✅ modely `[live-claude-haiku-4-5, live-claude-sonnet-4-5, claude-haiku-4-5, claude-sonnet-4-5]`, `live-live-claude-haiku-4-5` → 404 `{"error":{"message":"Model not found","type":"invalid_request_error","code":"model_not_found"}}`, health aplikace 200 |
+| L2b | po odebrání klíčů zakázky (evict) další role znovu zaregistruje tytéž hodnoty (stejné hashe, sonda 200 na všech replikách) a proběhne bez 401; GC maže i SUSPENDED | ✅ 5 klíčů vydáno (sonda 200) → Account, 1 kolo otázek, H1 → `evict` odebral 5 klíčů (0 v ConfigMapě) → schválení H1 → `GATEWAY_KEYS_REISSUED` se stejnými 5 hashi, sonda 200 na všech replikách → pod architekt Succeeded, `AGENT_RUN` bez chyby; L2 celkem 215 s |
+| L2c | INFO: co GC v běhu odebral podle stavu instancí, velikost ConfigMapy po úklidu | ℹ️ běh 1: první GC odebral 203 zakázek / 1015 klíčů (vše SUSPENDED), ConfigMap 1 003 888 B → 288 593 B; běh 4: 366 kB, 490 klíčů, 98 zakázek, GC v běhu už nic staršího TTL |
+
+Výsledek: **84/84 + 17 INFO** (`measure` run 41438707088, 4 běhy: 1 = 78/6 měřicí cesta, 2 = 83/1 K1f tunel, 3 = pád T1e tunel, 4 = vše PASS; L1c, L2a i L2b prošly od běhu 2).
+
+Nálezy:
+
+1. **Tři snímky orchestrátoru matou výběr „starší verze“** (běh 1, E6b/E6c/E13c FAIL): harness bral první ne-latest verzi podle abecedy – od P4-3
+   je to produkční verze z P3-6 (`572659d3b0d2`) se stovkami SUSPENDED instancí z měření a bez značek kandidáta → E6b bez `KLASIFIKACE_DONE`,
+   E6c `drained` False. Oprava: `candidate_version()` vybírá snímek se značkou `WORKFLOW_VERSION` (testovací kandidát `e8468f768abe`).
+   Pro provoz: snímků přibývá s každou změnou orchestrátoru; drain starých verzí (E6c) je reálná provozní povinnost, ne jen test.
+2. **Zakázka z interního API dostane otázky Account** (běh 1, L2b FAIL): L2b čekal jen na `HITL_WAIT H1`, Account vrátil `otazky` → `DIALOG_WAIT`
+   → po 1500 s bez odpovědi zakázka skončila timeoutem dialogu (Pozastaveno) a klíče se znovu nevydaly (57 min čekání naprázdno). Harness odpovídá
+   přes `POST /zakazky/<id>/dialog` (až 3 kola) jako ostatní API toky.
+3. **Okno logu gateway** (běh 1, P24d FAIL): `kubectl logs --since=40m` po hodině L1/L2 neobsahovalo git egress rolí (SNI počty 0) → okno 240 min,
+   `--tail=20000`. Měřicí artefakt, ne platforma.
+4. **P21a čekal catch-all** (běh 1): check ověřoval `'*' → $LLM_UPSTREAM_URL`; od P4-3 naopak vyžaduje, že `'*'` chybí a měřicí upstream má jen
+   explicitní alias `<model>`.
+5. **Pasivní čekání bez keepalivu podruhé** (běh 2, K1f FAIL): `wait_sla` 90 s četl jen DOM, tunel port-forward umřel a GUI stav SLA nenačetlo
+   (v běhu 1 za 19 s). Stejná třída jako nález 8 P4-2 – `_tunnel_tick` doplněn i do `wait_sla`/`wait_profile`. Všechna pasivní čekání GUI klienta
+   harnessu teď drží tunel.
+6. **GC klíčů v číslech** (L2c/E4d běh 1): první vydání klíčů v běhu odebralo **203 pozastavených zakázek / 1015 klíčů** (vše `SUSPENDED` z dřívějších
+   měření), ConfigMap z 1 003 888 B na ~290 kB (385 klíčů, 77 zakázek); v běhu 2 už jen 1–3 zakázky per GC. Obnova klíčů po úklidu (L2b): tytéž
+   hashe z OpenBao, sonda 200 na všech replikách, architekt proběhl bez 401.
+7. **Druhý interrupt téhož bodu nad týmž artefaktem** (návrh L1c): run AG-UI po rozhodnutí drží množinu `resolved` interruptů; opakovaná publikace
+   otevře `publikace` nad stejným hashem znovu → `pending_interrupt` počítá pořadí a id dostane příponu `:1`, jinak by GUI čekalo navždy.
+   Totéž by platilo pro `rozpocet` při druhém vyčerpání (dnes končí pauzou).
+8. **Kontrakt aktivit pro staré verze orchestrátoru**: `publish_*` už nevyhazují výjimku, ale vracejí `{error}`; instance starších verzí (bez bodu
+   `publikace`) by po selhání publikace pokračovaly dál (`publish_pr` → `{}`) místo FAILED. Netýká se žádné živé instance (jen stopy z měření),
+   ale je to změna kontraktu směrem k mírnějšímu chování (do `zakazka_wf.py` se nezapisuje – každá změna souboru = nová verze orchestrátoru).
+9. **Tunel potřetí – navigace po pasivní fázi** (běh 3, pád v T1e): po dotazech do Postgresu (RLS) bez provozu přes forward aplikace `threads_list`
+   čekal 30 s na tabulku, která bez fetch nikdy nepřišla. Navigace GUI klienta (`_goto_wait`: seznam zakázek, stránky firmy) teď dělá keepalive před
+   `goto` a při timeoutu jednou keepalive + reload. Tři pády na tunel ve čtyřech bězích: měřicí cesta runner → port-forward → AKS je nejslabší článek
+   měření; kandidát = Ingress s interní CA nebo `kubectl port-forward` nahradit stabilnějším tunelem (např. `socat` pod + jediný dlouhý stream).
 
 ## Spuštění
 

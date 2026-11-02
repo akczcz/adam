@@ -172,7 +172,9 @@ def main():
             ctx.close(); g.browser.close(); g.pw.stop()
         except Exception as e: notes["close_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         if video_path and Path(video_path).exists(): Path(video_path).replace(out / "video.webm")
-        try: notes["stop"] = http("POST", f"{APP}/zakazky/{z}/stop", json={"by": "harness", "reason": "promo: úklid po natáčení"}, timeout=60).json()   # zakázka dál neběží (pody rolí končí)
+        try:
+            r = http("POST", f"{APP}/zakazky/{z}/stop", json={"by": "harness", "reason": "promo: úklid po natáčení"}, timeout=60)   # zakázka dál neběží (pody rolí končí)
+            notes["stop"] = r.json() if r.headers.get("content-type", "").startswith("application/json") else {"http": r.status_code, "text": r.text[:160]}
         except Exception as e: notes["stop"] = f"{type(e).__name__}: {str(e)[:120]}"
         pf.stop()
     (out / "scenes.json").write_text(json.dumps({"marks": marks, "notes": notes, "zakazka": z, "recorded_s": now() if t_rec[0] else None}, ensure_ascii=False, indent=1))

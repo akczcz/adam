@@ -71,9 +71,23 @@ class Gui:
         return self.page.evaluate("sessionStorage.getItem('agui_token')")
 
     # --- seznam a založení ----------------------------------------------------------------------------------------------
+    def _goto_wait(self, path, js, timeout_s=30, where="goto"):
+        """Navigace + čekání na prvek; po delší pasivní fázi bez provozu (dotazy do DB, sondy) bývá tunel port-forward mrtvý a fetch z GUI nic nevrátí
+        (P4-3 běh 3: threads_list v T1e timeout 30 s) → keepalive před navigací a při timeoutu jednou keepalive + reload + delší čekání."""
+        if self.keepalive:
+            try: self.keepalive()
+            except Exception: pass
+        self.page.goto(self.base + path); self.page.wait_for_timeout(300)
+        try: self.page.wait_for_function(js, timeout=timeout_s * 1000)
+        except Exception as e:
+            self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": f"{type(e).__name__}", "where": where})
+            if self.keepalive:
+                try: self.keepalive()
+                except Exception: pass
+            self.page.reload(); self.page.wait_for_timeout(500); self.page.wait_for_function(js, timeout=2 * timeout_s * 1000)
+
     def threads_list(self):
-        self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
-        self.page.wait_for_function("document.querySelector('[data-testid=threads-table]') || document.querySelector('[data-testid=threads-empty]')")
+        self._goto_wait("#/", "document.querySelector('[data-testid=threads-table]') || document.querySelector('[data-testid=threads-empty]')", where="threads_list")
         rows = self.page.locator("[data-testid^=thread-row-]")
         out = []
         for i in range(rows.count()):
@@ -229,21 +243,21 @@ class Gui:
 
     def wait_profile(self, timeout_s=120):
         """Čeká na profil rizika ve stavu zakázky (STATE_SNAPSHOT.profile z KLASIFIKACE) nebo konec runu."""
-        t0 = time.time()
+        t0 = time.time(); tk = t0
         while time.time() - t0 < timeout_s:
             if self.t("state-profile").count(): break
             rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
             if rs in ("finished", "cancelled"): break
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(1000); tk = self._tunnel_tick(tk)
         self.shot("profile")
         return {"waited_s": round(time.time() - t0, 1), "profile": self.t("state-profile").inner_text().strip() if self.t("state-profile").count() else None, **self.snapshot()}
 
     def wait_sla(self, timeout_s=120):
         """Čeká na indikaci překročení SLA (state-sla / aktivita sla) – zakázka přitom dál čeká na rozhodnutí."""
-        t0 = time.time()
+        t0 = time.time(); tk = t0
         while time.time() - t0 < timeout_s:
             if self.t("state-sla").count() or self.t("act-sla").count(): break
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(1000); tk = self._tunnel_tick(tk)   # P4-3 běh 2 (K1f): 90 s jen čtení DOM → tunel port-forward umřel, stav z GUI se neobnovil (nález 8 P4-2)
         self.shot("sla")
         return {"waited_s": round(time.time() - t0, 1), "sla_text": self.t("state-sla").inner_text() if self.t("state-sla").count() else None, "act_sla": self.t("act-sla").count(), "interrupt": self.t("interrupt").get_attribute("data-interrupt-id") if self.t("interrupt").count() else None}
 
@@ -257,7 +271,9 @@ class Gui:
 
     def page_rows(self, page, table_ids, timeout_s=60):
         """Stránka firmy (P3-3): počty řádků tabulek (data-rows) nebo prázdné stavy."""
-        self.page.goto(self.base + f"#/{page}"); self.page.wait_for_timeout(500); out = {}
+        out = {}
+        try: self._goto_wait(f"#/{page}", f"document.querySelector('[data-testid={table_ids[0]}]') || document.querySelector('[data-testid={table_ids[0]}-empty]')", timeout_s=timeout_s, where=f"page_rows:{page}")
+        except Exception: pass   # chybu zachytí smyčka níže (per tabulka)
         for tid in table_ids:
             try:
                 self.page.wait_for_function(f"document.querySelector('[data-testid={tid}]') || document.querySelector('[data-testid={tid}-empty]')", timeout=timeout_s * 1000)

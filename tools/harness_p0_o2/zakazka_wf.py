@@ -29,7 +29,7 @@ VERSION = hashlib.sha256(open(__file__, "rb").read().replace(b"\r\n", b"\n")).he
 HITL_TIMEOUT_S = float(os.environ.get("O1_HITL_TIMEOUT_S", "3600"))
 BUDGET_USD = float(os.environ.get("O1_BUDGET_USD", "400"))
 BUDGET_TIMEOUT_S = float(os.environ.get("P0_BUDGET_TIMEOUT_S", str(4 * 3600)))   # roles/*.yaml on_exceeded.timeout: 4h, on_timeout: pause
-SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0)
+SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600, "publikace": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0); publikace (P4-3) jako rozpocet
 
 
 def h(s): return hashlib.sha256(s.encode()).hexdigest()[:16]
@@ -105,6 +105,19 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
     return None if art.get("budget_exceeded") else art
 
 
+def publish(ctx: wf.DaprWorkflowContext, z, activity, inp, artifact_hash):
+    """P4-3: publikace ven (GitHub issue/PR/merge přes gateway) může selhat – 401 bez ostrého PAT, 422, výpadek. Dřív výjimka aktivity = instance
+    FAILED bez eskalace (běh 2 P4-2). Teď aktivita vrací {'error', 'publish_kind'} a orchestrátor otevře rozhodovací bod `publikace`: schválení
+    s důvodem = opakovat (po opravě PAT / výpadku), zamítnutí nebo timeout = Pozastaveno (nic se neodeslalo jinam). Token schválení je vázaný na
+    hash publikovaného artefaktu. Vrací výsledek aktivity, nebo None = pozastavit."""
+    while True:
+        res = yield ctx.call_activity(activity, input=inp)
+        if not (isinstance(res, dict) and res.get("error")): return res
+        yield ctx.call_activity("notify", input={"event": "PUBLISH_FAILED", "bod": "publikace", "zakazka": z["id"], "publish_kind": res.get("publish_kind"), "error": str(res["error"])[:300], "live": bool(z.get("live")), "artifact_hash": artifact_hash})
+        tok = yield from hitl(ctx, z, "publikace", artifact_hash)
+        if not tok: return None
+
+
 def zakazka(ctx: wf.DaprWorkflowContext, z):
     state = {"id": z["id"], "stav": "P1"}
     # P3-4 P1a klasifikační brána (T9/T15) PŘED prvním během role (odchylka od procesy.md Upresneni → Klasifikace: odmítnutá zakázka nespustí žádný pod ani neutratí nic);
@@ -135,11 +148,11 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
         z = {**z, "dialog": (z.get("dialog") or []) + [str(data.get("answer", ""))[:2000]]}
     gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
     if os.environ.get("P0_GITHUB_MODE") == "1" and gh_hitl:
-        yield ctx.call_activity("publish_issue", input={"z": z, "zad": zad})     # issue = nosič H1 (dogfooding, vlastní repo; cizí zákazník → AG-UI)
+        if (yield from publish(ctx, z, "publish_issue", {"z": z, "zad": zad}, zad["hash"])) is None: return {**state, "stav": "Pozastaveno", "bod": "publikace", "publish_kind": "issue"}   # issue = nosič H1 (dogfooding, vlastní repo; cizí zákazník → AG-UI)
     t1 = yield from hitl(ctx, z, "H1", zad["hash"])                           # vstup zakázky – člověk zákazníka (/schvaluji na issue nebo AG-UI)
     if not t1: return {**state, "stav": "Pozastaveno", "bod": "H1"}
     if os.environ.get("P0_GITHUB_MODE") == "1" and not gh_hitl:
-        yield ctx.call_activity("publish_issue", input={"z": z, "zad": zad})     # bez GitHub HITL: issue až po schválení (N3)
+        if (yield from publish(ctx, z, "publish_issue", {"z": z, "zad": zad}, zad["hash"])) is None: return {**state, "stav": "Pozastaveno", "bod": "publikace", "publish_kind": "issue"}   # bez GitHub HITL: issue až po schválení (N3)
     yield ctx.call_activity("notify_customer", input={"z": z, "channel": "email", "role": "account", "subject": f"Zakázka {z['id']}: zadání přijato (H1)",   # P3-4 N3 stavová zpráva (čl. 50 naostro)
                                                        "body": f"Zadání zakázky {z['id']} bylo schváleno člověkem (H1); profil rizika {kl['profile']}. Artefakt {zad['ref']} · hash {zad['hash']}."})
     adr = yield from run_role(ctx, z, "architekt", "role_architekt", z)        # P2 Návrh
@@ -150,13 +163,19 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     if not pr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "vyvojar"}
     pr_pub = {}
     if os.environ.get("P0_GITHUB_MODE") == "1":
-        pr_pub = yield ctx.call_activity("publish_pr", input={"z": z, "pr": pr})  # větev + PR = artefakt pro review (reverzibilní)
+        pr_pub = yield from publish(ctx, z, "publish_pr", {"z": z, "pr": pr}, pr["hash"])   # větev + PR = artefakt pro review (reverzibilní)
+        if pr_pub is None: return {**state, "stav": "Pozastaveno", "bod": "publikace", "publish_kind": "pull_request"}
     rev = yield from run_role(ctx, z, "reviewer", "role_reviewer", {"z": z, "pr": pr})   # P4 Review
     if not rev: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "reviewer"}
     yield ctx.call_activity("budget_check", input=z)
     t4 = yield from hitl(ctx, z, "H4", pr["hash"])                            # merge = N1 – člověk vlastník
     if not t4: return {**state, "stav": "Pozastaveno", "bod": "H4"}
-    m = yield ctx.call_activity("executor", input={"z": z, "action": "merge", "artifact_hash": pr["hash"], "token": t4, "pr": pr, "pr_publish": pr_pub})
+    while True:
+        m = yield ctx.call_activity("executor", input={"z": z, "action": "merge", "artifact_hash": pr["hash"], "token": t4, "pr": pr, "pr_publish": pr_pub})
+        if not m.get("publish_error"): break
+        # P4-3: PDP merge povolil, ale merge PR na GitHubu selhal (401/409/výpadek) → rozhodovací bod publikace; opakování = executor znovu s týmž tokenem H4
+        yield ctx.call_activity("notify", input={"event": "PUBLISH_FAILED", "bod": "publikace", "zakazka": z["id"], "publish_kind": "merge", "error": str(m["publish_error"])[:300], "live": bool(z.get("live")), "artifact_hash": pr["hash"]})
+        if not (yield from hitl(ctx, z, "publikace", pr["hash"])): return {**state, "stav": "Pozastaveno", "bod": "publikace", "publish_kind": "merge"}
     if not m["allow"]: return {**state, "stav": "Zamitnuto", "bod": "H4", "reason": m["reason"]}
     t5 = yield from hitl(ctx, z, "H5", pr["hash"])                            # deploy = N2
     if not t5: return {**state, "stav": "Pozastaveno", "bod": "H5"}

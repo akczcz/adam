@@ -14,4 +14,4 @@ Postup: cluster běží (`cluster.yml` start), neběží měření → workflow 
 Bez `SPEECH_KEY` render vloží ticho (kontrola střihu bez útraty). Změna textu = `scenes.py` → stačí znovu `render.py` nad starou nahrávkou.
 
 Předpoklady: provider `Microsoft.CognitiveServices` registrovaný v předplatném (dělá Adam z Macu, identita Actions providery neregistruje);
-Speech F0 není v Poland Central → výchozí `westeurope`. Zakázka pro video běží na mock modelu (bez útraty), nic se nepublikuje ven.
+Speech F0 není v Poland Central, West Europe nepřijímá nové zákazníky → workflow zkouší regiony po řadě (North Europe, Sweden Central, …). Zakázka pro video běží na mock modelu (bez útraty), nic se nepublikuje ven.
