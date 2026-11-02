@@ -14,6 +14,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 |---|---|---|
 | **P4-1** Obnova mandátu z GUI | mandát role = access token člověka (30 min) – role bez HITL před sebou jednala bez mandátu (E2 nález 5); Keycloak `act` nepomůže ani po GA | ✅ 2026-11-01 AKS 79/79 + 14 INFO (`measure` run 41297792885, 4 běhy) |
 | **P4-2** Ostrý běh s živým modelem a GitHubem | klíč modelu i PAT jen v Key Vaultu a jen v gateway; zakázka s flagem `live` z GUI; zapojení měřitelné bez tajemství | ✅ kód 2026-11-01, měření AKS 2026-11-02 **82/82 + 15 INFO** (`measure` run 41366091027); ostrý běh `p4-2-live` na vyžádání (ostrá tajemství v Key Vaultu) |
+| **P4-3** Připravenost na ostrý provoz (nálezy P4-2) | gateway bez catch-all mocku (neznámý alias → 404), úklid klíčů gateway i pro pozastavené zakázky + obnova při resume, selhání publikace na GitHub jako rozhodovací bod `publikace` místo FAILED | 🟡 kód 2026-11-02, měření AKS P43_RESULT (`measure` run P43_ID) |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -112,13 +113,41 @@ L1c/V1c ho vyžadují u každé role. **Pro ostrý provoz: catch-all `*` → moc
 5. Po běhu: Adam PAT revokuje a klíč modelu rotuje/omezí; v Key Vaultu vrátí výchozí hodnoty (`mock-github-token`, `sk-ant-harness-mock`),
    aby další měření neplatilo za 1 token předletové kontroly.
 
+## P4-3 Připravenost na ostrý provoz
+
+**Rozhodnutí:** před prvním ostrým během (skutečná útrata, zápisy do GitHubu) uzavřít tři nálezy P4-2, které by při ostrém provozu bolely:
+
+| Nález P4-2 | Riziko v ostrém provozu | Řešení (zvoleno) |
+|---|---|---|
+| (5) catch-all `*` → mock: neznámý alias modelu běžel tiše na mocku | zakázka „ostrý běh“ s překlepem v aliasu „uspěje“ zadarmo a falešně; v produkci by catch-all mířil na živé API s **cizím** nastavením (bez `params.model`, bez stropu per alias) | konfigurace gateway z rolegen má jen explicitní aliasy: `live-<model>` → `$LLM_LIVE_URL`, `<model>` → `$LLM_UPSTREAM_URL` (měřicí); **žádné `*`** – neznámý alias = 404 `model_not_found` (agentgateway 1.6 `model_router.rs`: shoda přesná / `*` / prefix / suffix; ověřeno ve zdrojáku 2026-11-02) |
+| (4) ConfigMap klíčů gateway 45 KB pod limitem 1 MiB – 147 SUSPENDED instancí drželo klíče | 422 při vydání klíčů další zakázce = celá platforma přestane spouštět role | GC maže i klíče zakázek **SUSPENDED** starších TTL (pozastavená neutrácí); `issue()` při dalším běhu role (resume) zjistí, že hodnoty v OpenBao existují, ale v ConfigMapě chybí → **znovu zaregistruje** tytéž hodnoty (stejné hashe, rozpočty ze šablony + strop, sonda na všech replikách, ledger `GATEWAY_KEYS_REISSUED`) |
+| (2) publikace bez PAT → instance FAILED bez eskalace | v ostrém běhu stačí výpadek GitHubu, vypršelý PAT nebo 422 a zakázka za peníze skončí mrtvá; opakovat jde jen ručně z Dapru | aktivity `publish_issue`/`publish_pr`/merge v `executor` vracejí `{error}` (ledger `PUBLISH_FAILED`) a orchestrátor otevře rozhodovací bod **`publikace`** (interrupt AG-UI, karta „Publikace selhala“ s chybou): schválení s důvodem = opakovat, zamítnutí/timeout = Pozastaveno; token vázaný na hash publikovaného artefaktu; nová verze orchestrátoru (E6 snímek) |
+
+| Varianta (publikace) | Proč ne / proč ano |
+|---|---|
+| Dapr retry policy na aktivitě | řeší jen přechodný výpadek; 401/422 opakuje naslepo, člověk se nedozví nic |
+| automatický retry s backoffem v aktivitě | totéž, navíc skrývá stav před GUI; nesedí k T6 (rozhodnutí s důvodem) |
+| **rozhodovací bod `publikace`** (zvoleno) | stejný mechanismus jako `rozpocet` (HITL s důvodem, SLA 4 h, eskalace provozu); opakování = tatáž aktivita, zamítnutí = Pozastaveno; druhé selhání = nový interrupt (`…:1`), ne tichá smyčka |
+
+| Varianta (klíče) | Proč ne / proč ano |
+|---|---|
+| Secret místo ConfigMap | stejný limit 1 MiB; řeší nic |
+| ConfigMap per zakázka / shardování | sidecar merge by četl N ConfigMap; víc zápisů, víc stavů; limit se jen odsune |
+| **GC i SUSPENDED + opětovná registrace** (zvoleno) | velikost ConfigMapy ~ aktivní zakázky; pozastavená zakázka nic neztrácí (hodnoty v OpenBao, útrata v budget_usage), při resume ~ 1 min navíc na propagaci |
+
+Měření `--step p4-3` = p4-2 + **L2a–c**; L1c upraveno: bez ostrého PAT skončí zakázka live na bodu `publikace` (GUI: opakovat → znovu 401 →
+zamítnout → Pozastaveno), ne FAILED.
+
+Výsledek měření: **P43_RESULT** (`measure` run P43_ID, P43_RUNS). Nálezy: P43_FINDINGS
+
 ## Rizika
 
 | Riziko | Řešení |
 |---|---|
 | PAT v gateway smí víc než zakázka potřebuje | fine-grained PAT jen na repozitář platformy + autorizace routy gateway (cesta `/repos/akczcz/adam/`, metody GET/POST/PATCH/PUT) + ruleset `main`; revokace po běhu |
 | Živý model = útrata; alias `live-*` může použít kdokoli s klíčem role | klíče role × zakázka mají rozpočty (Block 24h/30d), strop zakázky (`zakazka-30d-block`), ledger gateway per request → FinOps; klíč modelu s limitem workspace |
-| Neznámý alias modelu (překlep, dvojí prefix) spadne do catch-all `*` = mock a zakázka „live“ běží tiše na mocku | `AGENT_RUN.model` v ledgeru + check L1c/V1c; pro ostré prostředí catch-all odstranit (neznámý model → 404), mock jen v měřicím profilu (kandidát) |
+| Neznámý alias modelu (překlep, dvojí prefix) spadne do catch-all `*` = mock a zakázka „live“ běží tiše na mocku | `AGENT_RUN.model` v ledgeru + check L1c/V1c; ~~catch-all odstranit~~ **P4-3**: konfigurace bez `*`, neznámý alias → 404 (L2a) |
+| Selhání publikace na GitHub (výpadek, vypršelý PAT, 422) v ostrém běhu | ~~instance FAILED bez eskalace~~ **P4-3**: rozhodovací bod `publikace` (opakovat / pozastavit), ledger `PUBLISH_FAILED`, SLA 4 h → eskalace provozu |
 | Předletová kontrola `/_live/model` je placená (1 token) | jen na vyžádání v `p4-2-live` a v L1a (s výchozím klíčem 401, nic se neplatí) |
 | Mandát obnoví jiný člověk tenanta než schvalovatel → role jedná jeho jménem | ledger `MANDAT renewed by`, GUI ukazuje držitele; kdo klikne, přebírá odpovědnost (T1) – stejné jako schválení |
 | Keepalive = GUI otevřené v zapomenuté záložce drží mandát „navždy“ | jen dokud žije refresh token GUI (Keycloak SSO session); prodlužuje jen živý mandát držitele; zapsat do GUI timeout session (kandidát) |

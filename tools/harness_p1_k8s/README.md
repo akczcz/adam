@@ -988,7 +988,30 @@ Nálezy:
    upstream. Role „uspěla“ (3 tahy, bez chyby), publikace issue nikdy nenastala – zakázka označená jako ostrý běh by tiše běžela na mocku. Check
    L1c to odhalil (čekal viditelné selhání na 401). Oprava: prefix idempotentní, `AGENT_RUN.model` nese model skutečně poslaný do gateway a L1c/V1c
    vyžadují přesně `live-<model>` u každé role. Pro provoz: catch-all `*` → mock je v produkční gateway nepřípustný – neznámý alias má skončit 404,
-   ne na levném/falešném upstreamu (kandidát pro konfiguraci ostrého prostředí).
+   ne na levném/falešném upstreamu (→ P4-3 L2a).
+
+## P4-3 L2 – připravenost na ostrý provoz (2026-11-02, AKS, `--step p4-3` = p4-2 + **L2a–c**, L1c upraveno)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-3-připravenost-na-ostrý-provoz)): tři nálezy P4-2 uzavřít před prvním ostrým
+  během. Gateway bez catch-all `*` (rolegen: jen aliasy `live-<model>` a `<model>`; neznámý alias → 404 `model_not_found`, agentgateway 1.6
+  `model_router.rs`); GC klíčů gateway i pro SUSPENDED zakázky + opětovná registrace při dalším běhu role (`GATEWAY_KEYS_REISSUED`); selhání publikace
+  (issue/PR/merge) jako rozhodovací bod `publikace` (opakovat / pozastavit) místo FAILED – nová verze orchestrátoru, karta v GUI, druhé selhání = nový
+  interrupt `…:1`.
+- **Měření bez tajemství:** `GET /_live/model?alias=live-live-<model>` (404 z gateway), `POST /_gateway_keys/evict` (simulace GC jako `/_mandat/expire`
+  simuluje čas), L1c bez ostrého PAT prochází bodem `publikace` dvakrát (opakovat → zamítnout).
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| L1c | zakázka „ostrý běh“ bez PAT: `PUBLISH_FAILED` 401 → bod `publikace` v GUI (karta s chybou), opakovat → znovu 401 → interrupt `:1`, zamítnout → Pozastaveno (bod publikace), ne FAILED | P43_L1C |
+| L2a | konfigurace gateway bez `*`; `live-live-<model>` → 404 `model_not_found`; známé aliasy slouží dál | P43_L2A |
+| L2b | po odebrání klíčů zakázky (evict) další role znovu zaregistruje tytéž hodnoty (stejné hashe, sonda 200 na všech replikách) a proběhne bez 401; GC maže i SUSPENDED | P43_L2B |
+| L2c | INFO: co GC v běhu odebral podle stavu instancí, velikost ConfigMapy po úklidu | P43_L2C |
+
+Výsledek: **P43_RESULT** (`measure` run P43_ID, P43_RUNS).
+
+Nálezy:
+
+P43_FINDINGS
 
 ## Spuštění
 
