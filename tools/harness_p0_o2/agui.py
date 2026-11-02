@@ -36,8 +36,8 @@ CTX: dict = {}   # dodá app.py: ledger, read_ledger, wf_state, create, approve,
 THREAD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
 MIN_REASON = 10   # org.approvals CHECK (length(reason) >= 10) – proti automation bias (metriky.md T6)
 RUN_MAX_S = float(os.environ.get("P0_AGUI_RUN_MAX_S", "1800"))
-BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2", "klasifikace": "P1a", "dialog": "P1"}
-BOD_ACTION = {"H1": "zadani.accept", "H1a": "pravnik.stanovisko", "H2": "navrh.accept", "H4": "pr.merge", "H5": "deploy.apply", "rozpocet": "budget.raise", "klasifikace": "zadani.classify"}
+BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2", "klasifikace": "P1a", "dialog": "P1", "publikace": "N3"}
+BOD_ACTION = {"H1": "zadani.accept", "H1a": "pravnik.stanovisko", "H2": "navrh.accept", "H4": "pr.merge", "H5": "deploy.apply", "rozpocet": "budget.raise", "klasifikace": "zadani.classify", "publikace": "publish.retry"}   # P4-3: publikace selhala – schválení = opakovat
 WAIT_EVENTS = ("HITL_WAIT", "DIALOG_WAIT", "KLASIFIKACE_WAIT")   # P3-4: + dotazník klasifikační brány (interrupt reason=klasifikace)
 ARTIFACT_FILE = {"account": "artifacts/zadani.md", "architekt": "artifacts/adr.md", "reviewer": "artifacts/review.md"}
 
@@ -153,10 +153,13 @@ def pending_interrupt(entries):
     else:
         later = [e for e in entries[i + 1:] if e.get("kind") == "NOTIFY" and e.get("event") in ("HITL_APPROVED", "HITL_TIMEOUT", "HITL_INVALID_TOKEN", "HITL_REJECTED") and e.get("bod") == w.get("bod")]
     if later: return None
-    return w
+    # P4-3: týž bod nad týmž artefaktem podruhé (publikace: opakovat → znovu selhala) = nový interrupt s pořadím, jinak by ho run po rozhodnutí
+    # považoval za už vyřešený (`resolved`) a GUI by čekalo navždy
+    attempt = sum(1 for _, e in waits[:-1] if e.get("event") == w.get("event") and e.get("bod") == w.get("bod") and e.get("artifact_hash") == w.get("artifact_hash"))
+    return {**w, "attempt": attempt} if attempt else w
 
 
-def interrupt_id(w): return f"{'dialog' if w.get('event') == 'DIALOG_WAIT' else 'klasifikace' if w.get('event') == 'KLASIFIKACE_WAIT' else 'hitl'}:{w['bod']}:{w.get('artifact_hash')}"
+def interrupt_id(w): return f"{'dialog' if w.get('event') == 'DIALOG_WAIT' else 'klasifikace' if w.get('event') == 'KLASIFIKACE_WAIT' else 'hitl'}:{w['bod']}:{w.get('artifact_hash')}" + (f":{w['attempt']}" if w.get("attempt") else "")
 
 
 def state_of(zid, entries):
@@ -266,6 +269,7 @@ def events_for(zid, entries, start_idx=0, subagents=None):
         elif k == "NOTIFY":
             evn = e.get("event")
             if evn == "BUDGET_RAISED": act(i, "budget", {"state": "raised", "role": e.get("role"), "budget_usd": e.get("budget_usd"), "by": e.get("by"), "gateway_keys": (e.get("gateway") or {}).get("keys"), "propagation_s": ((e.get("gateway") or {}).get("propagation") or {}).get("s")})   # P3-6 E3
+            elif evn == "PUBLISH_FAILED": act(i, "publish", {"state": "failed", "kind": e.get("publish_kind"), "error": e.get("error"), "live": e.get("live"), "bod": "publikace"})   # P4-3: selhání publikace ven → bod publikace
             elif evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result"), "reason": e.get("reason")})
             elif evn and evn.startswith("KLASIFIKACE_"): act(i, "klasifikace", {"state": evn[12:].lower(), "bod": "klasifikace", "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result")})
             elif evn and evn.startswith("DIALOG_"):
@@ -381,10 +385,12 @@ async def run(req: Request):
                 else:
                     exc = next((e for e in reversed(ents) if e.get("kind") == "NOTIFY" and e.get("event") == "BUDGET_EXCEEDED"), {}) if w["bod"] == "rozpocet" else {}
                     bud = next((e for e in reversed(ents) if e.get("kind") in ("BUDGET_GATE", "BUDGET_EXCEEDED", "BUDGET")), {}) if w["bod"] == "rozpocet" else {}
-                    itr = Interrupt(id=interrupt_id(w), reason="approval", message=f"Schválení {w['bod']} – rozhodněte s důvodem (T6)", expires_at=exp,
+                    pf = next((e for e in reversed(ents) if e.get("kind") == "NOTIFY" and e.get("event") == "PUBLISH_FAILED"), {}) if w["bod"] == "publikace" else {}   # P4-3
+                    itr = Interrupt(id=interrupt_id(w), reason="approval", message=f"Publikace ({pf.get('publish_kind')}) do GitHubu selhala – schválení = opakovat, zamítnutí = pozastavit (T6)" if w["bod"] == "publikace" else f"Schválení {w['bod']} – rozhodněte s důvodem (T6)", expires_at=exp,
                                     response_schema={"type": "object", "required": ["decision", "reason"], "properties": {"decision": {"enum": ["approve", "reject"]}, "reason": {"type": "string", "minLength": MIN_REASON}, **({"budget_usd": {"type": "number", "exclusiveMinimum": 0}} if w["bod"] == "rozpocet" else {})}},
                                     metadata={"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": art.get("frm"), "action": BOD_ACTION.get(w["bod"], w["bod"]), "process": BOD_PROCESS.get(w["bod"]),
-                                              **({"role": exc.get("role") or w.get("artifact_hash"), "source": exc.get("source"), "limit_usd": bud.get("limit_usd"), "spent_usd": bud.get("spent_usd")} if w["bod"] == "rozpocet" else {})})
+                                              **({"role": exc.get("role") or w.get("artifact_hash"), "source": exc.get("source"), "limit_usd": bud.get("limit_usd"), "spent_usd": bud.get("spent_usd")} if w["bod"] == "rozpocet" else {}),
+                                              **({"publish_kind": pf.get("publish_kind"), "error": pf.get("error"), "live": pf.get("live")} if w["bod"] == "publikace" else {})})
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedInterruptOutcome(type="interrupt", interrupts=[itr]), result=state_of(zid, ents)))
                 return
             st = await asyncio.to_thread(CTX["wf_state"], zid) or {}   # P4-2: každou sekundu per otevřený stream – sync gRPC nesmí stát v event loopu

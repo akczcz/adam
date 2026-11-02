@@ -83,10 +83,14 @@ def render(tenant="acme"):
     build_cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "rolegen-build", "annotations": {"kustomize.toolkit.fluxcd.io/substitute": "disabled"}}, "data": data}
     base_cm = next(d for d in yaml.safe_load_all((ROOT / "infra/k8s/base/agentgateway/agentgateway.yaml").read_text()) if d and d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "agentgateway-config")
     cfg = yaml.safe_load(base_cm["data"]["config.yaml"])
-    cfg["llm"]["models"][0]["params"]["baseUrl"] = "$LLM_UPSTREAM_URL"   # env gateway (Deployment): aks mock-upstream v clusteru / živé API
-    # P4-2: ostrý běh zakázky = alias modelu live-<model> → vždy živé API ($LLM_LIVE_URL, klíč $ANTHROPIC_API_KEY z Key Vaultu); mock ('*') zůstává
-    # pro ostatní zakázky i měření. Alias vybírá pod role podle flagu zakázky (P0_MODEL), klíče, rozpočty a ledger gateway platí pro oba stejně.
-    cfg["llm"]["models"] = [{"name": f"live-{m}", "provider": "anthropic", "params": {"model": m, "apiKey": "$ANTHROPIC_API_KEY", "baseUrl": "$LLM_LIVE_URL"}} for m in LIVE_MODELS] + cfg["llm"]["models"]
+    mock = {**cfg["llm"]["models"][0]["params"], "baseUrl": "$LLM_UPSTREAM_URL"}   # env gateway (Deployment): aks mock-upstream v clusteru
+    # P4-2: ostrý běh zakázky = alias modelu live-<model> → vždy živé API ($LLM_LIVE_URL, klíč $ANTHROPIC_API_KEY z Key Vaultu). Alias vybírá pod role
+    # podle flagu zakázky (P0_MODEL), klíče, rozpočty a ledger gateway platí pro oba stejně.
+    # P4-3: žádný catch-all '*' – měřicí upstream dostanou jen explicitní aliasy <model>; neznámý alias (překlep, dvojí prefix live-live-…) gateway
+    # odmítne 404 model_not_found (agentgateway 1.6 model_router.rs: shoda přesná / '*' / prefix / suffix). Běh 7 P4-2: catch-all poslal zakázku
+    # „ostrý běh“ tiše na mock – v ostrém prostředí nepřípustné.
+    cfg["llm"]["models"] = [{"name": f"live-{m}", "provider": "anthropic", "params": {"model": m, "apiKey": "$ANTHROPIC_API_KEY", "baseUrl": "$LLM_LIVE_URL"}} for m in LIVE_MODELS] \
+                         + [{"name": m, "provider": "anthropic", "params": {**mock, "model": m}} for m in LIVE_MODELS]
     cfg["llm"]["policies"] = {"apiKey": {"mode": "optional", "location": tpl["policies"]["apiKey"]["location"], "keys": []}}   # klíče doplní aplikace per zakázka
     cfg |= eg
     github_egress(cfg)

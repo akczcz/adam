@@ -18,6 +18,7 @@ a stop jsou z GUI tytéž eventy workflow jako z GitHub bridge.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -479,7 +480,16 @@ def publish_issue(ctx, inp):
     body = open(p).read() if os.path.exists(p) else z["poptavka"]
     payload = {"title": f"[{z['id']}] Zadání: {z['poptavka'][:60].split('[INJECT]')[0].strip()}", "labels": ["zakazka", "p0-dogfooding"],
                "body": f"> {_disclosure('account', 'issue')}\n\n{body}\n\n---\n`zakazka_id`: {z['id']} · artefakt `{zad['ref']}` · hash `{zad['hash']}` · " + ("**čeká na schválení H1** – komentář `/schvaluji` od vlastníka procesu" if os.environ.get("P0_HITL_GITHUB") == "1" else "schválil člověk (H1)")}
-    return _publish(z, "issue", payload, approval_hash=zad["hash"])
+    try: return _publish(z, "issue", payload, approval_hash=zad["hash"])
+    except Exception as e: return _publish_failed(z, "issue", e, zad["hash"])
+
+
+def _publish_failed(z, kind, e, approval_hash):
+    """P4-3: selhání publikace ven (GitHub 401 bez ostrého PAT, 422, výpadek) nesmí shodit instanci (běh 2 P4-2: FAILED bez eskalace) – aktivita
+    vrátí chybu a orchestrátor (zakazka_wf.publish) otevře rozhodovací bod `publikace` (opakovat / zrušit). Záznam PUBLISH_FAILED = zdroj pro AG-UI."""
+    err = f"{type(e).__name__}: {str(e)[:300]}"
+    ledger("PUBLISH_FAILED", zakazka=z["id"], publish_kind=kind, error=err, live=bool(z.get("live")), approval_hash=approval_hash)
+    return {"error": err, "publish_kind": kind}
 
 
 @rt.activity(name="publish_pr")
@@ -495,7 +505,8 @@ def publish_pr(ctx, inp):
     payload = {"base": "main", "head": pr["branch"], "title": f"[{z['id']}] {pr['text'][:60] or 'PR zakázky'}", "files": files,
                "commit_message": f"{z['id']}: implementace úkolu 1\n\nAI-Agent: vyvojar@0.1.0 on-behalf-of Adam Kolařík\nArtifact-Hash: {pr['hash']}",
                "body": f"> {_disclosure('vyvojar', 'pr_description')}\n\n`zakazka_id`: {z['id']} · artefakt `{pr['ref']}` · hash `{pr['hash']}`\n\nSoubory: " + ", ".join(f["path"] for f in files) + "\n\nSloučení = HITL H4 (člověk) → merge-executor."}
-    return _publish(z, "pull_request", payload, approval_hash=pr["hash"])
+    try: return _publish(z, "pull_request", payload, approval_hash=pr["hash"])
+    except Exception as e: return _publish_failed(z, "pull_request", e, pr["hash"])
 
 
 @rt.activity(name="executor")
@@ -516,8 +527,9 @@ def executor(ctx, inp):
             os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copyfile(src, dst); applied.append(os.path.relpath(dst, target))
     if d["allow"] and action == "merge" and os.environ.get("P0_GITHUB_MODE") == "1" and inp.get("pr"):
         pub = inp.get("pr_publish") or {}
-        _publish(z, "merge", {"number": pub.get("number", 0), "title": f"{z['id']}: merge po schválení H4 (merge-executor)", "head": inp["pr"]["branch"]}, approval_hash=artifact_hash)
-    if d["allow"]:
+        try: _publish(z, "merge", {"number": pub.get("number", 0), "title": f"{z['id']}: merge po schválení H4 (merge-executor)", "head": inp["pr"]["branch"]}, approval_hash=artifact_hash)
+        except Exception as e: d = {**d, "publish_error": _publish_failed(z, "merge", e, artifact_hash)["error"]}   # P4-3: rozhodnutí PDP platí, merge na GitHubu neprošel → bod publikace (orchestrátor), EXECUTED až po úspěšném opakování
+    if d["allow"] and not d.get("publish_error"):
         ledger("EXECUTED", action=action, by=f"{action}-executor", zakazka=z["id"], artifact_hash=artifact_hash, applied=applied)
     return d
 
@@ -643,8 +655,8 @@ KLAS_QUESTIONS = [   # autonomie.md „Klasifikační brána (příloha III)“ 
     ("K6", "Zpracovávají se osobní údaje nad rámec kontaktů (GDPR)?", "sensitivity=personal"),
 ]
 KLAS_KEYS = [k for k, _, _ in KLAS_QUESTIONS]
-SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0)
-SLA_ESCALATION = {"klasifikace": "vlastnik:account", "dialog": "vlastnik:account", "H1": "vlastnik:account", "H1a": "governance", "H2": "vlastnik:architekt", "H4": "vlastnik:vyvoj", "H5": "vlastnik:nasazeni", "rozpocet": "governance"}   # autonomie.md T2 eskalace
+SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600, "publikace": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0); publikace (P4-3) jako rozpocet
+SLA_ESCALATION = {"klasifikace": "vlastnik:account", "dialog": "vlastnik:account", "H1": "vlastnik:account", "H1a": "governance", "H2": "vlastnik:architekt", "H4": "vlastnik:vyvoj", "H5": "vlastnik:nasazeni", "rozpocet": "governance", "publikace": "vlastnik:nasazeni"}   # autonomie.md T2 eskalace; publikace = provoz integrace GitHub
 CHANNELS_URL = os.environ.get("P0_CHANNELS_URL", "")   # adaptér kanálů k lidem (mock-channels v clusteru; ostrý provoz SMTP/helpdesk za gateway); prázdné = suchý běh
 
 
@@ -1028,11 +1040,22 @@ async def live_github(path: str = ""):
         return {"ok": False, "status": None, "wired": False, "path": path, "repo": GH_REPO, "via": GH_API_LIVE, "proxy": bool(GH_PROXY), "error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
+@app.post("/_gateway_keys/evict")
+async def gateway_keys_evict(req: Request):
+    """P4-3 (jen měření): odebrání klíčů zakázky z ConfigMapy gateway = simulace úklidu pozastavené zakázky (GC) – další běh role je musí znovu
+    zaregistrovat (GATEWAY_KEYS_REISSUED). V provozu klíče odebírá GC při vydávání (neutrácející zakázky starší TTL)."""
+    b = await req.json(); zid = b.get("zakazka") or ""
+    if not any(e.get("kind") == "ZAKAZKA_START" and e.get("zakazka") == zid for e in _ledger()): raise HTTPException(404, "zakázka neexistuje")
+    import gateway_keys
+    return await asyncio.to_thread(gateway_keys.evict, zid, ledger, b.get("reason"))
+
+
 @app.get("/_live/model")
-async def live_model():
+async def live_model(alias: str | None = None):
     """P4-2 (předletová kontrola): 1 token na alias live-<P0_MODEL> přes gateway → api.anthropic.com s klíčem z Key Vaultu. 200 = klíč platí (placená
-    zanedbatelná výzva); 401 authentication_error = cesta k živému API funguje, klíč je výchozí (mock); jiný stav = chyba zapojení/TLS."""
-    model = f"live-{os.environ.get('P0_MODEL', 'claude-haiku-4-5')}"
+    zanedbatelná výzva); 401 authentication_error = cesta k živému API funguje, klíč je výchozí (mock); jiný stav = chyba zapojení/TLS.
+    P4-3: `?alias=` = libovolný alias (měření: neznámý alias musí gateway odmítnout 404 model_not_found, ne tiše poslat na mock)."""
+    model = alias or f"live-{os.environ.get('P0_MODEL', 'claude-haiku-4-5')}"
     try:
         r = httpx.post(f"{os.environ['P0_LLM_URL']}/v1/messages", json={"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]},
                        headers={"anthropic-version": "2023-06-01", "x-zakazka": "_live-preflight"}, timeout=60)   # bez x-api-key: apiKey policy gateway je optional (bez role), klíč upstreamu vkládá gateway
