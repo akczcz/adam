@@ -50,20 +50,25 @@ class Gui:
             if self.pw: self.pw.stop()
             self.pw = self.browser = None
 
-    def _nav(self, fn, where):
+    def _nav(self, fn, where, frag=None):
         """Navigace s obnovou základu URL: quick tunnel Cloudflare má po restartu podu aplikace nový hostname (P4-4 běh 3: ERR_NAME_NOT_RESOLVED
         v E13/M1/L1) → při síťové chybě prohlížeče zjistit novou URL (rebase) a jít na tutéž stránku (hash) znovu."""
         try: return fn()
         except Exception as e:
             if not self.rebase or not re.search(r"ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_ADDRESS|ERR_TUNNEL|net::", str(e)): raise
-            old = self.page.url; nb = self.rebase()
+            nb = self.rebase()
             if not nb: raise
+            if frag is None: old = self.page.url; frag = ("#" + old.split("#", 1)[1]) if "#" in old else ""
             self.base = nb.rstrip("/") + "/"; self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": str(e)[:100], "where": f"rebase:{where}", "base": self.base})
-            frag = ("#" + old.split("#", 1)[1]) if "#" in old else ""
-            self.page.goto(self.base + frag); return None
+            self.page.wait_for_timeout(700)   # prohlížeč ještě dokončuje navigaci na chybovou stránku – okamžité goto by přerušila
+            for i in range(2):
+                try: self.page.goto(self.base + frag); return None
+                except Exception as e2:
+                    if i or "interrupted" not in str(e2): raise
+                    self.page.wait_for_timeout(1000)
 
     def goto(self, path):
-        return self._nav(lambda: self.page.goto(self.base + path), f"goto:{path[:20]}")
+        return self._nav(lambda: self.page.goto(self.base + path), f"goto:{path[:20]}", frag=path)
 
     def reload(self):
         return self._nav(lambda: self.page.reload(), "reload")
