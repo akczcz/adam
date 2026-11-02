@@ -1447,7 +1447,16 @@ def kv_name_of(kj):
 def kv_get(kv_name, name):
     """Hodnota tajemství z Key Vaultu identitou runneru (az login OIDC; role Key Vault Secrets Officer z Terraformu secrets.tf); None když chybí."""
     r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120)
+    if r.returncode != 0: _kv_err(kv_name, name, r)   # P4-4 běh 2: všechna čtení Key Vaultu z runneru naráz „chyběla“ – bez stderr nešlo poznat proč (hodnota se neloguje, jen chyba az)
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+KV_ERRORS: list = []
+
+
+def _kv_err(kv_name, name, r):
+    msg = (r.stderr or "").strip().splitlines(); msg = msg[-1][:300] if msg else f"exit {r.returncode}"
+    KV_ERRORS.append({"secret": name, "error": msg}); print(f"  az keyvault {kv_name}/{name}: {msg}", flush=True)
 
 
 def kv_set(kv_name, name, value, content_type):
@@ -1462,6 +1471,7 @@ def kv_set(kv_name, name, value, content_type):
 def kv_attrs(kv_name, name):
     """Jen atributy tajemství (enabled, contentType) – hodnotu harness nedrží (P3-6 E10: root token OpenBao se čte jen při bootstrapu); None když chybí."""
     r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "{contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    if r.returncode != 0: _kv_err(kv_name, name, r)
     return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
 
 
@@ -2576,7 +2586,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     elif not kv_meta and legacy_s:   # migrace z P2-3: Secret openbao-init z clusteru → Key Vault (jednorázově)
         ok_kv = kv_set(kv_name, "openbao-init", legacy_s, KV_CT); assert ok_kv is True, f"migrace openbao-init do Key Vaultu selhala: {ok_kv}"
         bao_state.update(init=json.loads(legacy_s), kv_root_read=True); bao_init_migrated = True; kv_meta = kv_attrs(kv_name, "openbao-init")
-    assert kv_meta, "OpenBao je inicializovaný, ale Key Vault secret openbao-init chybí (a v clusteru není ani starý Secret) – smazat PVC data-openbao-0 a pod openbao-0, nebo tajemství do Key Vaultu doplnit"
+    assert kv_meta, f"OpenBao je inicializovaný, ale Key Vault secret openbao-init chybí (a v clusteru není ani starý Secret) – smazat PVC data-openbao-0 a pod openbao-0, nebo tajemství do Key Vaultu doplnit; chyby az keyvault: {KV_ERRORS[-3:]}"
     if legacy_s: kubectl(a, "-n", NS, "delete", "secret", "openbao-init", "--ignore-not-found")   # bootstrap už jen v Key Vaultu
     bao_migrated = False
     seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
