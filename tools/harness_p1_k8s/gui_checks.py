@@ -19,27 +19,54 @@ KLAS_KEYS = ["K1", "K2", "K3", "K4", "K5", "K6"]
 KLAS_NO = {k: False for k in KLAS_KEYS}   # P3-4: dogfooding = vše „ne“ → profil standard
 
 
+REBASE = None     # P4-4: harness dodá funkci → aktuální základ URL GUI (quick tunnel Cloudflare mění hostname s každým restartem podu aplikace)
+_ACTIVE: list = []   # otevřené instance (běh 3 P4-4: neuzavřený Playwright po výjimce v M1 → L1c „Sync API inside the asyncio loop“)
+
+
 class Gui:
     def __init__(self, base_url: str, *, headless=True, chromium: str | None = None, shots: Path | None = None, slow_ms=0):
         self.base, self.headless, self.chromium, self.shots, self.slow = base_url.rstrip("/") + "/", headless, chromium or os.environ.get("PW_CHROMIUM"), shots, slow_ms
         self.pw = self.browser = self.page = None; self.log = []; self.keepalive = None   # harness dodá obnovu port-forwardu (fetch z prohlížeče nemá retry)
-        self.cur = None; self._err_t = None; self.recoveries = []   # otevřený thread + obnova pohledu po vyčerpání retry GUI (E11 3. běh: „error Failed to fetch“ 50 min)
+        self.cur = None; self._err_t = None; self.recoveries = []; self.rebase = REBASE   # otevřený thread + obnova pohledu po vyčerpání retry GUI (E11 3. běh: „error Failed to fetch“ 50 min)
 
     def open(self):
         from playwright.sync_api import sync_playwright
-        self.pw = sync_playwright().start()
+        for g in list(_ACTIVE):   # zapomenutá instance z předchozího toku (výjimka před close) by zablokovala nový start sync API
+            try: g.close()
+            except Exception: pass
+        self.pw = sync_playwright().start(); _ACTIVE.append(self)
         self.browser = self.pw.chromium.launch(headless=self.headless, executable_path=self.chromium or None, slow_mo=self.slow)
         self.page = self.browser.new_context(viewport={"width": 1280, "height": 900}, locale="cs-CZ").new_page()
         self.page.set_default_timeout(30_000)
         self.page.on("console", lambda m: self.log.append(f"[{m.type}] {m.text[:200]}") if m.type in ("error", "warning") else None)
-        self.page.goto(self.base)
+        self.goto("")
         return self
 
     def close(self):
+        if self in _ACTIVE: _ACTIVE.remove(self)
         try:
             if self.browser: self.browser.close()
         finally:
             if self.pw: self.pw.stop()
+            self.pw = self.browser = None
+
+    def _nav(self, fn, where):
+        """Navigace s obnovou základu URL: quick tunnel Cloudflare má po restartu podu aplikace nový hostname (P4-4 běh 3: ERR_NAME_NOT_RESOLVED
+        v E13/M1/L1) → při síťové chybě prohlížeče zjistit novou URL (rebase) a jít na tutéž stránku (hash) znovu."""
+        try: return fn()
+        except Exception as e:
+            if not self.rebase or not re.search(r"ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_ADDRESS|ERR_TUNNEL|net::", str(e)): raise
+            old = self.page.url; nb = self.rebase()
+            if not nb: raise
+            self.base = nb.rstrip("/") + "/"; self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": str(e)[:100], "where": f"rebase:{where}", "base": self.base})
+            frag = ("#" + old.split("#", 1)[1]) if "#" in old else ""
+            self.goto(frag); return None
+
+    def goto(self, path):
+        return self._nav(lambda: self.goto(path), f"goto:{path[:20]}")
+
+    def reload(self):
+        return self._nav(lambda: self.reload(), "reload")
 
     def shot(self, name):
         if self.shots:
@@ -62,7 +89,7 @@ class Gui:
     def relogin(self):
         """P3-6 E10 nález: po neúspěšném refreshi GUI token zahodí (api.ts ensureFresh), stav `user` v paměti ale zůstane → další akce jde bez Authorization (401 „chybí Bearer token“).
         Harness se přihlásí znovu stejnými údaji (sessionStorage pryč → login stránka)."""
-        self.page.evaluate("sessionStorage.clear()"); self.page.reload(); self.t("login-user").wait_for()
+        self.page.evaluate("sessionStorage.clear()"); self.reload(); self.t("login-user").wait_for()
         return self.login(*self.creds)
 
     @property
@@ -77,14 +104,14 @@ class Gui:
         if self.keepalive:
             try: self.keepalive()
             except Exception: pass
-        self.page.goto(self.base + path); self.page.wait_for_timeout(300)
+        self.goto(path); self.page.wait_for_timeout(300)
         try: self.page.wait_for_function(js, timeout=timeout_s * 1000)
         except Exception as e:
             self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": f"{type(e).__name__}", "where": where})
             if self.keepalive:
                 try: self.keepalive()
                 except Exception: pass
-            self.page.reload(); self.page.wait_for_timeout(500); self.page.wait_for_function(js, timeout=2 * timeout_s * 1000)
+            self.reload(); self.page.wait_for_timeout(500); self.page.wait_for_function(js, timeout=2 * timeout_s * 1000)
 
     def threads_list(self):
         self._goto_wait("#/", "document.querySelector('[data-testid=threads-table]') || document.querySelector('[data-testid=threads-empty]')", where="threads_list")
@@ -97,7 +124,7 @@ class Gui:
 
     def create_thread(self, zid, poptavka, budget=None, klasifikace=None, live=False):
         """Nová zakázka z GUI: poptávka + dotazník K1–K6 (P3-4; výchozí vše „ne“) → první run s forwardedProps.klasifikace; live (P4-2) = ostrý běh."""
-        self.page.goto(self.base + "#/"); self.t("new-id").wait_for(); self.t("new-k-form").wait_for(timeout=30_000)
+        self.goto("#/"); self.t("new-id").wait_for(); self.t("new-k-form").wait_for(timeout=30_000)
         self.t("new-id").fill(zid); self.t("new-poptavka").fill(poptavka); self.cur = zid
         if budget is not None: self.t("new-budget").fill(str(budget))
         if live: self.t("new-live").check()
@@ -120,8 +147,8 @@ class Gui:
         """Otevře thread s NOVÝM runem: navigace jen změnou hashe na tutéž URL stránku nereloaduje (React komponenta zůstane se starým stavem – po resume
         tenanta GUI ukazovalo run „cancelled“ ze stopu; nález P3-5 O3c) → nejdřív seznam, pak thread."""
         for attempt in range(2):
-            if self.page.url.endswith(f"#/t/{zid}"): self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
-            self.page.goto(self.base + f"#/t/{zid}"); self.cur = zid
+            if self.page.url.endswith(f"#/t/{zid}"): self.goto("#/"); self.page.wait_for_timeout(300)
+            self.goto(f"#/t/{zid}"); self.cur = zid
             self.page.wait_for_function("document.querySelector('[data-testid=run-status]') && !['idle','connecting'].includes(document.querySelector('[data-testid=run-status]').textContent)", timeout=60_000)
             st, err = self.t("run-status").inner_text(), (self.t("run-error").inner_text() if self.t("run-error").count() else None)
             if st != "error" or re.match(r"^\d{3}", (err or "").strip()) or not self.keepalive or attempt: break
@@ -136,10 +163,10 @@ class Gui:
         if self.keepalive:
             try: self.keepalive()
             except Exception: pass
-        self.page.goto(self.base + "#/")
+        self.goto("#/")
         try: self.page.evaluate("sessionStorage.clear()")
         except Exception: pass
-        self.page.reload(); self.t("login-user").wait_for()
+        self.reload(); self.t("login-user").wait_for()
         return self.login(user, pw)
 
     # --- průběh ------------------------------------------------------------------------------------------------------------
@@ -288,7 +315,7 @@ class Gui:
     # --- P3-6 E13: zaseknutá zakázka (Dapr STALLED – chybí verze orchestrátoru) -----------------------------------------------------
     def thread_status(self, zid):
         """Řádek zakázky v seznamu: text badge stavu + status workflow (data-status) – STALLED má badge „zaseknuto – chybí verze orchestrátoru“."""
-        self.page.goto(self.base + "#/"); self.page.wait_for_timeout(300)
+        self.goto("#/"); self.page.wait_for_timeout(300)
         self.page.wait_for_function("document.querySelector('[data-testid=threads-table]') || document.querySelector('[data-testid=threads-empty]')")
         b = self.page.locator(f"[data-testid=thread-row-{zid}] [data-testid=thread-stav]")
         self.shot(f"threads-{zid}")
@@ -349,7 +376,7 @@ class Gui:
 
     def wf_versions_card(self, timeout_s=60):
         """Firma (tenant platform): karta verzí orchestrátoru – souhrn (zaseknuté, chybějící verze) a řádky per verze."""
-        self.page.goto(self.base + "#/firma"); self.page.wait_for_timeout(500); out = {"rows": {}}
+        self.goto("#/firma"); self.page.wait_for_timeout(500); out = {"rows": {}}
         try:
             self.page.wait_for_function("document.querySelector('[data-testid=wf-versions]')", timeout=timeout_s * 1000)
             s = self.t("wf-summary"); out["stalled"] = int(s.get_attribute("data-stalled") or 0); out["missing"] = [m for m in (s.get_attribute("data-missing") or "").split(",") if m]
@@ -364,28 +391,28 @@ class Gui:
         return out
 
     def autonomy(self, role, tenant, level, reason):
-        self.page.goto(self.base + "#/firma"); self.t("auto-role").wait_for()
+        self.goto("#/firma"); self.t("auto-role").wait_for()
         self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
         seq0 = self.t("auto-result").get_attribute("data-seq") if self.t("auto-result").count() else None
         self.t("auto-submit").click()
         try: self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=auto-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=60_000)   # nový výsledek, ne starý z předchozího odeslání
         except Exception:   # P3-5 nález: spadlý port-forward → fetch z GUI bez odpovědi; obnovit tunel (keepalive harnessu), znovu odeslat
             if self.keepalive: self.keepalive()
-            self.page.reload(); self.t("auto-role").wait_for(); self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
+            self.reload(); self.t("auto-role").wait_for(); self.t("auto-role").fill(role); self.t("auto-tenant").fill(tenant); self.t("auto-level").select_option(level); self.t("auto-reason").fill(reason)
             seq0 = self.t("auto-result").get_attribute("data-seq") if self.t("auto-result").count() else None; self.t("auto-submit").click()
             self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=auto-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=90_000)
         self.shot(f"autonomy-{role}-{tenant}-{level}")
         return {"ok": self.t("auto-result").get_attribute("data-ok") == "true", "text": self.t("auto-result").inner_text()[:400]}
 
     def tenant_stop(self, tenant, reason, resume=False, _retry=True):
-        self.page.goto(self.base + "#/firma"); self.t("tstop-tenant").wait_for()
+        self.goto("#/firma"); self.t("tstop-tenant").wait_for()
         self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(""); d0 = self.t("tstop-submit").is_disabled(); self.t("tstop-reason").fill(reason)
         seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None
         self.t("tresume-submit" if resume else "tstop-submit").click()
         try: self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         except Exception:
             if self.keepalive: self.keepalive()
-            self.page.reload(); self.t("tstop-tenant").wait_for(timeout=120_000); self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(reason)   # P4-2 běh 4: po reloadu formulář do 30 s nebyl (aplikace dušená dumpem ledgeru) → shodilo celý běh
+            self.reload(); self.t("tstop-tenant").wait_for(timeout=120_000); self.t("tstop-tenant").fill(tenant); self.t("tstop-reason").fill(reason)   # P4-2 běh 4: po reloadu formulář do 30 s nebyl (aplikace dušená dumpem ledgeru) → shodilo celý běh
             seq0 = self.t("tstop-result").get_attribute("data-seq") if self.t("tstop-result").count() else None; self.t("tresume-submit" if resume else "tstop-submit").click()
             self.page.wait_for_function(f"(() => {{ const e = document.querySelector('[data-testid=tstop-result]'); return e && e.getAttribute('data-seq') !== {json.dumps(seq0)}; }})()", timeout=120_000)
         self.shot(f"tenant-{'resume' if resume else 'stop'}-{tenant}")
@@ -395,7 +422,7 @@ class Gui:
         return out
 
     def report(self):
-        self.page.goto(self.base + "#/governance"); self.t("report-summary").wait_for(timeout=60_000)
+        self.goto("#/governance"); self.t("report-summary").wait_for(timeout=60_000)
         rows = self.page.locator("[data-testid^=report-][data-missing]")
         out = [{"id": r.get_attribute("data-testid")[len("report-"):], "missing": (r.get_attribute("data-missing") or "").split(",") if r.get_attribute("data-missing") else []} for r in rows.all()]
         self.t("export-button").click(); self.t("export-lines").wait_for(timeout=60_000)

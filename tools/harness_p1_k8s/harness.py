@@ -597,8 +597,20 @@ def step_p1_5(a, rep, env):
 PUBLIC_URL = None   # P4-4: veřejná URL aplikace přes Cloudflare Tunnel (sidecar cloudflared); GUI klient harnessu jde přes ni místo port-forwardu
 
 
+_PUB_CTX: dict = {}
+
+
 def gui_base(app_url):
-    """Základ URL GUI pro Playwright: přes Cloudflare Tunnel (stabilní, bez umírajícího port-forwardu – nálezy P4-2/8, P4-3/5,9), jinak port-forward aplikace."""
+    """Základ URL GUI pro Playwright: přes Cloudflare Tunnel (bez umírajícího port-forwardu – nálezy P4-2/8, P4-3/5,9), jinak port-forward aplikace.
+    P4-4 běh 3: quick tunnel dostane po každém restartu podu aplikace (E6, E13) nový hostname → před použitím ověřit /health a případně URL znovu
+    zjistit z logu sidecaru (pojmenovaný tunnel ze Secretu je stálý)."""
+    global PUBLIC_URL
+    if PUBLIC_URL and _PUB_CTX:
+        try:
+            if httpx.get(f"{PUBLIC_URL}/health", timeout=8).status_code == 200: return f"{PUBLIC_URL}/gui/"
+        except Exception: pass
+        PUBLIC_URL, info = public_url(_PUB_CTX["a"], _PUB_CTX["http"], timeout_s=150); _PUB_CTX.setdefault("rediscover", []).append({"t": time.strftime("%H:%M:%S"), "url": PUBLIC_URL, **{k: v for k, v in info.items() if k != "log_tail"}})
+        print(f"  veřejná URL znovu: {PUBLIC_URL} ({info.get('source')}, {info.get('s')} s)", flush=True)
     return f"{PUBLIC_URL or app_url}/gui/"
 
 
@@ -2704,7 +2716,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
         if n1:   # P4-4: veřejný vstup přes Cloudflare Tunnel – zjistit URL a ověřit hranici veřejného listeneru dřív, než GUI toky začnou
             global PUBLIC_URL
-            t_n = time.time(); PUBLIC_URL, pub_info = public_url(a, http)
+            t_n = time.time(); PUBLIC_URL, pub_info = public_url(a, http); _PUB_CTX.update(a=a, http=http)
+            sys.path.insert(0, str(HERE)); import gui_checks as _gcm; _gcm.REBASE = lambda: (gui_base(APP).rsplit("/gui/", 1)[0] if PUBLIC_URL else None)   # GUI klient si po chybě navigace vyžádá novou URL
             pods = kj("-n", NS, "get", "pods", "-l", "app=zakazka").get("items", [])
             cf = next((c for p_ in pods for c in (p_.get("status") or {}).get("containerStatuses", []) if c.get("name") == "cloudflared"), {})
             def pub(path, **kw):
@@ -2811,7 +2824,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if e13: e13_flow(a, rep, http, led, APP, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E13: STALLED (chybějící verze) v GUI a obnova – po E6 (stejné podmínky: bez podů rolí)
         if m1: m1_flow(a, rep, http, led, APP, KC, dsn, zid[:-2], LOGS / "gui-shots")   # P4-1 M1: obnova mandátu z GUI (pody account + architekt)
         if n1 and PUBLIC_URL:   # P4-4 N1b: AG-UI stream přes Cloudflare (SSE, přihlášení Keycloak přes veřejný listener) nad zakázkou P21b
-            t_b = time.time(); n1b = {}
+            t_b = time.time(); n1b = {}; gui_base(APP)   # obnovit URL po restartech podu v E6/E13
+            n1b["url"] = PUBLIC_URL; n1b["rediscovered"] = _PUB_CTX.get("rediscover", [])
             try:
                 lg = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": "adam", "password": "adam"}, timeout=30); n1b["login"] = lg.status_code
                 tokp = (lg.json() or {}).get("access_token") if lg.status_code == 200 else None
