@@ -60,13 +60,13 @@ class Gui:
             if not nb: raise
             self.base = nb.rstrip("/") + "/"; self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": str(e)[:100], "where": f"rebase:{where}", "base": self.base})
             frag = ("#" + old.split("#", 1)[1]) if "#" in old else ""
-            self.goto(frag); return None
+            self.page.goto(self.base + frag); return None
 
     def goto(self, path):
-        return self._nav(lambda: self.goto(path), f"goto:{path[:20]}")
+        return self._nav(lambda: self.page.goto(self.base + path), f"goto:{path[:20]}")
 
     def reload(self):
-        return self._nav(lambda: self.reload(), "reload")
+        return self._nav(lambda: self.page.reload(), "reload")
 
     def shot(self, name):
         if self.shots:
