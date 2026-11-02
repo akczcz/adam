@@ -2732,7 +2732,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if n1:   # P4-4: veřejný vstup přes Cloudflare Tunnel – zjistit URL a ověřit hranici veřejného listeneru dřív, než GUI toky začnou
             global PUBLIC_URL
             t_n = time.time(); PUBLIC_URL, pub_info = public_url(a, http); _PUB_CTX.update(a=a, http=http, pod=pub_info.get("pod"))
-            sys.path.insert(0, str(HERE)); import gui_checks as _gcm; _gcm.REBASE = lambda: (gui_base(APP).rsplit("/gui/", 1)[0] if PUBLIC_URL else None)   # GUI klient si po chybě navigace vyžádá novou URL
+            sys.path.insert(0, str(HERE)); import gui_checks as _gcm; _gcm.REBASE = lambda: (gui_base(APP) if PUBLIC_URL else None)   # GUI klient si po chybě navigace vyžádá nový základ URL (včetně /gui/ – běh 7: bez něj goto mířilo na kořen → 404 → timeout loginu)
             pods = kj("-n", NS, "get", "pods", "-l", "app=zakazka").get("items", [])
             cf = next((c for p_ in pods for c in (p_.get("status") or {}).get("containerStatuses", []) if c.get("name") == "cloudflared"), {})
             def pub(path, **kw):
