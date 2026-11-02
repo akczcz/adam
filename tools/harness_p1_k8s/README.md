@@ -1070,6 +1070,11 @@ Nálezy:
    (hostname ze Secretu, harness ho nemusí hledat).
 4. **Zapomenutá instance Playwrightu** (běh 3, L1c „Sync API inside the asyncio loop“): výjimka v M1 před `close()` nechala běžet smyčku sync
    API a další tok nemohl Playwright nastartovat. `Gui.open()` nejdřív zavře zapomenuté instance (modulový seznam), `close()` je idempotentní.
+6. **Tunel ukončovaného podu žije dál** (běhy 5–6, E13b/E13c): po `delete pod` běží starý pod s grace period a jeho quick tunnel ještě chvíli
+   odpovídá 200 (`logs deploy/…` ho navíc vybral místo nového) – harness si nechal starý hostname a za minutu dostal 502 (Cloudflare, origin
+   pryč), přihlášení přes umírající pod skončilo timeoutem. Oprava: URL vždy z **nejnovějšího běžícího podu** bez `deletionTimestamp`, 5xx od
+   Cloudflare = důvod k rebase, relogin nejdřív přejde na aktuální URL. Pro provoz: rolling restart s pojmenovaným tunelem (stálý hostname,
+   až 25 replik `cloudflared` na tunel) tento problém nemá – Cloudflare drží spojení k oběma podům a přepne sám.
 5. **Hranice veřejného listeneru drží** (N1a od běhu 3): přes Cloudflare je dostupné jen `/gui`, `/agui/*` (bez tokenu 401) a `/health`; interní API
    (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) vrací 404, protože na veřejném listeneru vůbec neexistuje –
    druhá aplikace FastAPI v témže procesu místo filtru cest.
