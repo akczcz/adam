@@ -940,12 +940,12 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| L1a | alias `live-<model>` → api.anthropic.com s klíčem z Key Vaultu; s výchozím klíčem 401 authentication_error; mock `*` dál | P42_L1A |
-| L1b | GitHub API přes gateway (CONNECT, cert platformy, přepis na api.github.com, PAT ze Secretu ESO Ready); výchozí PAT → 401; jiný repozitář → 403 | P42_L1B |
-| L1c | zakázka „ostrý běh“ z GUI: flag v ledgeru, badge seznam + detail, pod Account `P0_MODEL=live-<model>`; bez klíče selže viditelně; stop | P42_L1C |
+| L1a | alias `live-<model>` → api.anthropic.com s klíčem z Key Vaultu; s výchozím klíčem 401 authentication_error; mock `*` dál | ✅ alias `live-claude-haiku-4-5` → 401 `authentication_error` („invalid x-api-key“) z api.anthropic.com za 0,7 s (`wired` true); `LLM_LIVE_URL` = api.anthropic.com/v1, `LLM_UPSTREAM_URL` = mock-upstream |
+| L1b | GitHub API přes gateway (CONNECT, cert platformy, přepis na api.github.com, PAT ze Secretu ESO Ready); výchozí PAT → 401; jiný repozitář → 403 | ✅ `GET /repos/akczcz/adam` přes `https://github.platform.internal/api` (CONNECT, cert platformy) → 401 `Bad credentials` z api.github.com (`wired` true); Secret `agentgateway-github-token` z ESO Ready; cizí repozitář 403 z gateway |
+| L1c | zakázka „ostrý běh“ z GUI: flag v ledgeru, badge seznam + detail, pod Account `P0_MODEL=live-<model>`; bez klíče selže viditelně; stop | ✅ zakázka P31-002119-l1: `ZAKAZKA_START.live` true, badge „ostrý“ v seznamu i detailu, AG-UI `live` true; pod Account Succeeded s `P0_MODEL=live-claude-haiku-4-5`, `AGENT_RUN.model` = tentýž alias (ne `live-live-…`), `is_error` true (ResultError, ne rozpočet); publikace issue přes gateway 401 → instance FAILED s příčinou ve `failureDetails` |
 | V1a–c | ostrý běh (jen `p4-2-live`): předletová kontrola 200/200, zakázka z GUI → Dokonceno, issue/PR/merge ověřené z veřejného GitHub API, útrata > 0 pod stropem, mandát rolí | na vyžádání |
 
-Výsledek: **P42_RESULT** (`measure` run P42_ID, P42_RUNS).
+Výsledek: **82/82 + 15 INFO** (`measure` run 41366091027, 9 běhů; L1a–c i V1 poprvé všechny PASS v běhu 9 – běhy 1–6 padaly na zapojení routy a výkonu aplikace, běh 7 na dvojím prefixu aliasu, běh 8 na tunelu port-forward v M1c).
 
 Nálezy:
 

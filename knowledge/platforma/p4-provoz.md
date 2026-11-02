@@ -13,7 +13,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | Krok | Co | Stav |
 |---|---|---|
 | **P4-1** Obnova mandátu z GUI | mandát role = access token člověka (30 min) – role bez HITL před sebou jednala bez mandátu (E2 nález 5); Keycloak `act` nepomůže ani po GA | ✅ 2026-11-01 AKS 79/79 + 14 INFO (`measure` run 41297792885, 4 běhy) |
-| **P4-2** Ostrý běh s živým modelem a GitHubem | klíč modelu i PAT jen v Key Vaultu a jen v gateway; zakázka s flagem `live` z GUI; zapojení měřitelné bez tajemství | 🟡 kód 2026-11-01, měření AKS P42_RESULT (`measure` run P42_ID); ostrý běh na vyžádání |
+| **P4-2** Ostrý běh s živým modelem a GitHubem | klíč modelu i PAT jen v Key Vaultu a jen v gateway; zakázka s flagem `live` z GUI; zapojení měřitelné bez tajemství | ✅ kód 2026-11-01, měření AKS 2026-11-02 **82/82 + 15 INFO** (`measure` run 41366091027); ostrý běh `p4-2-live` na vyžádání (ostrá tajemství v Key Vaultu) |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -85,7 +85,7 @@ strop zakázky je i strop ostrého běhu. Měření: `--step p4-2` = p4-1 + **L1
 bez klíče), `--step p4-2-live` = **V1a–c** (předletová kontrola 200/200, zakázka z GUI jako člověk, issue/PR/merge ověřené z veřejného
 GitHub API, útrata a mandát).
 
-Výsledek měření: **P42_RESULT** (`measure` run P42_ID, P42_RUNS). Nálezy (detail v [README harnessu](../../tools/harness_p1_k8s/README.md#p4-2-l1v1--ostrý-běh-s-živým-modelem-a-githubem-2026-11-01-aks---step-p4-2--p4-1--l1ac---step-p4-2-live--p3-1--v1ac)):
+Výsledek měření: **82/82 + 15 INFO** (`measure` run 41366091027, 9 běhů, 2026-11-02). Nálezy (detail v [README harnessu](../../tools/harness_p1_k8s/README.md#p4-2-l1v1--ostrý-běh-s-živým-modelem-a-githubem-2026-11-01-aks---step-p4-2--p4-1--l1ac---step-p4-2-live--p3-1--v1ac)):
 (1) autorizace routy musí povolit i `GET /repos/<repo>` bez lomítka (předletová kontrola; cizí repozitář dál 403); (2) bez ostrého PAT skončí zakázka
 live po selhání role na `publish_issue` 401 → instance **FAILED** s příčinou ve `failureDetails`, bez retry/HITL – pro ostrý provoz kandidát „publikace
 selhala“ jako interrupt; (3) aplikace s ~280 zakázkami v ledgeru stála desítky sekund: `GET /threads` volal pro každou zakázku synchronní gRPC na Dapr
@@ -127,3 +127,4 @@ L1c/V1c ho vyžadují u každé role. **Pro ostrý provoz: catch-all `*` → moc
 ## Changelog
 - 2026-11-01: založeno; P4-1 návrh a kód (obnova mandátu z GUI).
 - 2026-11-01: P4-1 hotovo na AKS (79/79 + 14 INFO, 4 běhy) – nálezy: dvojí import `app.py` (stav v modulu ⇒ jedna replika), registr = poslední běh role.
+- 2026-11-02: P4-2 hotovo na AKS (82/82 + 15 INFO, 9 běhů) – živý model i GitHub jen přes gateway, klíč i PAT jen v Key Vaultu, flag `live` zakázky z GUI, zapojení měřené bez tajemství (401 z obou upstreamů); nálezy: dvojí prefix aliasu = tichý mock (catch-all `*` pro ostré prostředí odstranit), výkon `GET /threads` při stovkách zakázek, ConfigMap klíčů u limitu, tunel port-forward v harnessu. Ostrý běh `p4-2-live` čeká na ostrá tajemství v Key Vaultu a Adamův pokyn.
