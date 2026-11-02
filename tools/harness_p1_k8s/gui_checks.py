@@ -73,6 +73,16 @@ class Gui:
     def goto(self, path):
         return self._nav(lambda: self.page.goto(self.base + path), f"goto:{path[:20]}", frag=path)
 
+    def rebase_now(self, where="explicit"):
+        """Po známém restartu podu aplikace (E13c) nečekat na chybu: tunel ukončovaného podu ještě chvíli odpovídá (běh 6 P4-4: login přes
+        umírající pod → timeout) → rovnou zjistit aktuální URL a přejít na tutéž stránku pod ní."""
+        if not self.rebase: return False
+        nb = self.rebase()
+        if not nb or nb.rstrip("/") + "/" == self.base: return False
+        old = self.page.url; self.base = nb.rstrip("/") + "/"
+        self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "where": f"rebase:{where}", "base": self.base})
+        self.page.goto(self.base + (("#" + old.split("#", 1)[1]) if "#" in old else "")); return True
+
     def reload(self):
         return self._nav(lambda: self.page.reload(), "reload")
 
@@ -97,7 +107,7 @@ class Gui:
     def relogin(self):
         """P3-6 E10 nález: po neúspěšném refreshi GUI token zahodí (api.ts ensureFresh), stav `user` v paměti ale zůstane → další akce jde bez Authorization (401 „chybí Bearer token“).
         Harness se přihlásí znovu stejnými údaji (sessionStorage pryč → login stránka)."""
-        self.page.evaluate("sessionStorage.clear()"); self.reload(); self.t("login-user").wait_for()
+        self.rebase_now("relogin"); self.page.evaluate("sessionStorage.clear()"); self.reload(); self.t("login-user").wait_for()
         return self.login(*self.creds)
 
     @property
@@ -171,7 +181,7 @@ class Gui:
         if self.keepalive:
             try: self.keepalive()
             except Exception: pass
-        self.goto("#/")
+        self.rebase_now("relogin_as"); self.goto("#/")
         try: self.page.evaluate("sessionStorage.clear()")
         except Exception: pass
         self.reload(); self.t("login-user").wait_for()
