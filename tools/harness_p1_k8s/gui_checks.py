@@ -229,21 +229,21 @@ class Gui:
 
     def wait_profile(self, timeout_s=120):
         """Čeká na profil rizika ve stavu zakázky (STATE_SNAPSHOT.profile z KLASIFIKACE) nebo konec runu."""
-        t0 = time.time()
+        t0 = time.time(); tk = t0
         while time.time() - t0 < timeout_s:
             if self.t("state-profile").count(): break
             rs = self.t("run-status").inner_text() if self.t("run-status").count() else ""
             if rs in ("finished", "cancelled"): break
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(1000); tk = self._tunnel_tick(tk)
         self.shot("profile")
         return {"waited_s": round(time.time() - t0, 1), "profile": self.t("state-profile").inner_text().strip() if self.t("state-profile").count() else None, **self.snapshot()}
 
     def wait_sla(self, timeout_s=120):
         """Čeká na indikaci překročení SLA (state-sla / aktivita sla) – zakázka přitom dál čeká na rozhodnutí."""
-        t0 = time.time()
+        t0 = time.time(); tk = t0
         while time.time() - t0 < timeout_s:
             if self.t("state-sla").count() or self.t("act-sla").count(): break
-            self.page.wait_for_timeout(1000)
+            self.page.wait_for_timeout(1000); tk = self._tunnel_tick(tk)   # P4-3 běh 2 (K1f): 90 s jen čtení DOM → tunel port-forward umřel, stav z GUI se neobnovil (nález 8 P4-2)
         self.shot("sla")
         return {"waited_s": round(time.time() - t0, 1), "sla_text": self.t("state-sla").inner_text() if self.t("state-sla").count() else None, "act_sla": self.t("act-sla").count(), "interrupt": self.t("interrupt").get_attribute("data-interrupt-id") if self.t("interrupt").count() else None}
 
