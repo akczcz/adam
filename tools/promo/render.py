@@ -83,7 +83,8 @@ def main():
         m = marks.get(s["id"]) or {}
         gui_ok = s["kind"] == "gui" and video.exists() and "t0" in m and m.get("t1", vdur) - m["t0"] >= 3 and m["t0"] < vdur
         if gui_ok:
-            t0 = m["t0"]; clip = min(m.get("t1", vdur) - t0, vdur - t0, d)
+            t1 = min(m.get("t1", vdur), vdur); clip = min(t1 - m["t0"], d)
+            t0 = max(m["t0"], t1 - d) if s.get("align") == "end" else m["t0"]   # align=end: posledních d sekund záběru (výsledek scény), jinak začátek
             label = (f",drawtext=fontfile={FONT}:text='{s['title'].replace(chr(39), '').replace(':', '\\:')}':fontcolor=white:fontsize=38:box=1:boxcolor=0x0b1020@0.72:boxborderw=18:x=60:y=h-110" if FONT else "")
             run("ffmpeg", "-y", "-ss", f"{t0:.2f}", "-t", f"{clip:.2f}", "-i", video, "-i", mp3, "-f", "lavfi", "-t", f"{d:.2f}", "-i", "anullsrc=r=48000:cl=stereo",
                 "-filter_complex", f"[0:v]{vf_base},tpad=stop_mode=clone:stop_duration={max(0.0, d - clip) + 0.5:.2f}{label}[v];[1:a][2:a]amix=inputs=2:duration=longest:normalize=0[a]",

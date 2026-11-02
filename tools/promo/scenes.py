@@ -39,7 +39,7 @@ SCENES = [
      "bullets": ["člověk: OAuth z Keycloaku, token exchange – sub schvalovatele, azp klienta role", "agent: SPIFFE SVID per pod jako druhý credential", "jedna Rego pro gateway, paměť i executor; tajemství v OpenBao a Key Vaultu"],
      "say": "Identita člověka přichází z Keycloaku, identita agenta je SPIFFE SVID per pod. Jedna politika v OPA rozhoduje pro gateway, pro nástroje paměti i pro executor. "
             "Tajemství drží OpenBao a Key Vault."},
-    {"id": "09-navrh-pr", "kind": "gui", "title": "Architekt → vývojář v sandboxu → pull request → H4 merge",
+    {"id": "09-navrh-pr", "kind": "gui", "align": "end", "title": "Architekt → vývojář v sandboxu → pull request → H4 merge",   # align end: konec záběru = PR a karta H4, ne start architekta
      "say": "Architekt navrhne řešení, vývojář ho implementuje v sandboxu a výsledkem je pull request. Merge je opět rozhodnutí člověka – bod H4."},
     {"id": "10-firma", "kind": "gui", "title": "Firma – verze orchestrátoru, stop tenanta, autonomie rolí",
      "say": "Pohled na firmu: verze orchestrátoru a instance per verze, stop tenanta jedním rozhodnutím – klíče dostanou limit nula a pody skončí do minuty – a posun autonomie role jen při splněných metrikách."},

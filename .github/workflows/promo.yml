@@ -85,6 +85,7 @@ jobs:
           path: |
             tools/promo/out/promo.mp4
             tools/promo/out/promo.srt
+            tools/promo/out/video.webm
             tools/promo/out/render.json
             tools/promo/out/scenes.json
             tools/promo/out/cards/*.png
