@@ -78,7 +78,7 @@ patches:
       path: /spec/template/spec/containers/-
       value:
         name: cloudflared
-        image: "${ACR_LOGIN_SERVER}/cloudflared:2026.10.7"
+        image: "${ACR_LOGIN_SERVER}/cloudflared:2026.10.7-1"
         env:
         - {name: APP_PUBLIC_URL, value: http://127.0.0.1:8011}
         - {name: TUNNEL_PROTOCOL, value: http2}
