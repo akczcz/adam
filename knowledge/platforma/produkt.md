@@ -99,9 +99,10 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 |---|---|
 | P4-1 Obnova mandátu z GUI (subject token člověka 30 min; role bez HITL před sebou jednala bez mandátu) | ✅ 2026-11-01 AKS 79/79 + 14 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
 | P4-2 Ostrý běh s živým modelem a GitHubem (flag zakázky, klíč i PAT jen v Key Vaultu a jen v gateway) | ✅ kód 2026-11-01, měření AKS 2026-11-02 82/82 + 15 INFO ([p4-provoz.md](p4-provoz.md)); ostrý běh `p4-2-live` na vyžádání |
-| P4-3 Připravenost na ostrý provoz (gateway bez catch-all mocku, GC klíčů i pro pozastavené zakázky, selhání publikace jako rozhodovací bod) | 🟡 kód 2026-11-02, měření AKS P43_RESULT ([p4-provoz.md](p4-provoz.md)) |
+| P4-3 Připravenost na ostrý provoz (gateway bez catch-all mocku, GC klíčů i pro pozastavené zakázky, selhání publikace jako rozhodovací bod) | ✅ 2026-11-02 AKS 84/84 + 17 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
 
 ## Changelog
+- 2026-11-02: P4-3 hotovo na AKS (84/84 + 17 INFO) – před prvním ostrým během uzavřeny tři nálezy P4-2: neznámý alias modelu končí 404 (žádný tichý mock), klíče gateway pozastavených zakázek se uklízejí a při resume obnovují, selhání publikace na GitHub je rozhodovací bod člověka (opakovat / pozastavit), ne mrtvá instance. Promo video: `tools/promo`, workflow `promo`.
 - 2026-11-02: P4-2 hotovo na AKS (82/82 + 15 INFO) – zakázka „ostrý běh“ z GUI jde na živý model a skutečný GitHub výhradně přes gateway; klíč modelu i PAT drží jen Key Vault → ESO → gateway, aplikace ani pod role je nevidí; bez ostrých tajemství selže viditelně (401), nic se tiše nemockuje. Nález: neznámý alias modelu padá do catch-all mocku – pro ostré prostředí odstranit.
 - 2026-11-01: P4-1 hotovo na AKS (79/79 + 14 INFO) – poslední známý mandát mimo workflow, vypršelý viditelně „role bez mandátu“, tlačítko *Obnovit mandát* a keepalive v GUI; nález: stav v modulu aplikace ⇒ jedna replika.
 - 2026-10-27: P3-6 E3 hotovo na AKS (51/51); další položky P3-6 (E4 ledger → ClickHouse, E1 ESO/cert-manager, E2 token exchange) po jednom PR.

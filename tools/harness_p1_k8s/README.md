@@ -1002,12 +1002,12 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| L1c | zakázka „ostrý běh“ bez PAT: `PUBLISH_FAILED` 401 → bod `publikace` v GUI (karta s chybou), opakovat → znovu 401 → interrupt `:1`, zamítnout → Pozastaveno (bod publikace), ne FAILED | P43_L1C |
-| L2a | konfigurace gateway bez `*`; `live-live-<model>` → 404 `model_not_found`; známé aliasy slouží dál | P43_L2A |
-| L2b | po odebrání klíčů zakázky (evict) další role znovu zaregistruje tytéž hodnoty (stejné hashe, sonda 200 na všech replikách) a proběhne bez 401; GC maže i SUSPENDED | P43_L2B |
-| L2c | INFO: co GC v běhu odebral podle stavu instancí, velikost ConfigMapy po úklidu | P43_L2C |
+| L1c | zakázka „ostrý běh“ bez PAT: `PUBLISH_FAILED` 401 → bod `publikace` v GUI (karta s chybou), opakovat → znovu 401 → interrupt `:1`, zamítnout → Pozastaveno (bod publikace), ne FAILED | ✅ `PUBLISH_FAILED` (issue, 401 `/repos/akczcz/adam/issues`, live) → `HITL_WAIT publikace`, karta „Publikace selhala“ s chybou 401, schválení → druhé `PUBLISH_FAILED` a interrupt `hitl:publikace:<hash>:1`, zamítnutí → `HITL_REJECTED` → COMPLETED/Pozastaveno bod publikace; pod Account `live-claude-haiku-4-5`, `AGENT_RUN.model` tentýž |
+| L2a | konfigurace gateway bez `*`; `live-live-<model>` → 404 `model_not_found`; známé aliasy slouží dál | ✅ modely `[live-claude-haiku-4-5, live-claude-sonnet-4-5, claude-haiku-4-5, claude-sonnet-4-5]`, `live-live-claude-haiku-4-5` → 404 `{"error":{"message":"Model not found","type":"invalid_request_error","code":"model_not_found"}}`, health aplikace 200 |
+| L2b | po odebrání klíčů zakázky (evict) další role znovu zaregistruje tytéž hodnoty (stejné hashe, sonda 200 na všech replikách) a proběhne bez 401; GC maže i SUSPENDED | ✅ 5 klíčů vydáno (sonda 200) → Account, 1 kolo otázek, H1 → `evict` odebral 5 klíčů (0 v ConfigMapě) → schválení H1 → `GATEWAY_KEYS_REISSUED` se stejnými 5 hashi, sonda 200 na všech replikách → pod architekt Succeeded, `AGENT_RUN` bez chyby; L2 celkem 215 s |
+| L2c | INFO: co GC v běhu odebral podle stavu instancí, velikost ConfigMapy po úklidu | ℹ️ běh 1: první GC odebral 203 zakázek / 1015 klíčů (vše SUSPENDED), ConfigMap 1 003 888 B → 288 593 B; běh 4: 366 kB, 490 klíčů, 98 zakázek, GC v běhu už nic staršího TTL |
 
-Výsledek: **P43_RESULT** (`measure` run P43_ID, P43_RUNS).
+Výsledek: **84/84 + 17 INFO** (`measure` run 41438707088, 4 běhy: 1 = 78/6 měřicí cesta, 2 = 83/1 K1f tunel, 3 = pád T1e tunel, 4 = vše PASS; L1c, L2a i L2b prošly od běhu 2).
 
 Nálezy:
 
@@ -1034,6 +1034,10 @@ Nálezy:
 8. **Kontrakt aktivit pro staré verze orchestrátoru**: `publish_*` už nevyhazují výjimku, ale vracejí `{error}`; instance starších verzí (bez bodu
    `publikace`) by po selhání publikace pokračovaly dál (`publish_pr` → `{}`) místo FAILED. Netýká se žádné živé instance (jen stopy z měření),
    ale je to změna kontraktu směrem k mírnějšímu chování (do `zakazka_wf.py` se nezapisuje – každá změna souboru = nová verze orchestrátoru).
+9. **Tunel potřetí – navigace po pasivní fázi** (běh 3, pád v T1e): po dotazech do Postgresu (RLS) bez provozu přes forward aplikace `threads_list`
+   čekal 30 s na tabulku, která bez fetch nikdy nepřišla. Navigace GUI klienta (`_goto_wait`: seznam zakázek, stránky firmy) teď dělá keepalive před
+   `goto` a při timeoutu jednou keepalive + reload. Tři pády na tunel ve čtyřech bězích: měřicí cesta runner → port-forward → AKS je nejslabší článek
+   měření; kandidát = Ingress s interní CA nebo `kubectl port-forward` nahradit stabilnějším tunelem (např. `socat` pod + jediný dlouhý stream).
 
 ## Spuštění
 
