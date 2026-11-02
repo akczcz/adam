@@ -93,6 +93,17 @@ variable "github_token" {
   sensitive   = true
   description = "Výchozí (neplatná) hodnota tajemství github-token v Key Vaultu; ostrý fine-grained PAT (jen repo platformy: contents, issues, pull_requests RW) nastaví Adam v Key Vaultu na dobu ostrého běhu a pak ho revokuje – Terraform ho nepřepisuje (P4-2)"
 }
+variable "cloudflare_tunnel_token" {
+  type        = string
+  default     = "quick"
+  sensitive   = true
+  description = "Token pojmenovaného Cloudflare Tunnelu pro sidecar cloudflared aplikace (P4-4); 'quick' = quick tunnel *.trycloudflare.com bez účtu. Ostrou hodnotu nastaví Adam v Key Vaultu, Terraform ji nepřepisuje"
+}
+variable "cloudflare_tunnel_hostname" {
+  type        = string
+  default     = "quick"
+  description = "Veřejný hostname pojmenovaného tunelu (published application v Cloudflare Zero Trust); 'quick' = harness čte hostname z logu sidecaru"
+}
 variable "role_clients" {
   type        = list(string)
   default     = ["account", "architekt", "vyvojar", "reviewer", "sre"]

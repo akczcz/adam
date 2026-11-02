@@ -15,6 +15,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-1** Obnova mandátu z GUI | mandát role = access token člověka (30 min) – role bez HITL před sebou jednala bez mandátu (E2 nález 5); Keycloak `act` nepomůže ani po GA | ✅ 2026-11-01 AKS 79/79 + 14 INFO (`measure` run 41297792885, 4 běhy) |
 | **P4-2** Ostrý běh s živým modelem a GitHubem | klíč modelu i PAT jen v Key Vaultu a jen v gateway; zakázka s flagem `live` z GUI; zapojení měřitelné bez tajemství | ✅ kód 2026-11-01, měření AKS 2026-11-02 **82/82 + 15 INFO** (`measure` run 41366091027); ostrý běh `p4-2-live` na vyžádání (ostrá tajemství v Key Vaultu) |
 | **P4-3** Připravenost na ostrý provoz (nálezy P4-2) | gateway bez catch-all mocku (neznámý alias → 404), úklid klíčů gateway i pro pozastavené zakázky + obnova při resume, selhání publikace na GitHub jako rozhodovací bod `publikace` místo FAILED | ✅ 2026-11-02 AKS **84/84 + 17 INFO** (`measure` run 41438707088, 4 běhy) |
+| **P4-4** Vstup do platformy přes Cloudflare Tunnel | GUI a AG-UI dostupné zvenčí přes sidecar `cloudflared` u aplikace (žádná veřejná IP/LB, egress jen :7844); veřejný listener nese jen GUI + AG-UI; měření přes tunel místo `kubectl port-forward`; Ingress jako záloha | 🟡 kód 2026-11-02, měření AKS P44_RESULT (`measure` run P44_ID) |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -147,6 +148,51 @@ publikace nad týmž artefaktem = nový interrupt (`…:1`), jinak run AG-UI po 
 platformy: zakázka z API dostala otázky Account, okno logu gateway 40 min, pasivní čekání GUI bez keepalivu (podruhé – nález 8 P4-2) a potřetí
 navigace GUI po dotazech do DB (běh 3) – měřicí cesta runner → `kubectl port-forward` → AKS je nejslabší článek měření, kandidát Ingress s interní CA.
 
+## P4-4 Vstup do platformy přes Cloudflare Tunnel
+
+**Rozhodnutí (Adam, 2026-11-02):** vstup pro lidi (GUI, AG-UI) zvenčí přes **Cloudflare Tunnel** – `cloudflared` jako sidecar u podu aplikace zakázky,
+který míří jen na **veřejný listener** aplikace (port 8011: `/gui`, `/agui/*`, `/health`). Interní API aplikace (`/zakazky/*` schvalování bez tokenu,
+`/_debug`, `/_live`, `/_wf`, `/_mandat`, `/_gateway_keys`) zůstává na 8010 uvnitř clusteru – veřejný listener je **druhá aplikace FastAPI ve stejném
+procesu**, ne proxy s filtrem cest (nic se nedá „zapomenout“ ve filtru). Ingress s veřejnou IP zůstává záložní variantou, kdyby tunnel nešel použít.
+
+| Varianta | Cena a provoz | Bezpečnost | Proč ne / proč ano |
+|---|---|---|---|
+| **Cloudflare Tunnel sidecar** (zvoleno) | zdarma (Zero Trust Free), bez LB a veřejné IP (~0 Kč/měs. navíc), bez certifikátů (TLS na edge Cloudflare) | žádný otevřený inbound port, egress jen :7844; Cloudflare Access (SSO, service tokeny) před aplikací zdarma do 50 uživatelů | jednoduché, odpovídá „dočasný/dev“ provozu; závislost na Cloudflare, trycloudflare hostname náhodný |
+| AKS app routing (managed nginx Ingress) + cert-manager | Standard LB + veřejná IP (jednotky USD/měs.), DNS a certifikát (Let's Encrypt nebo interní CA) | veřejná IP = cíl skenů; WAF a rate limit řešit zvlášť (NGINX, Azure Front Door = další cena) | plná kontrola, žádná třetí strana; víc infrastruktury a nákladů pro dev |
+| Private Link / VPN | privátní endpoint + klient VPN | nejbezpečnější | runner GitHubu ani zákazník se nedostanou bez VPN; pro měření nepoužitelné |
+
+**Fakta (Cloudflare docs, zdrojové soubory `cloudflare/cloudflare-docs` na GitHubu, ověřeno 2026-11-02):**
+- Cloudflare Tunnel je součást Zero Trust (i Free): limit **1 000 tunelů na účet, 25 aktivních replik na tunel**, publikované aplikace omezené
+  jen 1 MB konfigurace (`account-limits.mdx`). Access: 500 aplikací, **50 service tokenů**, 50 IdP (tamtéž). Limit 50 uživatelů Zero Trust Free:
+  neověřeno zde (plán Cloudflare, ne docs limitů).
+- Egress `cloudflared`: **port 7844 TCP (http2) nebo UDP (quic)** na `region1/region2.v2.argotunnel.com`; port 443 jen pro volitelné funkce
+  (update, features) – bez něj loguje chybu, běží dál (`tunnel-with-firewall.mdx`). Sidecar používá `--protocol http2` (TCP; UDP přes
+  NetworkPolicy/NAT nejistý).
+- Service tokeny Access: hlavičky `CF-Access-Client-Id` / `CF-Access-Client-Secret` (`service-tokens.mdx`) – cesta pro harness, až bude před
+  hostname Access policy.
+- Quick tunnel (`cloudflared tunnel --url …`, `*.trycloudflare.com`): bez účtu, hostname náhodný per start, bez SLA a bez Access; určený pro test,
+  ne provoz – **spekulace/paměť, stránku docs se nepodařilo stáhnout** (zkontrolovat před ostrým použitím).
+- Obraz `cloudflare/cloudflared:2026.10.7` (Docker Hub 2026-11-02); oficiální obraz je bez shellu → vlastní obraz `cloudflared` (statická binárka nad
+  busyboxem), aby sidecar při startu volil režim podle `TUNNEL_TOKEN` (`quick` → quick tunnel, jinak pojmenovaný tunnel; token jen v env, ne v argumentech).
+
+Tok: člověk → `https://<hostname>` (Cloudflare edge, TLS) → tunnel :7844 → sidecar `cloudflared` → `127.0.0.1:8011` (veřejný listener) → GUI / AG-UI
+(přihlášení Keycloak přes aplikaci, tokeny jako dosud). Tajemství: `cloudflare-tunnel-token` a `cloudflare-tunnel-hostname` v Key Vaultu (Terraform
+s výchozím `quick`, `ignore_changes`) → ESO → Secret `cloudflare-tunnel` → env sidecaru. Měření (`--step p4-4` = p4-3 + **N1a–b**): veřejná URL ze
+Secretu nebo z logu sidecaru, GUI klient harnessu jde přes tunel (všech 14 toků), N1a = hranice veřejného listeneru (GUI 200, AG-UI bez tokenu 401,
+interní cesty 404, `cf-ray`), N1b = SSE run přes Cloudflare.
+
+Výsledek měření: **P44_RESULT** (`measure` run P44_ID, P44_RUNS). Nálezy: P44_FINDINGS
+
+### Postup pojmenovaného tunelu s Access (až bude Adam chtít stabilní adresu)
+
+1. Cloudflare Zero Trust → Networks → Tunnels → Create tunnel (cloudflared) → zkopírovat **token**; Published application: hostname
+   `platforma.<doména>` → `http://127.0.0.1:8011` (doména musí být zóna v účtu Cloudflare, Free plán stačí).
+2. Access → Applications → self-hosted na ten hostname; policy Allow pro Adamův e-mail (OTP) a **service token** pro harness.
+3. Key Vault: `cloudflare-tunnel-token` = token, `cloudflare-tunnel-hostname` = hostname (portál nebo `az keyvault secret set`, nikdy do Gitu);
+   ESO do 1 h nebo `force-sync`; `rollout restart deploy/zakazka` (env sidecaru).
+4. Harness: service token do Key Vaultu (`cloudflare-access-client-id/secret`, kandidát) → hlavičky `CF-Access-Client-*` u všech volání GUI/AG-UI.
+5. Quick tunnel po tu dobu nepoužívat (hostname bez Access je veřejný, i když náhodný).
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -154,6 +200,8 @@ navigace GUI po dotazech do DB (běh 3) – měřicí cesta runner → `kubectl 
 | PAT v gateway smí víc než zakázka potřebuje | fine-grained PAT jen na repozitář platformy + autorizace routy gateway (cesta `/repos/akczcz/adam/`, metody GET/POST/PATCH/PUT) + ruleset `main`; revokace po běhu |
 | Živý model = útrata; alias `live-*` může použít kdokoli s klíčem role | klíče role × zakázka mají rozpočty (Block 24h/30d), strop zakázky (`zakazka-30d-block`), ledger gateway per request → FinOps; klíč modelu s limitem workspace |
 | Neznámý alias modelu (překlep, dvojí prefix) spadne do catch-all `*` = mock a zakázka „live“ běží tiše na mocku | `AGENT_RUN.model` v ledgeru + check L1c/V1c; ~~catch-all odstranit~~ **P4-3**: konfigurace bez `*`, neznámý alias → 404 (L2a) |
+| Veřejná URL GUI (quick tunnel) bez Access: kdokoli s adresou může zkoušet přihlášení | hostname náhodný per start podu a jen po dobu měření; veřejný listener nese jen GUI + AG-UI (interní API ne); Keycloak brute-force detection zapnout (kandidát); pro stálý provoz pojmenovaný tunnel + Access (P4-4 postup) |
+| Závislost na Cloudflare (výpadek edge, změna podmínek Free plánu) | Ingress s veřejnou IP jako záložní varianta (rozhodnutí P4-4); aplikace uvnitř clusteru běží dál, tunnel bez readiness proby nic neshodí |
 | Selhání publikace na GitHub (výpadek, vypršelý PAT, 422) v ostrém běhu | ~~instance FAILED bez eskalace~~ **P4-3**: rozhodovací bod `publikace` (opakovat / pozastavit), ledger `PUBLISH_FAILED`, SLA 4 h → eskalace provozu |
 | Předletová kontrola `/_live/model` je placená (1 token) | jen na vyžádání v `p4-2-live` a v L1a (s výchozím klíčem 401, nic se neplatí) |
 | Mandát obnoví jiný člověk tenanta než schvalovatel → role jedná jeho jménem | ledger `MANDAT renewed by`, GUI ukazuje držitele; kdo klikne, přebírá odpovědnost (T1) – stejné jako schválení |

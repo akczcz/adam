@@ -1039,6 +1039,24 @@ Nálezy:
    `goto` a při timeoutu jednou keepalive + reload. Tři pády na tunel ve čtyřech bězích: měřicí cesta runner → port-forward → AKS je nejslabší článek
    měření; kandidát = Ingress s interní CA nebo `kubectl port-forward` nahradit stabilnějším tunelem (např. `socat` pod + jediný dlouhý stream).
 
+## P4-4 N1 – vstup přes Cloudflare Tunnel (2026-11-02, AKS, `--step p4-4` = p4-3 + **N1a–b**, GUI toky přes tunel)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-4-vstup-do-platformy-přes-cloudflare-tunnel)): sidecar `cloudflared`
+  u podu aplikace → veřejný listener 8011 (jen `/gui`, `/agui/*`, `/health`; druhá aplikace FastAPI v témže procesu). Quick tunnel bez účtu
+  (`*.trycloudflare.com`, hostname z logu sidecaru) nebo pojmenovaný tunnel (token + hostname z Key Vaultu přes ESO). Harness: `public_url()`,
+  `gui_base()` – všech 14 GUI toků jde přes tunel místo `kubectl port-forward` (nálezy P4-2/8, P4-3/5, 9); port-forwardy zůstávají pro interní API.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| N1a | sidecar Ready, veřejná URL nalezena, `/health` přes Cloudflare (`cf-ray`), `/gui/` 200, `/agui/threads` bez tokenu 401, interní cesty (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) 404 | P44_N1A |
+| N1b | přihlášení + seznam threadů + AG-UI run jako SSE (`RUN_STARTED … RUN_FINISHED`) přes Cloudflare, `text/event-stream` | P44_N1B |
+
+Výsledek: **P44_RESULT** (`measure` run P44_ID, P44_RUNS).
+
+Nálezy:
+
+P44_FINDINGS
+
 ## Spuštění
 
 ```bash
