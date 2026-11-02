@@ -53,7 +53,10 @@ class Gui:
     def _nav(self, fn, where, frag=None):
         """Navigace s obnovou základu URL: quick tunnel Cloudflare má po restartu podu aplikace nový hostname (P4-4 běh 3: ERR_NAME_NOT_RESOLVED
         v E13/M1/L1) → při síťové chybě prohlížeče zjistit novou URL (rebase) a jít na tutéž stránku (hash) znovu."""
-        try: return fn()
+        try:
+            resp = fn()
+            if self.rebase and resp is not None and getattr(resp, "status", 0) >= 500: raise RuntimeError(f"net::HTTP {resp.status} (chybová stránka Cloudflare – tunel starého podu)")   # běh 5 P4-4: mrtvý quick tunnel = 502/530 stránka, ne síťová chyba
+            return resp
         except Exception as e:
             if not self.rebase or not re.search(r"ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|ERR_ADDRESS|ERR_TUNNEL|net::", str(e)): raise
             nb = self.rebase()
@@ -193,6 +196,12 @@ class Gui:
         (E11 3. běh: „Failed to fetch“, workflow přitom čekal na dialog 50 min). Když „error“ bez HTTP kódu trvá déle než retry GUI, obnovit
         port-forward (keepalive) a znovu otevřít thread = nový run-pohled (run je jen pohled, zdroj pravdy je ledger)."""
         err = (self.t("run-error").inner_text() if self.t("run-error").count() else "") if rs == "error" else ""
+        if rs == "error" and self.rebase and re.match(r"^(502|503|530)", err.strip()) and self.cur:   # 5xx z Cloudflare = tunel podu, který už neběží (běh 5 P4-4 E13b) → nová URL a thread znovu
+            nb = self.rebase()
+            if nb and nb.rstrip("/") + "/" != self.base:
+                self.base = nb.rstrip("/") + "/"; self.recoveries.append({"t": time.strftime("%H:%M:%S"), "thread": self.cur, "error": err[:60], "where": "rebase:recover", "base": self.base})
+                try: self.open_thread(self.cur); self._err_t = None; return True
+                except Exception as e: self.recoveries[-1]["reopen_failed"] = type(e).__name__
         if rs != "error" or re.match(r"^\d{3}", err.strip()): self._err_t = None; return False
         self._err_t = self._err_t or time.time()
         if time.time() - self._err_t < after_s or not self.cur: return False

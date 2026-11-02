@@ -606,10 +606,11 @@ def gui_base(app_url):
     zjistit z logu sidecaru (pojmenovaný tunnel ze Secretu je stálý)."""
     global PUBLIC_URL
     if PUBLIC_URL and _PUB_CTX:
+        same_pod = _PUB_CTX.get("pod") == newest_app_pod(_PUB_CTX["a"])   # jiný pod = jiný tunel, i kdyby starý ještě odpovídal
         try:
-            if httpx.get(f"{PUBLIC_URL}/health", timeout=8).status_code == 200: return f"{PUBLIC_URL}/gui/"
+            if same_pod and httpx.get(f"{PUBLIC_URL}/health", timeout=8).status_code == 200: return f"{PUBLIC_URL}/gui/"
         except Exception: pass
-        PUBLIC_URL, info = public_url(_PUB_CTX["a"], _PUB_CTX["http"], timeout_s=150); _PUB_CTX.setdefault("rediscover", []).append({"t": time.strftime("%H:%M:%S"), "url": PUBLIC_URL, **{k: v for k, v in info.items() if k != "log_tail"}})
+        PUBLIC_URL, info = public_url(_PUB_CTX["a"], _PUB_CTX["http"], timeout_s=150); _PUB_CTX["pod"] = info.get("pod"); _PUB_CTX.setdefault("rediscover", []).append({"t": time.strftime("%H:%M:%S"), "url": PUBLIC_URL, **{k: v for k, v in info.items() if k != "log_tail"}})
         print(f"  veřejná URL znovu: {PUBLIC_URL} ({info.get('source')}, {info.get('s')} s)", flush=True)
     return f"{PUBLIC_URL or app_url}/gui/"
 
@@ -620,20 +621,34 @@ def public_url(a, http, timeout_s=150):
     import base64 as _b
     host = kubectl(a, "-n", NS, "get", "secret", "cloudflare-tunnel", "-o", "jsonpath={.data.hostname}").stdout.strip()
     host = _b.b64decode(host).decode().strip() if host else ""
-    t0 = time.time(); url = None; log_tail = ""
+    t0 = time.time(); url = None; log_tail = ""; pod = None
     while time.time() - t0 < timeout_s:
+        pod = newest_app_pod(a)   # běh 5 P4-4: `logs deploy/…` vzal ukončovaný pod – jeho tunel ještě chvíli odpovídal 200 a pak 502
         if host and host != "quick": url = f"https://{host}"
-        else:
-            log_tail = kubectl(a, "-n", NS, "logs", "deploy/zakazka", "-c", "cloudflared", "--tail=400").stdout
+        elif pod:
+            log_tail = kubectl(a, "-n", NS, "logs", pod, "-c", "cloudflared", "--tail=400").stdout
             m = re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", log_tail)
             url = m[-1] if m else None
         if url:
             try:
                 r = httpx.get(f"{url}/health", timeout=15, follow_redirects=True)
-                if r.status_code == 200 and r.json().get("public"): return url, {"source": "secret" if host and host != "quick" else "quick-tunnel-log", "s": round(time.time() - t0, 1), "cf_ray": r.headers.get("cf-ray"), "server": r.headers.get("server")}
+                if r.status_code == 200 and r.json().get("public"): return url, {"source": "secret" if host and host != "quick" else "quick-tunnel-log", "pod": pod, "s": round(time.time() - t0, 1), "cf_ray": r.headers.get("cf-ray"), "server": r.headers.get("server")}
             except Exception: pass
         time.sleep(5)
-    return None, {"source": None, "s": round(time.time() - t0, 1), "log_tail": log_tail[-400:]}
+    return None, {"source": None, "pod": pod, "s": round(time.time() - t0, 1), "log_tail": log_tail[-400:]}
+
+
+def newest_app_pod(a):
+    """Jméno nejnovějšího běžícího (ne ukončovaného) podu aplikace – po restartu (E6, E13) je chvíli starý i nový pod, každý s vlastním quick tunelem."""
+    pods = [p_ for p_ in kj_static(a, "-n", NS, "get", "pods", "-l", "app=zakazka").get("items", []) if (p_.get("status") or {}).get("phase") == "Running" and not (p_.get("metadata") or {}).get("deletionTimestamp")]
+    pods.sort(key=lambda p_: (p_.get("status") or {}).get("startTime") or "")
+    return pods[-1]["metadata"]["name"] if pods else None
+
+
+def kj_static(a, *args):
+    r = kubectl(a, *args, "-o", "json")
+    try: return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
+    except Exception: return {}
 
 
 class PortForward:
@@ -2716,7 +2731,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
         if n1:   # P4-4: veřejný vstup přes Cloudflare Tunnel – zjistit URL a ověřit hranici veřejného listeneru dřív, než GUI toky začnou
             global PUBLIC_URL
-            t_n = time.time(); PUBLIC_URL, pub_info = public_url(a, http); _PUB_CTX.update(a=a, http=http)
+            t_n = time.time(); PUBLIC_URL, pub_info = public_url(a, http); _PUB_CTX.update(a=a, http=http, pod=pub_info.get("pod"))
             sys.path.insert(0, str(HERE)); import gui_checks as _gcm; _gcm.REBASE = lambda: (gui_base(APP).rsplit("/gui/", 1)[0] if PUBLIC_URL else None)   # GUI klient si po chybě navigace vyžádá novou URL
             pods = kj("-n", NS, "get", "pods", "-l", "app=zakazka").get("items", [])
             cf = next((c for p_ in pods for c in (p_.get("status") or {}).get("containerStatuses", []) if c.get("name") == "cloudflared"), {})
