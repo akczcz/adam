@@ -1343,6 +1343,16 @@ def gui_flow(a, rep, http, led, zid, APP, GHS, dsn):
 KLAS_NO = {k: False for k in ("K1", "K2", "K3", "K4", "K5", "K6")}   # P3-4: zakázky z interního API musí nést dotazník, jinak čekají na klasifikaci v AG-UI
 
 
+def candidate_version(registered, cur):
+    """E6/E13: „starší verze“ orchestrátoru pro testy = snímek-kandidát s jiným pořadím úloh (značky WORKFLOW_VERSION/KLASIFIKACE_DONE), ne libovolná
+    ne-latest verze – od P4-3 jsou v obrazu tři snímky (dvě dřívější produkční verze bez značek + kandidát) a výběr podle abecedy bral produkční verzi
+    se stovkami SUSPENDED instancí z měření (E6b bez KLASIFIKACE_DONE, E6c drained False)."""
+    for v in sorted(registered):
+        p = T / "harness_p0_o2/wf_versions" / f"zakazka_{v}.py"
+        if v != cur and p.exists() and "WORKFLOW_VERSION" in p.read_text(): return v
+    return next((v for v in sorted(registered) if v != cur), None)
+
+
 def e6_flow(a, rep, http, led, APP, kj, tag):
     """E6 (P3-6): verzování workflow – Dapr named versioning (1.17+): každá verze orchestrátoru (zakazka_wf.py, snímky wf_versions/) je registrovaná pod
     jménem `zakazka` s version_name = hash obsahu; instance nese verzi v historii a po nasazení nového obrazu (zde: restart podu aplikace, obě verze
@@ -1354,7 +1364,7 @@ def e6_flow(a, rep, http, led, APP, kj, tag):
     v0 = http("GET", f"{APP}/_wf/versions", timeout=30).json(); cur = v0.get("current"); reg = (v0.get("registered") or {}).get("versions") or []
     L0 = led(); wfv = [e for e in L0 if e["kind"] == "WF_VERSIONS"]
     rep.add("E6a", "Verzování workflow (Dapr named versioning): orchestrátor zakázky v samostatném modulu zakazka_wf.py (aktivity jménem), verze = hash obsahu, snímek každé verze v wf_versions/ (CI `wf_versions.py check` = snímek aktuální verze existuje a odpovídá názvu); aplikace registruje všechny snímky + aktuální jako latest a při startu ověří, že všechny aktivity volané kteroukoli verzí jsou registrované (ledger WF_VERSIONS), GET /_wf/versions hlásí current == verze z HEAD repa, ≥ 2 registrované verze (kandidát s jiným pořadím úloh), latest == current, žádný neshodný snímek", "PASS" if chk.returncode == 0 and chk_j.get("ok") and cur and cur == chk_j.get("current") and v0.get("latest") == cur and len(reg) >= 2 and cur in reg and not (v0.get("registered") or {}).get("unfrozen") and not (v0.get("registered") or {}).get("bad") and (v0.get("registered") or {}).get("activities_checked") and all(v0.get("snapshots", {}).values()) and wfv and wfv[-1].get("current") == cur else "FAIL", {"check": chk_j, "check_rc": chk.returncode, "api": {k: v0.get(k) for k in ("current", "latest", "registered", "snapshots")}, "ledger_wf_versions": (wfv[-1] if wfv else None)})
-    old = next((v for v in sorted(reg) if v != cur), None); zo, zn = f"{tag}-e6old", f"{tag}-e6new"
+    old = candidate_version(reg, cur); zo, zn = f"{tag}-e6old", f"{tag}-e6new"   # P4-3 běh 1: tři snímky – „starší verze“ = kandidát se značkami (WORKFLOW_VERSION), ne první podle abecedy
     def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")   # události orchestrátoru jdou přes aktivitu notify (kind NOTIFY, event=…)
     def wait_kind(zid, kind, timeout=120):
         t0 = time.time()
@@ -1750,7 +1760,7 @@ def e13_flow(a, rep, http, led, APP, kj, tag, shots):
             e = next((e for e in led() if K(e) == kind and e.get("zakazka") == z_), None)
             if e: return e
             time.sleep(2)
-    v0 = versions(); cur = v0.get("current"); old = next((v for v in sorted((v0.get("registered") or {}).get("versions") or []) if v != cur), None)
+    v0 = versions(); cur = v0.get("current"); old = candidate_version((v0.get("registered") or {}).get("versions") or [], cur)
     sw1 = http("POST", f"{APP}/_wf/latest", json={"version": old, "by": "harness", "reason": "E13: zakázka na starší verzi orchestrátoru"}, timeout=15).json() if old else {}
     http("POST", f"{APP}/zakazky", json={"id": z, "poptavka": f"Zakázka {z} bez dotazníku (E13: založena na verzi {old}, která bude odebrána).", "tenant": "acme", "hitl_timeout_s": 1800}, timeout=15)
     w0 = wait_kind(z, "KLASIFIKACE_WAIT") or {}
@@ -2046,7 +2056,12 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots, l2=False):
         return [c for c in cur if (c.get("metadata") or {}).get("zakazka") == zid_]
     http("POST", f"{APP}/zakazky", json={"id": z2, "poptavka": f"Zakázka {z2}: přidej soubor zakazky/{z2}/NOTES.md (test úklidu klíčů gateway a jejich obnovy při dalším běhu role).", "tenant": "acme", "klasifikace": KLAS_NO, "budget_usd": 1, "hitl_timeout_s": 1800}, timeout=15)
     iss = wait_led2(lambda e: K(e) == "GATEWAY_KEYS_ISSUED", 600) or {}
-    w = wait_led2(lambda e: K(e) == "HITL_WAIT" and e.get("bod") == "H1", 1500) or {}
+    w = {}
+    for _ in range(3):   # P4-3 běh 1: Account položil upřesňující otázky (DIALOG_WAIT) a harness čekal jen na H1 → odpovědět přes API a čekat dál
+        w = wait_led2(lambda e: (K(e) == "HITL_WAIT" and e.get("bod") == "H1") or (K(e) == "DIALOG_WAIT" and not any(K(x) == "DIALOG_ANSWER" and x.get("round") == e.get("round") for x in L(z2))), 1500) or {}
+        if K(w) != "DIALOG_WAIT": break
+        http("POST", f"{APP}/zakazky/{z2}/dialog", json={"by": "adam", "answer": "Stačí jeden soubor NOTES.md v adresáři zakázky; rozpočet i termín výchozí."}, timeout=15); l2d["dialog_rounds"] = l2d.get("dialog_rounds", 0) + 1
+    if K(w) != "HITL_WAIT": w = {}
     l2d["issued"] = {"roles": iss.get("roles"), "hashes": iss.get("hashes"), "probe_status": iss.get("probe_status")}; l2d["h1"] = bool(w)
     ev = J(http("POST", f"{APP}/_gateway_keys/evict", json={"zakazka": z2, "reason": "L2b: simulace úklidu klíčů pozastavené zakázky"}, timeout=60)); l2d["evict"] = ev
     l2d["cm_after_evict"] = len(cm_keys_of(z2))
@@ -2653,7 +2668,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         with psycopg.connect(dsn("dapr_state"), autocommit=True, connect_timeout=10) as c:
             dapr_tables = sorted(r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall())
         gw_models = {m.get("name"): (m.get("params") or {}).get("baseUrl") for m in gw_cfg.get("llm", {}).get("models", [])}   # P4-2: '*' = mock/env upstream, live-<model> = živé API
-        gw_ok = all(config_from_git.values()) and gw_models.get("*") == "$LLM_UPSTREAM_URL" and gw_models.get(f"live-{a.model}") == "$LLM_LIVE_URL" and "apiKey" in (gw_cfg.get("llm", {}).get("policies") or {}) and "apikeys-template.yaml" in (cfg_cluster["rolegen-build"] or {}) and any(k.startswith("srt-") for k in (cfg_cluster["rolegen-build"] or {}))
+        gw_ok = all(config_from_git.values()) and "*" not in gw_models and gw_models.get(a.model) == "$LLM_UPSTREAM_URL" and gw_models.get(f"live-{a.model}") == "$LLM_LIVE_URL"   # P4-3: bez catch-all, měřicí upstream jen explicitní alias and "apiKey" in (gw_cfg.get("llm", {}).get("policies") or {}) and "apikeys-template.yaml" in (cfg_cluster["rolegen-build"] or {}) and any(k.startswith("srt-") for k in (cfg_cluster["rolegen-build"] or {}))
         rep.add("P21a", "AKS: Flux kustomizations platform + roles Ready na HEAD; ConfigMapy agentgateway-config a rolegen-build v clusteru == render infra/k8s/overlays/aks z HEAD (konfigurace z Gitu, harness nic nerenderuje); gateway má apiKey policy a upstream z env LLM_UPSTREAM_URL; rolegen-build nese apikeys-template a srt; platforma vč. mock-upstream Ready; OpenBao init/unseal/transit; schéma paměti M1 na Flexible Serveru; harness dodal jen tajemství", "PASS" if all(v == "True" for v in flux.values()) and gw_ok and all(rolls.values()) and all(v == 200 for v in health.values()) and dapr_tables else "FAIL", {"flux": flux, "flux_rev": flux_rev, "config_from_git": config_from_git, "config_diff": config_diff, "gateway_upstream_env": gw_env.get("LLM_UPSTREAM_URL"), "rolegen_build_keys": sorted(cfg_cluster["rolegen-build"] or {}), "rollouts": rolls, "health": health, "pg": {"host": pg_host, "version": pg_ver, "via": pg_via}, "dapr_state_tables": dapr_tables, "rollout_s": round(time.time() - t0, 1)})
 
         if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
@@ -2826,7 +2841,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             mreq = mdbg.get("requests") or []
             ok_mirror = gp.get("pip") == 0 and ".whl" in str(gp.get("pip_files", "")) and gp.get("npm") == 0 and ".tgz" in str(gp.get("npm_files", "")) and any("/pypi/" in q.get("path", "") for q in mreq) and any("/npm/" in q.get("path", "") for q in mreq)
             rep.add("P24c", "Mirror balíčků z Kata podu: pip download (index mirror.platform.internal/pypi/simple) a npm pack (registry /npm/) přes gateway CONNECT – terminace TLS, routa jen GET; mirror viděl požadavky obou klientů", "PASS" if ok_mirror else "FAIL", {"pip": gp.get("pip"), "pip_files": gp.get("pip_files"), "pip_err": gp.get("pip_err"), "npm": gp.get("npm"), "npm_files": gp.get("npm_files"), "npm_err": gp.get("npm_err"), "mirror_paths": sorted({q.get("path") for q in mreq})[:10], "via": gp.get("via")})
-            gw_log = kubectl(a, "-n", NS, "logs", "-l", "app=agentgateway", "-c", "agentgateway", "--since=40m", "--tail=4000", "--prefix").stdout   # obě repliky
+            gw_log = kubectl(a, "-n", NS, "logs", "-l", "app=agentgateway", "-c", "agentgateway", "--since=240m", "--tail=20000", "--prefix").stdout   # obě repliky; P4-3 běh 1: L1/L2 před P24d trvaly hodinu → 40 min okno bez git egressu rolí
             sni_lines = {h: sum(1 for l in gw_log.splitlines() if h in l) for h in ("git.platform.internal", "mirror.platform.internal", "evil.example.com")}
             eg_v = ((pods_led.get("vyvojar") or {}).get("egress_probe") or {})
             ok_edge = gp.get("evil_sni") not in (None, 0) and str(gp.get("http80_code")) in ("403", "404", "405", "000") and str(gp.get("other_repo_http")) in ("404", "403") and eg_v.get("internet_1.1.1.1:443", {}).get("result") == "timeout" and sni_lines["git.platform.internal"] > 0
