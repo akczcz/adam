@@ -1991,7 +1991,10 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots, l2=False):
             t0 = time.time()
             while time.time() - t0 < 300 and len([e for e in L(z) if K(e) == "PUBLISH_FAILED"]) < 2: time.sleep(3)
             pub["failed_count"] = len([e for e in L(z) if K(e) == "PUBLISH_FAILED"])
-            pub["gui2"] = g.wait_interrupt("publikace", timeout_s=120); pub["interrupt2"] = pub["gui2"].get("interrupt")
+            pub["gui2"] = g.wait_interrupt("publikace", timeout_s=120)
+            t0 = time.time()   # druhé čekání = nový interrupt (:1), ne zbytek prvního v DOM
+            while time.time() - t0 < 60 and not str(g.t("interrupt").get_attribute("data-interrupt-id") if g.t("interrupt").count() else "").endswith(":1"): g.page.wait_for_timeout(1500)
+            pub["interrupt2"] = g.t("interrupt").get_attribute("data-interrupt-id") if g.t("interrupt").count() else None
             pub["cancel"] = g.decide("L1c: ostrý běh bez PAT – pozastavit zakázku, úklid po měření", "reject")
     except Exception as e: pub["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     t0 = time.time()
