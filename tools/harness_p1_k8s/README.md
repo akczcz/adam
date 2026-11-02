@@ -1055,7 +1055,24 @@ Výsledek: **P44_RESULT** (`measure` run P44_ID, P44_RUNS).
 
 Nálezy:
 
-P44_FINDINGS
+1. **Obraz sidecaru bez CA certifikátů** (běh 1): statická binárka `cloudflared` nad busyboxem nedokázala ověřit TLS k `api.trycloudflare.com`
+   (`x509: certificate signed by unknown authority`) → CrashLoopBackOff; a protože Kubernetes Pod je Ready jen se všemi kontejnery, **pád sidecaru
+   shodil readiness podu aplikace** (Flux health check `Deployment/zakazka InProgress`, Service bez endpointů). Oprava: Alpine + `ca-certificates`
+   a nekonečná smyčka v entrypointu – výpadek tunelu se loguje a opakuje, kontejner nikdy nekončí. Pro provoz: každý sidecar u kritického podu
+   musí „selhávat měkce“, jinak se z pomocné funkce stane SPOF.
+2. **Čtení Key Vaultu z runneru naráz selhalo** (běh 2): `az keyvault secret show` pro všechny secrety vrátil chybu (E1b `git_token_match`
+   false, E8 „openbao-init chybí“), zatímco ESO z clusteru četl normálně a Terraform z téhož runneru 30 min předtím zapisoval. V dalším běhu
+   bez změny prošlo → přechodný výpadek data-plane/AAD; harness od té doby loguje stderr `az keyvault` (bez hodnot) a aserce nese poslední chyby.
+3. **Quick tunnel = nový hostname po každém restartu podu** (běh 3, 7 FAIL z jedné příčiny): E6 a E13 restartují pod aplikace, sidecar startuje
+   znovu a `*.trycloudflare.com` hostname se změní; harness držel starou URL (`ERR_NAME_NOT_RESOLVED` v E13b/c, M1a–c, L1c, N1b). Oprava:
+   `gui_base()` před každým otevřením GUI ověří `/health` a URL zjistí znovu z logu sidecaru; GUI klient při síťové chybě navigace zavolá
+   `rebase` a jde na tutéž stránku (hash) pod novou URL. Pro provoz: quick tunnel je jen pro měření/dev – stálou adresu dá pojmenovaný tunnel
+   (hostname ze Secretu, harness ho nemusí hledat).
+4. **Zapomenutá instance Playwrightu** (běh 3, L1c „Sync API inside the asyncio loop“): výjimka v M1 před `close()` nechala běžet smyčku sync
+   API a další tok nemohl Playwright nastartovat. `Gui.open()` nejdřív zavře zapomenuté instance (modulový seznam), `close()` je idempotentní.
+5. **Hranice veřejného listeneru drží** (N1a od běhu 3): přes Cloudflare je dostupné jen `/gui`, `/agui/*` (bez tokenu 401) a `/health`; interní API
+   (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) vrací 404, protože na veřejném listeneru vůbec neexistuje –
+   druhá aplikace FastAPI v témže procesu místo filtru cest.
 
 ## Spuštění
 

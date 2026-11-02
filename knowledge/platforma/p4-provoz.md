@@ -181,7 +181,12 @@ s výchozím `quick`, `ignore_changes`) → ESO → Secret `cloudflare-tunnel` �
 Secretu nebo z logu sidecaru, GUI klient harnessu jde přes tunel (všech 14 toků), N1a = hranice veřejného listeneru (GUI 200, AG-UI bez tokenu 401,
 interní cesty 404, `cf-ray`), N1b = SSE run přes Cloudflare.
 
-Výsledek měření: **P44_RESULT** (`measure` run P44_ID, P44_RUNS). Nálezy: P44_FINDINGS
+Výsledek měření: **P44_RESULT** (`measure` run P44_ID, P44_RUNS). Nálezy (detail v [README harnessu](../../tools/harness_p1_k8s/README.md#p4-4-n1--vstup-přes-cloudflare-tunnel-2026-11-02-aks---step-p4-4--p4-3--n1ab-gui-toky-přes-tunel)):
+(1) sidecar bez CA certifikátů padal a **pád sidecaru shodil readiness celého podu aplikace** – pomocný kontejner u kritického podu musí selhávat
+měkce (smyčka, žádná readiness proba), jinak je SPOF; (2) quick tunnel dostane **po každém restartu podu nový hostname** – pro měření harness URL
+hledá znovu, pro provoz je nutný pojmenovaný tunnel (stálý hostname ze Secretu); (3) hranice veřejného listeneru drží (interní API přes tunel 404,
+AG-UI bez tokenu 401); (4) čtení Key Vaultu z runneru jednou naráz selhalo a samo se vrátilo – měřicí cesta runner → Azure není deterministická,
+harness teď chyby `az keyvault` loguje; (5) zapomenutá instance Playwrightu po výjimce blokovala další toky – klient si po sobě uklízí.
 
 ### Postup pojmenovaného tunelu s Access (až bude Adam chtít stabilní adresu)
 
