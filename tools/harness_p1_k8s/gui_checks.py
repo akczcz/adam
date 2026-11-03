@@ -443,6 +443,11 @@ class Gui:
         out = {"disabled_empty": d0, "ok": self.t("tstop-result").get_attribute("data-ok") == "true", "text": self.t("tstop-result").inner_text()[:400]}
         if not out["ok"] and "(401)" in out["text"] and _retry and getattr(self, "creds", None):   # 1. běh E10: GUI bez tokenu po neúspěšném refreshi → přihlásit znovu a jednou opakovat
             self.relogin(); return {**self.tenant_stop(tenant, reason, resume, _retry=False), "relogin_after": out["text"]}
+        m = re.search(r"\((\d{3})\)", out["text"]); code = int(m.group(1)) if m else None
+        if not out["ok"] and _retry and (code is None or code >= 500 or code == 429):   # 2. běh P4-5: resume z GUI přes tunel selhal rychlou HTTP chybou → přechodná 5xx tunelu / 429 refreshe → jednou opakovat (po 5xx nejdřív rebase)
+            time.sleep(65 if code == 429 else 5)
+            if code is None or code >= 500: self.rebase_now("tenant_stop")
+            return {**self.tenant_stop(tenant, reason, resume, _retry=False), "retry_after": out["text"]}
         return out
 
     def report(self):
