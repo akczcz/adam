@@ -29,7 +29,7 @@ import httpx
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "harness_p1_k8s")); sys.path.insert(0, str(HERE))
-from gui_checks import Gui   # noqa: E402  – stejný klient GUI jako měření (test id, čekání na interrupty, obnova po výpadku tunelu)
+from gui_checks import Gui, HUMAN_PW, hpw   # noqa: E402  – stejný klient GUI jako měření (test id, čekání na interrupty, obnova po výpadku tunelu)
 from scenes import SCENES   # noqa: E402
 
 NS = "platform-data"
@@ -98,6 +98,13 @@ def main():
 
     health = http("GET", f"{APP}/health", timeout=20).status_code
     print(f"app health {health}")
+    # P4-6: hesla lidí (adam, platform-admin) ze Secretu keycloak-humans (Key Vault přes ESO); bez Secretu dev literál; hodnoty se nelogují
+    import base64
+    rs = subprocess.run([a.kubectl, "--context", a.context, "-n", NS, "get", "secret", "keycloak-humans", "-o", "jsonpath={.data.P0_HUMAN_PASSWORDS}"], capture_output=True, text=True, timeout=60)
+    if rs.returncode == 0 and rs.stdout.strip():
+        try: HUMAN_PW.update({k: str(v) for k, v in json.loads(base64.b64decode(rs.stdout.strip()).decode()).items() if v})
+        except (ValueError, UnicodeDecodeError): print("keycloak-humans: P0_HUMAN_PASSWORDS není JSON")
+    print(f"hesla lidí: {'Secret keycloak-humans' if HUMAN_PW else 'dev literály'} ({sorted(HUMAN_PW) or '-'})")
     marks = {}; notes = {"tag": a.tag, "health": health}
     t_rec = [None]
 
@@ -124,7 +131,7 @@ def main():
     z = f"{a.tag}-demo"
     try:
         # 02 – pult: přihlášení adam, seznam zakázek
-        mark("02-pult", t0=now()); g.login("adam", "adam"); g.threads_list(); hold(6); g.page.mouse.wheel(0, 400); hold(4); mark("02-pult", t1=now())
+        mark("02-pult", t0=now()); g.login("adam", hpw("adam")); g.threads_list(); hold(6); g.page.mouse.wheel(0, 400); hold(4); mark("02-pult", t1=now())
         # 03 – založení: poptávka, rozpočet, dotazník K1–K6 (vše „ne“ = standardní profil), odeslat; chvíli nechat běžet první run
         mark("03-zalozeni", t0=now())
         g.page.goto(g.base + "#/"); g.t("new-id").wait_for(); g.t("new-k-form").wait_for(timeout=30_000)
@@ -154,7 +161,7 @@ def main():
         if (w4.get("interrupt") or "").startswith("hitl:H4:"): hold(6); g.page.mouse.wheel(0, 600); hold(5)
         mark("09-navrh-pr", t1=now())
         # 10–12 – Firma jako platform-admin: Firma (verze, tenanti, autonomie), FinOps, Governance, Audit
-        g.relogin_as("platform-admin", "platform-admin")
+        g.relogin_as("platform-admin", hpw("platform-admin"))
         mark("10-firma", t0=now()); g.page.goto(g.base + "#/firma"); g.page.wait_for_function("document.querySelector('[data-testid=wf-versions]')", timeout=60_000); hold(7); g.page.mouse.wheel(0, 500); hold(5); g.page.mouse.wheel(0, 600); hold(5); mark("10-firma", t1=now())
         mark("11-finops", t0=now()); g.page_rows("finops", ["finops-tenants", "finops-ledger"], timeout_s=90); hold(7); g.page.mouse.wheel(0, 700); hold(6); mark("11-finops", t1=now())
         mark("12-governance", t0=now()); g.page_rows("governance", ["report-table"], timeout_s=90); hold(7); g.page.mouse.wheel(0, 700); hold(4)

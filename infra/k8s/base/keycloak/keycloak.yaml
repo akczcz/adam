@@ -12,6 +12,18 @@ stringData:
   KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev   # jen kind; AKS: overlay tento Secret maže, ESO ho dává z Key Vaultu (P3-6 E9; bootstrap admin platí jen pro prázdnou DB – běžící instanci otočí harness admin API)
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-humans
+type: Opaque
+stringData:   # P4-6: hesla lidí harnessu – jen kind (dev hodnota = jméno); AKS: overlay Secret maže, ESO ho dává z Key Vaultu; realm JSON nese jen placeholdery ${KC_HUMAN_PW_*}
+  KC_HUMAN_PW_ADAM: adam
+  KC_HUMAN_PW_BEA: bea
+  KC_HUMAN_PW_PLATFORM_ADMIN: platform-admin
+  KC_HUMAN_PW_PROBE: probe
+  P0_HUMAN_PASSWORDS: '{"adam": "adam", "bea": "bea", "platform-admin": "platform-admin", "probe": "probe"}'
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: keycloak
@@ -44,6 +56,10 @@ spec:
         - {name: KC_DB_PASSWORD, valueFrom: {secretKeyRef: {name: postgres-auth, key: POSTGRES_PASSWORD}}}
         - {name: KC_BOOTSTRAP_ADMIN_USERNAME, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_USERNAME}}}
         - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_PASSWORD}}}
+        - {name: KC_HUMAN_PW_ADAM, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_ADAM, optional: true}}}   # P4-6: placeholdery ${KC_HUMAN_PW_*} v realm JSON (import jen do prázdného realmu)
+        - {name: KC_HUMAN_PW_BEA, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_BEA, optional: true}}}
+        - {name: KC_HUMAN_PW_PLATFORM_ADMIN, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_PLATFORM_ADMIN, optional: true}}}
+        - {name: KC_HUMAN_PW_PROBE, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_PROBE, optional: true}}}
         - {name: KC_HTTP_PORT, value: "8080"}
         - {name: KC_HOSTNAME, value: http://keycloak:8080}   # pevný issuer pro tokeny uvnitř clusteru (server paměti ověřuje iss); z hostitele přes NodePort stejný iss
         - {name: JAVA_OPTS_APPEND, value: "-Xms256m -Xmx768m"}

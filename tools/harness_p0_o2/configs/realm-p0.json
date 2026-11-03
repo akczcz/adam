@@ -421,7 +421,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "adam",
+          "value": "${KC_HUMAN_PW_ADAM}",
           "temporary": false
         }
       ],
@@ -445,7 +445,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "bea",
+          "value": "${KC_HUMAN_PW_BEA}",
           "temporary": false
         }
       ],
@@ -468,7 +468,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "platform-admin",
+          "value": "${KC_HUMAN_PW_PLATFORM_ADMIN}",
           "temporary": false
         }
       ],
@@ -492,7 +492,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "probe",
+          "value": "${KC_HUMAN_PW_PROBE}",
           "temporary": false
         }
       ],
