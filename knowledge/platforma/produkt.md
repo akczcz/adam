@@ -102,6 +102,7 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 | P4-3 Připravenost na ostrý provoz (gateway bez catch-all mocku, GC klíčů i pro pozastavené zakázky, selhání publikace jako rozhodovací bod) | ✅ 2026-11-02 AKS 84/84 + 17 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
 | P4-4 Vstup do platformy přes Cloudflare Tunnel (sidecar cloudflared, veřejný listener jen GUI + AG-UI, měření přes tunel) | ✅ 2026-11-02 AKS 86/86 + 17 INFO, 8 běhů ([p4-provoz.md](p4-provoz.md)); pojmenovaný tunnel + Access na vyžádání |
 | P4-5 Zabezpečení veřejného vstupu (brute-force zámek Keycloaku, rate limit loginu, audit s hashem IP, idle odhlášení GUI) | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)); stálá adresa = pojmenovaný tunnel + Access na vyžádání |
+| P4-6 Hesla lidí mimo Git (účty harnessu z Key Vaultu přes ESO, realm z Gitu bez literálů, migrace běžícího realmu) | 🟡 kód 2026-11-03, měření AKS P46_RESULT ([p4-provoz.md](p4-provoz.md)) |
 
 ## Changelog
 - 2026-11-03: P4-5 hotovo na AKS (89/89 + 18 INFO) – veřejný vstup odolá hádání hesel (dočasný zámek účtu v Keycloaku, 20 přihlášení/min na IP na veřejném listeneru), každé přihlášení v auditu bez osobních údajů (hash IP), zapomenutá záložka se po 30 min odhlásí a nedrží mandát. Nález: ledger gateway v ClickHouse je proti rozpočtům gateway opožděný o desítky sekund.

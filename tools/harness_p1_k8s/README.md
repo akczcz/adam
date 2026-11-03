@@ -1115,6 +1115,25 @@ Nálezy:
    před E4; 20 s po něm chyběly v ClickHouse poslední 2 spany zakázky `cap` (0,006 USD nad tolerancí 5 % + 0,002 USD), zatímco
    `budget_usage` gateway je zapsáno hned. E4a čte ClickHouse opakovaně, dokud součty nesedí (max 150 s), a hlásí počet čtení a čas.
 
+## P4-6 Q1 – hesla lidí mimo Git (2026-11-03, AKS, `--step p4-6` = p4-5 + **Q1a–b**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-6-hesla-lidí-mimo-git)): hesla účtů lidí harnessu (adam, bea,
+  platform-admin, probe) z Key Vaultu (Terraform `random_password`) přes ESO Secret `keycloak-humans`; realm JSON z Gitu nese jen placeholdery
+  `${KC_HUMAN_PW_*}` (Keycloak je při importu dosadí z env), běžící realm otočí harness admin API (`kc_humans_sync` v `kc_ensure`).
+- **Harness:** `load_human_pw` čte `P0_HUMAN_PASSWORDS` ze Secretu na začátku kroku do `HUMAN_PW`; všechna přihlášení lidí přes `hpw(jméno)`
+  (bez Secretu dev literál = jméno – kind, lokální fixture); hodnoty se nikde nelogují. Promo `record.py` čte totéž.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| Q1a | render overlaye AKS: ConfigMap `keycloak-realm` má u 4 lidí jen `${KC_HUMAN_PW_*}` a Flux substitute vypnutý, žádný base Secret `keycloak-humans` (jen ExternalSecret), env Keycloaku `secretKeyRef`; Secret == Key Vault (4 hesla i JSON); Keycloak: dev literál odmítnut bez tokenu, heslo z Key Vaultu 200 u všech čtyř; harness hesla ze Secretu | P46_Q1A |
+| Q1b | migrace hesel v běžícím realmu tímto během (kódy) | P46_Q1B |
+
+Výsledek: **P46_RESULT** (`measure` run P46_ID, P46_RUNS).
+
+Nálezy:
+
+P46_FINDINGS_MORE
+
 ## Spuštění
 
 ```bash

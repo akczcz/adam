@@ -17,6 +17,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-3** Připravenost na ostrý provoz (nálezy P4-2) | gateway bez catch-all mocku (neznámý alias → 404), úklid klíčů gateway i pro pozastavené zakázky + obnova při resume, selhání publikace na GitHub jako rozhodovací bod `publikace` místo FAILED | ✅ 2026-11-02 AKS **84/84 + 17 INFO** (`measure` run 41438707088, 4 běhy) |
 | **P4-4** Vstup do platformy přes Cloudflare Tunnel | GUI a AG-UI dostupné zvenčí přes sidecar `cloudflared` u aplikace (žádná veřejná IP/LB, egress jen :7844); veřejný listener nese jen GUI + AG-UI; měření přes tunel místo `kubectl port-forward`; Ingress jako záloha | ✅ 2026-11-02 AKS **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů); quick tunnel pro měření, pojmenovaný tunnel + Access na vyžádání |
 | **P4-5** Zabezpečení veřejného vstupu | brute-force detekce Keycloaku, rate limit přihlášení na veřejném listeneru, audit přihlášení s hashem IP, idle odhlášení GUI a keepalive mandátu jen při aktivitě | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy |
+| **P4-6** Hesla lidí mimo Git | hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu přes ESO; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}`, běžící realm otočí harness admin API | 🟡 kód 2026-11-03, měření P46_RESULT |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -229,6 +230,31 @@ Výsledek měření: **89/89 PASS + 18 INFO** (`measure` run 41694231750, 2026-1
 5. **Ledger z gateway (ClickHouse) je eventually consistent** proti `budget_usage` gateway (řád desítek sekund) – FinOps reporty nad ledgerem
    mají číst s odstupem, rovnost s rozpočty platí až po doběhnutí exportu.
 
+## P4-6 Hesla lidí mimo Git
+
+**Rozhodnutí:** poslední literály hesel z Gitu – účty lidí harnessu (`adam/adam`, `bea/bea`, `platform-admin/…`, `probe/probe` v `realm-p0.json`) –
+jdou stejnou cestou jako admin Keycloaku a DB role v P3-6 E9: Terraform `random_password` → Key Vault `kc-user-<jméno>-password` → ESO Secret
+`keycloak-humans`. Od P4-4 je GUI na veřejné URL a hesla z Gitu by stačila komukoli, kdo repozitář přečte.
+
+| Kdo heslo potřebuje | Odkud ho bere |
+|---|---|
+| Keycloak při importu realmu (prázdná DB: nový cluster, kind) | realm JSON nese `"value": "${KC_HUMAN_PW_ADAM}"` …; import dosadí env Keycloaku z `keycloak-humans` (`secretKeyRef`, optional) |
+| Keycloak s existujícím realmem (AKS dnes) | import existující realm **nemění** → harness jako operátor: login heslem ze Secretu, jinak dev literál → `reset-password` admin API (jako admin v E9) |
+| Harness a promo (přihlášení lidí v měření, GUI) | Secret `keycloak-humans.P0_HUMAN_PASSWORDS` přes kubectl; bez Secretu (kind, lokální fixture) dev literál = jméno |
+| kind | base Secret `keycloak-humans` s dev hodnotami (jen kind; overlay AKS ho maže) |
+
+Fakta (ověřeno 2026-11-03 ze zdroje `keycloak/keycloak` tag 26.8.1, `docs/guides/server/importExport.adoc` a
+`AbstractFileBasedImportProvider.java`): realm import umí placeholdery `${NÁZEV}` pro libovolnou hodnotu realm JSON, řeší je z **env proměnných**
+(`System.getenv`), bez omezení názvů; `--import-realm` existující realm přeskočí. Flux `postBuild.substitute` by `${…}` vyprázdnil – ConfigMap
+`keycloak-realm` má od P2-1 anotaci `kustomize.toolkit.fluxcd.io/substitute: disabled` (ověřeno ze zdroje `fluxcd/pkg` 2026-11-03: nedefinovaná
+proměnná v nestriktním režimu → prázdný řetězec, escape `$${…}`).
+
+Varianty, které nepřišly: hesla nastavuje aplikace při startu jako DB role (dala by aplikaci práva realm-admina – zbytečně široké); Keycloak vault
+SPI `${vault.…}` (jen pro client secrety, LDAP, SMTP – ne pro credentials uživatelů); účty lidí mimo realm z Gitu (federace zákazníkova IdP – kandidát
+„realm per tenant"). Měření `--step p4-6` = p4-5 + **Q1a–b**.
+
+Výsledek měření: **P46_RESULT** (`measure` run P46_ID, P46_RUNS). Nálezy: P46_FINDINGS
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -237,7 +263,7 @@ Výsledek měření: **89/89 PASS + 18 INFO** (`measure` run 41694231750, 2026-1
 | Živý model = útrata; alias `live-*` může použít kdokoli s klíčem role | klíče role × zakázka mají rozpočty (Block 24h/30d), strop zakázky (`zakazka-30d-block`), ledger gateway per request → FinOps; klíč modelu s limitem workspace |
 | Neznámý alias modelu (překlep, dvojí prefix) spadne do catch-all `*` = mock a zakázka „live“ běží tiše na mocku | `AGENT_RUN.model` v ledgeru + check L1c/V1c; ~~catch-all odstranit~~ **P4-3**: konfigurace bez `*`, neznámý alias → 404 (L2a) |
 | Veřejná URL GUI (quick tunnel) bez Access: kdokoli s adresou může zkoušet přihlášení | hostname náhodný per start podu a jen po dobu měření; veřejný listener nese jen GUI + AG-UI (interní API ne); ~~brute-force detection kandidát~~ **P4-5**: zámek účtu po 5 selháních, 20 loginů/min/IP, audit s hashem IP, idle odhlášení; pro stálý provoz pojmenovaný tunnel + Access (P4-4 postup) |
-| Dev hesla lidí harnessu (`adam/adam`, `bea/bea`, `platform-admin/…`) v realmu z Gitu na veřejné URL | jen po dobu měření na náhodném hostname; před pojmenovaným tunelem hesla do Key Vaultu (Terraform `random_password` jako u E9) a realm bez literálů – kandidát |
+| Dev hesla lidí harnessu (`adam/adam`, `bea/bea`, `platform-admin/…`) v realmu z Gitu na veřejné URL | ~~jen po dobu měření na náhodném hostname; hesla do Key Vaultu – kandidát~~ **P4-6**: hesla z Key Vaultu (ESO `keycloak-humans`), realm z Gitu jen s placeholdery, harness čte hesla ze Secretu |
 | Závislost na Cloudflare (výpadek edge, změna podmínek Free plánu) | Ingress s veřejnou IP jako záložní varianta (rozhodnutí P4-4); aplikace uvnitř clusteru běží dál, tunnel bez readiness proby nic neshodí |
 | Selhání publikace na GitHub (výpadek, vypršelý PAT, 422) v ostrém běhu | ~~instance FAILED bez eskalace~~ **P4-3**: rozhodovací bod `publikace` (opakovat / pozastavit), ledger `PUBLISH_FAILED`, SLA 4 h → eskalace provozu |
 | Předletová kontrola `/_live/model` je placená (1 token) | jen na vyžádání v `p4-2-live` a v L1a (s výchozím klíčem 401, nic se neplatí) |
