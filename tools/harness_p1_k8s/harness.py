@@ -1219,14 +1219,7 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     sys.path.insert(0, str(HERE)); from gui_checks import Gui
     def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
     t_e = time.time(); time.sleep(20)   # batch Collectoru + flush gateway
-    pf_ch = PortForward(a, "clickhouse", 18445, 8443); rows = []; ch_err = None
-    try:
-        q = f"SELECT SpanAttributes['tenant'], SpanAttributes['zakazka'], SpanAttributes['role'], count(), sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])), ServiceName FROM otel.otel_traces WHERE SpanAttributes['zakazka'] LIKE '{tag}%' AND Timestamp > now() - INTERVAL 6 HOUR GROUP BY 1,2,3,7 FORMAT JSONCompact"
-        for _ in range(6):
-            r = http("POST", "https://127.0.0.1:18445/", content=q, timeout=30)
-            if r.status_code == 200: rows = r.json().get("data", []); break
-            ch_err = r.text[:200]; time.sleep(5)
-    finally: pf_ch.stop()
+    q = f"SELECT SpanAttributes['tenant'], SpanAttributes['zakazka'], SpanAttributes['role'], count(), sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])), ServiceName FROM otel.otel_traces WHERE SpanAttributes['zakazka'] LIKE '{tag}%' AND Timestamp > now() - INTERVAL 6 HOUR GROUP BY 1,2,3,7 FORMAT JSONCompact"
     keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
     with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c: usage = {r_[0]: r_[1] for r_ in c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()}
     gw = {}
@@ -1234,13 +1227,25 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
         md = k.get("metadata") or {}; zk = md.get("zakazka", "")
         if not str(zk).startswith(tag): continue
         hsh = k["keyHash"].split(":", 1)[1]; gw[zk] = round(gw.get(zk, 0.0) + role_usage_usd(usage.items(), hsh), 6)
-    ch = {}
-    for t_, z_, r_, n_, cost, tin, svc in rows: ch[z_] = round(ch.get(z_, 0.0) + float(cost), 6)
-    cmp = {z_: {"gateway_usd": gw.get(z_, 0.0), "ledger_usd": ch.get(z_, 0.0), "diff": round(abs(gw.get(z_, 0.0) - ch.get(z_, 0.0)), 6)} for z_ in sorted(set(gw) | set(ch))}
-    with_spend = [z_ for z_, v in cmp.items() if v["gateway_usd"] > 0]
-    ok_sum = bool(with_spend) and all(cmp[z_]["ledger_usd"] > 0 and cmp[z_]["diff"] <= 0.002 + 0.05 * max(cmp[z_]["gateway_usd"], cmp[z_]["ledger_usd"]) for z_ in with_spend)
+    pf_ch = PortForward(a, "clickhouse", 18445, 8443); rows = []; ch_err = None; cmp = {}; with_spend = []; ok_sum = False; polls = 0
+    try:
+        t_q = time.time()
+        while time.time() - t_q < 150:   # 3. běh P4-5: poslední 2 spany zakázky E3 (account po navýšení stropu, těsně před E4) ještě nebyly v ClickHouse (diff 0,006 USD) → ledger je eventually consistent, číst opakovaně až do shody (max 150 s)
+            polls += 1
+            for _ in range(6):
+                r = http("POST", "https://127.0.0.1:18445/", content=q, timeout=30)
+                if r.status_code == 200: rows = r.json().get("data", []); ch_err = None; break
+                ch_err = r.text[:200]; time.sleep(5)
+            ch = {}
+            for t_, z_, r_, n_, cost, tin, svc in rows: ch[z_] = round(ch.get(z_, 0.0) + float(cost), 6)
+            cmp = {z_: {"gateway_usd": gw.get(z_, 0.0), "ledger_usd": ch.get(z_, 0.0), "diff": round(abs(gw.get(z_, 0.0) - ch.get(z_, 0.0)), 6)} for z_ in sorted(set(gw) | set(ch))}
+            with_spend = [z_ for z_, v in cmp.items() if v["gateway_usd"] > 0]
+            ok_sum = bool(with_spend) and all(cmp[z_]["ledger_usd"] > 0 and cmp[z_]["diff"] <= 0.002 + 0.05 * max(cmp[z_]["gateway_usd"], cmp[z_]["ledger_usd"]) for z_ in with_spend)
+            if ok_sum or ch_err: break
+            time.sleep(10)
+    finally: pf_ch.stop()
     attrs_ok = bool(rows) and all(t_ in ("acme", "beta") and r_ and float(cost) >= 0 for t_, z_, r_, n_, cost, tin, svc in rows)
-    rep.add("E4a", "Per-request ledger z gateway: tracing agentgateway (randomSampling, fields tenant/zakazka/role z metadat klíče + llm.cost.total) posílá span každého LLM requestu rolí do OTEL Collectoru → ClickHouse otel.otel_traces; součet llm.cost.total per zakázka tohoto běhu == útrata klíčů v budget_usage (± 5 % + 0,002 USD) – nezávislý zdroj FinOps bez tabulky gateway; každý span nese tenant, zakázku a roli", "PASS" if attrs_ok and ok_sum and not ch_err else "FAIL", {"spans_rows": len(rows), "services": sorted({svc for *_, svc in rows}), "per_zakazka": cmp, "zakazky_with_spend": len(with_spend), "sample": rows[:4], "clickhouse_error": ch_err})
+    rep.add("E4a", "Per-request ledger z gateway: tracing agentgateway (randomSampling, fields tenant/zakazka/role z metadat klíče + llm.cost.total) posílá span každého LLM requestu rolí do OTEL Collectoru → ClickHouse otel.otel_traces; součet llm.cost.total per zakázka tohoto běhu == útrata klíčů v budget_usage (± 5 % + 0,002 USD) – nezávislý zdroj FinOps bez tabulky gateway; každý span nese tenant, zakázku a roli", "PASS" if attrs_ok and ok_sum and not ch_err else "FAIL", {"spans_rows": len(rows), "services": sorted({svc for *_, svc in rows}), "per_zakazka": cmp, "zakazky_with_spend": len(with_spend), "polls": polls, "wait_s": round(time.time() - t_e, 1), "sample": rows[:4], "clickhouse_error": ch_err})
     ta, tb, tp = tok("adam", "adam"), tok("bea", "bea"), tok("platform-admin", "platform-admin")
     def gov(t_, args=None): r = http("POST", f"{APP}/agui/gov/tools/ledger", json=args or {}, headers={"Authorization": f"Bearer {t_}"}, timeout=60); return r.status_code, (r.json() if r.headers.get("content-type", "").startswith("application/json") else {"text": r.text[:200]})
     gov_errors = []
