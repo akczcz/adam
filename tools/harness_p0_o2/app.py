@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 
 if __name__ == "__main__": sys.modules.setdefault("app", sys.modules[__name__])   # P4-1 nález (M1b, 2. běh): `import app` z gateway_keys/aktivit jinak vytvoří DRUHOU kopii modulu (vlastní _SUBJECTS, vlastní runtime) a její agui.CTX.update přepíše callbacky GUI → obnova mandátu z GUI šla do jiného slovníku než subject_for_role rolí
@@ -1231,6 +1232,25 @@ app.include_router(agui.router)
 # ve stejném procesu (sdílený stav, ledger, Dapr klient), ne proxy s filtrem cest.
 public = FastAPI(title="platforma – veřejný vstup (GUI + AG-UI)")
 public.include_router(agui.router)
+_RL: dict = {}; _RL_ALL: list = []; _RL_LOCK = threading.Lock()
+RL_PER_MIN = int(os.environ.get("P0_LOGIN_RATE_PER_MIN", "20")); RL_ALL_PER_MIN = int(os.environ.get("P0_LOGIN_RATE_ALL_PER_MIN", "300"))
+
+
+@public.middleware("http")
+async def public_rate_limit(request: Request, call_next):
+    """P4-5: přihlášení a refresh na veřejném listeneru jsou omezené per IP (CF-Connecting-IP za Cloudflare) a celkem – hádání hesel a zahlcení Keycloaku
+    zastaví aplikace dřív, než Keycloak (brute-force detekce tam platí per účet). Jedna replika → stav v paměti (nález P4-1: stav v modulu ⇒ 1 replika)."""
+    if request.url.path in ("/agui/login", "/agui/refresh"):
+        ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?"); now = time.time()
+        with _RL_LOCK:
+            q = _RL.setdefault(ip, []); q[:] = [t for t in q if now - t < 60]; _RL_ALL[:] = [t for t in _RL_ALL if now - t < 60]
+            over = "ip" if len(q) >= RL_PER_MIN else "all" if len(_RL_ALL) >= RL_ALL_PER_MIN else None
+            if not over: q.append(now); _RL_ALL.append(now)
+        if over:
+            ledger("LOGIN_RATE_LIMITED", path=request.url.path, scope=over, ip_hash=hashlib.sha256(ip.encode()).hexdigest()[:12], per_min=RL_PER_MIN if over == "ip" else RL_ALL_PER_MIN)
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "příliš mnoho pokusů o přihlášení – zkuste to za minutu"}, status_code=429, headers={"Retry-After": "60"})
+    return await call_next(request)
 
 
 @public.get("/health")

@@ -2,7 +2,7 @@
 // předání artefaktů jako zprávy s disclosure čl. 50, aktivity, stav), HITL = interrupt → formulář s povinným důvodem → resume, stop.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EventType } from "@ag-ui/core";
-import { hasToken, klasQuestions, listThreads, login, me, needsKeepalive, renewMandat, runAgent, setToken, threadState, type KlasQuestion, type ThreadState, type User } from "./api";
+import { activity, hasToken, idleLimitMs, isActive, klasQuestions, listThreads, login, me, needsKeepalive, renewMandat, runAgent, setToken, threadState, type KlasQuestion, type ThreadState, type User } from "./api";
 import { AuditPage, FinopsPage, FirmaPage, GovernancePage, Nav, RegistrPage } from "./Firma";
 
 type Ev = Record<string, any>;
@@ -35,8 +35,15 @@ export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const hash = useHash();
+  const [idleMsg, setIdleMsg] = useState<string | null>(null);
   useEffect(() => { if (hasToken()) me().then(setUser).catch(() => setToken(null)); }, []);
-  if (!user) return <Login onLogin={(u) => { setUser(u); setErr(null); }} />;
+  useEffect(() => {   // P4-5: idle timeout – bez aktivity člověka (myš, klávesy, dotyk) se GUI odhlásí (výchozí 30 min; veřejný vstup přes tunel)
+    const bump = () => { activity.last = Date.now(); };
+    for (const ev of ["mousemove", "mousedown", "keydown", "touchstart", "scroll"]) window.addEventListener(ev, bump, { passive: true });
+    const t = setInterval(() => { if (hasToken() && Date.now() - activity.last > idleLimitMs()) { setToken(null, null); setUser(null); setIdleMsg(`Odhlášeno po nečinnosti (${Math.round(idleLimitMs() / 60000) || "<1"} min).`); } }, 5000);
+    return () => { clearInterval(t); for (const ev of ["mousemove", "mousedown", "keydown", "touchstart", "scroll"]) window.removeEventListener(ev, bump); };
+  }, []);
+  if (!user) return <Login notice={idleMsg} onLogin={(u) => { setUser(u); setErr(null); setIdleMsg(null); activity.last = Date.now(); }} />;
   const m = hash.match(/^#\/t\/([^/?]+)/);
   const page = (hash.match(/^#\/([a-z]+)/) ?? [null, ""])[1] ?? "";
   return (
@@ -57,12 +64,13 @@ export function App() {
   );
 }
 
-function Login({ onLogin }: { onLogin: (u: User) => void }) {
+function Login({ onLogin, notice }: { onLogin: (u: User) => void; notice?: string | null }) {
   const [u, setU] = useState(""); const [p, setP] = useState(""); const [e, setE] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   return (
     <main style={{ maxWidth: 380 }}>
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Přihlášení</h2>
+        {notice && <p className="muted" data-testid="idle-notice">{notice}</p>}
         <p className="muted">Účet člověka v Keycloaku platformy (realm role <code>human</code>). Agenti se sem nepřihlašují.</p>
         <form onSubmit={async (ev) => { ev.preventDefault(); setBusy(true); setE(null); try { onLogin(await login(u, p)); } catch (x: any) { setE(String(x.message ?? x)); } finally { setBusy(false); } }}>
           <label>Uživatel</label><input data-testid="login-user" value={u} onChange={(x) => setU(x.target.value)} autoFocus />
@@ -77,6 +85,7 @@ function Login({ onLogin }: { onLogin: (u: User) => void }) {
 
 // P4-1: keepalive mandátu – živý mandát přihlášeného držitele s < 10 min do konce se prodlouží jeho aktuálním tokenem (auto); vypršelý ne (to je rozhodnutí člověka)
 async function keepalive(ts: ThreadState[], user: User) {
+  if (!isActive()) return;   // P4-5: zapomenutá záložka bez aktivity (10 min) mandát neprodlužuje
   for (const t of ts) if (needsKeepalive(t, user)) { try { await renewMandat(t.id, true); } catch { /* příští kolo */ } }
 }
 
@@ -204,7 +213,7 @@ function Thread({ id, user }: { id: string; user: User }) {
   // P4-1: mandát – držitel s otevřeným detailem prodlužuje živý mandát sám (každých 30 s kontrola); vypršelý obnoví jen kliknutím
   const [mandatMsg, setMandatMsg] = useState<string | null>(null);
   useEffect(() => {
-    const t = setInterval(() => threadState(id).then((s) => { setState((prev) => (runStatus === "running" ? prev : s)); if (needsKeepalive(s, user)) renewMandat(id, true).then((r) => setState(r.state)).catch(() => undefined); }).catch(() => undefined), 30000);
+    const t = setInterval(() => threadState(id).then((s) => { setState((prev) => (runStatus === "running" ? prev : s)); if (needsKeepalive(s, user) && isActive()) renewMandat(id, true).then((r) => setState(r.state)).catch(() => undefined); }).catch(() => undefined), 30000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, runStatus]);

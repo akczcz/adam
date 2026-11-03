@@ -701,6 +701,14 @@ def kc_ensure(a, http, KC, realm="p0"):
     O2 = T / "harness_p0_o2"; rj = json.loads((O2 / "configs/realm-p0.json").read_text())
     tok, adm_info = kc_admin(a, http, KC)   # P3-6 E9: heslo admina ze Secretu (Key Vault), dev literál při migraci otočen
     H = {"Authorization": f"Bearer {tok}"}; A = f"{KC}/admin/realms/{realm}"; created = {"roles": [], "clients": [], "users": [], "errors": [], "admin": adm_info}
+    # P4-5: brute-force detekce realmu (dočasný zámek účtu: 5 selhání → 60 s, roste do 15 min) – `--import-realm` existující realm nemění → admin API;
+    # a odemknout účty zamčené z minulého měření (N2a), aby lidé harnessu (adam, bea, platform-admin) nezačínali zamčení
+    bf = {k: rj[k] for k in ("bruteForceProtected", "permanentLockout", "failureFactor", "waitIncrementSeconds", "maxFailureWaitSeconds", "maxDeltaTimeSeconds", "quickLoginCheckMilliSeconds", "minimumQuickLoginWaitSeconds") if k in rj}
+    cur = http("GET", A, headers=H, timeout=20).json()
+    if bf and any(cur.get(k) != v for k, v in bf.items()):
+        x = http("PUT", A, headers=H, json={**{k: cur.get(k) for k in ("realm", "enabled")}, **bf}, timeout=20); created["brute_force"] = x.status_code
+    else: created["brute_force"] = "unchanged"
+    created["unlock_all"] = http("DELETE", f"{A}/attack-detection/brute-force/users", headers=H, timeout=20).status_code
     have_roles = {r["name"] for r in http("GET", f"{A}/roles", headers=H, timeout=20).json()}
     for r in rj["roles"]["realm"]:
         if r["name"] not in have_roles:
@@ -948,12 +956,15 @@ def gov_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_
             tst = c.execute("SELECT status FROM org.tenants WHERE tenant_id = 'beta'").fetchone()[0]; evs = c.execute("SELECT count(*) FROM org.agent_events WHERE tenant_id = 'beta' AND kind = 'suspended'").fetchone()[0]
         stop_led = next((e for e in reversed(led()) if e["kind"] == "STOP_TENANT" and e.get("tenant") == "beta"), {})
         rs = g.tenant_stop("beta", "Test hotov – tenant beta zpět do provozu (resume).", resume=True)
+        if not rs.get("ok"):   # 2. běh P4-5: resume z GUI selhal (rychlá HTTP chyba, detail chyběl) a beta zůstal stopped → O3a/O3d spadly jako důsledek → fallback přes API, U2d zůstává FAIL s detailem
+            try: rs["api_fallback"] = http("POST", f"{APP}/agui/gov/tenant/beta/resume", json={"reason": "U2d: resume z GUI selhal – fallback přes API, aby tenant beta nezůstal stopped."}, headers={"Authorization": f"Bearer {tok('platform-admin', 'platform-admin')}"}, timeout=120).status_code
+            except Exception as e: rs["api_fallback"] = f"{type(e).__name__}: {str(e)[:120]}"
         after_resume = {z_: status(z_) for z_ in beta_z}; timing["resume_s"] = round(time.time() - t_s, 1)
         cond = {"stop_gui_ok": bool(st["ok"]), "disabled_empty": bool(st["disabled_empty"]), "second_interrupt": w2.get("kind") in ("dialog", "approval"), "running_before": bool(running_before),
                 "suspended": all(after[z_] == "SUSPENDED" for z_ in running_before), "keys_blocked_cm": blocked_cm, "gateway_429": gw_http == 429, "memory_beta_denied": mem.status_code == 403 and "tenant_stopped" in mem.text,
                 "memory_acme_ok": mem_a.status_code == 200, "spire_beta_entries": "spiffe://platform/role/account/beta" in ents, "tenant_stopped": tst == "stopped", "events_suspended": evs >= 1, "resume_gui_ok": bool(rs["ok"]),
                 "running_after_resume": all(after_resume[z_] == "RUNNING" for z_ in running_before)}   # 4. běh E8: FAIL bez čitelné příčiny (detail uříznutý seznamem ~100 zakázek beta) → podmínky jmenovitě, stavy jen pro zakázky běhu
-        rep.add("U2d","Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "before": before, "after_stop": after, "after_resume": after_resume, "beta_older_n": len(beta_all) - len(beta_z), "timing": timing, "stop_gui": st, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
+        rep.add("U2d","Stop tenanta z GUI (platform-admin, důvod povinný; autonomie.md T5): všechny běžící zakázky beta → SUSPENDED (durable, HITL zůstává), pody rolí ukončeny, klíče gateway tenanta Block (ConfigMap limit 0 → 429 na request s klíčem beta; acme nedotčen), paměť pro tenant beta deny (tenant_stopped; acme 200), SPIRE entries beta zůstávají, org.tenants.status=stopped + agent_events suspended; resume vrací zakázky do RUNNING a klíče zpět", "PASS" if all(cond.values()) else "FAIL", {"conditions": cond, "before": before, "after_stop": after, "after_resume": after_resume, "beta_older_n": len(beta_all) - len(beta_z), "timing": timing, "stop_gui": st, "resume_gui": rs, "keys_blocked_cm": blocked_cm, "gateway_http_beta_key": gw_http, "memory_beta": [mem.status_code, mem.text[:80]], "memory_acme": mem_a.status_code, "spire_beta_entries": ents.count("/beta"), "tenant_status": tst, "events_suspended": evs, "ledger": {k: stop_led.get(k) for k in ("paused", "pods_killed", "keys_blocked", "registry")}, "second_zakazka": {"id": zb2, "interrupt": w2.get("kind")}})
         rep.add("U2h", "GUI nad firmou: čas scénáře, screenshoty", "INFO", {"wall_s": round(time.time() - t_g, 1), "shots": sorted(p.name for p in (gui_shots / "gov").glob("*.png")) if (gui_shots / "gov").exists() else []})
     finally:
         g.close()
@@ -1208,14 +1219,7 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     sys.path.insert(0, str(HERE)); from gui_checks import Gui
     def tok(user, pw): r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": user, "password": pw}, timeout=15); return r.json()["access_token"]
     t_e = time.time(); time.sleep(20)   # batch Collectoru + flush gateway
-    pf_ch = PortForward(a, "clickhouse", 18445, 8443); rows = []; ch_err = None
-    try:
-        q = f"SELECT SpanAttributes['tenant'], SpanAttributes['zakazka'], SpanAttributes['role'], count(), sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])), ServiceName FROM otel.otel_traces WHERE SpanAttributes['zakazka'] LIKE '{tag}%' AND Timestamp > now() - INTERVAL 6 HOUR GROUP BY 1,2,3,7 FORMAT JSONCompact"
-        for _ in range(6):
-            r = http("POST", "https://127.0.0.1:18445/", content=q, timeout=30)
-            if r.status_code == 200: rows = r.json().get("data", []); break
-            ch_err = r.text[:200]; time.sleep(5)
-    finally: pf_ch.stop()
+    q = f"SELECT SpanAttributes['tenant'], SpanAttributes['zakazka'], SpanAttributes['role'], count(), sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])), sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])), ServiceName FROM otel.otel_traces WHERE SpanAttributes['zakazka'] LIKE '{tag}%' AND Timestamp > now() - INTERVAL 6 HOUR GROUP BY 1,2,3,7 FORMAT JSONCompact"
     keys_cm = _yk.safe_load((kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or "[]") or []
     with psycopg.connect(dsn("agentgateway"), autocommit=True, connect_timeout=10) as c: usage = {r_[0]: r_[1] for r_ in c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()}
     gw = {}
@@ -1223,13 +1227,25 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
         md = k.get("metadata") or {}; zk = md.get("zakazka", "")
         if not str(zk).startswith(tag): continue
         hsh = k["keyHash"].split(":", 1)[1]; gw[zk] = round(gw.get(zk, 0.0) + role_usage_usd(usage.items(), hsh), 6)
-    ch = {}
-    for t_, z_, r_, n_, cost, tin, svc in rows: ch[z_] = round(ch.get(z_, 0.0) + float(cost), 6)
-    cmp = {z_: {"gateway_usd": gw.get(z_, 0.0), "ledger_usd": ch.get(z_, 0.0), "diff": round(abs(gw.get(z_, 0.0) - ch.get(z_, 0.0)), 6)} for z_ in sorted(set(gw) | set(ch))}
-    with_spend = [z_ for z_, v in cmp.items() if v["gateway_usd"] > 0]
-    ok_sum = bool(with_spend) and all(cmp[z_]["ledger_usd"] > 0 and cmp[z_]["diff"] <= 0.002 + 0.05 * max(cmp[z_]["gateway_usd"], cmp[z_]["ledger_usd"]) for z_ in with_spend)
+    pf_ch = PortForward(a, "clickhouse", 18445, 8443); rows = []; ch_err = None; cmp = {}; with_spend = []; ok_sum = False; polls = 0
+    try:
+        t_q = time.time()
+        while time.time() - t_q < 150:   # 3. běh P4-5: poslední 2 spany zakázky E3 (account po navýšení stropu, těsně před E4) ještě nebyly v ClickHouse (diff 0,006 USD) → ledger je eventually consistent, číst opakovaně až do shody (max 150 s)
+            polls += 1
+            for _ in range(6):
+                r = http("POST", "https://127.0.0.1:18445/", content=q, timeout=30)
+                if r.status_code == 200: rows = r.json().get("data", []); ch_err = None; break
+                ch_err = r.text[:200]; time.sleep(5)
+            ch = {}
+            for t_, z_, r_, n_, cost, tin, svc in rows: ch[z_] = round(ch.get(z_, 0.0) + float(cost), 6)
+            cmp = {z_: {"gateway_usd": gw.get(z_, 0.0), "ledger_usd": ch.get(z_, 0.0), "diff": round(abs(gw.get(z_, 0.0) - ch.get(z_, 0.0)), 6)} for z_ in sorted(set(gw) | set(ch))}
+            with_spend = [z_ for z_, v in cmp.items() if v["gateway_usd"] > 0]
+            ok_sum = bool(with_spend) and all(cmp[z_]["ledger_usd"] > 0 and cmp[z_]["diff"] <= 0.002 + 0.05 * max(cmp[z_]["gateway_usd"], cmp[z_]["ledger_usd"]) for z_ in with_spend)
+            if ok_sum or ch_err: break
+            time.sleep(10)
+    finally: pf_ch.stop()
     attrs_ok = bool(rows) and all(t_ in ("acme", "beta") and r_ and float(cost) >= 0 for t_, z_, r_, n_, cost, tin, svc in rows)
-    rep.add("E4a", "Per-request ledger z gateway: tracing agentgateway (randomSampling, fields tenant/zakazka/role z metadat klíče + llm.cost.total) posílá span každého LLM requestu rolí do OTEL Collectoru → ClickHouse otel.otel_traces; součet llm.cost.total per zakázka tohoto běhu == útrata klíčů v budget_usage (± 5 % + 0,002 USD) – nezávislý zdroj FinOps bez tabulky gateway; každý span nese tenant, zakázku a roli", "PASS" if attrs_ok and ok_sum and not ch_err else "FAIL", {"spans_rows": len(rows), "services": sorted({svc for *_, svc in rows}), "per_zakazka": cmp, "zakazky_with_spend": len(with_spend), "sample": rows[:4], "clickhouse_error": ch_err})
+    rep.add("E4a", "Per-request ledger z gateway: tracing agentgateway (randomSampling, fields tenant/zakazka/role z metadat klíče + llm.cost.total) posílá span každého LLM requestu rolí do OTEL Collectoru → ClickHouse otel.otel_traces; součet llm.cost.total per zakázka tohoto běhu == útrata klíčů v budget_usage (± 5 % + 0,002 USD) – nezávislý zdroj FinOps bez tabulky gateway; každý span nese tenant, zakázku a roli", "PASS" if attrs_ok and ok_sum and not ch_err else "FAIL", {"spans_rows": len(rows), "services": sorted({svc for *_, svc in rows}), "per_zakazka": cmp, "zakazky_with_spend": len(with_spend), "polls": polls, "wait_s": round(time.time() - t_e, 1), "sample": rows[:4], "clickhouse_error": ch_err})
     ta, tb, tp = tok("adam", "adam"), tok("bea", "bea"), tok("platform-admin", "platform-admin")
     def gov(t_, args=None): r = http("POST", f"{APP}/agui/gov/tools/ledger", json=args or {}, headers={"Authorization": f"Bearer {t_}"}, timeout=60); return r.status_code, (r.json() if r.headers.get("content-type", "").startswith("application/json") else {"text": r.text[:200]})
     gov_errors = []
@@ -2506,7 +2522,7 @@ def step_live(a, rep, env):
     return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -2858,6 +2874,57 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             n1b["s"] = round(time.time() - t_b, 1)
             ok_n1b = n1b.get("login") == 200 and (n1b.get("threads") or {}).get("status") == 200 and n1b.get("run_status") == 200 and str(n1b.get("content_type", "")).startswith("text/event-stream") and "RUN_STARTED" in evs and "RUN_FINISHED" in evs
             rep.add("N1b", "AG-UI přes Cloudflare Tunnel: přihlášení člověka (password grant přes aplikaci), seznam threadů a run = SSE stream (RUN_STARTED … RUN_FINISHED) projdou proxy Cloudflare beze změny (content-type text/event-stream, cf-ray); GUI toky tohoto běhu (P21b, T1, K1, O3, E3/E4/E13, M1, L1) šly přes tunel místo port-forwardu", "PASS" if ok_n1b else "FAIL", n1b)
+        if n2 and PUBLIC_URL:   # P4-5: zabezpečení veřejného vstupu – rate limit loginu, brute-force zámek Keycloaku, idle odhlášení GUI
+            sys.path.insert(0, str(HERE)); from gui_checks import Gui as _Gui2
+            t_2 = time.time(); gui_base(APP)
+            AR = f"{KC}/admin/realms/p0"
+            def adm(method, path, **kw):   # admin token realmu master žije 60 s (běh 1: po pauzách N2b vypršel → 401 → KeyError) → čerstvý token na každé volání
+                tokA, _ = kc_admin(a, http, KC); r = http(method, f"{AR}{path}", headers={"Authorization": f"Bearer {tokA}"}, timeout=20)
+                try: body = r.json() if r.text else None
+                except Exception: body = None
+                return r.status_code, body
+            realm = adm("GET", "")[1] or {}; n2r = {k: realm.get(k) for k in ("bruteForceProtected", "permanentLockout", "failureFactor", "waitIncrementSeconds", "maxFailureWaitSeconds")}
+            def pub_login(user, pw):
+                try:
+                    r = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": user, "password": pw}, timeout=30); return r.status_code, r.headers.get("retry-after"), r.headers.get("cf-ray")
+                except Exception as e: return f"{type(e).__name__}", None, None
+            # N2b: rate limit per IP jen na veřejném listeneru – správné heslo 25× rychle → prvních 20 projde, pak 429 + Retry-After; interní listener bez limitu
+            time.sleep(62)   # čisté okno (GUI toky před chvílí přihlašovaly z téže IP runneru)
+            codes = [pub_login("probe", "probe") for _ in range(25)]; ra = next((c[1] for c in codes if c[0] == 429), None); first429 = next((i for i, c in enumerate(codes) if c[0] == 429), None)
+            internal = http("POST", f"{APP}/agui/login", json={"username": "probe", "password": "probe"}, timeout=20).status_code
+            rl = [e for e in led() if e.get("kind") == "LOGIN_RATE_LIMITED" and e.get("ts", 0) > t_2]
+            n2b = {"codes": [c[0] for c in codes], "retry_after": ra, "internal_login": internal, "rate_limited_events": len(rl), "scope": sorted({e.get("scope") for e in rl}), "ip_hash": (rl[0].get("ip_hash") if rl else None)}
+            n2b["first_429_index"] = first429
+            ok_2b = first429 is not None and 15 <= first429 <= 20 and all(c[0] == 200 for c in codes[:first429]) and all(c[0] == 429 for c in codes[first429:]) and ra == "60" and internal == 200 and len(rl) >= 1 and "ip" in n2b["scope"]
+            rep.add("N2b", "Rate limit přihlášení na veřejném listeneru (P4-5): 20 požadavků/min na IP (CF-Connecting-IP za Cloudflare) na /agui/login a /agui/refresh, nad limit 429 s Retry-After 60 a ledger LOGIN_RATE_LIMITED (IP jen jako hash); interní listener (port-forward, uvnitř clusteru) limit nemá; celkový strop 300/min", "PASS" if ok_2b else "FAIL", n2b)
+            time.sleep(62)   # okno rate limitu
+            # N2a: brute-force detekce Keycloaku – 6× špatné heslo účtu probe přes veřejný vstup → zámek: i správné heslo odmítnuto (401), admin API hlásí disabled; odemknout → 200
+            st_u, users = adm("GET", "/users?username=probe&exact=true"); uid = (users or [{}])[0].get("id") if isinstance(users, list) else None
+            if uid: adm("DELETE", f"/attack-detection/brute-force/users/{uid}")
+            wrong = []
+            for i in range(6):   # 2. běh: pokusy < 1 s po sobě → quickLoginCheckMilliSeconds zamkl účet už po 2. selhání (numFailures 2, další pokusy se nepočítají) → rozestup 1,5 s, aby se měřil failureFactor 5
+                wrong.append(pub_login("probe", f"wrong-{i}")[0]); time.sleep(1.5)
+            locked = pub_login("probe", "probe")[0]
+            bfs = (adm("GET", f"/attack-detection/brute-force/users/{uid}")[1] or {}) if uid else {}
+            unlock = adm("DELETE", f"/attack-detection/brute-force/users/{uid}")[0] if uid else None
+            time.sleep(2); after = pub_login("probe", "probe")[0]
+            fails = [e for e in led() if e.get("kind") == "GUI_LOGIN" and e.get("user") == "probe" and e.get("ok") is False and e.get("ts", 0) > t_2]
+            n2a = {"realm": n2r, "probe_uid": bool(uid), "users_http": st_u, "wrong": wrong, "locked_correct_pw": locked, "brute_force_status": {k: bfs.get(k) for k in ("disabled", "numFailures", "lastFailure")}, "unlock": unlock, "after_unlock": after, "failed_logins_ledger": len(fails), "via": sorted({e.get("via") for e in fails}), "ip_hash_present": all(bool(e.get("ip_hash")) for e in fails)}
+            ok_2a = n2r.get("bruteForceProtected") is True and n2r.get("permanentLockout") is False and n2r.get("failureFactor") == 5 and all(c == 401 for c in wrong) and locked == 401 and bfs.get("disabled") is True and (bfs.get("numFailures") or 0) >= 5 and unlock == 204 and after == 200 and len(fails) >= 7 and "cloudflare" in n2a["via"] and n2a["ip_hash_present"]
+            rep.add("N2a", "Brute-force detekce Keycloaku (realm p0, z Gitu přes admin API, ne trvalý zámek): 5 selhání → účet dočasně zamčen (60 s, roste do 15 min) – i správné heslo přes veřejný vstup odmítnuto 401, admin API attack-detection hlásí disabled/numFailures; odemknutí operátorem (DELETE) → přihlášení 200; každé selhání v ledgeru GUI_LOGIN s via=cloudflare a hashem IP (audit bez osobních údajů)", "PASS" if ok_2a else "FAIL", n2a)
+            # N2c: idle odhlášení GUI – bez aktivity člověka se GUI odhlásí (výchozí 30 min, měření: sessionStorage.agui_idle_s = 20) a mandát se neprodlužuje
+            n2c = {}; g2 = None
+            try:
+                g2 = _Gui2(gui_base(APP), shots=LOGS / "gui-shots" / "n2").open(); g2.page.evaluate("sessionStorage.setItem('agui_idle_s', '20')")
+                n2c["login"] = g2.login("adam", "adam"); t_i = time.time(); g2.threads_list()
+                g2.page.wait_for_function("document.querySelector('[data-testid=login-user]') && document.querySelector('[data-testid=idle-notice]')", timeout=90_000)
+                n2c["idle_s"] = round(time.time() - t_i, 1); n2c["notice"] = g2.t("idle-notice").inner_text()[:120]; n2c["token_cleared"] = g2.page.evaluate("sessionStorage.getItem('agui_token')") is None; g2.shot("n2-idle")
+            except Exception as e: n2c["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            finally:
+                if g2: g2.close()
+            ok_2c = 15 <= n2c.get("idle_s", 0) <= 60 and "nečinnosti" in n2c.get("notice", "") and n2c.get("token_cleared") is True
+            rep.add("N2c", "Idle odhlášení GUI (P4-5): bez aktivity člověka (myš, klávesy) se pult odhlásí a token zahodí (výchozí 30 min, měření 20 s přes sessionStorage.agui_idle_s), přihlašovací stránka to říká; keepalive mandátu běží jen při aktivitě posledních 10 min – zapomenutá záložka mandát navždy nedrží (riziko P4-1)", "PASS" if ok_2c else "FAIL", n2c)
+            rep.add("N2d", "N2: čas", "INFO", {"wall_s": round(time.time() - t_2, 1)})
         if l1: l1_flow(a, rep, http, led, APP, KC, kj, zid[:-2], LOGS / "gui-shots", l2=l2)   # P4-2 L1: zapojení ostrého běhu bez tajemství (živé API 401, GitHub 401, flag live viditelně); P4-3 L2: bez catch-all mocku, GC klíčů + reissue
         if live: live_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P4-2 ostrý běh: živý model + skutečný GitHub (jen p4-2-live, platí se)
         if e11: e11b_check(a, rep, ca_file, t_bao0)   # P3-6 E11b: spany gateway i paměti přes TLS – až po LLM provozu rolí
@@ -3068,7 +3135,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-2-live"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -3079,7 +3146,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -3099,6 +3166,7 @@ def main():
      "p4-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True),
      "p4-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True),   # P4-3: p4-2 + L2a–c (gateway bez catch-all, GC klíčů + reissue)
      "p4-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True),   # P4-4: p4-3 + N1a–b (vstup přes Cloudflare Tunnel, GUI toky přes tunel)
+     "p4-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True),   # P4-5: p4-4 + N2a–c (brute force, rate limit, idle odhlášení)
      "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))

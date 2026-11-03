@@ -16,6 +16,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-2** Ostrý běh s živým modelem a GitHubem | klíč modelu i PAT jen v Key Vaultu a jen v gateway; zakázka s flagem `live` z GUI; zapojení měřitelné bez tajemství | ✅ kód 2026-11-01, měření AKS 2026-11-02 **82/82 + 15 INFO** (`measure` run 41366091027); ostrý běh `p4-2-live` na vyžádání (ostrá tajemství v Key Vaultu) |
 | **P4-3** Připravenost na ostrý provoz (nálezy P4-2) | gateway bez catch-all mocku (neznámý alias → 404), úklid klíčů gateway i pro pozastavené zakázky + obnova při resume, selhání publikace na GitHub jako rozhodovací bod `publikace` místo FAILED | ✅ 2026-11-02 AKS **84/84 + 17 INFO** (`measure` run 41438707088, 4 běhy) |
 | **P4-4** Vstup do platformy přes Cloudflare Tunnel | GUI a AG-UI dostupné zvenčí přes sidecar `cloudflared` u aplikace (žádná veřejná IP/LB, egress jen :7844); veřejný listener nese jen GUI + AG-UI; měření přes tunel místo `kubectl port-forward`; Ingress jako záloha | ✅ 2026-11-02 AKS **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů); quick tunnel pro měření, pojmenovaný tunnel + Access na vyžádání |
+| **P4-5** Zabezpečení veřejného vstupu | brute-force detekce Keycloaku, rate limit přihlášení na veřejném listeneru, audit přihlášení s hashem IP, idle odhlášení GUI a keepalive mandátu jen při aktivitě | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -201,6 +202,33 @@ v GUI klientovi harnessu, ne platformy – cena za quick tunnel bez stálého ho
 4. Harness: service token do Key Vaultu (`cloudflare-access-client-id/secret`, kandidát) → hlavičky `CF-Access-Client-*` u všech volání GUI/AG-UI.
 5. Quick tunnel po tu dobu nepoužívat (hostname bez Access je veřejný, i když náhodný).
 
+## P4-5 Zabezpečení veřejného vstupu
+
+**Rozhodnutí:** jakmile je GUI dostupné z internetu (P4-4), musí přihlášení odolat hádání hesel a zapomenuté relaci i bez Cloudflare Access
+(ten přijde s pojmenovaným tunelem). Čtyři vrstvy, každá jiný útok:
+
+| Vrstva | Co | Nastavení | Proti čemu |
+|---|---|---|---|
+| Keycloak brute-force detekce (realm `p0`, z Gitu přes admin API – `--import-realm` existující realm nemění) | dočasný zámek účtu po selháních, **ne trvalý** (trvalý zámek = DoS na cizí účet) | `failureFactor` 5, `waitIncrementSeconds` 60 → `maxFailureWaitSeconds` 900, okno 12 h, quick login 1 s | hádání hesla jednoho účtu z mnoha IP |
+| Rate limit na veřejném listeneru aplikace (`/agui/login`, `/agui/refresh`) | 20 požadavků/min na IP (`CF-Connecting-IP` za Cloudflare), 300/min celkem → 429 + `Retry-After: 60`, ledger `LOGIN_RATE_LIMITED` | jen veřejný listener; interní API bez limitu | sprejování hesel přes mnoho účtů z jedné IP, zahlcení Keycloaku |
+| Audit přihlášení | ledger `GUI_LOGIN` s `ok`, `via` (cloudflare/internal), `ip_hash` (sha256, 12 znaků – žádná osobní data) | – | důkaz pro incident, bez uchovávání IP |
+| Idle odhlášení GUI + keepalive jen při přítomnosti | bez aktivity člověka (myš, klávesy, dotyk) 30 min → token zahozen, přihlašovací stránka to říká; keepalive mandátu (P4-1) jen při aktivitě posledních 10 min | `sessionStorage.agui_idle_s` = testovací přepsání | zapomenutá záložka na veřejném počítači; riziko P4-1 „záložka drží mandát navždy“ |
+
+Varianty, které nepřišly: Cloudflare WAF/rate limiting (Free: základní pravidla ano, ale neřeší interní vstup a vazbu na audit platformy; doplní
+to, ne nahradí); trvalý zámek účtu (útočník zamkne správného uživatele); limit v Keycloaku místo v aplikaci (Keycloak neumí per-IP limit bez
+proxy). Měření `--step p4-5` = p4-4 + **N2a–c** (účet `probe` jen pro zámek – lidé harnessu se zamykat nesmí; `kc_ensure` zámky na začátku běhu maže).
+
+Výsledek měření: **89/89 PASS + 18 INFO** (`measure` run 41694231750, 2026-11-03, 4 běhy). Nálezy (detail v README harnessu):
+
+1. **Admin token Keycloaku žije 60 s** – operátorské skripty si berou čerstvý token na každé volání admin API, ne jeden na začátku.
+2. **Rate limit platí i pro vlastní měření** – všechna přihlášení GUI toků jdou přes tunel z jedné IP runneru; harness drží pod limitem a čeká na čisté okno.
+3. **Quick-login zámek je rychlejší než `failureFactor`** – selhání < 1 s po sobě zamknou účet už po 2. pokusu (`quickLoginCheckMilliSeconds`),
+   další pokusy na zamčeném účtu se nepočítají; rychlá dávka je tedy samostatná ochrana, pomalé hádání chytí `failureFactor` 5.
+4. **Resume tenanta z GUI přes tunel jednou selhal rychlou HTTP chybou** (přechodná chyba cesty) a strhl s sebou dva další checky, protože
+   tenant zůstal stopped – harness po 5xx/429 opakuje a při selhání dělá resume přes API; provozně: operace z GUI musí být idempotentní a opakovatelné.
+5. **Ledger z gateway (ClickHouse) je eventually consistent** proti `budget_usage` gateway (řád desítek sekund) – FinOps reporty nad ledgerem
+   mají číst s odstupem, rovnost s rozpočty platí až po doběhnutí exportu.
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -208,15 +236,20 @@ v GUI klientovi harnessu, ne platformy – cena za quick tunnel bez stálého ho
 | PAT v gateway smí víc než zakázka potřebuje | fine-grained PAT jen na repozitář platformy + autorizace routy gateway (cesta `/repos/akczcz/adam/`, metody GET/POST/PATCH/PUT) + ruleset `main`; revokace po běhu |
 | Živý model = útrata; alias `live-*` může použít kdokoli s klíčem role | klíče role × zakázka mají rozpočty (Block 24h/30d), strop zakázky (`zakazka-30d-block`), ledger gateway per request → FinOps; klíč modelu s limitem workspace |
 | Neznámý alias modelu (překlep, dvojí prefix) spadne do catch-all `*` = mock a zakázka „live“ běží tiše na mocku | `AGENT_RUN.model` v ledgeru + check L1c/V1c; ~~catch-all odstranit~~ **P4-3**: konfigurace bez `*`, neznámý alias → 404 (L2a) |
-| Veřejná URL GUI (quick tunnel) bez Access: kdokoli s adresou může zkoušet přihlášení | hostname náhodný per start podu a jen po dobu měření; veřejný listener nese jen GUI + AG-UI (interní API ne); Keycloak brute-force detection zapnout (kandidát); pro stálý provoz pojmenovaný tunnel + Access (P4-4 postup) |
+| Veřejná URL GUI (quick tunnel) bez Access: kdokoli s adresou může zkoušet přihlášení | hostname náhodný per start podu a jen po dobu měření; veřejný listener nese jen GUI + AG-UI (interní API ne); ~~brute-force detection kandidát~~ **P4-5**: zámek účtu po 5 selháních, 20 loginů/min/IP, audit s hashem IP, idle odhlášení; pro stálý provoz pojmenovaný tunnel + Access (P4-4 postup) |
+| Dev hesla lidí harnessu (`adam/adam`, `bea/bea`, `platform-admin/…`) v realmu z Gitu na veřejné URL | jen po dobu měření na náhodném hostname; před pojmenovaným tunelem hesla do Key Vaultu (Terraform `random_password` jako u E9) a realm bez literálů – kandidát |
 | Závislost na Cloudflare (výpadek edge, změna podmínek Free plánu) | Ingress s veřejnou IP jako záložní varianta (rozhodnutí P4-4); aplikace uvnitř clusteru běží dál, tunnel bez readiness proby nic neshodí |
 | Selhání publikace na GitHub (výpadek, vypršelý PAT, 422) v ostrém běhu | ~~instance FAILED bez eskalace~~ **P4-3**: rozhodovací bod `publikace` (opakovat / pozastavit), ledger `PUBLISH_FAILED`, SLA 4 h → eskalace provozu |
 | Předletová kontrola `/_live/model` je placená (1 token) | jen na vyžádání v `p4-2-live` a v L1a (s výchozím klíčem 401, nic se neplatí) |
 | Mandát obnoví jiný člověk tenanta než schvalovatel → role jedná jeho jménem | ledger `MANDAT renewed by`, GUI ukazuje držitele; kdo klikne, přebírá odpovědnost (T1) – stejné jako schválení |
-| Keepalive = GUI otevřené v zapomenuté záložce drží mandát „navždy“ | jen dokud žije refresh token GUI (Keycloak SSO session); prodlužuje jen živý mandát držitele; zapsat do GUI timeout session (kandidát) |
+| Keepalive = GUI otevřené v zapomenuté záložce drží mandát „navždy“ | jen dokud žije refresh token GUI (Keycloak SSO session); prodlužuje jen živý mandát držitele; ~~zapsat do GUI timeout session (kandidát)~~ **P4-5**: idle odhlášení 30 min, keepalive jen při aktivitě posledních 10 min |
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-03: P4-5 hotovo na AKS (89/89 + 18 INFO, 4 běhy) – brute-force detekce Keycloaku (dočasný zámek 5 selhání → 60 s … 15 min, realm
+  z Gitu přes admin API), rate limit `/agui/login` + `/agui/refresh` na veřejném listeneru (20/min/IP, 300/min, 429 + Retry-After), audit
+  `GUI_LOGIN` s `via` a hashem IP, idle odhlášení GUI 30 min a keepalive mandátu jen při aktivitě. Nálezy: admin token 60 s, quick-login zámek,
+  resume z GUI přes tunel opakovat, ledger gateway eventually consistent.
 - 2026-11-02: P4-4 hotovo na AKS (86/86 + 17 INFO, 8 běhů) – vstup do GUI/AG-UI přes Cloudflare Tunnel (sidecar `cloudflared`, veřejný listener
   jen GUI + AG-UI + /health, žádná veřejná IP ani LB, egress :7844); měření přes tunel místo `kubectl port-forward`; quick tunnel bez účtu pro
   měření, pojmenovaný tunnel + Access (token a hostname v Key Vaultu) pro stálou adresu. Nálezy: sidecar musí selhávat měkce (CA certifikáty,

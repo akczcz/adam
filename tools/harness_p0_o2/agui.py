@@ -15,6 +15,7 @@ z P0_AGUI_DEV_USERS. Zdroj pravdy pro události je ledger aplikace (JSONL) – G
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -83,8 +84,8 @@ async def login(req: Request):
     kc = os.environ.get("P0_KC_TOKEN_URL")
     if kc:
         r = await asyncio.to_thread(httpx.post, kc, data={"grant_type": "password", "client_id": os.environ.get("P0_GUI_CLIENT", "harness-human"), "username": user, "password": pw}, timeout=15)
-        ok = r.status_code == 200
-        CTX["ledger"]("GUI_LOGIN", user=user, ok=ok, idp="keycloak", http=r.status_code)
+        ok = r.status_code == 200; ip = req.headers.get("cf-connecting-ip") or (req.client.host if req.client else "?")
+        CTX["ledger"]("GUI_LOGIN", user=user, ok=ok, idp="keycloak", http=r.status_code, via="cloudflare" if req.headers.get("cf-connecting-ip") else "internal", ip_hash=hashlib.sha256(ip.encode()).hexdigest()[:12], kc_error=(r.json().get("error_description") if not ok and r.headers.get("content-type", "").startswith("application/json") else None))   # P4-5: audit neúspěšných přihlášení (IP jen jako hash), důvod z Keycloaku (zámek brute force)
         if not ok: raise HTTPException(401, "přihlášení odmítnuto")
         j = r.json(); c = jwt.decode(j["access_token"], options={"verify_signature": False})
         if c.get("sub"): _NAMES[c["sub"]] = c.get("preferred_username") or user
