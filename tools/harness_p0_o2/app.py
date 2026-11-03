@@ -1226,10 +1226,22 @@ agui.CTX.update({
     "autonomy": lambda role, tenant, level, u, reason: finops.autonomy_set(role, tenant, level, by=u["sub"], reason=reason),
 })
 app.include_router(agui.router)
+# P4-4: veřejný vstup (Cloudflare Tunnel sidecar → APP_PUBLIC_PORT) nese jen GUI, AG-UI (Keycloak tokeny) a /health – interní API aplikace
+# (/zakazky/* schvalování bez tokenu, /_debug, /_live, /_mandat, /_gateway_keys, /_wf) zůstává na APP_PORT uvnitř clusteru. Druhá aplikace FastAPI
+# ve stejném procesu (sdílený stav, ledger, Dapr klient), ne proxy s filtrem cest.
+public = FastAPI(title="platforma – veřejný vstup (GUI + AG-UI)")
+public.include_router(agui.router)
+
+
+@public.get("/health")
+async def public_health(): return {"ok": True, "public": True}
+
+
 _GUI_DIR = os.environ.get("P0_GUI_DIR", "/app/gui")
 if os.path.isdir(_GUI_DIR):
     from fastapi.staticfiles import StaticFiles
     app.mount("/gui", StaticFiles(directory=_GUI_DIR, html=True), name="gui")
+    public.mount("/gui", StaticFiles(directory=_GUI_DIR, html=True), name="gui")
 
 
 def tenants_from_git():
@@ -1251,4 +1263,8 @@ if __name__ == "__main__":
     ledger("DB_ROLES_SYNC", **finops.roles_sync())   # P3-6 E9: hesla RLS rolí (memory_app, org_reader, org_writer) z env (ESO/Key Vault), ne literál v Gitu
     ledger("WF_VERSIONS", **WF)   # P3-6 E6: které verze orchestrátoru tento obraz nese a která je latest
     rt.start()
+    if os.environ.get("APP_PUBLIC_PORT"):   # P4-4: veřejný listener ve vlákně (uvicorn mimo hlavní vlákno neinstaluje signal handlery – ty drží hlavní server)
+        import threading
+        threading.Thread(target=uvicorn.run, kwargs={"app": public, "host": os.environ.get("APP_HOST", "127.0.0.1"), "port": int(os.environ["APP_PUBLIC_PORT"]), "log_level": "warning"}, daemon=True, name="public").start()
+        ledger("PUBLIC_LISTENER", port=int(os.environ["APP_PUBLIC_PORT"]), routes=["/gui", "/agui/*", "/health"])
     uvicorn.run(app, host=os.environ.get("APP_HOST", "127.0.0.1"), port=int(os.environ.get("APP_PORT", "8010")), log_level="warning")

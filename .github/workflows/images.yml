@@ -60,6 +60,8 @@ jobs:
             echo "== roles/$r:$v"
             az acr build -r "$ACR" -t "roles/$r:$v" -t "roles/$r:${GITHUB_SHA::7}" --build-arg "BASE_IMAGE=$ACR.azurecr.io/zakazka-app:p1" -f "$d/Dockerfile" "$d" --no-logs -o none
           done
+      - name: cloudflared sidecar (P4-4, az acr build – statická binárka nad busyboxem kvůli volbě režimu při startu)
+        run: az acr repository show -n "$ACR" --image cloudflared:2026.10.7-1 -o none 2>/dev/null && echo "skip cloudflared:2026.10.7-1" || az acr build -r "$ACR" -t cloudflared:2026.10.7-1 -f infra/images/cloudflared/Dockerfile infra/images/cloudflared --no-logs -o none
       - name: build měřicího obrazu sandboxu S1 (az acr build)
         run: az acr build -r "$ACR" -t sandbox-s1:p1 -f infra/images/sandbox-s1/Dockerfile infra/images/sandbox-s1
       - run: az acr repository list -n "$ACR" -o table | tee -a "$GITHUB_STEP_SUMMARY"

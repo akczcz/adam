@@ -1039,6 +1039,46 @@ Nálezy:
    `goto` a při timeoutu jednou keepalive + reload. Tři pády na tunel ve čtyřech bězích: měřicí cesta runner → port-forward → AKS je nejslabší článek
    měření; kandidát = Ingress s interní CA nebo `kubectl port-forward` nahradit stabilnějším tunelem (např. `socat` pod + jediný dlouhý stream).
 
+## P4-4 N1 – vstup přes Cloudflare Tunnel (2026-11-02, AKS, `--step p4-4` = p4-3 + **N1a–b**, GUI toky přes tunel)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-4-vstup-do-platformy-přes-cloudflare-tunnel)): sidecar `cloudflared`
+  u podu aplikace → veřejný listener 8011 (jen `/gui`, `/agui/*`, `/health`; druhá aplikace FastAPI v témže procesu). Quick tunnel bez účtu
+  (`*.trycloudflare.com`, hostname z logu sidecaru) nebo pojmenovaný tunnel (token + hostname z Key Vaultu přes ESO). Harness: `public_url()`,
+  `gui_base()` – všech 14 GUI toků jde přes tunel místo `kubectl port-forward` (nálezy P4-2/8, P4-3/5, 9); port-forwardy zůstávají pro interní API.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| N1a | sidecar Ready, veřejná URL nalezena, `/health` přes Cloudflare (`cf-ray`), `/gui/` 200, `/agui/threads` bez tokenu 401, interní cesty (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) 404 | ✅ quick tunnel z logu sidecaru za 2,5 s (`*.trycloudflare.com`, `cf-ray` …-LAX, `server: cloudflare`), sidecar Ready bez restartu (`cloudflared:2026.10.7-1`), `/gui/` 200, `/agui/threads` 401, pět interních cest 404 |
+| N1b | přihlášení + seznam threadů + AG-UI run jako SSE (`RUN_STARTED … RUN_FINISHED`) přes Cloudflare, `text/event-stream` | ✅ login 200, threads 200, run 200 `text/event-stream` s `cf-ray`, události `RUN_STARTED … RUN_FINISHED`; URL během běhu 2× znovu zjištěna po restartech podu (E6, E13 – vždy ~2,8 s) |
+
+Výsledek: **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů: 1 = CA certifikáty sidecaru, 2 = Key Vault z runneru, 3 = 79/7 nový hostname po restartu, 4 = rekurze v klientovi, 5 = 84/2 tunel ukončovaného podu, 6 = 85/1 relogin přes starý tunel, 7 = 84/2 základ bez `/gui/`, 8 = vše PASS). N1a–b a všechny GUI toky přes tunel procházejí od běhu 5; běhy 5–7 ladily jen obnovu URL v GUI klientovi harnessu.
+
+Nálezy:
+
+1. **Obraz sidecaru bez CA certifikátů** (běh 1): statická binárka `cloudflared` nad busyboxem nedokázala ověřit TLS k `api.trycloudflare.com`
+   (`x509: certificate signed by unknown authority`) → CrashLoopBackOff; a protože Kubernetes Pod je Ready jen se všemi kontejnery, **pád sidecaru
+   shodil readiness podu aplikace** (Flux health check `Deployment/zakazka InProgress`, Service bez endpointů). Oprava: Alpine + `ca-certificates`
+   a nekonečná smyčka v entrypointu – výpadek tunelu se loguje a opakuje, kontejner nikdy nekončí. Pro provoz: každý sidecar u kritického podu
+   musí „selhávat měkce“, jinak se z pomocné funkce stane SPOF.
+2. **Čtení Key Vaultu z runneru naráz selhalo** (běh 2): `az keyvault secret show` pro všechny secrety vrátil chybu (E1b `git_token_match`
+   false, E8 „openbao-init chybí“), zatímco ESO z clusteru četl normálně a Terraform z téhož runneru 30 min předtím zapisoval. V dalším běhu
+   bez změny prošlo → přechodný výpadek data-plane/AAD; harness od té doby loguje stderr `az keyvault` (bez hodnot) a aserce nese poslední chyby.
+3. **Quick tunnel = nový hostname po každém restartu podu** (běh 3, 7 FAIL z jedné příčiny): E6 a E13 restartují pod aplikace, sidecar startuje
+   znovu a `*.trycloudflare.com` hostname se změní; harness držel starou URL (`ERR_NAME_NOT_RESOLVED` v E13b/c, M1a–c, L1c, N1b). Oprava:
+   `gui_base()` před každým otevřením GUI ověří `/health` a URL zjistí znovu z logu sidecaru; GUI klient při síťové chybě navigace zavolá
+   `rebase` a jde na tutéž stránku (hash) pod novou URL. Pro provoz: quick tunnel je jen pro měření/dev – stálou adresu dá pojmenovaný tunnel
+   (hostname ze Secretu, harness ho nemusí hledat).
+4. **Zapomenutá instance Playwrightu** (běh 3, L1c „Sync API inside the asyncio loop“): výjimka v M1 před `close()` nechala běžet smyčku sync
+   API a další tok nemohl Playwright nastartovat. `Gui.open()` nejdřív zavře zapomenuté instance (modulový seznam), `close()` je idempotentní.
+6. **Tunel ukončovaného podu žije dál** (běhy 5–6, E13b/E13c): po `delete pod` běží starý pod s grace period a jeho quick tunnel ještě chvíli
+   odpovídá 200 (`logs deploy/…` ho navíc vybral místo nového) – harness si nechal starý hostname a za minutu dostal 502 (Cloudflare, origin
+   pryč), přihlášení přes umírající pod skončilo timeoutem. Oprava: URL vždy z **nejnovějšího běžícího podu** bez `deletionTimestamp`, 5xx od
+   Cloudflare = důvod k rebase, relogin nejdřív přejde na aktuální URL. Pro provoz: rolling restart s pojmenovaným tunelem (stálý hostname,
+   až 25 replik `cloudflared` na tunel) tento problém nemá – Cloudflare drží spojení k oběma podům a přepne sám.
+5. **Hranice veřejného listeneru drží** (N1a od běhu 3): přes Cloudflare je dostupné jen `/gui`, `/agui/*` (bez tokenu 401) a `/health`; interní API
+   (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) vrací 404, protože na veřejném listeneru vůbec neexistuje –
+   druhá aplikace FastAPI v témže procesu místo filtru cest.
+
 ## Spuštění
 
 ```bash

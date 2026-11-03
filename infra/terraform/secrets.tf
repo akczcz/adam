@@ -77,6 +77,28 @@ resource "azurerm_key_vault_secret" "github_token" {
   lifecycle { ignore_changes = [value] }
 }
 
+# P4-4: Cloudflare Tunnel sidecaru aplikace – token pojmenovaného tunelu a veřejný hostname; výchozí "quick" = quick tunnel bez účtu (měření).
+# Ostré hodnoty nastaví Adam v Key Vaultu (Terraform je nepřepisuje): token z Cloudflare Zero Trust (Networks → Tunnels), hostname = published application.
+resource "azurerm_key_vault_secret" "cloudflare_tunnel_token" {
+  name         = "cloudflare-tunnel-token"
+  value        = var.cloudflare_tunnel_token
+  key_vault_id = azurerm_key_vault.kv.id
+  content_type = "Cloudflare Tunnel token pojmenovaného tunelu pro sidecar cloudflared aplikace zakázky; 'quick' = quick tunnel *.trycloudflare.com bez účtu"
+  tags         = var.tags
+  depends_on   = [time_sleep.kv_rbac]
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "azurerm_key_vault_secret" "cloudflare_tunnel_hostname" {
+  name         = "cloudflare-tunnel-hostname"
+  value        = var.cloudflare_tunnel_hostname
+  key_vault_id = azurerm_key_vault.kv.id
+  content_type = "Veřejný hostname pojmenovaného tunelu (published application) – harness a dokumentace; 'quick' = hostname se čte z logu sidecaru"
+  tags         = var.tags
+  depends_on   = [time_sleep.kv_rbac]
+  lifecycle { ignore_changes = [value] }
+}
+
 # client secrety service-account klientů rolí v Keycloaku (realm p0 z Gitu – dev hodnoty); rotace = změna v Keycloaku + tady
 resource "azurerm_key_vault_secret" "role_client_secrets" {
   name         = "role-client-secrets"
