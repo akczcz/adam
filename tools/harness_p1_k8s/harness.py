@@ -2869,8 +2869,13 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if n2 and PUBLIC_URL:   # P4-5: zabezpečení veřejného vstupu – rate limit loginu, brute-force zámek Keycloaku, idle odhlášení GUI
             sys.path.insert(0, str(HERE)); from gui_checks import Gui as _Gui2
             t_2 = time.time(); gui_base(APP)
-            tokA, _ = kc_admin(a, http, KC); HA = {"Authorization": f"Bearer {tokA}"}; AR = f"{KC}/admin/realms/p0"
-            realm = http("GET", AR, headers=HA, timeout=20).json(); n2r = {k: realm.get(k) for k in ("bruteForceProtected", "permanentLockout", "failureFactor", "waitIncrementSeconds", "maxFailureWaitSeconds")}
+            AR = f"{KC}/admin/realms/p0"
+            def adm(method, path, **kw):   # admin token realmu master žije 60 s (běh 1: po pauzách N2b vypršel → 401 → KeyError) → čerstvý token na každé volání
+                tokA, _ = kc_admin(a, http, KC); r = http(method, f"{AR}{path}", headers={"Authorization": f"Bearer {tokA}"}, timeout=20)
+                try: body = r.json() if r.text else None
+                except Exception: body = None
+                return r.status_code, body
+            realm = adm("GET", "")[1] or {}; n2r = {k: realm.get(k) for k in ("bruteForceProtected", "permanentLockout", "failureFactor", "waitIncrementSeconds", "maxFailureWaitSeconds")}
             def pub_login(user, pw):
                 try:
                     r = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": user, "password": pw}, timeout=30); return r.status_code, r.headers.get("retry-after"), r.headers.get("cf-ray")
@@ -2886,14 +2891,14 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             rep.add("N2b", "Rate limit přihlášení na veřejném listeneru (P4-5): 20 požadavků/min na IP (CF-Connecting-IP za Cloudflare) na /agui/login a /agui/refresh, nad limit 429 s Retry-After 60 a ledger LOGIN_RATE_LIMITED (IP jen jako hash); interní listener (port-forward, uvnitř clusteru) limit nemá; celkový strop 300/min", "PASS" if ok_2b else "FAIL", n2b)
             time.sleep(62)   # okno rate limitu
             # N2a: brute-force detekce Keycloaku – 6× špatné heslo účtu probe přes veřejný vstup → zámek: i správné heslo odmítnuto (401), admin API hlásí disabled; odemknout → 200
-            uid = (http("GET", f"{AR}/users", headers=HA, params={"username": "probe", "exact": "true"}, timeout=20).json() or [{}])[0].get("id")
-            if uid: http("DELETE", f"{AR}/attack-detection/brute-force/users/{uid}", headers=HA, timeout=20)
+            st_u, users = adm("GET", "/users?username=probe&exact=true"); uid = (users or [{}])[0].get("id") if isinstance(users, list) else None
+            if uid: adm("DELETE", f"/attack-detection/brute-force/users/{uid}")
             wrong = [pub_login("probe", f"wrong-{i}")[0] for i in range(6)]; locked = pub_login("probe", "probe")[0]
-            bfs = http("GET", f"{AR}/attack-detection/brute-force/users/{uid}", headers=HA, timeout=20).json() if uid else {}
-            unlock = http("DELETE", f"{AR}/attack-detection/brute-force/users/{uid}", headers=HA, timeout=20).status_code if uid else None
+            bfs = (adm("GET", f"/attack-detection/brute-force/users/{uid}")[1] or {}) if uid else {}
+            unlock = adm("DELETE", f"/attack-detection/brute-force/users/{uid}")[0] if uid else None
             time.sleep(2); after = pub_login("probe", "probe")[0]
             fails = [e for e in led() if e.get("kind") == "GUI_LOGIN" and e.get("user") == "probe" and e.get("ok") is False and e.get("ts", 0) > t_2]
-            n2a = {"realm": n2r, "wrong": wrong, "locked_correct_pw": locked, "brute_force_status": {k: bfs.get(k) for k in ("disabled", "numFailures", "lastFailure")}, "unlock": unlock, "after_unlock": after, "failed_logins_ledger": len(fails), "via": sorted({e.get("via") for e in fails}), "ip_hash_present": all(bool(e.get("ip_hash")) for e in fails)}
+            n2a = {"realm": n2r, "probe_uid": bool(uid), "users_http": st_u, "wrong": wrong, "locked_correct_pw": locked, "brute_force_status": {k: bfs.get(k) for k in ("disabled", "numFailures", "lastFailure")}, "unlock": unlock, "after_unlock": after, "failed_logins_ledger": len(fails), "via": sorted({e.get("via") for e in fails}), "ip_hash_present": all(bool(e.get("ip_hash")) for e in fails)}
             ok_2a = n2r.get("bruteForceProtected") is True and n2r.get("permanentLockout") is False and n2r.get("failureFactor") == 5 and all(c == 401 for c in wrong) and locked == 401 and bfs.get("disabled") is True and (bfs.get("numFailures") or 0) >= 5 and unlock == 204 and after == 200 and len(fails) >= 7 and "cloudflare" in n2a["via"] and n2a["ip_hash_present"]
             rep.add("N2a", "Brute-force detekce Keycloaku (realm p0, z Gitu přes admin API, ne trvalý zámek): 5 selhání → účet dočasně zamčen (60 s, roste do 15 min) – i správné heslo přes veřejný vstup odmítnuto 401, admin API attack-detection hlásí disabled/numFailures; odemknutí operátorem (DELETE) → přihlášení 200; každé selhání v ledgeru GUI_LOGIN s via=cloudflare a hashem IP (audit bez osobních údajů)", "PASS" if ok_2a else "FAIL", n2a)
             # N2c: idle odhlášení GUI – bez aktivity člověka se GUI odhlásí (výchozí 30 min, měření: sessionStorage.agui_idle_s = 20) a mandát se neprodlužuje
