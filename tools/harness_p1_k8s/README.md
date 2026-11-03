@@ -1093,7 +1093,8 @@ Nálezy:
 | N2b | 25 správných přihlášení rychle přes tunel: prvních ~20 → 200, pak 429 s `Retry-After: 60`, ledger `LOGIN_RATE_LIMITED` scope ip; interní listener bez limitu (200) | ✅ (běh 1) 20× 200, pak 5× 429 s `Retry-After: 60`, 5 záznamů `LOGIN_RATE_LIMITED` scope `ip` s hashem IP, interní login 200 |
 | N2c | GUI bez aktivity 20 s (test) → přihlašovací stránka s `idle-notice`, token zahozen | ✅ (běh 2) přihlášení `adam` přes tunel, po 24,6 s bez aktivity přihlašovací stránka „Odhlášeno po nečinnosti (<1 min)", token v sessionStorage zahozen |
 
-Výsledek: **P45_RESULT** (`measure` run P45_ID, P45_RUNS).
+Výsledek: **89/89 PASS + 18 INFO** (`measure` run 41694231750, 2026-11-03, 4 běhy: 1 pád N2a na vypršelém admin tokenu, 2 N2a quick-login
+zámek + U2d resume z GUI, 3 E4a/E4b zpožděný ledger, 4 vše PASS; ~82 min).
 
 Nálezy:
 
@@ -1113,7 +1114,6 @@ Nálezy:
 5. **Ledger z gateway je eventually consistent** (běh 3, E4a/E4b FAIL): E3 končí druhým během role account (po navýšení stropu) těsně
    před E4; 20 s po něm chyběly v ClickHouse poslední 2 spany zakázky `cap` (0,006 USD nad tolerancí 5 % + 0,002 USD), zatímco
    `budget_usage` gateway je zapsáno hned. E4a čte ClickHouse opakovaně, dokud součty nesedí (max 150 s), a hlásí počet čtení a čas.
-P45_FINDINGS_MORE3
 
 ## Spuštění
 
