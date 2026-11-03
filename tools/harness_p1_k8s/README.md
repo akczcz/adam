@@ -1091,7 +1091,7 @@ Nálezy:
 |---|---|---|
 | N2a | 6× špatné heslo `probe` přes tunel → 401; správné heslo odmítnuto (zámek); admin API `attack-detection` disabled/numFailures ≥ 5; odemknutí → 200; ledger `GUI_LOGIN` ok=false s `via=cloudflare` a `ip_hash` | P45_N2A |
 | N2b | 25 správných přihlášení rychle přes tunel: prvních ~20 → 200, pak 429 s `Retry-After: 60`, ledger `LOGIN_RATE_LIMITED` scope ip; interní listener bez limitu (200) | ✅ (běh 1) 20× 200, pak 5× 429 s `Retry-After: 60`, 5 záznamů `LOGIN_RATE_LIMITED` scope `ip` s hashem IP, interní login 200 |
-| N2c | GUI bez aktivity 20 s (test) → přihlašovací stránka s `idle-notice`, token zahozen | P45_N2C |
+| N2c | GUI bez aktivity 20 s (test) → přihlašovací stránka s `idle-notice`, token zahozen | ✅ (běh 2) přihlášení `adam` přes tunel, po 24,6 s bez aktivity přihlašovací stránka „Odhlášeno po nečinnosti (<1 min)", token v sessionStorage zahozen |
 
 Výsledek: **P45_RESULT** (`measure` run P45_ID, P45_RUNS).
 
@@ -1102,7 +1102,15 @@ Nálezy:
    realmu master je krátký záměrně.
 2. **Rate limit bere i vlastní měření** (N2b): rate limit per IP platí i pro runner (všechna přihlášení GUI toků jdou přes tunel z jedné IP) –
    N2b proto čeká 62 s na čisté okno před i po testu; víc než ~15 přihlášení za minutu v jednom toku by měření rozbilo (zatím max. jednotky).
-P45_FINDINGS_MORE
+3. **Quick-login zámek Keycloaku je rychlejší než `failureFactor`** (běh 2, N2a FAIL): 6 špatných hesel poslaných hned za sebou
+   (< 1 s) zamklo účet už po 2. selhání – `quickLoginCheckMilliSeconds: 1000` + `minimumQuickLoginWaitSeconds: 60` – a další pokusy na
+   zamčeném účtu se už nepočítají (`numFailures: 2`). Zámek tedy fungoval (správné heslo 401), ale tvrzení „5 selhání" se nedalo změřit.
+   N2a posílá pokusy 1,5 s od sebe; rychlá dávka je samostatná (ostřejší) ochrana, ne chyba.
+4. **Resume tenanta z GUI přes tunel selhal rychlou HTTP chybou** (běh 2, U2d FAIL → O3a/O3d jen jako důsledek, tenant beta zůstal
+   stopped): detail GUI odpovědi v reportu chyběl, stop 90 s předtím prošel a resume přes API v O3c prošel → přechodná chyba cesty
+   (rychlý tunel / refresh tokenu). `tenant_stop` v `gui_checks` po 5xx (po rebase tunelu) nebo 429 jednou opakuje, U2d nese odpověď GUI
+   v detailu a při selhání dělá resume přes API, aby další checky neměřily zastavený tenant.
+P45_FINDINGS_MORE2
 
 ## Spuštění
 
