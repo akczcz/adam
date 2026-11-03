@@ -1090,14 +1090,19 @@ Nálezy:
 | Check | Tvrzení | Výsledek |
 |---|---|---|
 | N2a | 6× špatné heslo `probe` přes tunel → 401; správné heslo odmítnuto (zámek); admin API `attack-detection` disabled/numFailures ≥ 5; odemknutí → 200; ledger `GUI_LOGIN` ok=false s `via=cloudflare` a `ip_hash` | P45_N2A |
-| N2b | 25 správných přihlášení rychle přes tunel: prvních ~20 → 200, pak 429 s `Retry-After: 60`, ledger `LOGIN_RATE_LIMITED` scope ip; interní listener bez limitu (200) | P45_N2B |
+| N2b | 25 správných přihlášení rychle přes tunel: prvních ~20 → 200, pak 429 s `Retry-After: 60`, ledger `LOGIN_RATE_LIMITED` scope ip; interní listener bez limitu (200) | ✅ (běh 1) 20× 200, pak 5× 429 s `Retry-After: 60`, 5 záznamů `LOGIN_RATE_LIMITED` scope `ip` s hashem IP, interní login 200 |
 | N2c | GUI bez aktivity 20 s (test) → přihlašovací stránka s `idle-notice`, token zahozen | P45_N2C |
 
 Výsledek: **P45_RESULT** (`measure` run P45_ID, P45_RUNS).
 
 Nálezy:
 
-P45_FINDINGS
+1. **Admin token Keycloaku žije 60 s** (běh 1, pád N2a `KeyError`): harness si vzal admin token před N2b (25 přihlášení + 62 s pauza) a v N2a
+   už dostal 401 místo seznamu uživatelů. `adm()` bere čerstvý token na každé volání admin API. Totéž platí pro operátorské skripty: token
+   realmu master je krátký záměrně.
+2. **Rate limit bere i vlastní měření** (N2b): rate limit per IP platí i pro runner (všechna přihlášení GUI toků jdou přes tunel z jedné IP) –
+   N2b proto čeká 62 s na čisté okno před i po testu; víc než ~15 přihlášení za minutu v jednom toku by měření rozbilo (zatím max. jednotky).
+P45_FINDINGS_MORE
 
 ## Spuštění
 
