@@ -1079,6 +1079,26 @@ Nálezy:
    (`/zakazky`, `/_debug/ledger`, `/_live/model`, `/_wf/versions`, `/threads`) vrací 404, protože na veřejném listeneru vůbec neexistuje –
    druhá aplikace FastAPI v témže procesu místo filtru cest.
 
+## P4-5 N2 – zabezpečení veřejného vstupu (2026-11-03, AKS, `--step p4-5` = p4-4 + **N2a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-5-zabezpečení-veřejného-vstupu)): brute-force detekce Keycloaku
+  (dočasný zámek 5 selhání → 60 s … 15 min), rate limit `/agui/login` + `/agui/refresh` na veřejném listeneru (20/min/IP, 300/min celkem, 429 +
+  Retry-After), audit `GUI_LOGIN` s `via` a hashem IP, idle odhlášení GUI (30 min) a keepalive mandátu jen při aktivitě.
+- **Měření:** účet `probe` (realm z Gitu) jen pro zámek; `kc_ensure` nastaví brute-force atributy realmu admin API a na začátku běhu odemkne vše;
+  N2c přepíše idle limit na 20 s přes `sessionStorage.agui_idle_s`.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| N2a | 6× špatné heslo `probe` přes tunel → 401; správné heslo odmítnuto (zámek); admin API `attack-detection` disabled/numFailures ≥ 5; odemknutí → 200; ledger `GUI_LOGIN` ok=false s `via=cloudflare` a `ip_hash` | P45_N2A |
+| N2b | 25 správných přihlášení rychle přes tunel: prvních ~20 → 200, pak 429 s `Retry-After: 60`, ledger `LOGIN_RATE_LIMITED` scope ip; interní listener bez limitu (200) | P45_N2B |
+| N2c | GUI bez aktivity 20 s (test) → přihlašovací stránka s `idle-notice`, token zahozen | P45_N2C |
+
+Výsledek: **P45_RESULT** (`measure` run P45_ID, P45_RUNS).
+
+Nálezy:
+
+P45_FINDINGS
+
 ## Spuštění
 
 ```bash

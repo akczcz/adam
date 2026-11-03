@@ -101,6 +101,7 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 | P4-2 Ostrý běh s živým modelem a GitHubem (flag zakázky, klíč i PAT jen v Key Vaultu a jen v gateway) | ✅ kód 2026-11-01, měření AKS 2026-11-02 82/82 + 15 INFO ([p4-provoz.md](p4-provoz.md)); ostrý běh `p4-2-live` na vyžádání |
 | P4-3 Připravenost na ostrý provoz (gateway bez catch-all mocku, GC klíčů i pro pozastavené zakázky, selhání publikace jako rozhodovací bod) | ✅ 2026-11-02 AKS 84/84 + 17 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
 | P4-4 Vstup do platformy přes Cloudflare Tunnel (sidecar cloudflared, veřejný listener jen GUI + AG-UI, měření přes tunel) | ✅ 2026-11-02 AKS 86/86 + 17 INFO, 8 běhů ([p4-provoz.md](p4-provoz.md)); pojmenovaný tunnel + Access na vyžádání |
+| P4-5 Zabezpečení veřejného vstupu (brute-force zámek Keycloaku, rate limit loginu, audit s hashem IP, idle odhlášení GUI) | 🟡 kód 2026-11-03, měření AKS P45_RESULT ([p4-provoz.md](p4-provoz.md)) |
 
 ## Changelog
 - 2026-11-02: P4-4 hotovo na AKS (86/86 + 17 INFO) – GUI a AG-UI dostupné zvenčí přes Cloudflare Tunnel (sidecar u aplikace, veřejný listener nese jen GUI + AG-UI, interní API zůstává v clusteru); zdarma, bez veřejné IP; měření jde přes tunel místo port-forwardu. Stálá adresa = pojmenovaný tunnel s Cloudflare Access (postup v p4-provoz.md).
