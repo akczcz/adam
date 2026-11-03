@@ -26,6 +26,10 @@ export function setToken(t: string | null, refresh?: string | null, expiresIn?: 
   expiresAt = t && expiresIn ? Date.now() + expiresIn * 1000 : 0; sessionStorage.setItem("agui_exp", String(expiresAt));
 }
 export function hasToken() { return !!token; }
+/** P4-5: poslední aktivita člověka v GUI – idle timeout (odhlášení) a keepalive mandátu jen při přítomnosti (zapomenutá záložka nesmí držet mandát navždy). */
+export const activity = { last: Date.now() };
+export function idleLimitMs(): number { const o = Number(sessionStorage.getItem("agui_idle_s") ?? 0); return (o > 0 ? o : 1800) * 1000; }   // sessionStorage.agui_idle_s = testovací přepsání (měření N2c)
+export function isActive(withinMs = 600_000): boolean { return Date.now() - activity.last < withinMs; }
 function auth(): Record<string, string> { return token ? { Authorization: `Bearer ${token}` } : {}; }
 
 /** Access token Keycloaku žije 15 min; dlouhá zakázka (role v Kata podech) ho přežije → před každým voláním obnovit, když zbývá < 90 s (P3-2 nález). */

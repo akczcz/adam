@@ -701,6 +701,14 @@ def kc_ensure(a, http, KC, realm="p0"):
     O2 = T / "harness_p0_o2"; rj = json.loads((O2 / "configs/realm-p0.json").read_text())
     tok, adm_info = kc_admin(a, http, KC)   # P3-6 E9: heslo admina ze Secretu (Key Vault), dev literál při migraci otočen
     H = {"Authorization": f"Bearer {tok}"}; A = f"{KC}/admin/realms/{realm}"; created = {"roles": [], "clients": [], "users": [], "errors": [], "admin": adm_info}
+    # P4-5: brute-force detekce realmu (dočasný zámek účtu: 5 selhání → 60 s, roste do 15 min) – `--import-realm` existující realm nemění → admin API;
+    # a odemknout účty zamčené z minulého měření (N2a), aby lidé harnessu (adam, bea, platform-admin) nezačínali zamčení
+    bf = {k: rj[k] for k in ("bruteForceProtected", "permanentLockout", "failureFactor", "waitIncrementSeconds", "maxFailureWaitSeconds", "maxDeltaTimeSeconds", "quickLoginCheckMilliSeconds", "minimumQuickLoginWaitSeconds") if k in rj}
+    cur = http("GET", A, headers=H, timeout=20).json()
+    if bf and any(cur.get(k) != v for k, v in bf.items()):
+        x = http("PUT", A, headers=H, json={**{k: cur.get(k) for k in ("realm", "enabled")}, **bf}, timeout=20); created["brute_force"] = x.status_code
+    else: created["brute_force"] = "unchanged"
+    created["unlock_all"] = http("DELETE", f"{A}/attack-detection/brute-force/users", headers=H, timeout=20).status_code
     have_roles = {r["name"] for r in http("GET", f"{A}/roles", headers=H, timeout=20).json()}
     for r in rj["roles"]["realm"]:
         if r["name"] not in have_roles:
@@ -2506,7 +2514,7 @@ def step_live(a, rep, env):
     return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -2858,6 +2866,49 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             n1b["s"] = round(time.time() - t_b, 1)
             ok_n1b = n1b.get("login") == 200 and (n1b.get("threads") or {}).get("status") == 200 and n1b.get("run_status") == 200 and str(n1b.get("content_type", "")).startswith("text/event-stream") and "RUN_STARTED" in evs and "RUN_FINISHED" in evs
             rep.add("N1b", "AG-UI přes Cloudflare Tunnel: přihlášení člověka (password grant přes aplikaci), seznam threadů a run = SSE stream (RUN_STARTED … RUN_FINISHED) projdou proxy Cloudflare beze změny (content-type text/event-stream, cf-ray); GUI toky tohoto běhu (P21b, T1, K1, O3, E3/E4/E13, M1, L1) šly přes tunel místo port-forwardu", "PASS" if ok_n1b else "FAIL", n1b)
+        if n2 and PUBLIC_URL:   # P4-5: zabezpečení veřejného vstupu – rate limit loginu, brute-force zámek Keycloaku, idle odhlášení GUI
+            sys.path.insert(0, str(HERE)); from gui_checks import Gui as _Gui2
+            t_2 = time.time(); gui_base(APP)
+            tokA, _ = kc_admin(a, http, KC); HA = {"Authorization": f"Bearer {tokA}"}; AR = f"{KC}/admin/realms/p0"
+            realm = http("GET", AR, headers=HA, timeout=20).json(); n2r = {k: realm.get(k) for k in ("bruteForceProtected", "permanentLockout", "failureFactor", "waitIncrementSeconds", "maxFailureWaitSeconds")}
+            def pub_login(user, pw):
+                try:
+                    r = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": user, "password": pw}, timeout=30); return r.status_code, r.headers.get("retry-after"), r.headers.get("cf-ray")
+                except Exception as e: return f"{type(e).__name__}", None, None
+            # N2b: rate limit per IP jen na veřejném listeneru – správné heslo 25× rychle → prvních 20 projde, pak 429 + Retry-After; interní listener bez limitu
+            time.sleep(62)   # čisté okno (GUI toky před chvílí přihlašovaly z téže IP runneru)
+            codes = [pub_login("probe", "probe") for _ in range(25)]; ra = next((c[1] for c in codes if c[0] == 429), None); first429 = next((i for i, c in enumerate(codes) if c[0] == 429), None)
+            internal = http("POST", f"{APP}/agui/login", json={"username": "probe", "password": "probe"}, timeout=20).status_code
+            rl = [e for e in led() if e.get("kind") == "LOGIN_RATE_LIMITED" and e.get("ts", 0) > t_2]
+            n2b = {"codes": [c[0] for c in codes], "retry_after": ra, "internal_login": internal, "rate_limited_events": len(rl), "scope": sorted({e.get("scope") for e in rl}), "ip_hash": (rl[0].get("ip_hash") if rl else None)}
+            n2b["first_429_index"] = first429
+            ok_2b = first429 is not None and 15 <= first429 <= 20 and all(c[0] == 200 for c in codes[:first429]) and all(c[0] == 429 for c in codes[first429:]) and ra == "60" and internal == 200 and len(rl) >= 1 and "ip" in n2b["scope"]
+            rep.add("N2b", "Rate limit přihlášení na veřejném listeneru (P4-5): 20 požadavků/min na IP (CF-Connecting-IP za Cloudflare) na /agui/login a /agui/refresh, nad limit 429 s Retry-After 60 a ledger LOGIN_RATE_LIMITED (IP jen jako hash); interní listener (port-forward, uvnitř clusteru) limit nemá; celkový strop 300/min", "PASS" if ok_2b else "FAIL", n2b)
+            time.sleep(62)   # okno rate limitu
+            # N2a: brute-force detekce Keycloaku – 6× špatné heslo účtu probe přes veřejný vstup → zámek: i správné heslo odmítnuto (401), admin API hlásí disabled; odemknout → 200
+            uid = (http("GET", f"{AR}/users", headers=HA, params={"username": "probe", "exact": "true"}, timeout=20).json() or [{}])[0].get("id")
+            if uid: http("DELETE", f"{AR}/attack-detection/brute-force/users/{uid}", headers=HA, timeout=20)
+            wrong = [pub_login("probe", f"wrong-{i}")[0] for i in range(6)]; locked = pub_login("probe", "probe")[0]
+            bfs = http("GET", f"{AR}/attack-detection/brute-force/users/{uid}", headers=HA, timeout=20).json() if uid else {}
+            unlock = http("DELETE", f"{AR}/attack-detection/brute-force/users/{uid}", headers=HA, timeout=20).status_code if uid else None
+            time.sleep(2); after = pub_login("probe", "probe")[0]
+            fails = [e for e in led() if e.get("kind") == "GUI_LOGIN" and e.get("user") == "probe" and e.get("ok") is False and e.get("ts", 0) > t_2]
+            n2a = {"realm": n2r, "wrong": wrong, "locked_correct_pw": locked, "brute_force_status": {k: bfs.get(k) for k in ("disabled", "numFailures", "lastFailure")}, "unlock": unlock, "after_unlock": after, "failed_logins_ledger": len(fails), "via": sorted({e.get("via") for e in fails}), "ip_hash_present": all(bool(e.get("ip_hash")) for e in fails)}
+            ok_2a = n2r.get("bruteForceProtected") is True and n2r.get("permanentLockout") is False and n2r.get("failureFactor") == 5 and all(c == 401 for c in wrong) and locked == 401 and bfs.get("disabled") is True and (bfs.get("numFailures") or 0) >= 5 and unlock == 204 and after == 200 and len(fails) >= 7 and "cloudflare" in n2a["via"] and n2a["ip_hash_present"]
+            rep.add("N2a", "Brute-force detekce Keycloaku (realm p0, z Gitu přes admin API, ne trvalý zámek): 5 selhání → účet dočasně zamčen (60 s, roste do 15 min) – i správné heslo přes veřejný vstup odmítnuto 401, admin API attack-detection hlásí disabled/numFailures; odemknutí operátorem (DELETE) → přihlášení 200; každé selhání v ledgeru GUI_LOGIN s via=cloudflare a hashem IP (audit bez osobních údajů)", "PASS" if ok_2a else "FAIL", n2a)
+            # N2c: idle odhlášení GUI – bez aktivity člověka se GUI odhlásí (výchozí 30 min, měření: sessionStorage.agui_idle_s = 20) a mandát se neprodlužuje
+            n2c = {}; g2 = None
+            try:
+                g2 = _Gui2(gui_base(APP), shots=LOGS / "gui-shots" / "n2").open(); g2.page.evaluate("sessionStorage.setItem('agui_idle_s', '20')")
+                n2c["login"] = g2.login("adam", "adam"); t_i = time.time(); g2.threads_list()
+                g2.page.wait_for_function("document.querySelector('[data-testid=login-user]') && document.querySelector('[data-testid=idle-notice]')", timeout=90_000)
+                n2c["idle_s"] = round(time.time() - t_i, 1); n2c["notice"] = g2.t("idle-notice").inner_text()[:120]; n2c["token_cleared"] = g2.page.evaluate("sessionStorage.getItem('agui_token')") is None; g2.shot("n2-idle")
+            except Exception as e: n2c["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            finally:
+                if g2: g2.close()
+            ok_2c = 15 <= n2c.get("idle_s", 0) <= 60 and "nečinnosti" in n2c.get("notice", "") and n2c.get("token_cleared") is True
+            rep.add("N2c", "Idle odhlášení GUI (P4-5): bez aktivity člověka (myš, klávesy) se pult odhlásí a token zahodí (výchozí 30 min, měření 20 s přes sessionStorage.agui_idle_s), přihlašovací stránka to říká; keepalive mandátu běží jen při aktivitě posledních 10 min – zapomenutá záložka mandát navždy nedrží (riziko P4-1)", "PASS" if ok_2c else "FAIL", n2c)
+            rep.add("N2d", "N2: čas", "INFO", {"wall_s": round(time.time() - t_2, 1)})
         if l1: l1_flow(a, rep, http, led, APP, KC, kj, zid[:-2], LOGS / "gui-shots", l2=l2)   # P4-2 L1: zapojení ostrého běhu bez tajemství (živé API 401, GitHub 401, flag live viditelně); P4-3 L2: bez catch-all mocku, GC klíčů + reissue
         if live: live_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P4-2 ostrý běh: živý model + skutečný GitHub (jen p4-2-live, platí se)
         if e11: e11b_check(a, rep, ca_file, t_bao0)   # P3-6 E11b: spany gateway i paměti přes TLS – až po LLM provozu rolí
@@ -3068,7 +3119,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-2-live"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -3079,7 +3130,7 @@ def main():
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -3099,6 +3150,7 @@ def main():
      "p4-2": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True),
      "p4-3": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True),   # P4-3: p4-2 + L2a–c (gateway bez catch-all, GC klíčů + reissue)
      "p4-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True),   # P4-4: p4-3 + N1a–b (vstup přes Cloudflare Tunnel, GUI toky přes tunel)
+     "p4-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True),   # P4-5: p4-4 + N2a–c (brute force, rate limit, idle odhlášení)
      "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))

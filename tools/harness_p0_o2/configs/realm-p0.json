@@ -2,6 +2,14 @@
   "realm": "p0",
   "enabled": true,
   "accessTokenLifespan": 900,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
   "displayName": "P0 identity: role = OAuth klient se service accountem (client_credentials); tenant_id a agent_id = atributy service-account uzivatele; roles plochy claim; aud=memory. Tajemstvi klientu jsou testovaci (harness), v clusteru je vydava OpenBao. P3-2: lidé tenantů (adam/acme, bea/beta, platform-admin/platform) = knowledge/organization/tenants.yaml; klient platform-gui.",
   "roles": {
     "realm": [
@@ -471,6 +479,29 @@
       "attributes": {
         "tenant_id": [
           "platform"
+        ]
+      }
+    },
+    {
+      "username": "probe",
+      "enabled": true,
+      "email": "probe@acme.test",
+      "emailVerified": true,
+      "firstName": "Probe",
+      "lastName": "Harness",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "probe",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "human"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "acme"
         ]
       }
     }
