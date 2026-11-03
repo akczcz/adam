@@ -1089,7 +1089,7 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| N2a | 6× špatné heslo `probe` přes tunel → 401; správné heslo odmítnuto (zámek); admin API `attack-detection` disabled/numFailures ≥ 5; odemknutí → 200; ledger `GUI_LOGIN` ok=false s `via=cloudflare` a `ip_hash` | P45_N2A |
+| N2a | 6× špatné heslo `probe` přes tunel → 401; správné heslo odmítnuto (zámek); admin API `attack-detection` disabled/numFailures ≥ 5; odemknutí → 200; ledger `GUI_LOGIN` ok=false s `via=cloudflare` a `ip_hash` | ✅ (běh 3) 6× 401 (1,5 s od sebe), správné heslo 401, `attack-detection` disabled=true numFailures=5, DELETE → 204, pak 200; 7 záznamů `GUI_LOGIN` ok=false via `cloudflare` s `ip_hash` |
 | N2b | 25 správných přihlášení rychle přes tunel: prvních ~20 → 200, pak 429 s `Retry-After: 60`, ledger `LOGIN_RATE_LIMITED` scope ip; interní listener bez limitu (200) | ✅ (běh 1) 20× 200, pak 5× 429 s `Retry-After: 60`, 5 záznamů `LOGIN_RATE_LIMITED` scope `ip` s hashem IP, interní login 200 |
 | N2c | GUI bez aktivity 20 s (test) → přihlašovací stránka s `idle-notice`, token zahozen | ✅ (běh 2) přihlášení `adam` přes tunel, po 24,6 s bez aktivity přihlašovací stránka „Odhlášeno po nečinnosti (<1 min)", token v sessionStorage zahozen |
 
@@ -1110,7 +1110,10 @@ Nálezy:
    stopped): detail GUI odpovědi v reportu chyběl, stop 90 s předtím prošel a resume přes API v O3c prošel → přechodná chyba cesty
    (rychlý tunel / refresh tokenu). `tenant_stop` v `gui_checks` po 5xx (po rebase tunelu) nebo 429 jednou opakuje, U2d nese odpověď GUI
    v detailu a při selhání dělá resume přes API, aby další checky neměřily zastavený tenant.
-P45_FINDINGS_MORE2
+5. **Ledger z gateway je eventually consistent** (běh 3, E4a/E4b FAIL): E3 končí druhým během role account (po navýšení stropu) těsně
+   před E4; 20 s po něm chyběly v ClickHouse poslední 2 spany zakázky `cap` (0,006 USD nad tolerancí 5 % + 0,002 USD), zatímco
+   `budget_usage` gateway je zapsáno hned. E4a čte ClickHouse opakovaně, dokud součty nesedí (max 150 s), a hlásí počet čtení a čas.
+P45_FINDINGS_MORE3
 
 ## Spuštění
 
