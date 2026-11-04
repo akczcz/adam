@@ -290,12 +290,13 @@ def roles_sync() -> dict:
 
 
 def tenant_spend(tenant: str) -> dict | None:
-    """Útrata tenanta = součet spent_usd jeho zakázek v org.zakazky (30d okno klíčů) + strop z org.tenants; None bez DSN."""
+    """Útrata tenanta = součet spent_usd jeho zakázek v org.zakazky za posledních 30 dní (okno jako u rozpočtů klíčů gateway) + strop z org.tenants; None bez DSN."""
     c = _conn("P0_REGISTRY_DSN")
     if c is None: return None
     try:
         c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY)
-        row = c.execute("SELECT COALESCE(SUM(spent_usd), 0) FROM org.zakazky WHERE tenant_id = %s", (tenant,)).fetchone()
+        # P4-8: okno 30 dní (jako rozpočty klíčů gateway) – do té doby součet všech zakázek tenanta od založení platformy (dev tenant beta narazil na strop 20 USD po ~2 měsících měření)
+        row = c.execute("SELECT COALESCE(SUM(spent_usd), 0) FROM org.zakazky WHERE tenant_id = %s AND created_at > now() - interval '30 days'", (tenant,)).fetchone()
         lim = c.execute("SELECT budget_usd FROM org.tenants WHERE tenant_id = %s", (tenant,)).fetchone()
         c.execute("UPDATE org.tenants SET spent_usd = %s, updated_at = now() WHERE tenant_id = %s", (float(row[0]), tenant))
         return {"tenant": tenant, "spent_usd": float(row[0]), "budget_usd": float(lim[0]) if lim else None}

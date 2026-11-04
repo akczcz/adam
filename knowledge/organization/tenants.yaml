@@ -13,7 +13,7 @@ tenants:
   - id: beta
     name: Beta s.r.o. – první externí zákazník (testovací)
     profile: standard
-    budget_usd: 20
+    budget_usd: 50            # P4-8: 20 USD dev tenant vyčerpal za ~2 měsíce měření (strop byl do P4-8 bez okna); okno 30 d + rezerva
     role_pods: true
     humans:
       - {username: bea, roles: [human]}
