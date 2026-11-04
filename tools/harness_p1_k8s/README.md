@@ -1153,16 +1153,22 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| R1a | 4 hesla lidí: nová verze v KV → Secret do minuty → admin API nastaví → nové 200, staré bez tokenu, veřejný login 200 | P47_R1A |
-| R1b | DB role: 3 nové verze → Secrety zakazka-finops/memory-db/governance-db → aplikace `DB_ROLES_SYNC` 3 role → paměť 200, governance 200, Postgres staré odmítnuto | P47_R1B |
-| R1c | admin Keycloaku: nová verze → `kc_admin` Secretem 400 → předchozí verzí z KV 200 → reset → Secretem 200, stará bez tokenu | P47_R1C |
-| R1d | časy (ESO sync, restarty) a počty verzí v KV | P47_R1D |
+| R1a | 4 hesla lidí: nová verze v KV → Secret do minuty → admin API nastaví → nové 200, staré bez tokenu, veřejný login 200 | ✅ 4 hesla, ESO sync 17 s, admin API reset 204 u všech, nové 200 / staré 400 `invalid_grant`, veřejný login 200 (37 s) |
+| R1b | DB role: 3 nové verze → Secrety zakazka-finops/memory-db/governance-db → aplikace `DB_ROLES_SYNC` 3 role → paměť 200, governance 200, Postgres staré odmítnuto | ✅ ESO sync 3 s, nové pody aplikace 334 s (`DB_ROLES_SYNC` 3 role), paměť + governance 10 s, oba 200; Postgres nové přijato, staré odmítnuto ×3 (429 s) |
+| R1c | admin Keycloaku: nová verze → `kc_admin` Secretem 400 → předchozí verzí z KV 200 → reset → Secretem 200, stará bez tokenu | ✅ ESO sync 0,5 s; `kc_admin` Secretem 400 → předchozí verze KV (1) 200 → reset 204 → Secretem 200; stará 400 (11 s) |
+| R1d | časy (ESO sync, restarty) a počty verzí v KV | ℹ️ celkem 477 s; verze v KV po rotaci: 2 u každého tajemství |
 
-Výsledek: **P47_RESULT** (`measure` run P47_ID, P47_RUNS).
+Výsledek: **93/93 PASS + 20 INFO** (`measure` run 41882561599, 2026-11-04, 1 běh; ~82 min, R1 ~8 min).
 
 Nálezy:
 
-P47_FINDINGS_MORE
+1. **Rotace DB rolí = ~6 min, z toho 334 s nové pody aplikace** (smazání podu → Dapr sidecar, readiness, start workflow workeru);
+   paměť a governance 10 s. Okno rotace určuje aplikace, ne Key Vault/ESO (sync 0,5–17 s) – kandidát: aplikace přečte nové heslo bez restartu
+   (ESO mountovaný Secret + reload) nebo dvě repliky s PDB.
+2. **Obnova admina z předchozí verze Key Vaultu funguje bez výpadku** – `az keyvault secret list-versions` dává verze od nejnovější, stačí
+   první starší; `bootstrap-admin` CLI (zastavený Keycloak) zůstává jen záchrana po ztrátě všech verzí.
+3. **`terraform fmt -check` odmítá komentář za jednořádkovým blokem** (`lifecycle { … }   # …`) – komentář na vlastní řádek; `infra apply`
+   padá dřív než plan, takže formát hlídat před pushem.
 
 ## Spuštění
 
