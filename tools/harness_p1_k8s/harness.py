@@ -705,8 +705,15 @@ def kc_admin(a, http, KC):
     info = {"user": user, "secret_login": None, "legacy_login": None, "rotated": None}
     r = login(pw) if pw else None; info["secret_login"] = r.status_code if r is not None else "no-secret"
     if r is None or r.status_code != 200:
-        r = login(LEGACY_KC_ADMIN); info["legacy_login"] = r.status_code
-        assert r.status_code == 200, f"Keycloak admin login: Secret {info['secret_login']}, dev literál {r.status_code} {r.text[:200]}"
+        # P4-7: po rotaci v Key Vaultu nese Secret novou hodnotu, kterou Keycloak ještě nezná → přihlásit se předchozí verzí z Key Vaultu (verze zná jen KV) a otočit
+        kvn = kv_name_of(lambda *x: kj_static(a, *x)); older = [v for v in (kv_versions(kvn, "keycloak-admin-password") if kvn else [])[1:] if v and v != pw]
+        info["kv_older_versions"] = len(older)
+        for i, o in enumerate(older):
+            r = login(o)
+            if r.status_code == 200: info["recovered_from"] = f"kv_version_-{i + 1}"; break
+        if r is None or r.status_code != 200:
+            r = login(LEGACY_KC_ADMIN); info["legacy_login"] = r.status_code
+        assert r.status_code == 200, f"Keycloak admin login: Secret {info['secret_login']}, předchozí verze KV {len(older)}, dev literál {r.status_code} {r.text[:200]}"
         if pw:
             H = {"Authorization": f"Bearer {r.json()['access_token']}"}
             u = http("GET", f"{KC}/admin/realms/master/users", headers=H, params={"username": user, "exact": "true"}, timeout=20).json()
@@ -728,13 +735,12 @@ def kc_humans_sync(http, KC, A, H, rj):
         pw = HUMAN_PW.get(name)
         if not pw: out[name] = {"secret": "missing"}; continue
         rec = {"secret_login": login(name, pw)}
-        if rec["secret_login"] != 200:
-            rec["legacy_login"] = login(name, name)
-            if rec["legacy_login"] == 200:
-                users = http("GET", f"{A}/users", headers=H, params={"username": name, "exact": "true"}, timeout=20).json()
-                if users:
-                    x = http("PUT", f"{A}/users/{users[0]['id']}/reset-password", headers=H, json={"type": "password", "value": pw, "temporary": False}, timeout=20)
-                    rec["rotated"] = x.status_code; rec["after"] = login(name, pw)
+        if rec["secret_login"] != 200:   # P4-7: idempotentně – když Secret (Key Vault) nesedí, admin heslo nastaví (dev literál ani stará hodnota nejsou potřeba)
+            users = http("GET", f"{A}/users", headers=H, params={"username": name, "exact": "true"}, timeout=20).json()
+            if users:
+                x = http("PUT", f"{A}/users/{users[0]['id']}/reset-password", headers=H, json={"type": "password", "value": pw, "temporary": False}, timeout=20)
+                rec["rotated"] = x.status_code; rec["after"] = login(name, pw)
+            else: rec["user"] = "missing"
         out[name] = rec
     return out
 
@@ -1552,6 +1558,43 @@ def _kv_err(kv_name, name, r):
     KV_ERRORS.append({"secret": name, "error": msg}); print(f"  az keyvault {kv_name}/{name}: {msg}", flush=True)
 
 
+def kv_versions(kv_name, name, n=4):
+    """P4-7: hodnoty tajemství v Key Vaultu od nejnovější (aktuální první, max n) – při rotaci zná starou hodnotu jen Key Vault (verze), ESO dává jen aktuální.
+    Hodnoty se nelogují; chyba az jde do KV_ERRORS."""
+    r = subprocess.run(["az", "keyvault", "secret", "list-versions", "--vault-name", kv_name, "-n", name, "-o", "json"], capture_output=True, text=True, timeout=120)
+    if r.returncode != 0: _kv_err(kv_name, name, r); return []
+    try: vers = sorted((v for v in json.loads(r.stdout) if (v.get("attributes") or {}).get("enabled", True)), key=lambda v: (v.get("attributes") or {}).get("created") or "", reverse=True)
+    except ValueError: return []
+    out = []
+    for v in vers[:n]:
+        x = subprocess.run(["az", "keyvault", "secret", "show", "--id", v["id"], "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120)
+        if x.returncode == 0 and x.stdout.strip(): out.append(x.stdout.strip())
+    return out
+
+
+def kv_rotate(kv_name, name, content_type):
+    """P4-7: nová náhodná verze tajemství v Key Vaultu (operátor = runner); vrací hodnotu nebo None. Terraform hodnotu po založení nepřepisuje (ignore_changes)."""
+    import secrets as _sec
+    val = _sec.token_urlsafe(24); ok = kv_set(kv_name, name, val, content_type)
+    if ok is not True: print(f"  kv_rotate {name}: {ok}", flush=True); return None
+    return val
+
+
+def eso_force_sync(a, want, timeout_s=180):
+    """P4-7: anotace force-sync na ExternalSecretech a čekání, až Secrety nesou hodnotu z Key Vaultu (jinak ESO obnovuje po refreshInterval 1 h).
+    want = {externalsecret: [(secret, klíč, hodnota)]}; hodnota může být část (DSN nese heslo uvnitř)."""
+    import base64 as _b
+    ts = str(int(time.time()))
+    for es in want: kubectl(a, "-n", NS, "annotate", "externalsecret", es, f"force-sync={ts}", "--overwrite")
+    t0 = time.time(); pending = {it for lst in want.values() for it in lst}
+    while pending and time.time() - t0 < timeout_s:
+        for it in list(pending):
+            sname, key, val = it; raw = kubectl(a, "-n", NS, "get", "secret", sname, "-o", f"jsonpath={{.data.{key}}}").stdout.strip()
+            if raw and val and val in _b.b64decode(raw).decode(errors="replace"): pending.discard(it)
+        if pending: time.sleep(3)
+    return {"synced": not pending, "s": round(time.time() - t0, 1), "pending": sorted(f"{sname}.{key}" for sname, key, _ in pending)}
+
+
 def kv_set(kv_name, name, value, content_type):
     """Zápis tajemství do Key Vaultu přes dočasný soubor (hodnota není v argumentech procesu ani v logs/, které jdou do artefaktu běhu)."""
     import tempfile
@@ -1700,6 +1743,106 @@ def e10_checks(a, rep, BAO, tok, op, since_iso):
              "audit": {"since": since_iso, "entries": len(resp), "jwt_logins": len(logins), "jwt_logins_ok": len(login_ok), "root_paths": root_paths, "by_display_name": dict(by_name)}, "bootstrap_this_run": op.get("bootstrap"), "root_used": op.get("root_used"), "kv_root_read": op.get("kv_root_read"), "drift": op.get("drift"), "drift_after": op.get("drift_after")})
     rep.add("E10b", "E10: bootstrap auth/jwt operátora (jen první běh nebo drift policy/role), požadavky root tokenem v tomto běhu a rozložení požadavků v auditu OpenBao podle identity (jwt = operátor, kubernetes = aplikace, root = bootstrap)", "INFO",
             {"bootstrap": op.get("bootstrap"), "drift": op.get("drift"), "root_used": op.get("root_used"), "login_after_bootstrap": op.get("login_after"), "audit_by_display_name": dict(by_name), "audit_root_paths": root_paths, "token_meta": op.get("meta")})
+
+
+def _kc_login(http, KC, u, p, client="platform-gui", realm="p0"):
+    r = http("POST", f"{KC}/realms/{realm}/protocol/openid-connect/token", data={"grant_type": "password", "client_id": client, "username": u, "password": p}, timeout=20)
+    try: j = r.json()
+    except Exception: j = {}
+    return {"status": r.status_code, "token": bool(j.get("access_token")), "error": j.get("error")}
+
+
+def rotate_humans(a, http, KC, kv_name, secret):
+    """P4-7 R1a: nová verze hesel lidí v Key Vaultu → ESO force-sync → harness načte Secret → admin API nastaví hesla (kc_humans_sync) → nové 200, staré bez tokenu."""
+    USERS = ["adam", "bea", "platform-admin", "probe"]; t0 = time.time()
+    old = {u: hpw(u) for u in USERS}
+    new = {u: kv_rotate(kv_name, f"kc-user-{u}-password", "heslo člověka harnessu v realmu p0 – rotace (operátor = harness R1a)") for u in USERS}
+    sync = eso_force_sync(a, {"keycloak-humans": [("keycloak-humans", "P0_HUMAN_PASSWORDS", v) for v in new.values() if v]})
+    HUMAN_PW.clear(); humans = load_human_pw(a)
+    rj = json.loads((T / "harness_p0_o2/configs/realm-p0.json").read_text())
+    try:
+        tokA, adm = kc_admin(a, http, KC); hs = kc_humans_sync(http, KC, f"{KC}/admin/realms/p0", {"Authorization": f"Bearer {tokA}"}, rj)
+    except AssertionError as e: adm, hs = {"error": str(e)[:200]}, {}
+    logins = {u: {"new": _kc_login(http, KC, u, new[u] or ""), "old": _kc_login(http, KC, u, old[u])} for u in USERS}
+    pub = None
+    if PUBLIC_URL:
+        try: pub = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": "adam", "password": hpw("adam")}, timeout=30).status_code
+        except Exception as e: pub = type(e).__name__
+    ok = (all(new.values()) and sync["synced"] and humans.get("secret") is True and all(HUMAN_PW.get(u) == new[u] for u in USERS)
+          and all((hs.get(u) or {}).get("after") == 200 for u in USERS) and all(v["new"]["status"] == 200 and v["new"]["token"] and not v["old"]["token"] for v in logins.values()) and pub in (200, None))
+    return ok, {"kv_rotated": [u for u in USERS if new[u]], "eso": sync, "harness_secret": humans, "admin": adm, "humans_sync": hs, "logins": logins, "public_login": pub, "s": round(time.time() - t0, 1)}
+
+
+def rotate_admin(a, http, KC, kv_name, secret):
+    """P4-7 R1c: nová verze hesla admina Keycloaku v Key Vaultu → ESO force-sync → kc_admin: Secret nesedí → přihlášení předchozí verzí z Key Vaultu → reset → nové 200."""
+    t0 = time.time(); old = secret("keycloak-admin", "KC_BOOTSTRAP_ADMIN_PASSWORD") or ""
+    new = kv_rotate(kv_name, "keycloak-admin-password", "heslo admina Keycloaku (realm master) – rotace (operátor = harness R1c)")
+    sync = eso_force_sync(a, {"keycloak-admin": [("keycloak-admin", "KC_BOOTSTRAP_ADMIN_PASSWORD", new)]}) if new else {"synced": False, "s": 0, "pending": ["keycloak-admin"]}
+    try: _, adm = kc_admin(a, http, KC)
+    except AssertionError as e: adm = {"error": str(e)[:200]}
+    logins = {"new": _kc_login(http, KC, "admin", new or "", client="admin-cli", realm="master"), "old": _kc_login(http, KC, "admin", old, client="admin-cli", realm="master") if old else None}
+    ok = (bool(new) and sync["synced"] and adm.get("secret_login") not in (200, None) and str(adm.get("recovered_from", "")).startswith("kv_version") and adm.get("rotated") == 204 and adm.get("secret_login_after") == 200
+          and logins["new"]["token"] and logins["old"] is not None and not logins["old"]["token"])
+    return ok, {"kv_rotated": bool(new), "eso": sync, "kc_admin": adm, "logins": logins, "s": round(time.time() - t0, 1)}
+
+
+def rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try=None):
+    """P4-7 R1b: nové verze hesel DB rolí (memory_app, org_reader, org_writer) v Key Vaultu → ESO force-sync (zakazka-finops, memory-db, governance-db) →
+    restart aplikace (ALTER ROLE z env, ledger DB_ROLES_SYNC) → restart paměti a Governance MCP (DSN z env) → paměť i governance odpovídají, Postgres: staré heslo odmítnuto."""
+    ROLES = {"memory_app": "pg-memory-app-password", "org_reader": "pg-org-reader-password", "org_writer": "pg-org-writer-password"}; t0 = time.time(); tm = {}
+    old = json.loads(secret("zakazka-finops", "P0_DB_ROLE_PASSWORDS") or "{}")
+    new = {r: kv_rotate(kv_name, n, f"heslo DB role {r} (RLS) – rotace (operátor = harness R1b)") for r, n in ROLES.items()}
+    sync = eso_force_sync(a, {"zakazka-finops": [("zakazka-finops", "P0_DB_ROLE_PASSWORDS", v) for v in new.values() if v],
+                              "memory-db": [("memory-db", "MEMORY_DB_URI", new["memory_app"])] if new["memory_app"] else [],
+                              "governance-db": [("governance-db", "GOV_DSN", new["org_reader"])] if new["org_reader"] else []})
+    n0 = len([e for e in led() if e.get("kind") == "DB_ROLES_SYNC"]); t1 = time.time()
+    restart_pods(a, "zakazka"); time.sleep(5); roll_app = kubectl(a, "-n", NS, "rollout", "status", "deployment/zakazka", "--timeout=300s", timeout=320).returncode == 0
+    kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=zakazka", "--timeout=300s", timeout=320); pfs["zakazka"].start()
+    sync_ev = None; health = None; t2 = time.time()
+    while time.time() - t2 < 240 and not sync_ev:
+        try:
+            health = http("GET", f"{APP}/health", timeout=10).status_code
+            if health == 200:
+                evs = [e for e in led() if e.get("kind") == "DB_ROLES_SYNC"]
+                if len(evs) > n0 and evs[-1].get("written"): sync_ev = {k: evs[-1].get(k) for k in ("written", "roles", "error")}
+        except Exception: pass
+        if not sync_ev: time.sleep(5)
+    tm["app_s"] = round(time.time() - t1, 1); t3 = time.time()
+    restart_pods(a, "memory", "governance"); time.sleep(5)
+    rolls = {d: kubectl(a, "-n", NS, "rollout", "status", f"deployment/{d}", "--timeout=300s", timeout=320).returncode == 0 for d in ("memory", "governance")}
+    kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=memory", "--timeout=300s", timeout=320); pfs["memory"].start(); tm["consumers_s"] = round(time.time() - t3, 1)
+    human = _kc_login(http, KC, "adam", hpw("adam"), client="harness-human"); tk = None
+    if human["token"]: tk = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "harness-human", "username": "adam", "password": hpw("adam")}, timeout=15).json()["access_token"]
+    mem = None; gov = None
+    for _ in range(12):
+        try:
+            mem = http("POST", f"{MEM}/tools/search_memory", json={"query": "test", "limit": 1}, headers={"Authorization": f"Bearer {tk}"}, timeout=15).status_code if tk else "no-token"
+            tp = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": "platform-admin", "password": hpw("platform-admin")}, timeout=15).json().get("access_token")
+            gov = http("POST", f"{APP}/agui/gov/tools/tenants", json={}, headers={"Authorization": f"Bearer {tp}"}, timeout=30).status_code
+        except Exception as e: mem = mem or type(e).__name__
+        if mem == 200 and gov == 200: break
+        time.sleep(5)
+    pg = {r: {"old": pg_try(r, old.get(r, ""), db) if (pg_try and old.get(r)) else None, "new": pg_try(r, new[r], db) if (pg_try and new[r]) else None} for r, db in (("memory_app", "memory"), ("org_reader", "org"), ("org_writer", "org"))}
+    ok = (all(new.values()) and sync["synced"] and roll_app and bool(sync_ev) and sorted(sync_ev.get("roles") or []) == sorted(ROLES) and all(rolls.values()) and mem == 200 and gov == 200
+          and (pg_try is None or all(v["new"] is True and v["old"] is not True for v in pg.values())))
+    return ok, {"kv_rotated": [r for r in ROLES if new[r]], "eso": sync, "app": {"rollout": roll_app, "health": health, "db_roles_sync": sync_ev}, "consumers": rolls, "memory_http": mem, "governance_http": gov, "postgres": pg, "timing": {**tm, "total_s": round(time.time() - t0, 1)}}
+
+
+def r1_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn):
+    """R1 (P4-7): rotace tajemství jako provozní postup – nová verze v Key Vaultu → ESO force-sync → konzument; bez dev literálů a bez znalosti starého hesla."""
+    import psycopg
+    t_r = time.time(); hostport = dsn("org").split("@")[1].split("/")[0]
+    def pg_try(role, pw, db):
+        try:
+            with psycopg.connect(f"postgresql://{role}:{pw}@{hostport}/{db}?sslmode=require", connect_timeout=10) as c: return c.execute("SELECT current_user").fetchone()[0] == role
+        except psycopg.OperationalError as e: return f"denied: {str(e).splitlines()[0][:90]}"
+    ok_a, d_a = rotate_humans(a, http, KC, kv_name, secret)
+    rep.add("R1a", "Rotace hesel lidí (P4-7): nová verze 4 hesel v Key Vaultu (operátor), ESO force-sync → Secret keycloak-humans do minuty, harness hesla znovu načte, admin API je idempotentně nastaví v realmu (kc_humans_sync bez dev literálu i bez staré hodnoty); nové heslo 200 u všech čtyř, staré bez tokenu; přihlášení přes veřejný vstup novým heslem 200", "PASS" if ok_a else "FAIL", d_a)
+    ok_c, d_c = rotate_admin(a, http, KC, kv_name, secret)
+    rep.add("R1c", "Rotace hesla admina Keycloaku (P4-7): nová verze v Key Vaultu → ESO force-sync → kc_admin: Secret ještě nesedí → přihlášení předchozí verzí tajemství z Key Vaultu (verze zná jen KV; bootstrap-admin CLI by vyžadoval zastavený Keycloak) → reset-password → Secret 200, stará hodnota bez tokenu", "PASS" if ok_c else "FAIL", d_c)
+    ok_b, d_b = rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try)
+    rep.add("R1b", "Rotace hesel DB rolí s RLS (P4-7): nové verze memory_app/org_reader/org_writer v Key Vaultu → ESO force-sync Secretů zakazka-finops, memory-db, governance-db → nové pody aplikace (ALTER ROLE z env, ledger DB_ROLES_SYNC written, 3 role) → nové pody paměti a Governance MCP (DSN z env) → paměť 200 (token člověka), Governance MCP 200; Postgres: nové heslo přijato, staré odmítnuto u všech tří", "PASS" if ok_b else "FAIL", d_b)
+    rep.add("R1d", "R1: čas rotací a verze v Key Vaultu", "INFO", {"wall_s": round(time.time() - t_r, 1), "humans_s": d_a.get("s"), "admin_s": d_c.get("s"), "db_roles": d_b.get("timing"), "eso_s": {"humans": (d_a.get("eso") or {}).get("s"), "admin": (d_c.get("eso") or {}).get("s"), "db": (d_b.get("eso") or {}).get("s")}, "kv_versions": {n: len(kv_versions(kv_name, n, 10)) for n in ("keycloak-admin-password", "kc-user-adam-password", "pg-memory-app-password")}, "kv_errors": KV_ERRORS[-5:]})
 
 
 def q1_checks(a, rep, http, KC, secret, kv_name, rendered, kc_migr, humans):
@@ -2610,7 +2753,7 @@ def step_live(a, rep, env):
     return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -3215,6 +3358,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             if role in ROLE_CLIENTS: spend[role] = next((used / 1e9 for bid, used in rows if h in bid and bid.endswith("24h-block")), 0.0)
         rep.add("P21g", "FinOps na AKS: requesty rolí z podů šly přes clusterovou gateway s klíči vydanými aplikací → budget_usage na Flexible Serveru nese útratu každé role (hash klíče z ConfigMapy agentgateway-keys; obsahuje i sondu propagace)", "PASS" if set(spend) == set(ROLE_CLIENTS) and all(v > 0 for v in spend.values()) else "FAIL", {"spend_usd_by_role": spend, "total_usd": round(sum(spend.values()), 6)})
 
+        if r1: r1_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn)   # P4-7: rotace tajemství (lidé, admin Keycloaku, DB role) – až na konci, restartuje aplikaci, paměť a governance
         pods = kj("-n", NS, "get", "pods").get("items", [])
         rep.add("P21h", "Pody P2-1 a uzly", "INFO", {p["metadata"]["name"]: {"image": [c["image"].split("/")[-1] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])]} for p in pods if p["metadata"]["name"].split("-")[0] in ("zakazka", "memory", "bridge", "mock", "opa", "placement", "scheduler", "agentgateway")} | {"nodes": nodes, "wall_s": round(time.time() - t_all, 1)})
     finally:
@@ -3223,9 +3367,36 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if pf_pg: pf_pg.terminate(); kubectl(a, "-n", NS, "delete", "pod", "pgfwd", "--ignore-not-found", "--wait=false")
 
 
+def rotate_cli(a):
+    """P4-7 operátorský postup (workflow rotate.yml): rotace jedné skupiny tajemství bez měření – nová verze v Key Vaultu, ESO force-sync, konzument. Tiskne jen kódy."""
+    import base64 as _b
+    kj = lambda *x: kj_static(a, *x)
+    os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost"); platform_ca_bundle(a, kj)
+    kv_name = kv_name_of(kj); assert kv_name, "KV_NAME v substitute kustomizace platform-trust chybí"
+    pfs = {n: PortForward(a, n, lp, rp) for n, lp, rp in (("zakazka", 18010, 8010), ("memory", 19900, 9900), ("keycloak", 18443, 8443))}
+    APP, MEM, KC = "http://127.0.0.1:18010", "http://127.0.0.1:19900", "https://127.0.0.1:18443"
+    def http(method, url, **kw):
+        for i in range(12):
+            try: return httpx.request(method, url, **kw)
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError):
+                if i == 11: raise
+                time.sleep(5)
+    def secret(name, key, ns=NS):
+        v = kubectl(a, "-n", ns, "get", "secret", name, "-o", f"jsonpath={{.data.{key}}}").stdout.strip(); return _b.b64decode(v).decode() if v else None
+    def led(): return http("GET", f"{APP}/_debug/ledger", params={"offset": 0}, timeout=120).json()["items"]
+    try:
+        load_human_pw(a)
+        ok, d = {"keycloak-humans": lambda: rotate_humans(a, http, KC, kv_name, secret), "keycloak-admin": lambda: rotate_admin(a, http, KC, kv_name, secret),
+                 "db-roles": lambda: rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs)}[a.rotate]()
+        print(f"{'✅' if ok else '❌'} rotace {a.rotate}: {json.dumps(d, ensure_ascii=False)[:3000]}", flush=True)
+        return 0 if ok else 1
+    finally:
+        for pf in pfs.values(): pf.stop()
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-2-live"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -3233,10 +3404,15 @@ def main():
     ap.add_argument("--context", default="kind-platform", help="p1-6: kontext AKS, např. aks-platform-dev-admin")
     ap.add_argument("--acr", default=os.getenv("ACR_LOGIN_SERVER", ""), help="p1-6: login server ACR (socat pod pro Postgres, když runner nedosáhne na Flexible Server)")
     ap.add_argument("--create-kind", action="store_true", help="postavit obraz uzlu, cluster a nahrát obrazy (docker daemon)")
+    ap.add_argument("--rotate", choices=["keycloak-humans", "keycloak-admin", "db-roles"], default="", help="P4-7: jen rotace tajemství (operátorský postup, workflow rotate.yml) – bez měření")
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
+    if a.rotate:
+        assert a.kubectl, "chybí KUBECTL"
+        for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
+        sys.exit(rotate_cli(a))
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -3258,6 +3434,7 @@ def main():
      "p4-4": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True),   # P4-4: p4-3 + N1a–b (vstup přes Cloudflare Tunnel, GUI toky přes tunel)
      "p4-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True),   # P4-5: p4-4 + N2a–c (brute force, rate limit, idle odhlášení)
      "p4-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True),   # P4-6: p4-5 + Q1a–b (hesla lidí z Key Vaultu, realm z Gitu bez literálů)
+     "p4-7": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True),   # P4-7: p4-6 + R1a–d (rotace tajemství)
      "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))

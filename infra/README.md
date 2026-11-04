@@ -255,6 +255,14 @@ v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se 
 timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
 jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
 
+## P4-7: rotace tajemství (2026-11-04)
+
+Rotace = nová verze v Key Vaultu (`az keyvault secret set`, identita s rolí Key Vault Secrets Officer) → `kubectl annotate externalsecret <n>
+force-sync=$(date +%s)` → krok konzumenta: Keycloak hesla přes admin API (`harness.py --rotate keycloak-humans|keycloak-admin`, admin se obnoví
+předchozí verzí z Key Vaultu), DB role `harness.py --rotate db-roles` (nové pody aplikace, pak paměti a governance). Workflow `rotate` dělá
+totéž z GitHub Actions. Terraform hodnoty `random_password` po založení nepřepisuje (`ignore_changes`). Postgres admin a externí hodnoty
+(klíč modelu, PAT, Cloudflare) zůstávají ruční postup – tabulka v `knowledge/platforma/p4-provoz.md`.
+
 ## P4-6: hesla lidí harnessu mimo Git (2026-11-03)
 
 Účty lidí v `realm-p0.json` (`adam`, `bea`, `platform-admin`, `probe`) nesou místo hesla placeholder `${KC_HUMAN_PW_*}`; Keycloak ho při

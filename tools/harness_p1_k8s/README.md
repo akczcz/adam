@@ -1142,6 +1142,28 @@ Nálezy:
    když platí staré heslo = nový dev literál neexistuje → **rotaci existujícího hesla harness neumí** (nezná staré heslo) – kandidát: rotace přes
    admin API s hodnotou ze Secretu bez ohledu na stav (idempotentní reset při každém běhu) nebo Keycloak Job po změně Secretu.
 
+## P4-7 R1 – rotace tajemství (2026-11-04, AKS, `--step p4-7` = p4-6 + **R1a–d**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-7-rotace-tajemství-jako-provozní-postup)): rotace = nová verze
+  v Key Vaultu → ESO `force-sync` → konzument; bez dev literálů a bez znalosti starého hesla (admin Keycloaku se obnoví předchozí verzí z Key Vaultu).
+- **Harness:** `kv_rotate` (nová náhodná verze, `az keyvault secret set --file`), `kv_versions` (verze od nejnovější, hodnoty jen v paměti),
+  `eso_force_sync` (anotace + čekání na hodnotu v Secretu), `kc_admin` s obnovou z předchozí verze, `kc_humans_sync` idempotentní,
+  `rotate_db_roles` (nové pody aplikace → `DB_ROLES_SYNC` → nové pody paměti a governance). Totéž bez měření: `harness.py --rotate <skupina>`
+  (workflow `rotate`). R1 běží až na konci kroku.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| R1a | 4 hesla lidí: nová verze v KV → Secret do minuty → admin API nastaví → nové 200, staré bez tokenu, veřejný login 200 | P47_R1A |
+| R1b | DB role: 3 nové verze → Secrety zakazka-finops/memory-db/governance-db → aplikace `DB_ROLES_SYNC` 3 role → paměť 200, governance 200, Postgres staré odmítnuto | P47_R1B |
+| R1c | admin Keycloaku: nová verze → `kc_admin` Secretem 400 → předchozí verzí z KV 200 → reset → Secretem 200, stará bez tokenu | P47_R1C |
+| R1d | časy (ESO sync, restarty) a počty verzí v KV | P47_R1D |
+
+Výsledek: **P47_RESULT** (`measure` run P47_ID, P47_RUNS).
+
+Nálezy:
+
+P47_FINDINGS_MORE
+
 ## Spuštění
 
 ```bash

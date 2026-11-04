@@ -103,6 +103,7 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 | P4-4 Vstup do platformy přes Cloudflare Tunnel (sidecar cloudflared, veřejný listener jen GUI + AG-UI, měření přes tunel) | ✅ 2026-11-02 AKS 86/86 + 17 INFO, 8 běhů ([p4-provoz.md](p4-provoz.md)); pojmenovaný tunnel + Access na vyžádání |
 | P4-5 Zabezpečení veřejného vstupu (brute-force zámek Keycloaku, rate limit loginu, audit s hashem IP, idle odhlášení GUI) | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)); stálá adresa = pojmenovaný tunnel + Access na vyžádání |
 | P4-6 Hesla lidí mimo Git (účty harnessu z Key Vaultu přes ESO, realm z Gitu bez literálů, migrace běžícího realmu) | ✅ 2026-11-04 AKS 90/90 PASS + 19 INFO, 3 běhy ([p4-provoz.md](p4-provoz.md)) |
+| P4-7 Rotace tajemství jako provozní postup (Key Vault verze → ESO force-sync → konzument; workflow `rotate`) | 🟡 kód 2026-11-04, měření AKS P47_RESULT ([p4-provoz.md](p4-provoz.md)) |
 
 ## Changelog
 - 2026-11-04: P4-6 hotovo na AKS (90/90 PASS + 19 INFO) – v Gitu už není žádné heslo platformy: účty lidí harnessu mají hesla z Key Vaultu, realm Keycloaku z Gitu nese jen placeholdery; na veřejné URL (P4-4) tak nejsou účty s heslem z repozitáře. Nález: rotace už nasazeného hesla lidí zatím ruční (kandidát).
