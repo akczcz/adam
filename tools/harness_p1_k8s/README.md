@@ -1115,6 +1115,33 @@ Nálezy:
    před E4; 20 s po něm chyběly v ClickHouse poslední 2 spany zakázky `cap` (0,006 USD nad tolerancí 5 % + 0,002 USD), zatímco
    `budget_usage` gateway je zapsáno hned. E4a čte ClickHouse opakovaně, dokud součty nesedí (max 150 s), a hlásí počet čtení a čas.
 
+## P4-6 Q1 – hesla lidí mimo Git (2026-11-03, AKS, `--step p4-6` = p4-5 + **Q1a–b**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-6-hesla-lidí-mimo-git)): hesla účtů lidí harnessu (adam, bea,
+  platform-admin, probe) z Key Vaultu (Terraform `random_password`) přes ESO Secret `keycloak-humans`; realm JSON z Gitu nese jen placeholdery
+  `${KC_HUMAN_PW_*}` (Keycloak je při importu dosadí z env), běžící realm otočí harness admin API (`kc_humans_sync` v `kc_ensure`).
+- **Harness:** `load_human_pw` čte `P0_HUMAN_PASSWORDS` ze Secretu na začátku kroku do `HUMAN_PW`; všechna přihlášení lidí přes `hpw(jméno)`
+  (bez Secretu dev literál = jméno – kind, lokální fixture); hodnoty se nikde nelogují. Promo `record.py` čte totéž.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| Q1a | render overlaye AKS: ConfigMap `keycloak-realm` má u 4 lidí jen `${KC_HUMAN_PW_*}` a Flux substitute vypnutý, žádný base Secret `keycloak-humans` (jen ExternalSecret), env Keycloaku `secretKeyRef`; Secret == Key Vault (4 hesla i JSON); Keycloak: dev literál odmítnut bez tokenu, heslo z Key Vaultu 200 u všech čtyř; harness hesla ze Secretu | ✅ (běh 3) 4 placeholdery, substitute disabled, render bez base Secretu i literálu, env 4× `keycloak-humans`; Secret == Key Vault 4/4; dev literál 400 `invalid_grant` bez tokenu, heslo z Key Vaultu 200 u všech čtyř |
+| Q1b | migrace hesel v běžícím realmu tímto během (kódy) | ℹ️ (běh 3) všichni 4: Secretem 400 → dev literál 200 → `reset-password` 204 → Secretem 200 (jednorázová migrace běžícího realmu) |
+
+Výsledek: **90/90 PASS + 19 INFO** (`measure` run 41789164120, 2026-11-04, 3 běhy: 1 pád na kontrole lokálních binárek (krok chyběl v seznamu), 2 Flux neaplikoval – overlay AKS patchuje env Keycloaku podle indexu a nové env položky indexy posunuly (Deployment invalid), 3 vše PASS; ~83 min).
+
+Nálezy:
+
+1. **Overlay AKS patchuje env Keycloaku podle indexu** (běh 2): nové env položky vložené doprostřed seznamu posunuly `KC_HOSTNAME` → patch
+   `replace …/env/6/value` padl na jinou položku (Deployment „valueFrom i value“) a Flux **neaplikoval celou kustomizaci platform** (dry-run
+   jednoho objektu blokuje vše). Nové env patří na konec seznamu; patche podle indexu jsou křehké – kandidát přepsat na strategic merge podle jména.
+2. **Keycloak 26 vrací realm uživateli se špatným heslem 400 `invalid_grant`** (jako adminovi v E9), aplikace to mapuje na 401 – Q1a rozhoduje
+   „bez tokenu“, ne podle kódu.
+3. **Migrace je jednorázová a tichá**: `kc_humans_sync` otočí heslo jen když Secret nesedí a dev literál sedí; po migraci dev literál už nesedí
+   (Q1a) a další běhy nic nemění (Q1b jen `secret_login: 200`). Rotace v Key Vaultu → ESO do 1 h → další běh harnessu otočí znovu jen tehdy,
+   když platí staré heslo = nový dev literál neexistuje → **rotaci existujícího hesla harness neumí** (nezná staré heslo) – kandidát: rotace přes
+   admin API s hodnotou ze Secretu bez ohledu na stav (idempotentní reset při každém běhu) nebo Keycloak Job po změně Secretu.
+
 ## Spuštění
 
 ```bash

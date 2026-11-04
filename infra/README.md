@@ -255,6 +255,13 @@ v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se 
 timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
 jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
 
+## P4-6: hesla lidí harnessu mimo Git (2026-11-03)
+
+Účty lidí v `realm-p0.json` (`adam`, `bea`, `platform-admin`, `probe`) nesou místo hesla placeholder `${KC_HUMAN_PW_*}`; Keycloak ho při
+importu realmu dosadí z env (Secret `keycloak-humans`: kind = base dev hodnoty, AKS = ESO z Key Vaultu `kc-user-<jméno>-password` z `secrets.tf`).
+Import existující realm nemění – na AKS otočí hesla harness jako operátor (admin API) při dalším měření. Harness a promo čtou hesla ze Secretu
+(`P0_HUMAN_PASSWORDS`), nikdy z Gitu. Rotace = nová hodnota v Key Vaultu → ESO do 1 h → další běh harnessu.
+
 ## P3-6 E9: žádný literál hesla z Gitu (2026-10-30)
 
 Dev hesla z base manifestů platila i na AKS: admin Keycloaku `admin-dev` (Secret `keycloak-admin`), DSN paměti `memory_app:memory_app` a Governance

@@ -144,6 +144,25 @@ resource "azurerm_key_vault_secret" "pg_role_password" {
   depends_on   = [time_sleep.kv_rbac]
 }
 
+# --- P4-6: hesla lidí harnessu (adam, bea, platform-admin, probe) – dosud dev literály v realm-p0.json (Git) a tím i na veřejné URL (P4-4).
+# Náhodná hodnota v Key Vaultu → ESO Secret keycloak-humans (KC_HUMAN_PW_* pro placeholdery ${...} v realm JSON při importu, P0_HUMAN_PASSWORDS
+# pro harness/promo). Existující realm import nemění → běžící instanci otočí harness jako operátor (admin API reset-password), jako u admina (E9).
+resource "random_password" "kc_human" {
+  for_each = toset(["adam", "bea", "platform-admin", "probe"])
+  length   = 24
+  special  = false
+}
+
+resource "azurerm_key_vault_secret" "kc_human_password" {
+  for_each     = random_password.kc_human
+  name         = "kc-user-${each.key}-password"
+  value        = each.value.result
+  key_vault_id = azurerm_key_vault.kv.id
+  content_type = "heslo člověka harnessu ${each.key} v realmu p0 (Secret keycloak-humans přes ESO; Keycloak import $${KC_HUMAN_PW_*}, běžící realm otočí harness admin API)"
+  tags         = var.tags
+  depends_on   = [time_sleep.kv_rbac]
+}
+
 # --- ESO: workload identita pro čtení Key Vaultu ------------------------------------------------------------------------------
 resource "azurerm_user_assigned_identity" "eso" {
   name                = "id-eso-${var.name_suffix}"

@@ -164,6 +164,11 @@ patches:
     apiVersion: v1
     kind: Secret
     metadata: {name: keycloak-admin}
+- patch: |   # P4-6: hesla lidí harnessu jen z Key Vaultu (ESO keycloak-humans), base dev hodnoty jen pro kind
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata: {name: keycloak-humans}
 - patch: |
     $patch: delete
     apiVersion: v1

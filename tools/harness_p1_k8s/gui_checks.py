@@ -20,6 +20,14 @@ KLAS_NO = {k: False for k in KLAS_KEYS}   # P3-4: dogfooding = vše „ne“ →
 
 
 REBASE = None     # P4-4: harness dodá funkci → aktuální základ URL GUI (quick tunnel Cloudflare mění hostname s každým restartem podu aplikace)
+HUMAN_PW: dict = {}   # P4-6: hesla lidí harnessu ze Secretu keycloak-humans (Key Vault přes ESO); harness/promo je naplní, hodnoty se nelogují
+
+
+def hpw(user):
+    """Heslo člověka harnessu: ze Secretu keycloak-humans (AKS), bez něj dev literál = jméno (kind, lokální fixture)."""
+    return HUMAN_PW.get(user) or user
+
+
 _ACTIVE: list = []   # otevřené instance (běh 3 P4-4: neuzavřený Playwright po výjimce v M1 → L1c „Sync API inside the asyncio loop“)
 
 
@@ -489,7 +497,7 @@ def run_local(base, shots):
     def add(cid, ok, detail): checks.append({"id": cid, "status": "PASS" if ok else "FAIL", "detail": detail}); print(f"  {'✅' if ok else '❌'} {cid} {json.dumps(detail, ensure_ascii=False)[:300]}")
     g = Gui(base + "/gui/", shots=shots).open()
     try:
-        lf = g.login_fail("adam", "wrong"); li = g.login("adam", "adam"); t0 = g.threads_list()
+        lf = g.login_fail("adam", "wrong"); li = g.login("adam", hpw("adam")); t0 = g.threads_list()
         add("U1a", li["user"] == "adam" and li["tenant"] == "acme" and li["token"] and lf["still_login"] and isinstance(t0, list), {"login": li, "fail": lf, "threads": len(t0)})
         cr = g.create_thread(z1, "Přidej do repa soubor NOTES.md s poznámkou o GUI.", 5)
         w0 = g.wait_any_interrupt(120); dlg = g.answer_dialog("Soubor do zakazky/<id>/NOTES.md; rozpočet výchozí.") if w0.get("kind") == "dialog" else None   # P3-3: dialog Account
@@ -518,7 +526,7 @@ def run_local(base, shots):
         add("U1f", ws["status"] == "running" and st["disabled_short"] and not st["disabled_with_reason"] and st["run_status"] == "cancelled" and z2st.get("status") == "SUSPENDED" and st["stop_to_cancelled_s"] < 60, {"subagent": ws, "stop": {k: st[k] for k in ("stop_to_cancelled_s", "run_status", "state")}, "wf": z2st})
         add("U2b-local", dlg is not None and dlg["disabled_empty"] and "otázky" in dlg["questions"].lower() and h1["interrupt"] is not None, {"dialog": dlg})
         # U-2 lokálně (falešný Governance MCP ve fixture): stránky firmy, autonomie, stop tenanta, report + export
-        g.close(); g = Gui(base + "/gui/", shots=shots).open(); g.login("platform-admin", "platform-admin")
+        g.close(); g = Gui(base + "/gui/", shots=shots).open(); g.login("platform-admin", hpw("platform-admin"))
         pages = {"firma": g.page_rows("firma", ["roles-table", "tenants-table"]), "registr": g.page_rows("registr", ["agents-table", "events-table"]), "finops": g.page_rows("finops", ["finops-tenants", "finops-zakazky"]), "audit": g.page_rows("audit", ["approvals-table"])}
         add("U2a-local", pages["firma"]["roles-table"] == 5 and pages["firma"]["tenants-table"] == 3 and isinstance(pages["registr"]["agents-table"], int) and pages["audit"]["approvals-table"] >= 4, pages)
         r1 = g.autonomy("vyvojar", "beta", "A1", "Zkouška posunu bez podmínek – odmítnout."); r2 = g.autonomy("account", "acme", "A1", "Account má přes 10 běhů – posun na A1.")
@@ -527,7 +535,7 @@ def run_local(base, shots):
         add("U2d-local", st2["ok"] and st2["disabled_empty"] and rs2["ok"], {"stop": st2, "resume": rs2})
         rp = g.report(); add("U2e-local", rp["gaps"] >= 1 and rp["export_lines"] >= 1 and not any("T15:klasifikace" in r["missing"] for r in rp["rows"] if r["id"] == z1), {k: rp[k] for k in ("gaps", "export_lines")})
         # K-1 lokálně (P3-4): klasifikační brána, čl. 50 kanály, SLA
-        g.close(); g = Gui(base + "/gui/", shots=shots).open(); g.login("adam", "adam")
+        g.close(); g = Gui(base + "/gui/", shots=shots).open(); g.login("adam", hpw("adam"))
         ch = httpx.get(f"{base}/channels/_debug/messages", timeout=10).json()["messages"]; mine = [m for m in ch if m.get("zakazka") == z1]
         add("K1d-local", fin["acts"]["channel"] >= 2 and any(m["channel"] == "email" and "AI agent" in m["body"] and m.get("generated_by", {}).get("generated_by") == "ai-agent:account" for m in mine) and any(m["channel"] == "ticket" and "AI agent" in m["body"] and (m.get("generated_by") or {}).get("generated_by") == "ai-agent:sre" for m in mine), {"channel_acts": fin["acts"]["channel"], "messages": [(m["channel"], m["body"][:60], (m.get("generated_by") or {}).get("generated_by")) for m in mine]})
         z3 = f"U1-{tag}-hr"; g.create_thread(z3, "Agent bude přidělovat úkoly lidem v týmu.", klasifikace={"K2": True}); pr3 = g.wait_profile(60)
