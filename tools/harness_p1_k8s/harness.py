@@ -1795,7 +1795,7 @@ def rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try=Non
     sync = eso_force_sync(a, {"zakazka-finops": [("zakazka-finops", "P0_DB_ROLE_PASSWORDS", v) for v in new.values() if v],
                               "memory-db": [("memory-db", "MEMORY_DB_URI", new["memory_app"])] if new["memory_app"] else [],
                               "governance-db": [("governance-db", "GOV_DSN", new["org_reader"])] if new["org_reader"] else []})
-    n0 = len([e for e in led() if e.get("kind") == "DB_ROLES_SYNC"]); t1 = time.time()
+    t1 = time.time()
     restart_pods(a, "zakazka"); time.sleep(5); roll_app = kubectl(a, "-n", NS, "rollout", "status", "deployment/zakazka", "--timeout=300s", timeout=320).returncode == 0
     kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=zakazka", "--timeout=300s", timeout=320); pfs["zakazka"].start()
     sync_ev = None; health = None; t2 = time.time()
@@ -1803,8 +1803,8 @@ def rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try=Non
         try:
             health = http("GET", f"{APP}/health", timeout=10).status_code
             if health == 200:
-                evs = [e for e in led() if e.get("kind") == "DB_ROLES_SYNC"]
-                if len(evs) > n0 and evs[-1].get("written"): sync_ev = {k: evs[-1].get(k) for k in ("written", "roles", "error")}
+                evs = [e for e in led() if e.get("kind") == "DB_ROLES_SYNC" and e.get("ts", 0) > t1 - 30]   # podle času, ne počtu (ledger po restartu podu může začít znovu)
+                if evs and evs[-1].get("written"): sync_ev = {k: evs[-1].get(k) for k in ("written", "roles", "error")}
         except Exception: pass
         if not sync_ev: time.sleep(5)
     tm["app_s"] = round(time.time() - t1, 1); t3 = time.time()
