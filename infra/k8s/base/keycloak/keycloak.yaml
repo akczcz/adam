@@ -56,13 +56,13 @@ spec:
         - {name: KC_DB_PASSWORD, valueFrom: {secretKeyRef: {name: postgres-auth, key: POSTGRES_PASSWORD}}}
         - {name: KC_BOOTSTRAP_ADMIN_USERNAME, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_USERNAME}}}
         - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: keycloak-admin, key: KC_BOOTSTRAP_ADMIN_PASSWORD}}}
-        - {name: KC_HUMAN_PW_ADAM, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_ADAM, optional: true}}}   # P4-6: placeholdery ${KC_HUMAN_PW_*} v realm JSON (import jen do prázdného realmu)
-        - {name: KC_HUMAN_PW_BEA, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_BEA, optional: true}}}
-        - {name: KC_HUMAN_PW_PLATFORM_ADMIN, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_PLATFORM_ADMIN, optional: true}}}
-        - {name: KC_HUMAN_PW_PROBE, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_PROBE, optional: true}}}
         - {name: KC_HTTP_PORT, value: "8080"}
         - {name: KC_HOSTNAME, value: http://keycloak:8080}   # pevný issuer pro tokeny uvnitř clusteru (server paměti ověřuje iss); z hostitele přes NodePort stejný iss
         - {name: JAVA_OPTS_APPEND, value: "-Xms256m -Xmx768m"}
+        - {name: KC_HUMAN_PW_ADAM, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_ADAM, optional: true}}}   # P4-6 (až na konci – overlay AKS patchuje env podle indexu): placeholdery ${KC_HUMAN_PW_*} v realm JSON (import jen do prázdného realmu)
+        - {name: KC_HUMAN_PW_BEA, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_BEA, optional: true}}}
+        - {name: KC_HUMAN_PW_PLATFORM_ADMIN, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_PLATFORM_ADMIN, optional: true}}}
+        - {name: KC_HUMAN_PW_PROBE, valueFrom: {secretKeyRef: {name: keycloak-humans, key: KC_HUMAN_PW_PROBE, optional: true}}}
         ports:
         - {containerPort: 8080, name: http}
         - {containerPort: 9000, name: mgmt}
