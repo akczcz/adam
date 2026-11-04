@@ -18,6 +18,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-4** Vstup do platformy přes Cloudflare Tunnel | GUI a AG-UI dostupné zvenčí přes sidecar `cloudflared` u aplikace (žádná veřejná IP/LB, egress jen :7844); veřejný listener nese jen GUI + AG-UI; měření přes tunel místo `kubectl port-forward`; Ingress jako záloha | ✅ 2026-11-02 AKS **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů); quick tunnel pro měření, pojmenovaný tunnel + Access na vyžádání |
 | **P4-5** Zabezpečení veřejného vstupu | brute-force detekce Keycloaku, rate limit přihlášení na veřejném listeneru, audit přihlášení s hashem IP, idle odhlášení GUI a keepalive mandátu jen při aktivitě | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy |
 | **P4-6** Hesla lidí mimo Git | hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu přes ESO; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}`, běžící realm otočí harness admin API | ✅ 2026-11-04 AKS 90/90 PASS + 19 INFO, 3 běhy |
+| **P4-7** Rotace tajemství jako provozní postup | nová verze v Key Vaultu → ESO force-sync → konzument (Keycloak admin API, restart aplikace/paměti/governance); workflow `rotate`, bez dev literálů a bez znalosti starého hesla | ✅ 2026-11-04 AKS 93/93 PASS + 20 INFO, 1 běh |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -261,6 +262,38 @@ Výsledek měření: **90/90 PASS + 19 INFO** (`measure` run 41789164120, 2026-1
    neumí, protože staré heslo nezná – řešení = idempotentní reset z hodnoty Secretu při každém běhu, nebo Job v clusteru po změně Secretu (kandidát).
 3. Keycloak 26 vrací špatnému heslu 400 `invalid_grant` i pro uživatele realmu (ne 401); checky rozhodují „bez tokenu“.
 
+## P4-7 Rotace tajemství jako provozní postup
+
+**Rozhodnutí:** každé tajemství platformy má jeden postup rotace: **nová verze v Key Vaultu** (operátor – člověk `az keyvault secret set`, nebo
+workflow `rotate`), **ESO force-sync** (jinak obnova do 1 h) a **krok konzumenta**. Nikdo nepotřebuje starou hodnotu ani dev literál: hesla
+v Keycloaku nastavuje admin API idempotentně, admin sám se obnoví předchozí verzí tajemství z Key Vaultu (verze zná jen Key Vault), DB role
+nastaví aplikace při startu. Terraform hodnoty po založení nepřepisuje (`ignore_changes`), aby rotaci nevracel.
+
+| Tajemství (Key Vault) | Konzument | Krok konzumenta po force-sync | Výpadek | Automatizace |
+|---|---|---|---|---|
+| `kc-user-<jméno>-password` (lidé harnessu) | Keycloak realm p0, harness, promo | admin API `reset-password` (harness `kc_humans_sync`, idempotentní) | žádný (běžící relace platí do vypršení tokenu) | `rotate` group `keycloak-humans`, R1a |
+| `keycloak-admin-password` | Keycloak realm master, harness jako operátor | přihlášení **předchozí verzí z Key Vaultu** → `reset-password`; `bootstrap-admin` CLI jen při zastaveném Keycloaku (poslední záchrana) | žádný | `rotate` group `keycloak-admin`, R1c |
+| `pg-memory-app/org-reader/org-writer-password` (RLS role) | aplikace (`ALTER ROLE` při startu), paměť, Governance MCP (DSN z env) | nové pody aplikace → `DB_ROLES_SYNC` → nové pody paměti a governance | sekundy až desítky sekund (readiness) | `rotate` group `db-roles`, R1b |
+| `pg-platform-password` (admin Flexible Serveru) | Terraform (heslo serveru), Keycloak, gateway, Dapr, aplikace | `terraform apply -replace=random_password.pg` (server + Key Vault naráz) → force-sync → restart všech konzumentů | minuty (restart platformy) | ruční postup (kandidát) |
+| `anthropic-api-key`, `github-token`, `cloudflare-tunnel-*` | gateway / sidecar (env, soubor) | nová hodnota od Adama v Key Vaultu → force-sync → nové pody gateway / aplikace | sekundy | ruční postup (hodnoty mimo Terraform) |
+| `openbao-init` (root token, recovery) | nikdo za běhu (E10 scoped operátor) | nerotuje se; rotace root tokenu = `generate-root` (kandidát) | – | – |
+
+Fakta: Keycloak 26.8.1 `bootstrap-admin user` vyžaduje zastavené všechny uzly serveru (`docs/guides/server/bootstrap-admin-recovery.adoc`,
+ověřeno 2026-11-04 ze zdroje tag 26.8.1) – za běhu je cesta „předchozí verze z Key Vaultu“ jediná bez výpadku. ESO obnoví Secret na anotaci
+`force-sync` ihned (jinak `refreshInterval: 1h`). Měření `--step p4-7` = p4-6 + **R1a–d** (rotace běží až na konci běhu, restartuje aplikaci,
+paměť a governance).
+
+Varianty, které nepřišly: rotace Terraformem (`-replace` random_password) – vrací stav do Gitu/stavu Terraformu a vyžaduje `infra apply` s právy
+na celou infrastrukturu; CronJob v clusteru s admin právy Keycloaku (další držitel admin hesla); dev literál jako záchrana (P4-6 ho odstranilo).
+
+Výsledek měření: **93/93 PASS + 20 INFO** (`measure` run 41882561599, 2026-11-04, 1 běh; ~82 min, R1 ~8 min). Nálezy (detail v README harnessu):
+
+1. **Okno rotace určuje restart aplikace** (334 s nové pody aplikace, paměť a governance 10 s; Key Vault → Secret 0,5–17 s) – rotace DB rolí
+   je ~6 min bez obsluhy GUI; kandidát: nové heslo bez restartu (mount Secretu + reload) nebo dvě repliky s PDB.
+2. **Předchozí verze tajemství v Key Vaultu je legitimní zdroj pro „starou hodnotu“** – admin Keycloaku se obnoví sám, bez dev literálu
+   a bez odstávky; `bootstrap-admin` CLI (zastavený server) jen po ztrátě historie verzí.
+3. Rotace lidí a admina je bez výpadku (běžící tokeny platí do vypršení, 30 min).
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -278,6 +311,9 @@ Výsledek měření: **90/90 PASS + 19 INFO** (`measure` run 41789164120, 2026-1
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-04: P4-7 hotovo na AKS (93/93 PASS + 20 INFO, 1 běh) – rotace tajemství jako provozní postup: nová verze v Key Vaultu → ESO force-sync → konzument
+  (lidé a admin Keycloaku admin API, admin obnoven předchozí verzí z Key Vaultu; DB role restart aplikace → paměť + governance); workflow `rotate`,
+  Terraform hodnoty po založení nepřepisuje. Nálezy: okno rotace = restart aplikace (~6 min), verze KV jako zdroj staré hodnoty.
 - 2026-11-04: P4-6 hotovo na AKS (90/90 PASS + 19 INFO, 3 běhy) – hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu (Terraform
   `random_password`) přes ESO Secret `keycloak-humans`; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}` (Keycloak je při importu
   dosadí z env), běžící realm otočil harness admin API; harness a promo čtou hesla ze Secretu. Nálezy: patche env podle indexu zastavily Flux,

@@ -132,6 +132,8 @@ resource "azurerm_key_vault_secret" "keycloak_admin_password" {
   content_type = "heslo bootstrap admina Keycloaku (realm master; Secret keycloak-admin přes ESO, harness ho při migraci otočí admin API)"
   tags         = var.tags
   depends_on   = [time_sleep.kv_rbac]
+  # P4-7: hodnota z random_password jen při založení; rotace = nová verze v Key Vaultu (operátor), Terraform ji nevrací
+  lifecycle { ignore_changes = [value] }
 }
 
 resource "azurerm_key_vault_secret" "pg_role_password" {
@@ -142,6 +144,8 @@ resource "azurerm_key_vault_secret" "pg_role_password" {
   content_type = "heslo DB role ${each.key} (RLS, ne admin; nastavuje aplikace zakázky při startu, DSN přes ESO)"
   tags         = var.tags
   depends_on   = [time_sleep.kv_rbac]
+  # P4-7: hodnota z random_password jen při založení; rotace = nová verze v Key Vaultu (operátor), Terraform ji nevrací
+  lifecycle { ignore_changes = [value] }
 }
 
 # --- P4-6: hesla lidí harnessu (adam, bea, platform-admin, probe) – dosud dev literály v realm-p0.json (Git) a tím i na veřejné URL (P4-4).
@@ -161,6 +165,8 @@ resource "azurerm_key_vault_secret" "kc_human_password" {
   content_type = "heslo člověka harnessu ${each.key} v realmu p0 (Secret keycloak-humans přes ESO; Keycloak import $${KC_HUMAN_PW_*}, běžící realm otočí harness admin API)"
   tags         = var.tags
   depends_on   = [time_sleep.kv_rbac]
+  # P4-7: hodnota z random_password jen při založení; rotace = nová verze v Key Vaultu (operátor), Terraform ji nevrací
+  lifecycle { ignore_changes = [value] }
 }
 
 # --- ESO: workload identita pro čtení Key Vaultu ------------------------------------------------------------------------------

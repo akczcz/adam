@@ -1,0 +1,38 @@
+name: rotate
+# P4-7: rotace tajemství jako provozní postup – nová verze v Key Vaultu (identita runneru = Key Vault Secrets Officer), ESO force-sync,
+# konzument (Keycloak admin API / restart aplikace, paměti a Governance MCP). Jen kódy do logu, žádné hodnoty. Cluster musí běžet.
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: skupina tajemství k rotaci
+        type: choice
+        default: keycloak-humans
+        options: [keycloak-humans, keycloak-admin, db-roles]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  rotate:
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      RG: ${{ vars.TF_STATE_RG }}
+      CLUSTER: aks-platform-dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: rotace ${{ inputs.group }}
+        run: |
+          set -o pipefail
+          pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]'
+          python tools/harness_p1_k8s/harness.py --rotate "${{ inputs.group }}" --context "$CLUSTER-admin" 2>&1 | tee "$RUNNER_TEMP/rotate.log"
+          { echo "## rotace ${{ inputs.group }}"; echo '```'; grep -E "^(✅|❌)" "$RUNNER_TEMP/rotate.log" | cut -c1-1500; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
