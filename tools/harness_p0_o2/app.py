@@ -1277,10 +1277,25 @@ TENANTS = tenants_from_git()
 agui.CTX["tenants"] = TENANTS
 
 
+def _secrets_watch():
+    """P4-8: rotace hesel DB rolí bez restartu – Secret je v podu jako soubor (mount bez subPath), kubelet ho po změně obnoví do ~1 min; při změně
+    obsahu aplikace znovu provede ALTER ROLE (idempotentní) a zapíše DB_ROLES_SYNC trigger=file. Hodnoty se nelogují."""
+    import hashlib
+    last = None; poll = int(os.environ.get("P0_SECRETS_POLL_S", "20"))
+    while True:
+        try:
+            raw, source = finops.roles_passwords_raw(); h = hashlib.sha256((raw or "").encode()).hexdigest()[:12]
+            if last is not None and h != last and source == "file": ledger("DB_ROLES_SYNC", **finops.roles_sync(), trigger="file")
+            last = h
+        except Exception as e: ledger("DB_ROLES_SYNC", written=False, error=f"{type(e).__name__}: {str(e)[:120]}", trigger="file")
+        time.sleep(poll)
+
+
 if __name__ == "__main__":
     import uvicorn
     ledger("TENANTS_SYNC", **finops.tenants_sync(TENANTS), source="rolegen-build/tenants.json")   # P3-2: org.tenants + RLS org.* (idempotentní při startu)
     ledger("DB_ROLES_SYNC", **finops.roles_sync())   # P3-6 E9: hesla RLS rolí (memory_app, org_reader, org_writer) z env (ESO/Key Vault), ne literál v Gitu
+    threading.Thread(target=_secrets_watch, daemon=True, name="secrets-watch").start()   # P4-8: rotace hesel rolí bez restartu (soubor Secretu)
     ledger("WF_VERSIONS", **WF)   # P3-6 E6: které verze orchestrátoru tento obraz nese a která je latest
     rt.start()
     if os.environ.get("APP_PUBLIC_PORT"):   # P4-4: veřejný listener ve vlákně (uvicorn mimo hlavní vlákno neinstaluje signal handlery – ty drží hlavní server)

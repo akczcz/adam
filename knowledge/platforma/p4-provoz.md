@@ -19,6 +19,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-5** Zabezpečení veřejného vstupu | brute-force detekce Keycloaku, rate limit přihlášení na veřejném listeneru, audit přihlášení s hashem IP, idle odhlášení GUI a keepalive mandátu jen při aktivitě | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy |
 | **P4-6** Hesla lidí mimo Git | hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu přes ESO; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}`, běžící realm otočí harness admin API | ✅ 2026-11-04 AKS 90/90 PASS + 19 INFO, 3 běhy |
 | **P4-7** Rotace tajemství jako provozní postup | nová verze v Key Vaultu → ESO force-sync → konzument (Keycloak admin API, restart aplikace/paměti/governance); workflow `rotate`, bez dev literálů a bez znalosti starého hesla | ✅ 2026-11-04 AKS 93/93 PASS + 20 INFO, 1 běh |
+| **P4-8** Rotace bez restartu | Secrety s hesly DB rolí jako soubory v podech (kubelet je obnoví), aplikace sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení | 🟡 kód 2026-11-04, měření P48_RESULT |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -293,6 +294,21 @@ Výsledek měření: **93/93 PASS + 20 INFO** (`measure` run 41882561599, 2026-1
 2. **Předchozí verze tajemství v Key Vaultu je legitimní zdroj pro „starou hodnotu“** – admin Keycloaku se obnoví sám, bez dev literálu
    a bez odstávky; `bootstrap-admin` CLI (zastavený server) jen po ztrátě historie verzí.
 3. Rotace lidí a admina je bez výpadku (běžící tokeny platí do vypršení, 30 min).
+
+## P4-8 Rotace bez restartu
+
+**Rozhodnutí:** okno rotace DB rolí (P4-7: ~6 min, z toho 334 s nové pody aplikace) zmizí, když konzumenti čtou tajemství **ze souboru**, ne z env:
+Secrety `zakazka-finops`, `memory-db`, `governance-db` jsou v podech mountované (bez `subPath` – jinak kubelet soubor neobnoví), kubelet je po
+změně obnoví do ~1 min. Aplikace sleduje soubor (poll 20 s) a při změně provede `ALTER ROLE` (ledger `DB_ROLES_SYNC trigger=file`), paměť
+a Governance MCP čtou DSN ze souboru při každém spojení a při selhání (nové heslo ještě není v DB) použijí poslední funkční DSN. Env zůstává
+jako záloha (kind, lokální fixture). Workflow `rotate` group `db-roles` je od P4-8 bez restartu (`restart=true` = postup P4-7).
+
+Varianty, které nepřišly: Reloader/`stakater` operátor (rollout při změně Secretu – restart zůstává); `kubectl rollout restart` ve workflow
+(totéž); Secret přes env s restartem (P4-7). Fakta: kubelet obnovuje soubory z Secretu u mountů bez `subPath` (Kubernetes docs „Mounted Secrets
+are updated automatically“, zpoždění = sync period kubeletu + cache; env proměnné se neobnovují) – ověřit v měření R2 (čas Key Vault → soubor).
+Měření `--step p4-8` = p4-7 + **R2a–c** (druhá rotace DB rolí v témže běhu, tentokrát bez restartu; R1b s restartem zůstává jako regrese).
+
+Výsledek měření: **P48_RESULT** (`measure` run P48_ID, P48_RUNS). Nálezy: P48_FINDINGS
 
 ## Rizika
 

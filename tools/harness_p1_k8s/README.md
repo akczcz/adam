@@ -1170,6 +1170,25 @@ Nálezy:
 3. **`terraform fmt -check` odmítá komentář za jednořádkovým blokem** (`lifecycle { … }   # …`) – komentář na vlastní řádek; `infra apply`
    padá dřív než plan, takže formát hlídat před pushem.
 
+## P4-8 R2 – rotace bez restartu (2026-11-04, AKS, `--step p4-8` = p4-7 + **R2a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-8-rotace-bez-restartu)): Secrety s hesly DB rolí jako soubory v podech
+  (mount bez `subPath`), aplikace watcher → `ALTER ROLE`, paměť a Governance MCP DSN ze souboru per spojení s poslední funkční hodnotou.
+- **Harness:** `rotate_db_roles(restart=False)` – po ESO force-sync čeká na `DB_ROLES_SYNC trigger=file` (≤ 6 min), pak paměť/governance 200
+  (≤ 3 min), porovná jména a `startTime` podů před/po; CLI `--rotate db-roles` je bez restartu, `--rotate-restart` = postup P4-7.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| R2a | 3 nové verze v KV → Secret → soubor v podu → `DB_ROLES_SYNC trigger=file source=file` 3 role, pod aplikace nezměněn | P48_R2A |
+| R2b | paměť 200, governance 200 bez restartu (pody nezměněny); Postgres nové přijato, staré odmítnuto ×3 | P48_R2B |
+| R2c | okno rotace bez restartu (časy) | P48_R2C |
+
+Výsledek: **P48_RESULT** (`measure` run P48_ID, P48_RUNS).
+
+Nálezy:
+
+P48_FINDINGS_MORE
+
 ## Spuštění
 
 ```bash

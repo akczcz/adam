@@ -9,6 +9,10 @@ on:
         type: choice
         default: keycloak-humans
         options: [keycloak-humans, keycloak-admin, db-roles]
+      restart:
+        description: db-roles s restartem podů (výchozí bez restartu – P4-8)
+        type: boolean
+        default: false
 permissions:
   id-token: write
   contents: read
@@ -34,5 +38,5 @@ jobs:
         run: |
           set -o pipefail
           pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]'
-          python tools/harness_p1_k8s/harness.py --rotate "${{ inputs.group }}" --context "$CLUSTER-admin" 2>&1 | tee "$RUNNER_TEMP/rotate.log"
+          python tools/harness_p1_k8s/harness.py --rotate "${{ inputs.group }}" $([ "${{ inputs.restart }}" = "true" ] && echo --rotate-restart) --context "$CLUSTER-admin" 2>&1 | tee "$RUNNER_TEMP/rotate.log"
           { echo "## rotace ${{ inputs.group }}"; echo '```'; grep -E "^(✅|❌)" "$RUNNER_TEMP/rotate.log" | cut -c1-1500; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

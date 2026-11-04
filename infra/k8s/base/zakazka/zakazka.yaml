@@ -175,6 +175,7 @@ spec:
         - {name: data, mountPath: /data}
         - {name: work, mountPath: /tmp/p0-o2}
         - {name: rolegen, mountPath: /rolegen, readOnly: true}
+        - {name: finops-secret, mountPath: /etc/platform/secrets/finops, readOnly: true}   # P4-8: hesla DB rolí jako soubor – kubelet obnoví bez restartu (ne subPath, ne env)
         readinessProbe:
           httpGet: {path: /health, port: 8010}
           initialDelaySeconds: 5
@@ -208,6 +209,8 @@ spec:
         persistentVolumeClaim: {claimName: zakazka-data}   # ledger a HOME CLI přežijí restart podu (P1-5 měří durabilitu workflow)
       - name: work
         emptyDir: {}
+      - name: finops-secret
+        secret: {secretName: zakazka-finops, optional: true}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -255,6 +258,8 @@ spec:
         - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector:4318}   # P3-5: spany paměti (tenant.id, record.ids) → ClickHouse (O3d)
         ports:
         - {containerPort: 9900, name: http}
+        volumeMounts:
+        - {name: memory-db, mountPath: /etc/platform/secrets/memory-db, readOnly: true}   # P4-8: DSN jako soubor – rotace hesla role bez restartu
         readinessProbe:
           httpGet: {path: /health, port: 9900}
           initialDelaySeconds: 3
@@ -262,6 +267,9 @@ spec:
         resources:
           requests: {cpu: 100m, memory: 256Mi}
           limits: {memory: 768Mi}
+      volumes:
+      - name: memory-db
+        secret: {secretName: memory-db, optional: true}
 ---
 apiVersion: v1
 kind: Service
@@ -467,6 +475,8 @@ spec:
         - {name: GOV_CLICKHOUSE_URL, value: http://clickhouse:8123}   # P3-6 E4: per-request ledger ze spanů gateway (otel.otel_traces); uživatel default bez hesla – dev
         ports:
         - {containerPort: 9910, name: http}
+        volumeMounts:
+        - {name: governance-db, mountPath: /etc/platform/secrets/governance-db, readOnly: true}   # P4-8: DSN jako soubor – rotace hesla role bez restartu
         readinessProbe:
           httpGet: {path: /health, port: 9910}
           initialDelaySeconds: 3
@@ -474,3 +484,6 @@ spec:
         resources:
           requests: {cpu: 50m, memory: 128Mi}
           limits: {cpu: 500m, memory: 512Mi}
+      volumes:
+      - name: governance-db
+        secret: {secretName: governance-db, optional: true}

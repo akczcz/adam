@@ -255,6 +255,13 @@ v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se 
 timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
 jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
 
+## P4-8: rotace bez restartu (2026-11-04)
+
+Secrety `zakazka-finops`, `memory-db` a `governance-db` jsou v podech navíc jako soubory (`/etc/platform/secrets/<name>/<klíč>`, mount bez
+`subPath`, `optional`); kubelet je po změně obnoví do ~1 min. Aplikace při změně souboru provede `ALTER ROLE` (ledger `DB_ROLES_SYNC
+trigger=file`), paměť a Governance MCP čtou DSN ze souboru při každém spojení (při selhání poslední funkční). Overlay AKS přidává mounty
+`platform-ca` k těmto Deploymentům jako append (`/-`), ne jako nový seznam. Rotace DB rolí = `harness.py --rotate db-roles` bez restartu.
+
 ## P4-7: rotace tajemství (2026-11-04)
 
 Rotace = nová verze v Key Vaultu (`az keyvault secret set`, identita s rolí Key Vault Secrets Officer) → `kubectl annotate externalsecret <n>
