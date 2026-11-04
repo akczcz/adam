@@ -1125,14 +1125,22 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| Q1a | render overlaye AKS: ConfigMap `keycloak-realm` má u 4 lidí jen `${KC_HUMAN_PW_*}` a Flux substitute vypnutý, žádný base Secret `keycloak-humans` (jen ExternalSecret), env Keycloaku `secretKeyRef`; Secret == Key Vault (4 hesla i JSON); Keycloak: dev literál odmítnut bez tokenu, heslo z Key Vaultu 200 u všech čtyř; harness hesla ze Secretu | P46_Q1A |
-| Q1b | migrace hesel v běžícím realmu tímto během (kódy) | P46_Q1B |
+| Q1a | render overlaye AKS: ConfigMap `keycloak-realm` má u 4 lidí jen `${KC_HUMAN_PW_*}` a Flux substitute vypnutý, žádný base Secret `keycloak-humans` (jen ExternalSecret), env Keycloaku `secretKeyRef`; Secret == Key Vault (4 hesla i JSON); Keycloak: dev literál odmítnut bez tokenu, heslo z Key Vaultu 200 u všech čtyř; harness hesla ze Secretu | ✅ (běh 3) 4 placeholdery, substitute disabled, render bez base Secretu i literálu, env 4× `keycloak-humans`; Secret == Key Vault 4/4; dev literál 400 `invalid_grant` bez tokenu, heslo z Key Vaultu 200 u všech čtyř |
+| Q1b | migrace hesel v běžícím realmu tímto během (kódy) | ℹ️ (běh 3) všichni 4: Secretem 400 → dev literál 200 → `reset-password` 204 → Secretem 200 (jednorázová migrace běžícího realmu) |
 
-Výsledek: **P46_RESULT** (`measure` run P46_ID, P46_RUNS).
+Výsledek: **90/90 PASS + 19 INFO** (`measure` run 41789164120, 2026-11-04, 3 běhy: 1 pád na kontrole lokálních binárek (krok chyběl v seznamu), 2 Flux neaplikoval – overlay AKS patchuje env Keycloaku podle indexu a nové env položky indexy posunuly (Deployment invalid), 3 vše PASS; ~83 min).
 
 Nálezy:
 
-P46_FINDINGS_MORE
+1. **Overlay AKS patchuje env Keycloaku podle indexu** (běh 2): nové env položky vložené doprostřed seznamu posunuly `KC_HOSTNAME` → patch
+   `replace …/env/6/value` padl na jinou položku (Deployment „valueFrom i value“) a Flux **neaplikoval celou kustomizaci platform** (dry-run
+   jednoho objektu blokuje vše). Nové env patří na konec seznamu; patche podle indexu jsou křehké – kandidát přepsat na strategic merge podle jména.
+2. **Keycloak 26 vrací realm uživateli se špatným heslem 400 `invalid_grant`** (jako adminovi v E9), aplikace to mapuje na 401 – Q1a rozhoduje
+   „bez tokenu“, ne podle kódu.
+3. **Migrace je jednorázová a tichá**: `kc_humans_sync` otočí heslo jen když Secret nesedí a dev literál sedí; po migraci dev literál už nesedí
+   (Q1a) a další běhy nic nemění (Q1b jen `secret_login: 200`). Rotace v Key Vaultu → ESO do 1 h → další běh harnessu otočí znovu jen tehdy,
+   když platí staré heslo = nový dev literál neexistuje → **rotaci existujícího hesla harness neumí** (nezná staré heslo) – kandidát: rotace přes
+   admin API s hodnotou ze Secretu bez ohledu na stav (idempotentní reset při každém běhu) nebo Keycloak Job po změně Secretu.
 
 ## Spuštění
 

@@ -17,7 +17,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-3** Připravenost na ostrý provoz (nálezy P4-2) | gateway bez catch-all mocku (neznámý alias → 404), úklid klíčů gateway i pro pozastavené zakázky + obnova při resume, selhání publikace na GitHub jako rozhodovací bod `publikace` místo FAILED | ✅ 2026-11-02 AKS **84/84 + 17 INFO** (`measure` run 41438707088, 4 běhy) |
 | **P4-4** Vstup do platformy přes Cloudflare Tunnel | GUI a AG-UI dostupné zvenčí přes sidecar `cloudflared` u aplikace (žádná veřejná IP/LB, egress jen :7844); veřejný listener nese jen GUI + AG-UI; měření přes tunel místo `kubectl port-forward`; Ingress jako záloha | ✅ 2026-11-02 AKS **86/86 + 17 INFO** (`measure` run 41533916279, 8 běhů); quick tunnel pro měření, pojmenovaný tunnel + Access na vyžádání |
 | **P4-5** Zabezpečení veřejného vstupu | brute-force detekce Keycloaku, rate limit přihlášení na veřejném listeneru, audit přihlášení s hashem IP, idle odhlášení GUI a keepalive mandátu jen při aktivitě | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy |
-| **P4-6** Hesla lidí mimo Git | hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu přes ESO; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}`, běžící realm otočí harness admin API | 🟡 kód 2026-11-03, měření P46_RESULT |
+| **P4-6** Hesla lidí mimo Git | hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu přes ESO; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}`, běžící realm otočí harness admin API | ✅ 2026-11-04 AKS 90/90 PASS + 19 INFO, 3 běhy |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -253,7 +253,13 @@ Varianty, které nepřišly: hesla nastavuje aplikace při startu jako DB role (
 SPI `${vault.…}` (jen pro client secrety, LDAP, SMTP – ne pro credentials uživatelů); účty lidí mimo realm z Gitu (federace zákazníkova IdP – kandidát
 „realm per tenant"). Měření `--step p4-6` = p4-5 + **Q1a–b**.
 
-Výsledek měření: **P46_RESULT** (`measure` run P46_ID, P46_RUNS). Nálezy: P46_FINDINGS
+Výsledek měření: **90/90 PASS + 19 INFO** (`measure` run 41789164120, 2026-11-04, 3 běhy: 1 pád na kontrole lokálních binárek (krok chyběl v seznamu), 2 Flux neaplikoval – overlay AKS patchuje env Keycloaku podle indexu a nové env položky indexy posunuly (Deployment invalid), 3 vše PASS; ~83 min). Nálezy (detail v README harnessu):
+
+1. **Jeden neplatný objekt zastaví celou Flux kustomizaci** – overlay AKS patchuje env Keycloaku podle indexu, vložené env položky indexy
+   posunuly a Flux přestal aplikovat vše (dry-run). Nové env na konec; patche podle indexu nahradit patchi podle jména (kandidát).
+2. **Migrace hesel běžícího realmu je jednorázová** (harness otočí jen dev literál → Secret); rotaci už nasazeného hesla z Key Vaultu harness
+   neumí, protože staré heslo nezná – řešení = idempotentní reset z hodnoty Secretu při každém běhu, nebo Job v clusteru po změně Secretu (kandidát).
+3. Keycloak 26 vrací špatnému heslu 400 `invalid_grant` i pro uživatele realmu (ne 401); checky rozhodují „bez tokenu“.
 
 ## Rizika
 
@@ -272,6 +278,10 @@ Výsledek měření: **P46_RESULT** (`measure` run P46_ID, P46_RUNS). Nálezy: P
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-04: P4-6 hotovo na AKS (90/90 PASS + 19 INFO, 3 běhy) – hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu (Terraform
+  `random_password`) přes ESO Secret `keycloak-humans`; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}` (Keycloak je při importu
+  dosadí z env), běžící realm otočil harness admin API; harness a promo čtou hesla ze Secretu. Nálezy: patche env podle indexu zastavily Flux,
+  migrace jednorázová (rotace = kandidát), Keycloak 400 `invalid_grant`.
 - 2026-11-03: P4-5 hotovo na AKS (89/89 + 18 INFO, 4 běhy) – brute-force detekce Keycloaku (dočasný zámek 5 selhání → 60 s … 15 min, realm
   z Gitu přes admin API), rate limit `/agui/login` + `/agui/refresh` na veřejném listeneru (20/min/IP, 300/min, 429 + Retry-After), audit
   `GUI_LOGIN` s `via` a hashem IP, idle odhlášení GUI 30 min a keepalive mandátu jen při aktivitě. Nálezy: admin token 60 s, quick-login zámek,
