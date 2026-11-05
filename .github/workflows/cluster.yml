@@ -5,10 +5,14 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: stop | start | status
+        description: stop | start | status | diag (diagnostika telemetrie – Collector, ClickHouse, gateway; nic nemění)
         default: status
         type: choice
-        options: [stop, start, status]
+        options: [stop, start, status, diag]
+      tag:
+        description: diag – prefix zakázek běhu harnessu (např. P31-071221); prázdné = jen stav podů a logy
+        default: ''
+        type: string
 permissions:
   id-token: write
   contents: read
@@ -38,6 +42,62 @@ jobs:
           for i in $(seq 1 30); do pg=$(az postgres flexible-server show -g "$RG" -n "$PG" --query state -o tsv); case "$pg" in Starting|Stopping|Updating) sleep 20;; *) break;; esac; done
           [ "$pg" = "Stopped" ] && az postgres flexible-server start -g "$RG" -n "$PG" -o none && echo "PG started" || echo "PG: $pg"
           aks=$(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv); [ "$aks" = "Stopped" ] && az aks start -g "$RG" -n "$CLUSTER" -o none && echo "AKS started" || echo "AKS: $aks"
+      # diag (P4-8, běhy 2–3: E4a ztracené spany bez restartu Collectoru): stav a logy Collectoru/ClickHouse, spany gateway v ClickHouse
+      # per zakázka × role a bez atributu zakazka, requesty v logu gateway, události ledgeru (STOP/RESUME tenanta, klíče). Jen čtení.
+      - if: inputs.action == 'diag'
+        run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
+      - if: inputs.action == 'diag'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set +e
+          ns=platform-data
+          { echo '## pody telemetrie'; kubectl -n $ns get pods -o wide | grep -E 'NAME|otel-collector|clickhouse|agentgateway'
+            kubectl -n $ns top pod 2>&1 | grep -E 'NAME|otel-collector|clickhouse|agentgateway'
+            for p in $(kubectl -n $ns get pods -o name | grep -E 'otel-collector|clickhouse'); do
+              echo "### $p"; kubectl -n $ns get "$p" -o jsonpath='{range .status.containerStatuses[*]}{.name}{" restarts="}{.restartCount}{" state="}{.state}{" last="}{.lastState}{"\n"}{end}'
+              kubectl -n $ns get "$p" -o jsonpath='{range .spec.containers[*]}{.name}{" "}{.resources}{"\n"}{end}'
+              echo '--- log: chyby/varování (posledních 60 z 3000)'; kubectl -n $ns logs "$p" --all-containers --tail=3000 2>&1 | grep -iE 'error|warn|drop|refus|fail|exceed|memory|retry' | tail -60 | cut -c1-600
+              echo '--- previous (posledních 20)'; kubectl -n $ns logs "$p" --all-containers --tail=20 --previous 2>&1 | cut -c1-400
+            done
+            echo '### události otel-collector/clickhouse'; kubectl -n $ns get events --sort-by=.lastTimestamp 2>/dev/null | grep -E 'otel-collector|clickhouse' | tail -20
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          [ -z "$TAG" ] && exit 0
+          kubectl -n cert-manager get secret platform-root-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > "$RUNNER_TEMP/ca.crt"
+          kubectl -n $ns port-forward svc/clickhouse 18445:8443 >/dev/null 2>&1 & PF=$!; sleep 6
+          q() { curl -sS --max-time 60 --cacert "$RUNNER_TEMP/ca.crt" --resolve clickhouse.platform-data.svc:18445:127.0.0.1 "https://clickhouse.platform-data.svc:18445/" --data-binary "$1 FORMAT PrettyCompactNoEscapes" 2>&1 | cut -c1-400; }
+          { echo "## ClickHouse – spany gateway zakázek $TAG* (per zakázka × role)"
+            q "SELECT SpanAttributes['zakazka'] z, SpanAttributes['role'] r, count() n, round(sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])),6) usd, min(Timestamp) t0, max(Timestamp) t1, countIf(StatusCode!='Ok' AND StatusCode!='Unset') err FROM otel.otel_traces WHERE ServiceName='agentgateway' AND z LIKE '$TAG%' GROUP BY z,r ORDER BY z,r"
+            echo "## spany gateway bez atributu zakazka (posledních 6 h) – kam by se mohly ztratit"
+            q "SELECT SpanName, StatusCode, count() n, round(sum(toFloat64OrZero(SpanAttributes['llm.cost.total'])),6) usd, min(Timestamp) t0, max(Timestamp) t1 FROM otel.otel_traces WHERE ServiceName='agentgateway' AND Timestamp > now()-INTERVAL 6 HOUR AND SpanAttributes['zakazka']='' GROUP BY 1,2 ORDER BY n DESC"
+            q "SELECT Timestamp, SpanName, StatusCode, mapKeys(SpanAttributes) ks FROM otel.otel_traces WHERE ServiceName='agentgateway' AND Timestamp > now()-INTERVAL 6 HOUR AND SpanAttributes['zakazka']='' ORDER BY Timestamp DESC LIMIT 8"
+            echo "## spany gateway zakázek $TAG* v čase (všechny, po 1)"
+            q "SELECT Timestamp, SpanAttributes['zakazka'] z, SpanAttributes['role'] r, SpanName, StatusCode, SpanAttributes['llm.cost.total'] usd, round(Duration/1e6) ms, SpanAttributes['http.response.status_code'] http FROM otel.otel_traces WHERE ServiceName='agentgateway' AND z LIKE '$TAG%' ORDER BY Timestamp LIMIT 400"
+            echo "## spany gateway po 10 min (posledních 6 h) vs. memory-server"
+            q "SELECT toStartOfInterval(Timestamp, INTERVAL 10 minute) t, ServiceName, count() n FROM otel.otel_traces WHERE Timestamp > now()-INTERVAL 6 HOUR GROUP BY t, ServiceName ORDER BY t, ServiceName"
+            echo "## log gateway – requesty zakázek $TAG* (JSON pole zakazka/role/status; shrnutí per zakázka × role × status + posledních 40 řádků zakázek s rozdílem)"
+            for p in $(kubectl -n $ns get pods -o name | grep agentgateway); do
+              echo "### $p"; kubectl -n $ns logs "$p" -c agentgateway --tail=-1 2>/dev/null | grep -F "$TAG" > "$RUNNER_TEMP/gw.log"; wc -l < "$RUNNER_TEMP/gw.log"
+              head -c 700 "$RUNNER_TEMP/gw.log"; echo
+              python3 - "$RUNNER_TEMP/gw.log" <<'PY'
+          import sys, json, collections
+          c = collections.Counter(); keys = set()
+          for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
+              try: j = json.loads(l[l.index("{"):]) if "{" in l else {}
+              except Exception: j = {}
+              if not j: continue
+              keys |= set(j)
+              z = j.get("zakazka") or ""; r = j.get("role") or ""
+              st = next((j[k] for k in j if "status" in k.lower()), "?")
+              c[(z, r, str(st), j.get("http.path") or j.get("path") or j.get("http.url") or "")] += 1
+          print("keys:", sorted(keys)[:60])
+          for k, n in sorted(c.items()): print(n, *k)
+          PY
+            done
+            echo "## ledger aplikace – tenant stop/resume, klíče, zabité pody ($TAG*)"
+            kubectl -n $ns exec deploy/zakazka -c app -- sh -c "grep -E 'STOP_TENANT|RESUME_TENANT|GATEWAY_KEYS|ROLE_POD_KILLED|ROLE_CHECKPOINT|ROLE_STOPPED' /data/ledger.jsonl | grep -F '$TAG' | tail -40 | cut -c1-500" 2>&1
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          kill "$PF" 2>/dev/null; true
       - name: status
         run: |
           { echo "## $CLUSTER"; az aks show -g "$RG" -n "$CLUSTER" --query '{power:powerState.code, k8s:kubernetesVersion, provisioning:provisioningState}' -o table
