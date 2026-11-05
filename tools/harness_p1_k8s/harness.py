@@ -1281,7 +1281,7 @@ def ch_state(http):
     """Stav retence: disk (system.disks), otel tabulky a jejich TTL (engine_full), systémové logy, které mají být vypnuté, velikosti tabulek."""
     disk = ch_query(http, "SELECT free_space, total_space FROM system.disks WHERE name='default'")
     free, total = (int(disk[0][0]), int(disk[0][1])) if disk else (0, 0)
-    otel = {n: ("TTL" in ef) for n, ef in ch_query(http, "SELECT name, engine_full FROM system.tables WHERE database='otel'")}
+    otel = {n: ("TTL" in ef) for n, ef in ch_query(http, "SELECT name, engine_full FROM system.tables WHERE database='otel' AND engine != 'MaterializedView'")}   # MV TTL neumí (TTL má cílová tabulka *_trace_id_ts)
     sys_on = sorted(n for (n,) in ch_query(http, f"SELECT name FROM system.tables WHERE database='system' AND name IN ({','.join(repr(t) for t in CH_SYSTEM_LOGS_OFF)})"))
     sizes = {f"{d}.{t}": round(int(b) / 2**20, 1) for d, t, b in ch_query(http, "SELECT database, table, sum(bytes_on_disk) FROM system.parts WHERE active GROUP BY database, table ORDER BY 3 DESC LIMIT 10")}
     return {"disk": {"free_gb": round(free / 2**30, 2), "total_gb": round(total / 2**30, 2), "free_pct": round(100 * free / total, 1) if total else None}, "otel_ttl": otel, "system_logs_on": sys_on, "top_mb": sizes}
@@ -1300,7 +1300,7 @@ def ch_retention(a, http):
             except Exception as e: err = f"drop {t}: {str(e)[:160]}"
         for name, has_ttl in before["otel_ttl"].items():
             if has_ttl: continue
-            col = "TimeUnix" if name.startswith("otel_metrics") else "Timestamp"
+            col = "Start" if name.endswith("_trace_id_ts") else "TimeUnix" if name.startswith("otel_metrics") else "Timestamp"   # sloupce dle DDL clickhouse exportéru
             try: ch_query(http, f"ALTER TABLE otel.{name} MODIFY TTL toDateTime({col}) + toIntervalDay({CH_TTL_DAYS})"); ttl_added.append(name)
             except Exception as e: err = f"ttl {name}: {str(e)[:160]}"
         time.sleep(3); after = ch_state(http)
