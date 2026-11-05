@@ -1291,6 +1291,7 @@ def ch_retention(a, http):
     běhu (a workflow cluster.yml clickhouse-retention): (1) DROP systémových logů, které config vypíná (trace_log = profiler byl největší; po restartu
     podu s novým configem se už nezakládají), (2) otel tabulky bez TTL dostanou TTL 7 d (exporter `ttl: 168h` ho dává jen nově zakládaným;
     MODIFY TTL se rovnou materializuje = smaže staré části). Hodnoty před/po v detailu."""
+    kubectl(a, "-n", NS, "wait", "--for=condition=ready", "pod", "-l", "app=clickhouse", "--timeout=240s")   # rollout po změně configu (anotace platform/config-rev) – port-forward na nehotový pod = connection refused
     pf = PortForward(a, "clickhouse", 18445, 8443); dropped = []; ttl_added = []; err = None
     try:
         time.sleep(2); before = ch_state(http)
