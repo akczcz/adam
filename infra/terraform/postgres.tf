@@ -25,7 +25,8 @@ resource "azurerm_postgresql_flexible_server" "pg" {
   }
 
   # Azure přidělí zónu sám; bez ignore by Terraform chtěl zónu „vrátit“ na null → "zone can only be changed when exchanged with standby" (apply 2026-10-25)
-  lifecycle { ignore_changes = [zone] }
+  # P4-9: heslo admina rotuje operátor přes ARM (harness --rotate pg-admin) – Terraform ho po založení nepřepisuje (random_password.pg jen pro první apply)
+  lifecycle { ignore_changes = [zone, administrator_password] }
 }
 
 # pgvector musí být na allow-listu rozšíření, jinak CREATE EXTENSION vector selže

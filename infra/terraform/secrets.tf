@@ -34,6 +34,8 @@ resource "azurerm_key_vault_secret" "pg_password" {
   content_type = "heslo admin účtu Flexible Serveru (postgres-auth, DSN gateway/FinOps/Dapr)"
   tags         = var.tags
   depends_on   = [time_sleep.kv_rbac]
+  # P4-9: rotace = ARM PATCH hesla serveru + nová verze zde (harness --rotate pg-admin / workflow rotate); Terraform hodnotu po založení nevrací
+  lifecycle { ignore_changes = [value] }
 }
 
 resource "azurerm_key_vault_secret" "git_backend_token" {
