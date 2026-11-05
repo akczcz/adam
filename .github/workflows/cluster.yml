@@ -118,3 +118,31 @@ jobs:
           { echo "## $CLUSTER"; az aks show -g "$RG" -n "$CLUSTER" --query '{power:powerState.code, k8s:kubernetesVersion, provisioning:provisioningState}' -o table
             az aks nodepool list -g "$RG" --cluster-name "$CLUSTER" --query '[].{pool:name, vm:vmSize, count:count, min:minCount, max:maxCount, runtime:workloadRuntime, state:powerState.code}' -o table
             echo; echo "## $PG"; az postgres flexible-server show -g "$RG" -n "$PG" --query '{state:state, sku:sku.name, version:version}' -o table; } | tee -a "$GITHUB_STEP_SUMMARY"
+      # adresa GUI pro člověka (P4-4 tunel): pojmenovaný tunnel = hostname ze Secretu cloudflare-tunnel, quick tunnel = *.trycloudflare.com z logu sidecaru
+      # (nový hostname po každém restartu podu). Jen když cluster běží; po `start` trvá start podu aplikace několik minut → `status` znovu.
+      - name: adresa GUI
+        run: |
+          set +e
+          [ "$(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv)" = "Running" ] || { echo "GUI: cluster neběží"; exit 0; }
+          az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing -o none
+          host=$(kubectl -n platform-data get secret cloudflare-tunnel -o jsonpath='{.data.hostname}' 2>/dev/null | base64 -d)
+          url=""; [ -n "$host" ] && [ "$host" != "quick" ] && url="https://$host"
+          if [ -z "$url" ]; then
+            pod=$(kubectl -n platform-data get pods -l app=zakazka --field-selector=status.phase=Running --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | tail -1)
+            [ -n "$pod" ] && url=$(kubectl -n platform-data logs "$pod" -c cloudflared --tail=400 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
+          fi
+          { echo "## GUI"
+            if [ -n "$url" ]; then echo "$url/gui – přihlášení uživatelem z Keycloaku (adam = tenant acme, bea = beta, platform-admin), heslo v Key Vaultu \`kc-user-<jméno>-password\`"
+            else echo "URL tunelu zatím není (pod aplikace startuje) – spusť \`status\` za 2–3 min"; fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          # předletová kontrola ostrého běhu (P4-2 /_live): ok=True = klíč modelu / PAT z Key Vaultu platí (1 token), wired=True + 401 = cesta funguje, hodnoty výchozí (mock)
+          [ "${{ inputs.action }}" = "status" ] || exit 0
+          kubectl -n platform-data exec -i deploy/zakazka -c app -- python3 - <<'PY' 2>&1 | sed 's/^/ostrá tajemství: /' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, urllib.request
+          for p in ("model", "github"):
+              try:
+                  j = json.load(urllib.request.urlopen("http://127.0.0.1:8010/_live/" + p, timeout=90))
+                  print(p, "ok=%s status=%s wired=%s" % (j.get("ok"), j.get("status"), j.get("wired")), "" if j.get("ok") else "(ostrý běh neprojde – hodnota v Key Vaultu je výchozí nebo ESO ještě nesynchronizovalo)")
+              except Exception as e:
+                  print(p, "chyba %s: %s" % (type(e).__name__, str(e)[:120]))
+          PY

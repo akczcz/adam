@@ -13,6 +13,10 @@ on:
         type: choice
         default: none
         options: [none, p4-8, p4-7, p4-6, p4-5, p4-4, p4-3, p4-2, p4-2-live, p4-1, p3-6, p3-5, p3-4, p3-3, p3-2, p3-1, p2-6, p2-4, p2-3, p2-5, p2-2, p2-1]   # p4-2-live = ostrý běh (živý model, skutečný GitHub; vyžaduje ostrá tajemství v Key Vaultu, platí se)
+      stop:
+        description: po měření zastavit cluster (AKS + Flexible Server) – false = nechat běžet (např. ostrá zakázka z GUI)
+        type: boolean
+        default: true
 permissions:
   id-token: write
   contents: read
@@ -24,6 +28,7 @@ jobs:
     env:
       RG: ${{ vars.TF_STATE_RG }}
       CLUSTER: aks-platform-dev
+      PG: pg-platform-dev-${{ vars.NAME_SUFFIX }}-${{ vars.AZURE_LOCATION || 'polandcentral' }}
     steps:
       - uses: actions/checkout@v4
       - uses: azure/login@v2
@@ -110,6 +115,15 @@ jobs:
             tools/harness_p1_k8s/results/p*-*.json
             tools/harness_p1_k8s/logs/gui-shots/*.png
           if-no-files-found: ignore
+      # P4-8 nález: cluster po měření několikrát zůstal běžet hodiny (zastavení záviselo na notifikaci do session Claude, která se ztratila při restartu
+      # workeru). Zastavení je proto součást měření (vždy, i po selhání kroků); stejné příkazy jako cluster.yml `stop`. Nechat běžet = input stop=false.
+      - name: zastavit cluster po měření (input stop)
+        if: always() && inputs.stop
+        run: |
+          aks=$(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv); [ "$aks" = "Running" ] && az aks stop -g "$RG" -n "$CLUSTER" -o none && echo "AKS stopped" || echo "AKS: $aks"
+          for i in $(seq 1 30); do pg=$(az postgres flexible-server show -g "$RG" -n "$PG" --query state -o tsv); case "$pg" in Starting|Stopping|Updating) sleep 20;; *) break;; esac; done
+          [ "$pg" = "Ready" ] && az postgres flexible-server stop -g "$RG" -n "$PG" -o none && echo "PG stopped" || echo "PG: $pg"
+          { echo "## cluster po měření"; echo "AKS: $(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv), PG: $(az postgres flexible-server show -g "$RG" -n "$PG" --query state -o tsv)"; } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: výsledek
         if: always()
         run: |
