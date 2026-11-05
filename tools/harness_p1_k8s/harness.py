@@ -1599,9 +1599,35 @@ def kv_name_of(kj):
     return ((((k.get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME")) or ""
 
 
+def az_relogin():
+    """Runner GitHub Actions: OIDC assertion z azure/login platí 5 min; az CLI pak nezíská token pro další resource (Key Vault, ARM) ani neobnoví
+    prošlý access token (AADSTS700024 – běh 1 P4-9 po 10 min, P4-4 nález 4). Nové přihlášení = nový OIDC token z GitHubu (ACTIONS_ID_TOKEN_REQUEST_URL/
+    TOKEN, audience api://AzureADTokenExchange) + `az login --federated-token` (totéž dělá azure/login; token = 5min JWT identity runneru, ne tajemství
+    platformy). Mimo Actions (bez env) nic nedělá a vrací False."""
+    url, rt, cid, tid = (os.environ.get(k) for k in ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "AZURE_CLIENT_ID", "AZURE_TENANT_ID"))
+    if not (url and rt and cid and tid): return False
+    try:
+        jwt_ = httpx.get(f"{url}&audience=api://AzureADTokenExchange", headers={"Authorization": f"bearer {rt}"}, timeout=30).json().get("value")
+        if not jwt_: return False
+        r = subprocess.run(["az", "login", "--service-principal", "-u", cid, "--tenant", tid, "--federated-token", jwt_, "-o", "none"], capture_output=True, text=True, timeout=120)
+        sub = os.environ.get("AZURE_SUBSCRIPTION_ID")
+        if r.returncode == 0 and sub: subprocess.run(["az", "account", "set", "-s", sub], capture_output=True, text=True, timeout=60)
+        print(f"  az relogin: {'ok' if r.returncode == 0 else (r.stderr or '')[-200:]}", flush=True); return r.returncode == 0
+    except Exception as e:
+        print(f"  az relogin: {type(e).__name__}: {str(e)[:120]}", flush=True); return False
+
+
+def az_run(args, timeout=120):
+    """`az …` s jedním opakováním po novém přihlášení, když Entra odmítne prošlou assertion nebo token (AADSTS…)."""
+    r = subprocess.run(["az", *args], capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0 and re.search(r"AADSTS\d+|ExpiredAuthenticationToken|InvalidAuthenticationToken|run 'az login'", r.stderr or "") and az_relogin():
+        r = subprocess.run(["az", *args], capture_output=True, text=True, timeout=timeout)
+    return r
+
+
 def kv_get(kv_name, name):
     """Hodnota tajemství z Key Vaultu identitou runneru (az login OIDC; role Key Vault Secrets Officer z Terraformu secrets.tf); None když chybí."""
-    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "value", "-o", "tsv"], timeout=120)
     if r.returncode != 0: _kv_err(kv_name, name, r)   # P4-4 běh 2: všechna čtení Key Vaultu z runneru naráz „chyběla“ – bez stderr nešlo poznat proč (hodnota se neloguje, jen chyba az)
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
@@ -1617,13 +1643,13 @@ def _kv_err(kv_name, name, r):
 def kv_versions(kv_name, name, n=4):
     """P4-7: hodnoty tajemství v Key Vaultu od nejnovější (aktuální první, max n) – při rotaci zná starou hodnotu jen Key Vault (verze), ESO dává jen aktuální.
     Hodnoty se nelogují; chyba az jde do KV_ERRORS."""
-    r = subprocess.run(["az", "keyvault", "secret", "list-versions", "--vault-name", kv_name, "-n", name, "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "list-versions", "--vault-name", kv_name, "-n", name, "-o", "json"], timeout=120)
     if r.returncode != 0: _kv_err(kv_name, name, r); return []
     try: vers = sorted((v for v in json.loads(r.stdout) if (v.get("attributes") or {}).get("enabled", True)), key=lambda v: (v.get("attributes") or {}).get("created") or "", reverse=True)
     except ValueError: return []
     out = []
     for v in vers[:n]:
-        x = subprocess.run(["az", "keyvault", "secret", "show", "--id", v["id"], "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120)
+        x = az_run(["keyvault", "secret", "show", "--id", v["id"], "--query", "value", "-o", "tsv"], timeout=120)
         if x.returncode == 0 and x.stdout.strip(): out.append(x.stdout.strip())
     return out
 
@@ -1655,14 +1681,14 @@ def kv_set(kv_name, name, value, content_type):
     """Zápis tajemství do Key Vaultu přes dočasný soubor (hodnota není v argumentech procesu ani v logs/, které jdou do artefaktu běhu)."""
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f: f.write(value); tmp = f.name
-    try: r = subprocess.run(["az", "keyvault", "secret", "set", "--vault-name", kv_name, "-n", name, "--file", tmp, "--encoding", "utf-8", "--content-type", content_type, "-o", "none"], capture_output=True, text=True, timeout=180)
+    try: r = az_run(["keyvault", "secret", "set", "--vault-name", kv_name, "-n", name, "--file", tmp, "--encoding", "utf-8", "--content-type", content_type, "-o", "none"], timeout=180)
     finally: os.unlink(tmp)
     return r.returncode == 0 or (r.stderr or "")[-300:]
 
 
 def kv_attrs(kv_name, name):
     """Jen atributy tajemství (enabled, contentType) – hodnotu harness nedrží (P3-6 E10: root token OpenBao se čte jen při bootstrapu); None když chybí."""
-    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "{contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "{contentType:contentType,enabled:attributes.enabled}", "-o", "json"], timeout=120)
     if r.returncode != 0: _kv_err(kv_name, name, r)
     return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
 
@@ -1941,9 +1967,10 @@ def rotate_pg_admin(a, http, KC, APP, kv_name, secret, led, pfs, pg_try=None):
     old = secret("postgres-auth", "POSTGRES_PASSWORD") or ""
     new = _sec.token_urlsafe(24) + "Aa1"   # Azure: 8–128 znaků, 3 ze 4 kategorií; bez znaků, které by rozbily DSN/URL (token_urlsafe = [A-Za-z0-9_-])
     pg_host = kubectl(a, "-n", NS, "get", "svc", "postgres", "-o", "jsonpath={.spec.externalName}").stdout.strip(); pg_name = pg_host.split(".")[0]
-    rid = subprocess.run(["az", "resource", "list", "--name", pg_name, "--resource-type", "Microsoft.DBforPostgreSQL/flexibleServers", "--query", "[0].id", "-o", "tsv"], capture_output=True, text=True, timeout=120).stdout.strip()
-    tok = subprocess.run(["az", "account", "get-access-token", "--resource", "https://management.azure.com/", "--query", "accessToken", "-o", "tsv"], capture_output=True, text=True, timeout=120).stdout.strip()
-    arm = {"server": pg_name, "id": bool(rid), "token": bool(tok)}
+    relogin = az_relogin()   # na konci běhu (~100 min) může být access token ARM/KV po platnosti a OIDC assertion z azure/login je dávno pryč → nový OIDC token
+    rid =az_run(["resource", "list", "--name", pg_name, "--resource-type", "Microsoft.DBforPostgreSQL/flexibleServers", "--query", "[0].id", "-o", "tsv"], timeout=120).stdout.strip()
+    tok = az_run(["account", "get-access-token", "--resource", "https://management.azure.com/", "--query", "accessToken", "-o", "tsv"], timeout=120).stdout.strip()
+    arm = {"server": pg_name, "id": bool(rid), "token": bool(tok), "relogin": relogin}
     def arm_set(pw):
         """PATCH hesla + čekání na dokončení (Azure-AsyncOperation → status Succeeded; bez hlavičky stav serveru Ready). Vrací (http, výsledek)."""
         try:
@@ -1957,7 +1984,7 @@ def rotate_pg_admin(a, http, KC, APP, kv_name, secret, led, pfs, pg_try=None):
                 if op:
                     x = httpx.get(op, headers={"Authorization": f"Bearer {tok}"}, timeout=60); st = (x.json() if x.text else {}).get("status") or (f"http{x.status_code}" if x.status_code != 200 else "Succeeded")
                 else:
-                    st = subprocess.run(["az", "resource", "show", "--ids", rid, "--query", "properties.state", "-o", "tsv"], capture_output=True, text=True, timeout=120).stdout.strip(); st = "Succeeded" if st == "Ready" else st
+                    st = az_run(["resource", "show", "--ids", rid, "--query", "properties.state", "-o", "tsv"], timeout=120).stdout.strip(); st = "Succeeded" if st == "Ready" else st
             except Exception as e: st = f"{type(e).__name__}"
             if st in ("Succeeded", "Failed", "Canceled"): break
         return r.status_code, st
@@ -2113,14 +2140,14 @@ def e8_checks(a, rep, kj, kv_name, BAO, init, seal0, migrated, secret, kv_meta):
     """E8 (P3-6): bootstrap OpenBao (root token + recovery klíč z `sys/init`) žije jen v Key Vaultu platformy (secret `openbao-init`, zapsal operátor =
     harness identitou runneru), v clusteru žádný Secret; unseal dělá Key Vault (seal azurekeyvault) bez operátora. P3-6 E10: hodnota (root token)
     se čte jen při bootstrapu – `init` je None, když ji tento běh nepotřeboval; platnost root tokenu se už neověřuje lookupem (root se nepoužívá)."""
-    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", "openbao-init", "--query", "{contentType:contentType,enabled:attributes.enabled,created:attributes.created,updated:attributes.updated,recoveryLevel:attributes.recoveryLevel}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name, "-n", "openbao-init", "--query", "{contentType:contentType,enabled:attributes.enabled,created:attributes.created,updated:attributes.updated,recoveryLevel:attributes.recoveryLevel}", "-o", "json"], timeout=120)
     meta = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stderr or "")[-200:]}
     k8s_secret = secret("openbao-init", "init\\.json")
     by_kubectl = sorted(s_["metadata"]["name"] for s_ in kj("-n", NS, "get", "secrets").get("items", []) if any(m.get("manager", "").startswith("kubectl") for m in s_["metadata"].get("managedFields", [])))
     init = init or {}
     seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
     rep.add("E8a", "Bootstrap OpenBao jen v Key Vaultu: `sys/init` (recovery_shares 1) provádí operátor (harness identitou runneru, OIDC) a výsledek ukládá do Key Vault secretu `openbao-init` (contentType, soft-delete/purge protection Key Vaultu), ne do Kubernetes Secretu – v platform-data žádný Secret `openbao-init` ani jiný se stopou kubectl; při startu clusteru unseal zajistí seal azurekeyvault (při příchodu harnessu už unsealed, type azurekeyvault, recovery seal); hodnota (root token, recovery klíč) se čte jen při bootstrapu (E10), ne každý běh; migrace ze staršího Secretu proběhla jednorázově a Secret byl smazán", "PASS" if meta.get("enabled") is True and meta.get("contentType") and not k8s_secret and not by_kubectl and seal0.get("sealed") is False and seal0.get("type") == "azurekeyvault" and seal0.get("recovery_seal") is True and (not init or len(init.get("recovery_keys_base64") or init.get("keys_base64") or []) == 1) and not seal.get("sealed") else "FAIL", {"keyvault": {"name": kv_name, "secret": meta}, "k8s_secret_openbao_init": bool(k8s_secret), "secrets_by_kubectl": by_kubectl, "seal_at_start": {k: seal0.get(k) for k in ("sealed", "type", "recovery_seal", "initialized")}, "value_read_this_run": bool(init), "recovery_keys": (len(init.get("recovery_keys_base64") or init.get("keys_base64") or []) if init else "nečteno (E10: jen při bootstrapu)"), "recovery_keys_origin": ("recovery" if init.get("recovery_keys_base64") else "shamir→azurekeyvault migrace (keys_base64)") if init else None, "migrated_this_run": migrated})
-    r = subprocess.run(["az", "keyvault", "secret", "list", "--vault-name", kv_name, "--query", "[].{name:name,contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "list", "--vault-name", kv_name, "--query", "[].{name:name,contentType:contentType,enabled:attributes.enabled}", "-o", "json"], timeout=120)
     rep.add("E8b", "E8: inventář tajemství platformy v Key Vaultu (Terraform secrets.tf + bootstrap OpenBao); runner čte/zapisuje jako Key Vault Secrets Officer, pody přes ESO jako Secrets User", "INFO", {"secrets": json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else (r.stderr or "")[-200:]})
 
 
@@ -2797,7 +2824,7 @@ def e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw):
     import socket, ipaddress
     rg = os.environ.get("RG", "rg-platform-dev")
     def az(*args):
-        r = subprocess.run(["az", *args, "-o", "json"], capture_output=True, text=True, timeout=180)
+        r = az_run([*args, "-o", "json"], timeout=180)
         try: return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stderr or r.stdout)[-300:]}
         except Exception as e: return {"error": f"{type(e).__name__}: {r.stdout[:200]}"}
     pg_name = pg_host.split(".")[0]
@@ -2873,7 +2900,7 @@ def e1_checks(a, rep, kj, pre):
     owned = {n: any(o.get("kind") == "ExternalSecret" and o.get("name") == n for o in ((s_.get("metadata") or {}).get("ownerReferences") or [])) for n, s_ in secs.items()}
     kv_name = ((((get("flux-system", "kustomization", "platform-trust").get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME"))
     def kv(name):
-        r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name or "", "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120); return r.stdout.strip() if r.returncode == 0 else None
+        r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name or "", "-n", name, "--query", "value", "-o", "tsv"], timeout=120); return r.stdout.strip() if r.returncode == 0 else None
     kv_tok, kv_pg = kv("git-backend-token"), kv("pg-platform-password")
     tok = _b64.b64decode((secs["agentgateway-git-token"].get("data") or {}).get("token", "")).decode(); pg = _b64.b64decode((secs["postgres-auth"].get("data") or {}).get("POSTGRES_PASSWORD", "")).decode()
     agw_url = _b64.b64decode((secs["agentgateway-secrets"].get("data") or {}).get("AGW_DATABASE_URL", "")).decode(); dapr = _b64.b64decode((secs["dapr-components"].get("data") or {}).get("statestore.yaml", "")).decode()

@@ -71,6 +71,10 @@ jobs:
         id: e2e
         if: inputs.e2e != 'none'
         continue-on-error: true
+        env:   # P4-9: harness si umí obnovit přihlášení az (OIDC assertion azure/login platí 5 min; Key Vault/ARM po ~100 min běhu → AADSTS700024) – stejné hodnoty jako azure/login, nejsou tajemství
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -o pipefail
           pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]' fastapi opentelemetry-sdk inspect-ai anthropic uvicorn pandas pyarrow   # fastapi/otel: embedding M1; inspect-ai…: negativní kontrola evalů (p2-5)

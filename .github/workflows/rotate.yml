@@ -35,6 +35,10 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - name: rotace ${{ inputs.group }}
+        env:   # P4-9: harness si umí obnovit přihlášení az novým OIDC tokenem (assertion azure/login platí 5 min)
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -o pipefail
           pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]'
