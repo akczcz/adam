@@ -23,6 +23,10 @@ data:
         blocked_values:
           - "sk-[A-Za-z0-9]+"
         summary: debug
+      memory_limiter:   # P4-8: collector 4× restartoval (OOM při limitu 512Mi) a spany se ztratily – nejdřív odmítnout, ne spadnout
+        check_interval: 1s
+        limit_mib: 600
+        spike_limit_mib: 150
       batch:
         timeout: 1s
     exporters:
@@ -34,7 +38,7 @@ data:
         ttl: 0
         timeout: 10s
         sending_queue:
-          queue_size: 100
+          queue_size: 1000   # P4-8: 100 dávek nestačilo při výpadku ClickHouse/restartu – spany se zahazovaly
         retry_on_failure:
           enabled: true
           initial_interval: 1s
@@ -51,15 +55,15 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [gen_ai_normalizer, redaction, batch]
+          processors: [memory_limiter, gen_ai_normalizer, redaction, batch]
           exporters: [clickhouse]
         metrics:
           receivers: [otlp]
-          processors: [batch]
+          processors: [memory_limiter, batch]
           exporters: [clickhouse]
         logs:
           receivers: [otlp]
-          processors: [redaction, batch]
+          processors: [memory_limiter, redaction, batch]
           exporters: [clickhouse]
 ---
 apiVersion: v1
@@ -99,8 +103,8 @@ spec:
           initialDelaySeconds: 3
           periodSeconds: 5
         resources:
-          requests: {cpu: 100m, memory: 128Mi}
-          limits: {memory: 512Mi}
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 768Mi}   # P4-8: 512Mi → OOM restarty collectoru, ztráta spanů (E4a)
       volumes:
       - name: config
         configMap: {name: otel-collector-config}
