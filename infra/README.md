@@ -255,6 +255,14 @@ v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se 
 timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
 jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
 
+## P4-9: rotace admina Postgresu (2026-11-05)
+
+Heslo admina Flexible Serveru (`pg-platform-password`, user `platform`) rotuje `harness.py --rotate pg-admin` (workflow `rotate` group
+`pg-admin`): ARM `PATCH` `administratorLoginPassword` identitou Actions (Contributor na RG, hodnota v těle requestu) → nová verze v Key Vaultu
+→ ESO force-sync `postgres-auth`, `agentgateway-secrets`, `zakazka-finops`, `dapr-components` → nové pody `keycloak`, `agentgateway`,
+`zakazka` (+ daprd). Terraform `administrator_password` serveru ani hodnotu v Key Vaultu po založení nepřepisuje (`ignore_changes`);
+`random_password.pg` platí jen pro první apply. Okno = restart tří konzumentů (minuty); paměť a governance (RLS role) se nerestartují.
+
 ## P4-8: rotace bez restartu (2026-11-04)
 
 Secrety `zakazka-finops`, `memory-db` a `governance-db` jsou v podech navíc jako soubory (`/etc/platform/secrets/<name>/<klíč>`, mount bez

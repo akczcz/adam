@@ -1209,6 +1209,30 @@ Nálezy:
 6. **Běh 4 (42061788722, 96/96):** po úklidu disku E4a/E4b bez rozdílu (všech 8 zakázek `diff: 0.0`), E4d PASS – ztráta spanů v bězích 2–3
    byla jen plný disk, žádná změna v gateway ani Collectoru nebyla potřeba (hardening Collectoru z běhu 2 zůstává).
 
+## P4-9 R3 – rotace admina Postgresu (2026-11-05, AKS, `--step p4-9` = p4-8 + **R3a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-9-rotace-admina-postgresu)): heslo admina Flexible Serveru rotuje
+  ARM PATCH (identita runneru, hodnota v těle requestu) + nová verze v Key Vaultu + ESO force-sync + nové pody Keycloaku, gateway a aplikace.
+- **Harness:** `rotate_pg_admin` – `az resource list` (id serveru), `az account get-access-token` → `PATCH …?api-version=2024-08-01`
+  `{"properties":{"administratorLoginPassword":…}}` → `Azure-AsyncOperation` do `Succeeded` → `kv_set` (při selhání PATCH zpět na starou
+  hodnotu) → `eso_force_sync` 4 Secretů (klíč `statestore\.yaml` s escapovanou tečkou) → `restart_pods` keycloak/agentgateway/zakazka +
+  `rollout status` → token Keycloaku (password grant), `/health`, `GET /agui/threads` (Dapr state store), log gateway bez
+  `password authentication failed`, ledger bez `FINOPS_ERROR`; v měření navíc Postgres přes socat: nové heslo přijato, staré odmítnuto.
+  CLI `--rotate pg-admin` (workflow `rotate` group `pg-admin`) bez přímé kontroly Postgresu (private endpoint).
+- Rotace běží **úplně na konci** kroku (po R2): harness má `dsn()` se starým heslem a po R3 ho už nepoužije.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| R3a | ARM PATCH Succeeded → KV nová verze → ESO 4 Secrety; Postgres nové přijato, staré odmítnuto | P49_R3A |
+| R3b | nové pody keycloak/agentgateway/zakazka; Keycloak token 200, app 200, Dapr threads 200, gateway bez chyb auth, bez FINOPS_ERROR | P49_R3B |
+| R3c | okno rotace admina (časy), verze v KV | P49_R3C |
+
+Výsledek: **P49_RESULT** (`measure` run P49_ID, P49_RUNS).
+
+Nálezy:
+
+P49_FINDINGS
+
 ## Spuštění
 
 ```bash
