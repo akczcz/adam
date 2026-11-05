@@ -135,3 +135,14 @@ jobs:
             if [ -n "$url" ]; then echo "$url/gui – přihlášení uživatelem z Keycloaku (adam = tenant acme, bea = beta, platform-admin), heslo v Key Vaultu \`kc-user-<jméno>-password\`"
             else echo "URL tunelu zatím není (pod aplikace startuje) – spusť \`status\` za 2–3 min"; fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          # předletová kontrola ostrého běhu (P4-2 /_live): ok=True = klíč modelu / PAT z Key Vaultu platí (1 token), wired=True + 401 = cesta funguje, hodnoty výchozí (mock)
+          [ "${{ inputs.action }}" = "status" ] || exit 0
+          kubectl -n platform-data exec -i deploy/zakazka -c app -- python3 - <<'PY' 2>&1 | sed 's/^/ostrá tajemství: /' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, urllib.request
+          for p in ("model", "github"):
+              try:
+                  j = json.load(urllib.request.urlopen("http://127.0.0.1:8010/_live/" + p, timeout=90))
+                  print(p, "ok=%s status=%s wired=%s" % (j.get("ok"), j.get("status"), j.get("wired")), "" if j.get("ok") else "(ostrý běh neprojde – hodnota v Key Vaultu je výchozí nebo ESO ještě nesynchronizovalo)")
+              except Exception as e:
+                  print(p, "chyba %s: %s" % (type(e).__name__, str(e)[:120]))
+          PY
