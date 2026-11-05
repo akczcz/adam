@@ -308,7 +308,20 @@ Varianty, které nepřišly: Reloader/`stakater` operátor (rollout při změně
 are updated automatically“, zpoždění = sync period kubeletu + cache; env proměnné se neobnovují) – ověřit v měření R2 (čas Key Vault → soubor).
 Měření `--step p4-8` = p4-7 + **R2a–c** (druhá rotace DB rolí v témže běhu, tentokrát bez restartu; R1b s restartem zůstává jako regrese).
 
-Výsledek měření: **P48_RESULT** (`measure` run P48_ID, P48_RUNS). Nálezy: P48_FINDINGS
+**Retence ClickHouse (nález běhu 3):** PVC 4 Gi byl plný ze systémových logů ClickHouse (`trace_log` 2,3 GB; otel spany jen 20 MB) →
+`NOT_ENOUGH_SPACE` → Collector po 60 s retry spany zahazoval (ledger bez 1–3 requestů). Rozhodnutí: systémové logy ClickHouse vypnuté
+(`query_log` 3 dny), otel tabulky TTL 7 dní (exporter `ttl: 168h`, u starších tabulek `MODIFY TTL` z harnessu na startu běhu), kontrola E4d
+(volné místo, TTL, žádné zahazování v logu Collectoru) a operátorská akce `cluster.yml clickhouse-retention`. Kandidáti: větší PVC
+(managed-csi umí expanzi), Altinity operator, alert na volné místo disku. Diagnostika telemetrie bez kubectl: `cluster.yml diag`.
+
+Výsledek měření: **P48_RESULT** (`measure` run P48_ID, P48_RUNS). Nálezy (detail v README harnessu):
+
+1. **Okno rotace DB rolí bez restartu 77–123 s** (aplikace 46–95 s = kubelet obnoví soubor + poll 20 s; konzumenti 0–36 s) proti ~6 min
+   v P4-7 – rotace je za běhu provozu neviditelná (paměť a governance 200 po celou dobu).
+2. **Strop tenanta sčítal útratu od založení** (dev tenant beta vyčerpal 20 USD po ~2 měsících) → okno 30 dní jako u klíčů gateway; každý
+   strop potřebuje okno.
+3. **Plný disk ClickHouse ztrácel spany tiše** (Collector „Dropping data“, bez restartu, bez alertu) – ledger FinOps je jen tak důvěryhodný,
+   jak je zdravý jeho sklad; retence + E4d výše.
 
 ## Rizika
 

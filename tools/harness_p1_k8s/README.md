@@ -1182,12 +1182,30 @@ Nálezy:
 | R2a | 3 nové verze v KV → Secret → soubor v podu → `DB_ROLES_SYNC trigger=file source=file` 3 role, pod aplikace nezměněn | P48_R2A |
 | R2b | paměť 200, governance 200 bez restartu (pody nezměněny); Postgres nové přijato, staré odmítnuto ×3 | P48_R2B |
 | R2c | okno rotace bez restartu (časy) | P48_R2C |
+| E4d | retence ClickHouse (nové, běh 3): otel tabulky s TTL 7 d, vypnuté systémové logy se znovu nezaložily, volné místo ≥ 15 %, Collector od startu harnessu nic nezahodil | P48_E4D |
 
 Výsledek: **P48_RESULT** (`measure` run P48_ID, P48_RUNS).
 
 Nálezy:
 
-P48_FINDINGS_MORE
+1. **Běh 1 (41900608008, 94/95):** O3c – reviewer zakázky beta dostal od brány rozpočtu `BUDGET_EXCEEDED` tenanta: `finops.tenant_spend` sčítal
+   útratu tenanta **od založení** (dev tenant beta vyčerpal 20 USD po ~2 měsících měření). Oprava: okno 30 dní (stejně jako klíče gateway
+   `-30d-block`), beta 50 USD v `tenants.yaml`, O3c nese `budget_exceeded` v detailu. Obecně: každý strop potřebuje okno, jinak ho dlouhý provoz vyčerpá.
+2. **Běh 2 (41918926549, 92/95):** T1d porovnával strop tenanta s literálem 20 → čte `tenants.yaml`. E4a/E4b bez 1–3 spanů u tří zakázek –
+   nejdřív připsáno OOM Collectoru (4 restarty) a opraveno `memory_limiter` + fronta 1000 + limit 768Mi; restarty ale byly z bootu clusteru
+   (`diag` běh 3), hardening zůstává.
+3. **Běh 3 (41984163451, 93/95):** E4a/E4b opět bez 3 spanů (zakázka o3b). Diagnostika (`cluster.yml` akce `diag`): ClickHouse vracel
+   `NOT_ENOUGH_SPACE` – PVC 4 Gi plný z 91 %: `system.trace_log` 2,3 GB, `part_log` 316 MB, `text_log` 176 MB, `metric_log` 176 MB,
+   `asynchronous_metric_log` 127 MB … proti `otel.otel_traces` 20 MB; Collector po `max_elapsed_time` 60 s logoval „Exporting failed. Dropping
+   data.“ (07:43:24–37 = requesty o3b). **Ztráta spanů bez restartu = hledat v logu exportéru, ne v restartech.** Oprava: systémové logy
+   ClickHouse vypnuté (`platform.xml` `remove="1"`, `query_log` TTL 3 d; config.d je subPath → rollout přes anotaci `platform/config-rev`),
+   exporter `ttl: 168h`, harness `ch_retention` na startu běhu (DROP vypnutých logů, `MODIFY TTL` 7 d u otel tabulek – materialized view
+   přeskočit, `*_trace_id_ts` sloupec `Start`), kontrola **E4d**; operátorsky `cluster.yml` akce `clickhouse-retention` (`--ch-retention`):
+   první úklid volné místo 9,4 % → 95,8 %.
+4. **Okno rotace bez restartu** (R2c): 77–123 s (běh 1 87 s, běh 2 123 s, běh 3 77,5 s) proti 334 s s restartem (P4-7): aplikace 46–95 s
+   (kubelet obnoví soubor do ~1 min + poll watcheru 20 s), konzumenti 0–36 s (DSN ze souboru per spojení, poslední funkční DSN do `ALTER ROLE`).
+5. Paměť posílá ~48 spanů/min i při nečinném clusteru (ClickHouse po 10 min: 480 `memory-server`, 0 `agentgateway`) – zdroj neověřen
+   (kandidát: pravidelné volání paměti aplikací); s TTL 7 d je to ~0,5 M spanů v tabulce, bez TTL rostlo bez omezení.
 
 ## Spuštění
 
