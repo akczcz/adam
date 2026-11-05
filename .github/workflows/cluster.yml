@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: stop | start | status | diag (diagnostika telemetrie – Collector, ClickHouse, gateway; nic nemění)
+        description: stop | start | status | diag (diagnostika telemetrie – Collector, ClickHouse, gateway; nic nemění) | clickhouse-retention (úklid systémových logů ClickHouse a TTL otel tabulek – harness --ch-retention)
         default: status
         type: choice
-        options: [stop, start, status, diag]
+        options: [stop, start, status, diag, clickhouse-retention]
       tag:
         description: diag – prefix zakázek běhu harnessu (např. P31-071221); prázdné = jen stav podů a logy
         default: ''
@@ -98,6 +98,21 @@ jobs:
             kubectl -n $ns exec deploy/zakazka -c app -- sh -c "grep -E 'STOP_TENANT|RESUME_TENANT|GATEWAY_KEYS|ROLE_POD_KILLED|ROLE_CHECKPOINT|ROLE_STOPPED' /data/ledger.jsonl | grep -F '$TAG' | tail -40 | cut -c1-500" 2>&1
           } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           kill "$PF" 2>/dev/null; true
+      # clickhouse-retention (P4-8 běh 3): plný PVC ClickHouse → Collector zahazoval spany. Stejný kód jako na startu měření (harness ch_retention):
+      # DROP systémových logů vypnutých v platform.xml, TTL 7 d u otel tabulek bez TTL, stav disku před/po. Cluster musí běžet.
+      - if: inputs.action == 'clickhouse-retention'
+        uses: actions/checkout@v4
+      - if: inputs.action == 'clickhouse-retention'
+        run: az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing
+      - if: inputs.action == 'clickhouse-retention'
+        uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - if: inputs.action == 'clickhouse-retention'
+        run: |
+          set -o pipefail
+          pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]' cryptography certifi
+          python tools/harness_p1_k8s/harness.py --ch-retention --context "$CLUSTER-admin" 2>&1 | tee "$RUNNER_TEMP/ch.log"
+          { echo "## retence ClickHouse"; echo '```'; grep -E "^(✅|❌)" "$RUNNER_TEMP/ch.log" | cut -c1-3000; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: status
         run: |
           { echo "## $CLUSTER"; az aks show -g "$RG" -n "$CLUSTER" --query '{power:powerState.code, k8s:kubernetesVersion, provisioning:provisioningState}' -o table

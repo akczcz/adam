@@ -1268,7 +1268,61 @@ def e3_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
         g.close()
 
 
-def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
+CH_SYSTEM_LOGS_OFF = ("trace_log", "metric_log", "asynchronous_metric_log", "part_log", "query_thread_log", "processors_profile_log", "latency_log", "error_log", "query_metric_log", "text_log", "asynchronous_insert_log", "query_views_log")   # P4-8 běh 3: vypnuté v clickhouse-config platform.xml
+CH_TTL_DAYS = 7
+
+def ch_query(http, q, port=18445):
+    """Dotaz do ClickHouse přes port-forward (https z interní CA, SSL_CERT_FILE z platform_ca_bundle); JSONCompact → řádky, jinak text."""
+    r = http("POST", f"https://127.0.0.1:{port}/", content=q + (" FORMAT JSONCompact" if q.lstrip().upper().startswith("SELECT") else ""), timeout=120)
+    if r.status_code != 200: raise RuntimeError(f"ClickHouse {r.status_code}: {r.text[:300]}")
+    return r.json().get("data", []) if q.lstrip().upper().startswith("SELECT") else r.text
+
+def ch_state(http):
+    """Stav retence: disk (system.disks), otel tabulky a jejich TTL (engine_full), systémové logy, které mají být vypnuté, velikosti tabulek."""
+    disk = ch_query(http, "SELECT free_space, total_space FROM system.disks WHERE name='default'")
+    free, total = (int(disk[0][0]), int(disk[0][1])) if disk else (0, 0)
+    otel = {n: ("TTL" in ef) for n, ef in ch_query(http, "SELECT name, engine_full FROM system.tables WHERE database='otel'")}
+    sys_on = sorted(n for (n,) in ch_query(http, f"SELECT name FROM system.tables WHERE database='system' AND name IN ({','.join(repr(t) for t in CH_SYSTEM_LOGS_OFF)})"))
+    sizes = {f"{d}.{t}": round(int(b) / 2**20, 1) for d, t, b in ch_query(http, "SELECT database, table, sum(bytes_on_disk) FROM system.parts WHERE active GROUP BY database, table ORDER BY 3 DESC LIMIT 10")}
+    return {"disk": {"free_gb": round(free / 2**30, 2), "total_gb": round(total / 2**30, 2), "free_pct": round(100 * free / total, 1) if total else None}, "otel_ttl": otel, "system_logs_on": sys_on, "top_mb": sizes}
+
+def ch_retention(a, http):
+    """P4-8 běh 3 (E4a): PVC ClickHouse 4 Gi plný (NOT_ENOUGH_SPACE) → Collector po retry spany zahazoval. Idempotentní retence při startu každého
+    běhu (a workflow cluster.yml clickhouse-retention): (1) DROP systémových logů, které config vypíná (trace_log = profiler byl největší; po restartu
+    podu s novým configem se už nezakládají), (2) otel tabulky bez TTL dostanou TTL 7 d (exporter `ttl: 168h` ho dává jen nově zakládaným;
+    MODIFY TTL se rovnou materializuje = smaže staré části). Hodnoty před/po v detailu."""
+    pf = PortForward(a, "clickhouse", 18445, 8443); dropped = []; ttl_added = []; err = None
+    try:
+        time.sleep(2); before = ch_state(http)
+        for t in before["system_logs_on"]:
+            try: ch_query(http, f"DROP TABLE IF EXISTS system.{t} SYNC"); dropped.append(t)
+            except Exception as e: err = f"drop {t}: {str(e)[:160]}"
+        for name, has_ttl in before["otel_ttl"].items():
+            if has_ttl: continue
+            col = "TimeUnix" if name.startswith("otel_metrics") else "Timestamp"
+            try: ch_query(http, f"ALTER TABLE otel.{name} MODIFY TTL toDateTime({col}) + toIntervalDay({CH_TTL_DAYS})"); ttl_added.append(name)
+            except Exception as e: err = f"ttl {name}: {str(e)[:160]}"
+        time.sleep(3); after = ch_state(http)
+    except Exception as e: before = after = None; err = f"{type(e).__name__}: {str(e)[:200]}"
+    finally: pf.stop()
+    return {"before": before, "after": after, "dropped": dropped, "ttl_added": ttl_added, "error": err}
+
+def e4d_check(a, rep, http, ch_ret, since_iso):
+    """E4d: retence ClickHouse drží celý běh – volné místo ≥ 15 %, všechny otel tabulky s TTL, vypnuté systémové logy se znovu nezaložily
+    (= config platform.xml je v běžícím podu), Collector v logu nezahazoval data (`Exporting failed. Dropping data.`) od startu harnessu."""
+    pf = PortForward(a, "clickhouse", 18445, 8443)
+    try: time.sleep(2); st = ch_state(http); err = None
+    except Exception as e: st = None; err = f"{type(e).__name__}: {str(e)[:200]}"
+    finally: pf.stop()
+    pods = kj_static(a, "-n", NS, "get", "pods", "-l", "app=otel-collector")
+    drops = 0
+    for p in (pods.get("items") or []):
+        log = kubectl(a, "-n", NS, "logs", p["metadata"]["name"], f"--since-time={since_iso}", "--tail=5000").stdout
+        drops += log.count("Dropping data")
+    ok = bool(st) and (st["disk"]["free_pct"] or 0) >= 15 and st["otel_ttl"] and all(st["otel_ttl"].values()) and not st["system_logs_on"] and drops == 0
+    rep.add("E4d", "Retence ClickHouse (P4-8 běh 3: plný PVC 4 Gi → NOT_ENOUGH_SPACE → Collector zahazoval spany, E4a/E4b bez 1–3 spanů): otel tabulky s TTL 7 d (exporter ttl 168h + MODIFY TTL u starších), systémové logy ClickHouse vypnuté (platform.xml remove, query_log TTL 3 d) a po úklidu znovu nezaložené, volné místo ≥ 15 %, Collector od startu harnessu nic nezahodil", "PASS" if ok else "FAIL", {"state": st, "collector_drops_since_start": drops, "retention_at_start": {k: ch_ret.get(k) for k in ("dropped", "ttl_added", "error")} if ch_ret else None, "error": err})
+
+def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots, ch_ret=None, since_iso=None):
     """E4 (P3-6): per-request ledger z gateway – tracing agentgateway (span každého LLM requestu s tenant/zakazka/role/llm.cost.total) → Collector → ClickHouse;
     FinOps pohled v Governance MCP (nástroj `ledger`, hranice tenanta jako RLS) a v GUI; součet per zakázka == budget_usage ± tolerance (nezávislý zdroj)."""
     import psycopg, yaml as _yk
@@ -1322,6 +1376,7 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     finally: g.close()
     rep.add("E4b", "FinOps pohled z ledgeru: Governance MCP nástroj `ledger` čte ClickHouse (per tenant/zakázka/role, okno N dní) a přikládá rozdíl proti org.zakazky.spent_usd; hranice tenanta jako u RLS (bea vidí jen beta, platform-admin oba); u dokončených a zastavených zakázek běhu rozdíl ledger vs. registr ≤ 5 % + 0,002 USD; GUI FinOps má tabulky ledgeru s řádky", "PASS" if sp[0] == 200 and sb[0] == 200 and {"acme", "beta"} <= ten_p and ten_b == {"beta"} and run_z and delta_ok and isinstance(pages.get("finops-ledger"), int) and pages["finops-ledger"] >= 1 and pages.get("finops-ledger-zakazky", 0) >= 1 and src and "ClickHouse" in src else "FAIL", {"http": [sp[0], sb[0]], "tenants_platform": sorted(ten_p), "tenants_bea": sorted(ten_b), "run_zakazky": [{k: z.get(k) for k in ("zakazka_id", "status", "requests", "ledger_usd", "spent_usd", "delta_usd")} for z in run_z], "gui": pages, "source": src, "gov_errors": gov_errors})
     rep.add("E4c", "E4: čas", "INFO", {"wall_s": round(time.time() - t_e, 1)})
+    e4d_check(a, rep, http, ch_ret, since_iso)
     cm_raw = (kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or ""; cm_keys = _yk.safe_load(cm_raw) or []
     gcs = [e for e in led() if e.get("kind") == "GATEWAY_KEYS_GC" and str(e.get("zakazka", "")).startswith(tag)]
     rep.add("E4d", "ConfigMap agentgateway-keys: velikost a počet klíčů (limit API serveru 1 MiB – 5. běh E8 ho přerostl: 422 při vydání klíčů i blokaci tenanta); aplikace při vydávání nad 300 položek uklízí klíče ukončených zakázek starších 1 dne (GATEWAY_KEYS_GC), při 422 bez věkového limitu", "INFO",
@@ -3031,6 +3086,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
         if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
         if e11: e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep, pg_tls, t_bao0)   # P3-6 E11: TLS ClickHouse/Collector, Postgres verify-full
+        ch_ret = ch_retention(a, http) if e4 else None   # P4-8 běh 3: úklid a TTL v ClickHouse před provozem rolí (plný PVC → ztracené spany)
+        if ch_ret: print(f"  ch_retention={json.dumps({k: ch_ret.get(k) for k in ('dropped', 'ttl_added', 'error')}, ensure_ascii=False)} disk={(ch_ret.get('after') or {}).get('disk')}")
         if e12: e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw)   # P3-6 E12: Flexible Server jen přes private endpoint
         _led = {"items": []}
         def led():   # P4-2 běh 4: celý ledger (desítky MB) při každém volání přes port-forward dusil aplikaci (readiness, GUI, POST výsledku podu) → jen přírůstek od offsetu (ledger je append-only; total < offset = soubor vyměněn → znovu od nuly)
@@ -3110,7 +3167,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if klas: klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-4: K1a–K1g
         if o3: o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", bao_tok)   # P3-5: O3a–O3f
         if e3: e3_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E3: strop v gateway + navýšení z GUI
-        if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E4: per-request ledger → ClickHouse
+        if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots", ch_ret, t_bao0)   # P3-6 E4: per-request ledger → ClickHouse
         if e6: e6_flow(a, rep, http, led, APP, kj, zid[:-2])   # P3-6 E6: verzování workflow (restart podu aplikace – až po všech tocích s pody rolí)
         if e13: e13_flow(a, rep, http, led, APP, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E13: STALLED (chybějící verze) v GUI a obnova – po E6 (stejné podmínky: bez podů rolí)
         if m1: m1_flow(a, rep, http, led, APP, KC, dsn, zid[:-2], LOGS / "gui-shots")   # P4-1 M1: obnova mandátu z GUI (pody account + architekt)
@@ -3395,6 +3452,20 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if pf_pg: pf_pg.terminate(); kubectl(a, "-n", NS, "delete", "pod", "pgfwd", "--ignore-not-found", "--wait=false")
 
 
+def ch_retention_cli(a):
+    """P4-8 operátorský postup (workflow cluster.yml, akce clickhouse-retention): úklid a TTL v ClickHouse bez měření; tiskne stav před/po."""
+    kj = lambda *x: kj_static(a, *x)
+    os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost"); platform_ca_bundle(a, kj)
+    def http(method, url, **kw):
+        for i in range(12):
+            try: return httpx.request(method, url, **kw)
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError):
+                if i == 11: raise
+                time.sleep(5)
+    d = ch_retention(a, http)
+    print(f"{'✅' if not d['error'] else '❌'} retence ClickHouse: {json.dumps(d, ensure_ascii=False)[:4000]}", flush=True)
+    return 0 if not d["error"] else 1
+
 def rotate_cli(a):
     """P4-7 operátorský postup (workflow rotate.yml): rotace jedné skupiny tajemství bez měření – nová verze v Key Vaultu, ESO force-sync, konzument. Tiskne jen kódy."""
     import base64 as _b
@@ -3433,10 +3504,15 @@ def main():
     ap.add_argument("--acr", default=os.getenv("ACR_LOGIN_SERVER", ""), help="p1-6: login server ACR (socat pod pro Postgres, když runner nedosáhne na Flexible Server)")
     ap.add_argument("--create-kind", action="store_true", help="postavit obraz uzlu, cluster a nahrát obrazy (docker daemon)")
     ap.add_argument("--rotate", choices=["keycloak-humans", "keycloak-admin", "db-roles"], default="", help="P4-7: jen rotace tajemství (operátorský postup, workflow rotate.yml) – bez měření")
+    ap.add_argument("--ch-retention", action="store_true", help="P4-8: jen retence ClickHouse (úklid systémových logů, TTL otel tabulek, stav disku; workflow cluster.yml clickhouse-retention) – bez měření")
     ap.add_argument("--rotate-restart", action="store_true", help="P4-8: db-roles s restartem podů (výchozí bez restartu – Secrety jako soubory)")
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
+    if a.ch_retention:
+        assert a.kubectl, "chybí KUBECTL"
+        for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
+        sys.exit(ch_retention_cli(a))
     if a.rotate:
         assert a.kubectl, "chybí KUBECTL"
         for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)

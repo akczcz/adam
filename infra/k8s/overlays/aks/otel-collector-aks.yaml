@@ -46,7 +46,7 @@ data:
         database: otel
         username: default
         create_schema: true
-        ttl: 0
+        ttl: 168h   # P4-8 běh 3: TTL 7 d nově zakládaných otel tabulek (PVC 4 Gi byl plný → spany zahazovány); starší tabulky dostávají TTL z harnessu (ch_retention)
         timeout: 10s
         sending_queue:
           queue_size: 1000   # P4-8: 100 dávek nestačilo při výpadku ClickHouse/restartu – spany se zahazovaly

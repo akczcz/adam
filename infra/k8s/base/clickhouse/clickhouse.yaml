@@ -13,6 +13,22 @@ data:
         <mark_cache_size>268435456</mark_cache_size>
         <!-- výchozí ClickHouse; 0.5 z harnessu O1 = 1 GiB při limitu 2Gi → dotaz ledgeru padal (P3-6 E13 běh 2); subPath mount = projeví se restartem podu -->
         <max_server_memory_usage_to_ram_ratio>0.9</max_server_memory_usage_to_ram_ratio>
+        <!-- P4-8 běh 3: PVC 4 Gi plný (NOT_ENOUGH_SPACE) → Collector zahazoval spany (E4a). Systémové logy ClickHouse rostly bez TTL (trace_log =
+             profiler byl největší) – vypnuty (remove = klíč z config.xml pryč, tabulka se už nezakládá; existující maže harness ch_retention),
+             query_log s TTL 3 dny. Otel tabulky mají TTL 7 d z exportéru Collectoru (ttl: 168h) / harnessu. Změna = restart podu (subPath). -->
+        <trace_log remove="1"/>
+        <metric_log remove="1"/>
+        <asynchronous_metric_log remove="1"/>
+        <part_log remove="1"/>
+        <query_thread_log remove="1"/>
+        <processors_profile_log remove="1"/>
+        <latency_log remove="1"/>
+        <error_log remove="1"/>
+        <query_metric_log remove="1"/>
+        <text_log remove="1"/>
+        <asynchronous_insert_log remove="1"/>
+        <query_views_log remove="1"/>
+        <query_log><ttl>event_date + INTERVAL 3 DAY DELETE</ttl></query_log>
     </clickhouse>
   users.xml: |
     <clickhouse>
@@ -58,6 +74,7 @@ spec:
   template:
     metadata:
       labels: {app: clickhouse}
+      annotations: {platform/config-rev: "p4-8"}   # config.d je subPath mount → změna platform.xml se projeví až restartem; bump revize = rollout StatefulSetu
     spec:
       containers:
       - name: clickhouse
