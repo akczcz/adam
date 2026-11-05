@@ -21,6 +21,15 @@ from fastapi.responses import PlainTextResponse
 
 app = FastAPI()
 DSN = os.environ.get("GOV_DSN", "")
+DSN_FILE = os.environ.get("GOV_DSN_FILE", "/etc/platform/secrets/governance-db/GOV_DSN")   # P4-8: DSN ze souboru Secretu (rotace bez restartu)
+_DB = {"last_good": DSN}
+
+
+def dsn():
+    """P4-8: DSN ze souboru Secretu (mount bez subPath – kubelet ho při rotaci obnoví bez restartu podu), jinak env."""
+    try:
+        with open(DSN_FILE) as f: return f.read().strip() or DSN
+    except OSError: return DSN
 JWKS_URL, ISSUER = os.environ.get("GOV_KC_JWKS_URL"), os.environ.get("GOV_KC_ISSUER")
 DEV_SECRET = os.environ.get("O1_APPROVAL_SECRET", "o1-transit-key")
 _jwks = jwt.PyJWKClient(JWKS_URL, cache_keys=True, lifespan=300) if JWKS_URL else None
@@ -47,7 +56,12 @@ def user(req: Request) -> dict:
 
 def conn(tenant: str):
     import psycopg
-    c = psycopg.connect(DSN, autocommit=True, connect_timeout=5)
+    d = dsn()
+    try: c = psycopg.connect(d, autocommit=True, connect_timeout=5)
+    except psycopg.OperationalError:
+        if _DB["last_good"] == d: raise
+        c = psycopg.connect(_DB["last_good"], autocommit=True, connect_timeout=5)   # P4-8: nové heslo ještě není v DB → poslední funkční DSN
+    else: _DB["last_good"] = d
     c.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant,))
     return c
 

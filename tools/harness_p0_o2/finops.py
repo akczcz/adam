@@ -256,12 +256,22 @@ def tenants_sync(tenants: list[dict]) -> dict:
     finally: c.close()
 
 
+SECRETS_DIR = os.environ.get("P0_SECRETS_DIR", "/etc/platform/secrets/finops")
+
+
+def roles_passwords_raw():
+    """P4-8: JSON hesel rolí ze souboru Secretu (mount bez subPath – kubelet ho při rotaci obnoví bez restartu podu), jinak env (kind/P0). Vrací (text, zdroj)."""
+    try:
+        with open(os.path.join(SECRETS_DIR, "P0_DB_ROLE_PASSWORDS")) as f: return f.read(), "file"
+    except OSError: return os.environ.get("P0_DB_ROLE_PASSWORDS"), "env"
+
+
 def roles_sync() -> dict:
     """P3-6 E9: hesla DB rolí s RLS (memory_app, org_reader, org_writer) nejsou literál v Gitu ani v SQL, ale env P0_DB_ROLE_PASSWORDS
     (JSON role → heslo; AKS: ESO z Key Vaultu, kind: dev hodnoty v base Secretu). Aplikace jako vlastník schématu je při startu nastaví (ALTER ROLE,
     idempotentní; roli založí, když chybí – paměť ji jinak zakládá harness M1). Hodnoty se nelogují; do ledgeru jen jména rolí."""
-    raw = os.environ.get("P0_DB_ROLE_PASSWORDS")
-    if not raw: return {"written": False, "reason": "bez P0_DB_ROLE_PASSWORDS"}
+    raw, source = roles_passwords_raw()
+    if not raw: return {"written": False, "reason": "bez P0_DB_ROLE_PASSWORDS", "source": source}
     try: pws = json.loads(raw)
     except ValueError as e: return {"written": False, "error": f"P0_DB_ROLE_PASSWORDS není JSON: {e}"}
     bad = [r for r in pws if not re.fullmatch(r"[a-z_][a-z0-9_]*", r)]
@@ -273,19 +283,20 @@ def roles_sync() -> dict:
         for role, pw in pws.items():
             c.execute(sql.SQL("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {r}) THEN CREATE ROLE {i} LOGIN; END IF; END $$").format(r=sql.Literal(role), i=sql.Identifier(role)))
             c.execute(sql.SQL("ALTER ROLE {i} WITH LOGIN PASSWORD {p}").format(i=sql.Identifier(role), p=sql.Literal(str(pw))))
-        return {"written": True, "roles": sorted(pws)}
+        return {"written": True, "roles": sorted(pws), "source": source}
     except Exception as e:
         return {"written": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
     finally: c.close()
 
 
 def tenant_spend(tenant: str) -> dict | None:
-    """Útrata tenanta = součet spent_usd jeho zakázek v org.zakazky (30d okno klíčů) + strop z org.tenants; None bez DSN."""
+    """Útrata tenanta = součet spent_usd jeho zakázek v org.zakazky za posledních 30 dní (okno jako u rozpočtů klíčů gateway) + strop z org.tenants; None bez DSN."""
     c = _conn("P0_REGISTRY_DSN")
     if c is None: return None
     try:
         c.execute(DDL_TENANTS); c.execute(DDL_ZAKAZKY)
-        row = c.execute("SELECT COALESCE(SUM(spent_usd), 0) FROM org.zakazky WHERE tenant_id = %s", (tenant,)).fetchone()
+        # P4-8: okno 30 dní (jako rozpočty klíčů gateway) – do té doby součet všech zakázek tenanta od založení platformy (dev tenant beta narazil na strop 20 USD po ~2 měsících měření)
+        row = c.execute("SELECT COALESCE(SUM(spent_usd), 0) FROM org.zakazky WHERE tenant_id = %s AND created_at > now() - interval '30 days'", (tenant,)).fetchone()
         lim = c.execute("SELECT budget_usd FROM org.tenants WHERE tenant_id = %s", (tenant,)).fetchone()
         c.execute("UPDATE org.tenants SET spent_usd = %s, updated_at = now() WHERE tenant_id = %s", (float(row[0]), tenant))
         return {"tenant": tenant, "spent_usd": float(row[0]), "budget_usd": float(lim[0]) if lim else None}

@@ -37,6 +37,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
 
 DB_URI = os.environ["MEMORY_DB_URI"]
+DB_URI_FILE = os.environ.get("MEMORY_DB_URI_FILE", "/etc/platform/secrets/memory-db/MEMORY_DB_URI")   # P4-8: DSN ze souboru Secretu (rotace bez restartu)
+_DB = {"last_good": DB_URI}
+
+
+def db_uri():
+    """P4-8: DSN ze souboru Secretu (mount bez subPath – kubelet ho při rotaci obnoví bez restartu podu), jinak env."""
+    try:
+        with open(DB_URI_FILE) as f: return f.read().strip() or DB_URI
+    except OSError: return DB_URI
 JWT_SECRET = os.environ.get("MEMORY_JWT_SECRET", "harness-secret")
 JWKS_URL = os.environ.get("MEMORY_JWKS_URL")           # nastaveno → jen RS256 z JWKS (Keycloak), HS256 odmítnut
 JWT_ISSUER = os.environ.get("MEMORY_ISSUER")
@@ -162,7 +171,12 @@ def opa(action: str, tok: dict, record: dict | None = None, requested_status: st
 
 def conn(tenant_id: str):
     """Spojení pod rolí memory_app (RLS platí) s tenantem v session proměnné – nikdy z argumentu nástroje."""
-    c = psycopg.connect(DB_URI, autocommit=False)
+    uri = db_uri()
+    try: c = psycopg.connect(uri, autocommit=False, connect_timeout=5)
+    except psycopg.OperationalError:
+        if _DB["last_good"] == uri: raise
+        c = psycopg.connect(_DB["last_good"], autocommit=False, connect_timeout=5)   # P4-8: nové heslo ještě není v DB (ALTER ROLE dělá aplikace) → poslední funkční DSN
+    else: _DB["last_good"] = uri
     c.execute("SELECT set_config('app.tenant_id', %s, false)", (tenant_id,))
     return c
 

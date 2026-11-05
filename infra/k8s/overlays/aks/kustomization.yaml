@@ -236,15 +236,15 @@ patches:
     - {op: replace, path: /spec/template/spec/containers/0/env/3/value, value: https://keycloak:8443/realms/p0/protocol/openid-connect/certs}
     - {op: replace, path: /spec/template/spec/containers/0/env/4/value, value: https://keycloak:8443/realms/p0}
     - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: SSL_CERT_FILE, value: /etc/platform/ca/ca.crt}}
-    - {op: add, path: /spec/template/spec/containers/0/volumeMounts, value: [{name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}]}
-    - {op: add, path: /spec/template/spec/volumes, value: [{name: platform-ca, configMap: {name: platform-ca}}]}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}   # P4-8: base už má mount Secretu DSN → append
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: platform-ca, configMap: {name: platform-ca}}}
 - target: {kind: Deployment, name: governance}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/env/2/value, value: https://keycloak:8443/realms/p0/protocol/openid-connect/certs}
     - {op: replace, path: /spec/template/spec/containers/0/env/3/value, value: https://keycloak:8443/realms/p0}
     - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: SSL_CERT_FILE, value: /etc/platform/ca/ca.crt}}
-    - {op: add, path: /spec/template/spec/containers/0/volumeMounts, value: [{name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}]}
-    - {op: add, path: /spec/template/spec/volumes, value: [{name: platform-ca, configMap: {name: platform-ca}}]}
+    - {op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}   # P4-8: base už má mount Secretu DSN → append
+    - {op: add, path: /spec/template/spec/volumes/-, value: {name: platform-ca, configMap: {name: platform-ca}}}
 - target: {kind: StatefulSet, name: spire-server}
   patch: |
     - {op: add, path: /spec/template/spec/securityContext, value: {fsGroup: 1000, runAsUser: 1000, runAsNonRoot: true}}

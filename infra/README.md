@@ -255,6 +255,19 @@ v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se 
 timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
 jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
 
+## P4-8: rotace bez restartu (2026-11-04)
+
+Secrety `zakazka-finops`, `memory-db` a `governance-db` jsou v podech navíc jako soubory (`/etc/platform/secrets/<name>/<klíč>`, mount bez
+`subPath`, `optional`); kubelet je po změně obnoví do ~1 min. Aplikace při změně souboru provede `ALTER ROLE` (ledger `DB_ROLES_SYNC
+trigger=file`), paměť a Governance MCP čtou DSN ze souboru při každém spojení (při selhání poslední funkční). Overlay AKS přidává mounty
+`platform-ca` k těmto Deploymentům jako append (`/-`), ne jako nový seznam. Rotace DB rolí = `harness.py --rotate db-roles` bez restartu.
+
+**Retence ClickHouse (běh 3):** PVC 4 Gi zaplnily systémové logy ClickHouse (`trace_log` 2,3 GB) → `NOT_ENOUGH_SPACE` → Collector spany
+zahazoval. `clickhouse-config` `platform.xml` systémové logy vypíná (`<trace_log remove="1"/>` …, `query_log` TTL 3 dny) – je to subPath mount,
+změna configu = bump anotace `platform/config-rev` v StatefulSetu (rollout). Exporter Collectoru má `ttl: 168h` (jen nové tabulky); starší
+tabulky dostanou TTL z harnessu (`ch_retention` na startu každého měření, nebo `cluster.yml` akce `clickhouse-retention` = `harness.py
+--ch-retention`). Diagnostika telemetrie bez lokálního kubectl: `cluster.yml` akce `diag` (`tag` = prefix zakázek běhu).
+
 ## P4-7: rotace tajemství (2026-11-04)
 
 Rotace = nová verze v Key Vaultu (`az keyvault secret set`, identita s rolí Key Vault Secrets Officer) → `kubectl annotate externalsecret <n>

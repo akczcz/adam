@@ -873,7 +873,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
             rows = c.execute("SELECT budget_id, used_amount FROM budget_usage WHERE budget_id LIKE '%-30d-block'").fetchall()
         spend_b = {r_: role_usage_usd(rows, h) for r_, h in hashes.items()}
         gate_b = next((e for e in L if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zb), {})
-        rep.add("T1d", "Klíče gateway per tenant: klíče zakázky beta jsou k-beta-<zakazka>-<role> s metadata.tenant=beta a user_id beta/…, vydané z šablony s placeholderem {tenant}; útrata account v budget_usage > 0; budget_gate zná strop tenanta (org.tenants.budget_usd 20) a útratu tenanta", "PASS" if len(mine) >= 4 and all((k.get("metadata") or {}).get("tenant") == "beta" and (k.get("metadata") or {}).get("name", "").startswith("k-beta-") and (k.get("metadata") or {}).get("user_id", "").startswith("beta/") for k in mine) and spend_b.get("account", 0) > 0 and (gate_b.get("tenant") or {}).get("budget_usd") == 20 else "FAIL", {"keys": [(k.get("metadata") or {}).get("name") for k in mine], "spend_usd": {k: round(v, 6) for k, v in spend_b.items()}, "gate": {k: gate_b.get(k) for k in ("role", "tenant", "exceeded")}})
+        rep.add("T1d", "Klíče gateway per tenant: klíče zakázky beta jsou k-beta-<zakazka>-<role> s metadata.tenant=beta a user_id beta/…, vydané z šablony s placeholderem {tenant}; útrata account v budget_usage > 0; budget_gate zná strop tenanta (org.tenants.budget_usd z tenants.yaml) a útratu tenanta za 30 dní", "PASS" if len(mine) >= 4 and all((k.get("metadata") or {}).get("tenant") == "beta" and (k.get("metadata") or {}).get("name", "").startswith("k-beta-") and (k.get("metadata") or {}).get("user_id", "").startswith("beta/") for k in mine) and spend_b.get("account", 0) > 0 and (gate_b.get("tenant") or {}).get("budget_usd") == float(next(t["budget_usd"] for t in tenants_git if t["id"] == "beta")) else "FAIL", {"keys": [(k.get("metadata") or {}).get("name") for k in mine], "spend_usd": {k: round(v, 6) for k, v in spend_b.items()}, "gate": {k: gate_b.get(k) for k in ("role", "tenant", "exceeded")}})
         def rls(tenant):
             import base64 as _b64r
             host = dsn("org").split("@")[1].split("/")[0]; raw_ = kubectl(a, "-n", NS, "get", "secret", "zakazka-finops", "-o", "jsonpath={.data.P0_DB_ROLE_PASSWORDS}").stdout.strip()
@@ -1173,7 +1173,7 @@ def o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid_acme, tag, gui_shots, bao_t
         app_pods = [(p_["metadata"]["name"], sum(c_.get("restartCount", 0) for c_ in (p_.get("status", {}).get("containerStatuses") or []))) for p_ in kj("-n", NS, "get", "pods", "-l", "app=zakazka").get("items", [])]
         if h4["interrupt"]: wait_i("H5", 300)
         stop_b = http("POST", f"{APP}/zakazky/{zb}/stop", json={"by": "harness", "reason": "O3c hotovo – zakázku beta zastavuji (H5 není třeba)."}, timeout=60).status_code
-        rep.add("O3c", "Resume tenanta beta (platform-admin s důvodem): workflow RUNNING, výsledek zabitého podu (stopped) se zpracuje až po resume → ROLE_STOPPED rerun_after_resume → vývojář běží znovu (druhý ROLE_GATE/ROLE_POD vývojář od checkpointu), reviewer, HITL H4 znovu v GUI jako interrupt, schválení bea projde → merge executor allow (EXECUTED merge)", "PASS" if rs.status_code == 200 and zb in (rs_j.get("resumed") or []) and h4["interrupt"] and h4["interrupt"].startswith("hitl:H4:") and stopped_ev and stopped_ev[0].get("result") == "rerun_after_resume" and len(gates_v) >= 2 and len(pods_v) >= 2 and pods_v[-1].get("phase") == "Succeeded" and not pods_v[-1].get("stopped") and d4 and d4["new_run"] and ex and (ex.get("applied") is not None) else "FAIL", {"resume": {k: rs_j.get(k) for k in ("resumed", "keys_unblocked")}, "h4": h4["interrupt"], "h4_after_resume_s": round(time.time() - t_r, 1), "role_stopped": [{k: e.get(k) for k in ("role", "attempt", "result")} for e in stopped_ev], "vyvojar_gates": len(gates_v), "vyvojar_pods": [{k: e.get(k) for k in ("phase", "stopped", "t_run_s")} for e in pods_v], "decide": d4, "executed": {k: ex.get(k) for k in ("action", "by", "applied")} if ex else None, "stop_http": stop_b, "wf_after": st_b2.get("status"), "wf_output": st_b2.get("output"), "running_after_resume_s": resumed_after_s, "unblock_propagation": next((e.get("propagation") for e in reversed(led()) if e.get("kind") == "GATEWAY_KEYS_UNBLOCK" and e.get("tenant") == "beta"), None), "ledger_after_resume": tail_b, "app_pods": app_pods})
+        rep.add("O3c", "Resume tenanta beta (platform-admin s důvodem): workflow RUNNING, výsledek zabitého podu (stopped) se zpracuje až po resume → ROLE_STOPPED rerun_after_resume → vývojář běží znovu (druhý ROLE_GATE/ROLE_POD vývojář od checkpointu), reviewer, HITL H4 znovu v GUI jako interrupt, schválení bea projde → merge executor allow (EXECUTED merge)", "PASS" if rs.status_code == 200 and zb in (rs_j.get("resumed") or []) and h4["interrupt"] and h4["interrupt"].startswith("hitl:H4:") and stopped_ev and stopped_ev[0].get("result") == "rerun_after_resume" and len(gates_v) >= 2 and len(pods_v) >= 2 and pods_v[-1].get("phase") == "Succeeded" and not pods_v[-1].get("stopped") and d4 and d4["new_run"] and ex and (ex.get("applied") is not None) else "FAIL", {"resume": {k: rs_j.get(k) for k in ("resumed", "keys_unblocked")}, "h4": h4["interrupt"], "h4_after_resume_s": round(time.time() - t_r, 1), "role_stopped": [{k: e.get(k) for k in ("role", "attempt", "result")} for e in stopped_ev], "vyvojar_gates": len(gates_v), "vyvojar_pods": [{k: e.get(k) for k in ("phase", "stopped", "t_run_s")} for e in pods_v], "decide": d4, "executed": {k: ex.get(k) for k in ("action", "by", "applied")} if ex else None, "stop_http": stop_b, "wf_after": st_b2.get("status"), "wf_output": st_b2.get("output"), "running_after_resume_s": resumed_after_s, "unblock_propagation": next((e.get("propagation") for e in reversed(led()) if e.get("kind") == "GATEWAY_KEYS_UNBLOCK" and e.get("tenant") == "beta"), None), "ledger_after_resume": tail_b, "app_pods": app_pods, "budget_exceeded": [{k: e.get(k) for k in ("role", "source", "spent_usd", "limit_usd", "tenant")} for e in L if e.get("kind") == "BUDGET_EXCEEDED" and e.get("zakazka") == zb][-3:]})   # P4-8 běh 1: reviewer narazil na strop tenanta (tenant-sum) místo H4 – detail nese zdroj a částky
         # O3d – ClickHouse: spany serveru paměti (search_memory) tenanta acme nenesou žádný record.id ani tenant beta (a naopak); ledger zakázky acme bez identifikátorů beta
         pf_ch = PortForward(a, "clickhouse", 18445, 8443); rows = []; ch_err = None
         try:
@@ -1268,7 +1268,62 @@ def e3_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
         g.close()
 
 
-def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
+CH_SYSTEM_LOGS_OFF = ("trace_log", "metric_log", "asynchronous_metric_log", "part_log", "query_thread_log", "processors_profile_log", "latency_log", "error_log", "query_metric_log", "text_log", "asynchronous_insert_log", "query_views_log")   # P4-8 běh 3: vypnuté v clickhouse-config platform.xml
+CH_TTL_DAYS = 7
+
+def ch_query(http, q, port=18445):
+    """Dotaz do ClickHouse přes port-forward (https z interní CA, SSL_CERT_FILE z platform_ca_bundle); JSONCompact → řádky, jinak text."""
+    r = http("POST", f"https://127.0.0.1:{port}/", content=q + (" FORMAT JSONCompact" if q.lstrip().upper().startswith("SELECT") else ""), timeout=120)
+    if r.status_code != 200: raise RuntimeError(f"ClickHouse {r.status_code}: {r.text[:300]}")
+    return r.json().get("data", []) if q.lstrip().upper().startswith("SELECT") else r.text
+
+def ch_state(http):
+    """Stav retence: disk (system.disks), otel tabulky a jejich TTL (engine_full), systémové logy, které mají být vypnuté, velikosti tabulek."""
+    disk = ch_query(http, "SELECT free_space, total_space FROM system.disks WHERE name='default'")
+    free, total = (int(disk[0][0]), int(disk[0][1])) if disk else (0, 0)
+    otel = {n: ("TTL" in ef) for n, ef in ch_query(http, "SELECT name, engine_full FROM system.tables WHERE database='otel' AND engine != 'MaterializedView'")}   # MV TTL neumí (TTL má cílová tabulka *_trace_id_ts)
+    sys_on = sorted(n for (n,) in ch_query(http, f"SELECT name FROM system.tables WHERE database='system' AND name IN ({','.join(repr(t) for t in CH_SYSTEM_LOGS_OFF)})"))
+    sizes = {f"{d}.{t}": round(int(b) / 2**20, 1) for d, t, b in ch_query(http, "SELECT database, table, sum(bytes_on_disk) FROM system.parts WHERE active GROUP BY database, table ORDER BY 3 DESC LIMIT 10")}
+    return {"disk": {"free_gb": round(free / 2**30, 2), "total_gb": round(total / 2**30, 2), "free_pct": round(100 * free / total, 1) if total else None}, "otel_ttl": otel, "system_logs_on": sys_on, "top_mb": sizes}
+
+def ch_retention(a, http):
+    """P4-8 běh 3 (E4a): PVC ClickHouse 4 Gi plný (NOT_ENOUGH_SPACE) → Collector po retry spany zahazoval. Idempotentní retence při startu každého
+    běhu (a workflow cluster.yml clickhouse-retention): (1) DROP systémových logů, které config vypíná (trace_log = profiler byl největší; po restartu
+    podu s novým configem se už nezakládají), (2) otel tabulky bez TTL dostanou TTL 7 d (exporter `ttl: 168h` ho dává jen nově zakládaným;
+    MODIFY TTL se rovnou materializuje = smaže staré části). Hodnoty před/po v detailu."""
+    kubectl(a, "-n", NS, "wait", "--for=condition=ready", "pod", "-l", "app=clickhouse", "--timeout=240s")   # rollout po změně configu (anotace platform/config-rev) – port-forward na nehotový pod = connection refused
+    pf = PortForward(a, "clickhouse", 18445, 8443); dropped = []; ttl_added = []; err = None
+    try:
+        time.sleep(2); before = ch_state(http)
+        for t in before["system_logs_on"]:
+            try: ch_query(http, f"DROP TABLE IF EXISTS system.{t} SYNC"); dropped.append(t)
+            except Exception as e: err = f"drop {t}: {str(e)[:160]}"
+        for name, has_ttl in before["otel_ttl"].items():
+            if has_ttl: continue
+            col = "Start" if name.endswith("_trace_id_ts") else "TimeUnix" if name.startswith("otel_metrics") else "Timestamp"   # sloupce dle DDL clickhouse exportéru
+            try: ch_query(http, f"ALTER TABLE otel.{name} MODIFY TTL toDateTime({col}) + toIntervalDay({CH_TTL_DAYS})"); ttl_added.append(name)
+            except Exception as e: err = f"ttl {name}: {str(e)[:160]}"
+        time.sleep(3); after = ch_state(http)
+    except Exception as e: before = after = None; err = f"{type(e).__name__}: {str(e)[:200]}"
+    finally: pf.stop()
+    return {"before": before, "after": after, "dropped": dropped, "ttl_added": ttl_added, "error": err}
+
+def e4d_check(a, rep, http, ch_ret, since_iso):
+    """E4d: retence ClickHouse drží celý běh – volné místo ≥ 15 %, všechny otel tabulky s TTL, vypnuté systémové logy se znovu nezaložily
+    (= config platform.xml je v běžícím podu), Collector v logu nezahazoval data (`Exporting failed. Dropping data.`) od startu harnessu."""
+    pf = PortForward(a, "clickhouse", 18445, 8443)
+    try: time.sleep(2); st = ch_state(http); err = None
+    except Exception as e: st = None; err = f"{type(e).__name__}: {str(e)[:200]}"
+    finally: pf.stop()
+    pods = kj_static(a, "-n", NS, "get", "pods", "-l", "app=otel-collector")
+    drops = 0
+    for p in (pods.get("items") or []):
+        log = kubectl(a, "-n", NS, "logs", p["metadata"]["name"], f"--since-time={since_iso}", "--tail=5000").stdout
+        drops += log.count("Dropping data")
+    ok = bool(st) and (st["disk"]["free_pct"] or 0) >= 15 and st["otel_ttl"] and all(st["otel_ttl"].values()) and not st["system_logs_on"] and drops == 0
+    rep.add("E4d", "Retence ClickHouse (P4-8 běh 3: plný PVC 4 Gi → NOT_ENOUGH_SPACE → Collector zahazoval spany, E4a/E4b bez 1–3 spanů): otel tabulky s TTL 7 d (exporter ttl 168h + MODIFY TTL u starších), systémové logy ClickHouse vypnuté (platform.xml remove, query_log TTL 3 d) a po úklidu znovu nezaložené, volné místo ≥ 15 %, Collector od startu harnessu nic nezahodil", "PASS" if ok else "FAIL", {"state": st, "collector_drops_since_start": drops, "retention_at_start": {k: ch_ret.get(k) for k in ("dropped", "ttl_added", "error")} if ch_ret else None, "error": err})
+
+def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots, ch_ret=None, since_iso=None):
     """E4 (P3-6): per-request ledger z gateway – tracing agentgateway (span každého LLM requestu s tenant/zakazka/role/llm.cost.total) → Collector → ClickHouse;
     FinOps pohled v Governance MCP (nástroj `ledger`, hranice tenanta jako RLS) a v GUI; součet per zakázka == budget_usage ± tolerance (nezávislý zdroj)."""
     import psycopg, yaml as _yk
@@ -1322,6 +1377,7 @@ def e4_flow(a, rep, http, led, APP, KC, dsn, kj, tag, gui_shots):
     finally: g.close()
     rep.add("E4b", "FinOps pohled z ledgeru: Governance MCP nástroj `ledger` čte ClickHouse (per tenant/zakázka/role, okno N dní) a přikládá rozdíl proti org.zakazky.spent_usd; hranice tenanta jako u RLS (bea vidí jen beta, platform-admin oba); u dokončených a zastavených zakázek běhu rozdíl ledger vs. registr ≤ 5 % + 0,002 USD; GUI FinOps má tabulky ledgeru s řádky", "PASS" if sp[0] == 200 and sb[0] == 200 and {"acme", "beta"} <= ten_p and ten_b == {"beta"} and run_z and delta_ok and isinstance(pages.get("finops-ledger"), int) and pages["finops-ledger"] >= 1 and pages.get("finops-ledger-zakazky", 0) >= 1 and src and "ClickHouse" in src else "FAIL", {"http": [sp[0], sb[0]], "tenants_platform": sorted(ten_p), "tenants_bea": sorted(ten_b), "run_zakazky": [{k: z.get(k) for k in ("zakazka_id", "status", "requests", "ledger_usd", "spent_usd", "delta_usd")} for z in run_z], "gui": pages, "source": src, "gov_errors": gov_errors})
     rep.add("E4c", "E4: čas", "INFO", {"wall_s": round(time.time() - t_e, 1)})
+    e4d_check(a, rep, http, ch_ret, since_iso)
     cm_raw = (kj("-n", NS, "get", "configmap", "agentgateway-keys").get("data") or {}).get("keys.yaml") or ""; cm_keys = _yk.safe_load(cm_raw) or []
     gcs = [e for e in led() if e.get("kind") == "GATEWAY_KEYS_GC" and str(e.get("zakazka", "")).startswith(tag)]
     rep.add("E4d", "ConfigMap agentgateway-keys: velikost a počet klíčů (limit API serveru 1 MiB – 5. běh E8 ho přerostl: 422 při vydání klíčů i blokaci tenanta); aplikace při vydávání nad 300 položek uklízí klíče ukončených zakázek starších 1 dne (GATEWAY_KEYS_GC), při 422 bez věkového limitu", "INFO",
@@ -1786,7 +1842,11 @@ def rotate_admin(a, http, KC, kv_name, secret):
     return ok, {"kv_rotated": bool(new), "eso": sync, "kc_admin": adm, "logins": logins, "s": round(time.time() - t0, 1)}
 
 
-def rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try=None):
+def _pods_of(a, *apps):
+    return {d: sorted((p["metadata"]["name"], (p.get("status") or {}).get("startTime") or "") for p in kj_static(a, "-n", NS, "get", "pods", "-l", f"app={d}").get("items", []) if not p["metadata"].get("deletionTimestamp")) for d in apps}
+
+
+def rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try=None, restart=True):
     """P4-7 R1b: nové verze hesel DB rolí (memory_app, org_reader, org_writer) v Key Vaultu → ESO force-sync (zakazka-finops, memory-db, governance-db) →
     restart aplikace (ALTER ROLE z env, ledger DB_ROLES_SYNC) → restart paměti a Governance MCP (DSN z env) → paměť i governance odpovídají, Postgres: staré heslo odmítnuto."""
     ROLES = {"memory_app": "pg-memory-app-password", "org_reader": "pg-org-reader-password", "org_writer": "pg-org-writer-password"}; t0 = time.time(); tm = {}
@@ -1795,26 +1855,31 @@ def rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try=Non
     sync = eso_force_sync(a, {"zakazka-finops": [("zakazka-finops", "P0_DB_ROLE_PASSWORDS", v) for v in new.values() if v],
                               "memory-db": [("memory-db", "MEMORY_DB_URI", new["memory_app"])] if new["memory_app"] else [],
                               "governance-db": [("governance-db", "GOV_DSN", new["org_reader"])] if new["org_reader"] else []})
-    t1 = time.time()
-    restart_pods(a, "zakazka"); time.sleep(5); roll_app = kubectl(a, "-n", NS, "rollout", "status", "deployment/zakazka", "--timeout=300s", timeout=320).returncode == 0
-    kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=zakazka", "--timeout=300s", timeout=320); pfs["zakazka"].start()
-    sync_ev = None; health = None; t2 = time.time()
-    while time.time() - t2 < 240 and not sync_ev:
+    t1 = time.time(); pods0 = _pods_of(a, "zakazka", "memory", "governance"); sync_ev = None; health = None
+    if restart:
+        restart_pods(a, "zakazka"); time.sleep(5); roll_app = kubectl(a, "-n", NS, "rollout", "status", "deployment/zakazka", "--timeout=300s", timeout=320).returncode == 0
+        kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=zakazka", "--timeout=300s", timeout=320); pfs["zakazka"].start()
+    else: roll_app = "no-restart"
+    t2 = time.time()
+    while time.time() - t2 < (240 if restart else 360) and not sync_ev:
         try:
             health = http("GET", f"{APP}/health", timeout=10).status_code
-            if health == 200:
-                evs = [e for e in led() if e.get("kind") == "DB_ROLES_SYNC" and e.get("ts", 0) > t1 - 30]   # podle času, ne počtu (ledger po restartu podu může začít znovu)
-                if evs and evs[-1].get("written"): sync_ev = {k: evs[-1].get(k) for k in ("written", "roles", "error")}
+            if health == 200:   # podle času, ne počtu (ledger po restartu podu může začít znovu); P4-8 bez restartu: záznam trigger=file od watcheru (kubelet obnoví soubor do ~1 min + poll 20 s)
+                evs = [e for e in led() if e.get("kind") == "DB_ROLES_SYNC" and e.get("ts", 0) > t1 - 30 and (restart or e.get("trigger") == "file")]
+                if evs and evs[-1].get("written"): sync_ev = {k: evs[-1].get(k) for k in ("written", "roles", "error", "source", "trigger")}
         except Exception: pass
         if not sync_ev: time.sleep(5)
     tm["app_s"] = round(time.time() - t1, 1); t3 = time.time()
-    restart_pods(a, "memory", "governance"); time.sleep(5)
-    rolls = {d: kubectl(a, "-n", NS, "rollout", "status", f"deployment/{d}", "--timeout=300s", timeout=320).returncode == 0 for d in ("memory", "governance")}
-    kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=memory", "--timeout=300s", timeout=320); pfs["memory"].start(); tm["consumers_s"] = round(time.time() - t3, 1)
+    if restart:
+        restart_pods(a, "memory", "governance"); time.sleep(5)
+        rolls = {d: kubectl(a, "-n", NS, "rollout", "status", f"deployment/{d}", "--timeout=300s", timeout=320).returncode == 0 for d in ("memory", "governance")}
+        kubectl(a, "-n", NS, "wait", "--for=condition=Ready", "pod", "-l", "app=memory", "--timeout=300s", timeout=320); pfs["memory"].start()
+    else: rolls = {"memory": "no-restart", "governance": "no-restart"}
+    tm["consumers_s"] = round(time.time() - t3, 1)
     human = _kc_login(http, KC, "adam", hpw("adam"), client="harness-human"); tk = None
     if human["token"]: tk = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "harness-human", "username": "adam", "password": hpw("adam")}, timeout=15).json()["access_token"]
     mem = None; gov = None
-    for _ in range(12):
+    for _ in range(12 if restart else 36):   # bez restartu: soubor DSN v podech paměti a governance obnoví kubelet do ~1–2 min, spojení se dělá per request
         try:
             mem = http("POST", f"{MEM}/tools/search_memory", json={"query": "test", "limit": 1}, headers={"Authorization": f"Bearer {tk}"}, timeout=15).status_code if tk else "no-token"
             tp = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "platform-gui", "username": "platform-admin", "password": hpw("platform-admin")}, timeout=15).json().get("access_token")
@@ -1823,9 +1888,10 @@ def rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try=Non
         if mem == 200 and gov == 200: break
         time.sleep(5)
     pg = {r: {"old": pg_try(r, old.get(r, ""), db) if (pg_try and old.get(r)) else None, "new": pg_try(r, new[r], db) if (pg_try and new[r]) else None} for r, db in (("memory_app", "memory"), ("org_reader", "org"), ("org_writer", "org"))}
-    ok = (all(new.values()) and sync["synced"] and roll_app and bool(sync_ev) and sorted(sync_ev.get("roles") or []) == sorted(ROLES) and all(rolls.values()) and mem == 200 and gov == 200
-          and (pg_try is None or all(v["new"] is True and v["old"] is not True for v in pg.values())))
-    return ok, {"kv_rotated": [r for r in ROLES if new[r]], "eso": sync, "app": {"rollout": roll_app, "health": health, "db_roles_sync": sync_ev}, "consumers": rolls, "memory_http": mem, "governance_http": gov, "postgres": pg, "timing": {**tm, "total_s": round(time.time() - t0, 1)}}
+    tm["consumers_ok_s"] = round(time.time() - t3, 1); pods1 = _pods_of(a, "zakazka", "memory", "governance"); unchanged = {d: pods0[d] == pods1[d] for d in pods0}
+    ok = (all(new.values()) and sync["synced"] and bool(roll_app) and bool(sync_ev) and sorted(sync_ev.get("roles") or []) == sorted(ROLES) and all(rolls.values()) and mem == 200 and gov == 200
+          and (pg_try is None or all(v["new"] is True and v["old"] is not True for v in pg.values())) and (restart or (all(unchanged.values()) and sync_ev.get("trigger") == "file" and sync_ev.get("source") == "file")))
+    return ok, {"kv_rotated": [r for r in ROLES if new[r]], "eso": sync, "app": {"rollout": roll_app, "health": health, "db_roles_sync": sync_ev}, "consumers": rolls, "pods_unchanged": unchanged, "memory_http": mem, "governance_http": gov, "postgres": pg, "timing": {**tm, "total_s": round(time.time() - t0, 1)}}
 
 
 def r1_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn):
@@ -1843,6 +1909,23 @@ def r1_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn):
     ok_b, d_b = rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try)
     rep.add("R1b", "Rotace hesel DB rolí s RLS (P4-7): nové verze memory_app/org_reader/org_writer v Key Vaultu → ESO force-sync Secretů zakazka-finops, memory-db, governance-db → nové pody aplikace (ALTER ROLE z env, ledger DB_ROLES_SYNC written, 3 role) → nové pody paměti a Governance MCP (DSN z env) → paměť 200 (token člověka), Governance MCP 200; Postgres: nové heslo přijato, staré odmítnuto u všech tří", "PASS" if ok_b else "FAIL", d_b)
     rep.add("R1d", "R1: čas rotací a verze v Key Vaultu", "INFO", {"wall_s": round(time.time() - t_r, 1), "humans_s": d_a.get("s"), "admin_s": d_c.get("s"), "db_roles": d_b.get("timing"), "eso_s": {"humans": (d_a.get("eso") or {}).get("s"), "admin": (d_c.get("eso") or {}).get("s"), "db": (d_b.get("eso") or {}).get("s")}, "kv_versions": {n: len(kv_versions(kv_name, n, 10)) for n in ("keycloak-admin-password", "kc-user-adam-password", "pg-memory-app-password")}, "kv_errors": KV_ERRORS[-5:]})
+
+
+def r2_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn):
+    """R2 (P4-8): rotace hesel DB rolí bez restartu – Secrety jsou v podech jako soubory (mount bez subPath), kubelet je obnoví do ~1 min; aplikace
+    sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení (při selhání poslední funkční)."""
+    import psycopg
+    t_r = time.time(); hostport = dsn("org").split("@")[1].split("/")[0]
+    def pg_try(role, pw, db):
+        try:
+            with psycopg.connect(f"postgresql://{role}:{pw}@{hostport}/{db}?sslmode=require", connect_timeout=10) as c: return c.execute("SELECT current_user").fetchone()[0] == role
+        except psycopg.OperationalError as e: return f"denied: {str(e).splitlines()[0][:90]}"
+    ok, d = rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, pg_try, restart=False)
+    app_ok = bool(d["app"].get("db_roles_sync")) and d["app"]["db_roles_sync"].get("trigger") == "file" and d["app"]["db_roles_sync"].get("source") == "file" and d["pods_unchanged"].get("zakazka") is True and d["eso"]["synced"]
+    cons_ok = d["memory_http"] == 200 and d["governance_http"] == 200 and d["pods_unchanged"].get("memory") is True and d["pods_unchanged"].get("governance") is True and all(v["new"] is True and v["old"] is not True for v in d["postgres"].values())
+    rep.add("R2a", "Rotace hesel DB rolí bez restartu aplikace (P4-8): Secret zakazka-finops je v podu jako soubor (mount bez subPath), po rotaci v Key Vaultu a ESO force-sync ho kubelet obnoví, watcher aplikace změnu zachytí a provede ALTER ROLE (ledger DB_ROLES_SYNC trigger=file, source=file, 3 role) – pod aplikace zůstal (jméno i startTime)", "PASS" if app_ok else "FAIL", {"eso": d["eso"], "app": d["app"], "pods_unchanged": d["pods_unchanged"], "app_s": d["timing"].get("app_s")})
+    rep.add("R2b", "Paměť a Governance MCP po rotaci bez restartu (P4-8): DSN čtou ze souboru Secretu při každém spojení (při selhání poslední funkční DSN, dokud aplikace neudělá ALTER ROLE) → paměť 200 (token člověka), Governance MCP 200, pody zůstaly; Postgres: nové heslo přijato, staré odmítnuto u všech tří rolí", "PASS" if cons_ok else "FAIL", {"memory_http": d["memory_http"], "governance_http": d["governance_http"], "pods_unchanged": d["pods_unchanged"], "postgres": d["postgres"], "consumers_ok_s": d["timing"].get("consumers_ok_s")})
+    rep.add("R2c", "R2: okno rotace bez restartu (Key Vault → Secret → soubor v podu → ALTER ROLE → konzumenti)", "INFO", {"timing": d["timing"], "wall_s": round(time.time() - t_r, 1), "kv_rotated": d["kv_rotated"]})
 
 
 def q1_checks(a, rep, http, KC, secret, kv_name, rendered, kc_migr, humans):
@@ -2753,7 +2836,7 @@ def step_live(a, rep, env):
     return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False, r2=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -3004,6 +3087,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
         if e7: e7_checks(a, rep, http, kj, KC, BAO, ca_file)   # P3-6 E7: TLS OpenBao a Keycloaku z interní CA
         if e11: e11_checks(a, rep, http, kj, secret, ca_file, pg_host, pg_pw, pg_via, pg_ep, pg_tls, t_bao0)   # P3-6 E11: TLS ClickHouse/Collector, Postgres verify-full
+        ch_ret = ch_retention(a, http) if e4 else None   # P4-8 běh 3: úklid a TTL v ClickHouse před provozem rolí (plný PVC → ztracené spany)
+        if ch_ret: print(f"  ch_retention={json.dumps({k: ch_ret.get(k) for k in ('dropped', 'ttl_added', 'error')}, ensure_ascii=False)} disk={(ch_ret.get('after') or {}).get('disk')}")
         if e12: e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw)   # P3-6 E12: Flexible Server jen přes private endpoint
         _led = {"items": []}
         def led():   # P4-2 běh 4: celý ledger (desítky MB) při každém volání přes port-forward dusil aplikaci (readiness, GUI, POST výsledku podu) → jen přírůstek od offsetu (ledger je append-only; total < offset = soubor vyměněn → znovu od nuly)
@@ -3083,7 +3168,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         if klas: klas_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots")   # P3-4: K1a–K1g
         if o3: o3_flow(a, rep, http, led, APP, KC, dsn, kj, zid, zid[:-2], LOGS / "gui-shots", bao_tok)   # P3-5: O3a–O3f
         if e3: e3_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E3: strop v gateway + navýšení z GUI
-        if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E4: per-request ledger → ClickHouse
+        if e4: e4_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots", ch_ret, t_bao0)   # P3-6 E4: per-request ledger → ClickHouse
         if e6: e6_flow(a, rep, http, led, APP, kj, zid[:-2])   # P3-6 E6: verzování workflow (restart podu aplikace – až po všech tocích s pody rolí)
         if e13: e13_flow(a, rep, http, led, APP, kj, zid[:-2], LOGS / "gui-shots")   # P3-6 E13: STALLED (chybějící verze) v GUI a obnova – po E6 (stejné podmínky: bez podů rolí)
         if m1: m1_flow(a, rep, http, led, APP, KC, dsn, zid[:-2], LOGS / "gui-shots")   # P4-1 M1: obnova mandátu z GUI (pody account + architekt)
@@ -3359,6 +3444,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         rep.add("P21g", "FinOps na AKS: requesty rolí z podů šly přes clusterovou gateway s klíči vydanými aplikací → budget_usage na Flexible Serveru nese útratu každé role (hash klíče z ConfigMapy agentgateway-keys; obsahuje i sondu propagace)", "PASS" if set(spend) == set(ROLE_CLIENTS) and all(v > 0 for v in spend.values()) else "FAIL", {"spend_usd_by_role": spend, "total_usd": round(sum(spend.values()), 6)})
 
         if r1: r1_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn)   # P4-7: rotace tajemství (lidé, admin Keycloaku, DB role) – až na konci, restartuje aplikaci, paměť a governance
+        if r2: r2_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn)   # P4-8: rotace DB rolí bez restartu (Secrety jako soubory, watcher aplikace)
         pods = kj("-n", NS, "get", "pods").get("items", [])
         rep.add("P21h", "Pody P2-1 a uzly", "INFO", {p["metadata"]["name"]: {"image": [c["image"].split("/")[-1] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])]} for p in pods if p["metadata"]["name"].split("-")[0] in ("zakazka", "memory", "bridge", "mock", "opa", "placement", "scheduler", "agentgateway")} | {"nodes": nodes, "wall_s": round(time.time() - t_all, 1)})
     finally:
@@ -3366,6 +3452,20 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         pf_bao.stop()
         if pf_pg: pf_pg.terminate(); kubectl(a, "-n", NS, "delete", "pod", "pgfwd", "--ignore-not-found", "--wait=false")
 
+
+def ch_retention_cli(a):
+    """P4-8 operátorský postup (workflow cluster.yml, akce clickhouse-retention): úklid a TTL v ClickHouse bez měření; tiskne stav před/po."""
+    kj = lambda *x: kj_static(a, *x)
+    os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost"); platform_ca_bundle(a, kj)
+    def http(method, url, **kw):
+        for i in range(12):
+            try: return httpx.request(method, url, **kw)
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError):
+                if i == 11: raise
+                time.sleep(5)
+    d = ch_retention(a, http)
+    print(f"{'✅' if not d['error'] else '❌'} retence ClickHouse: {json.dumps(d, ensure_ascii=False)[:4000]}", flush=True)
+    return 0 if not d["error"] else 1
 
 def rotate_cli(a):
     """P4-7 operátorský postup (workflow rotate.yml): rotace jedné skupiny tajemství bez měření – nová verze v Key Vaultu, ESO force-sync, konzument. Tiskne jen kódy."""
@@ -3387,7 +3487,7 @@ def rotate_cli(a):
     try:
         load_human_pw(a)
         ok, d = {"keycloak-humans": lambda: rotate_humans(a, http, KC, kv_name, secret), "keycloak-admin": lambda: rotate_admin(a, http, KC, kv_name, secret),
-                 "db-roles": lambda: rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs)}[a.rotate]()
+                 "db-roles": lambda: rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, restart=a.rotate_restart)}[a.rotate]()
         print(f"{'✅' if ok else '❌'} rotace {a.rotate}: {json.dumps(d, ensure_ascii=False)[:3000]}", flush=True)
         return 0 if ok else 1
     finally:
@@ -3396,7 +3496,7 @@ def rotate_cli(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-2-live"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -3405,14 +3505,20 @@ def main():
     ap.add_argument("--acr", default=os.getenv("ACR_LOGIN_SERVER", ""), help="p1-6: login server ACR (socat pod pro Postgres, když runner nedosáhne na Flexible Server)")
     ap.add_argument("--create-kind", action="store_true", help="postavit obraz uzlu, cluster a nahrát obrazy (docker daemon)")
     ap.add_argument("--rotate", choices=["keycloak-humans", "keycloak-admin", "db-roles"], default="", help="P4-7: jen rotace tajemství (operátorský postup, workflow rotate.yml) – bez měření")
+    ap.add_argument("--ch-retention", action="store_true", help="P4-8: jen retence ClickHouse (úklid systémových logů, TTL otel tabulek, stav disku; workflow cluster.yml clickhouse-retention) – bez měření")
+    ap.add_argument("--rotate-restart", action="store_true", help="P4-8: db-roles s restartem podů (výchozí bez restartu – Secrety jako soubory)")
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
     ap.add_argument("--agentgateway-bin", default=os.getenv("AGENTGATEWAY_BIN", shutil.which("agentgateway") or ""))
     a = ap.parse_args()
+    if a.ch_retention:
+        assert a.kubectl, "chybí KUBECTL"
+        for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
+        sys.exit(ch_retention_cli(a))
     if a.rotate:
         assert a.kubectl, "chybí KUBECTL"
         for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
         sys.exit(rotate_cli(a))
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -3435,6 +3541,7 @@ def main():
      "p4-5": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True),   # P4-5: p4-4 + N2a–c (brute force, rate limit, idle odhlášení)
      "p4-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True),   # P4-6: p4-5 + Q1a–b (hesla lidí z Key Vaultu, realm z Gitu bez literálů)
      "p4-7": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True),   # P4-7: p4-6 + R1a–d (rotace tajemství)
+     "p4-8": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True),   # P4-8: p4-7 + R2a–c (rotace DB rolí bez restartu)
      "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))

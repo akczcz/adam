@@ -19,6 +19,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-5** Zabezpečení veřejného vstupu | brute-force detekce Keycloaku, rate limit přihlášení na veřejném listeneru, audit přihlášení s hashem IP, idle odhlášení GUI a keepalive mandátu jen při aktivitě | ✅ 2026-11-03 AKS 89/89 + 18 INFO, 4 běhy |
 | **P4-6** Hesla lidí mimo Git | hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu přes ESO; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}`, běžící realm otočí harness admin API | ✅ 2026-11-04 AKS 90/90 PASS + 19 INFO, 3 běhy |
 | **P4-7** Rotace tajemství jako provozní postup | nová verze v Key Vaultu → ESO force-sync → konzument (Keycloak admin API, restart aplikace/paměti/governance); workflow `rotate`, bez dev literálů a bez znalosti starého hesla | ✅ 2026-11-04 AKS 93/93 PASS + 20 INFO, 1 běh |
+| **P4-8** Rotace bez restartu | Secrety s hesly DB rolí jako soubory v podech (kubelet je obnoví), aplikace sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení | ✅ 2026-11-05 AKS 96/96 PASS + 21 INFO, 4 běhy |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -294,6 +295,34 @@ Výsledek měření: **93/93 PASS + 20 INFO** (`measure` run 41882561599, 2026-1
    a bez odstávky; `bootstrap-admin` CLI (zastavený server) jen po ztrátě historie verzí.
 3. Rotace lidí a admina je bez výpadku (běžící tokeny platí do vypršení, 30 min).
 
+## P4-8 Rotace bez restartu
+
+**Rozhodnutí:** okno rotace DB rolí (P4-7: ~6 min, z toho 334 s nové pody aplikace) zmizí, když konzumenti čtou tajemství **ze souboru**, ne z env:
+Secrety `zakazka-finops`, `memory-db`, `governance-db` jsou v podech mountované (bez `subPath` – jinak kubelet soubor neobnoví), kubelet je po
+změně obnoví do ~1 min. Aplikace sleduje soubor (poll 20 s) a při změně provede `ALTER ROLE` (ledger `DB_ROLES_SYNC trigger=file`), paměť
+a Governance MCP čtou DSN ze souboru při každém spojení a při selhání (nové heslo ještě není v DB) použijí poslední funkční DSN. Env zůstává
+jako záloha (kind, lokální fixture). Workflow `rotate` group `db-roles` je od P4-8 bez restartu (`restart=true` = postup P4-7).
+
+Varianty, které nepřišly: Reloader/`stakater` operátor (rollout při změně Secretu – restart zůstává); `kubectl rollout restart` ve workflow
+(totéž); Secret přes env s restartem (P4-7). Fakta: kubelet obnovuje soubory z Secretu u mountů bez `subPath` (Kubernetes docs „Mounted Secrets
+are updated automatically“, zpoždění = sync period kubeletu + cache; env proměnné se neobnovují) – ověřit v měření R2 (čas Key Vault → soubor).
+Měření `--step p4-8` = p4-7 + **R2a–c** (druhá rotace DB rolí v témže běhu, tentokrát bez restartu; R1b s restartem zůstává jako regrese).
+
+**Retence ClickHouse (nález běhu 3):** PVC 4 Gi byl plný ze systémových logů ClickHouse (`trace_log` 2,3 GB; otel spany jen 20 MB) →
+`NOT_ENOUGH_SPACE` → Collector po 60 s retry spany zahazoval (ledger bez 1–3 requestů). Rozhodnutí: systémové logy ClickHouse vypnuté
+(`query_log` 3 dny), otel tabulky TTL 7 dní (exporter `ttl: 168h`, u starších tabulek `MODIFY TTL` z harnessu na startu běhu), kontrola E4d
+(volné místo, TTL, žádné zahazování v logu Collectoru) a operátorská akce `cluster.yml clickhouse-retention`. Kandidáti: větší PVC
+(managed-csi umí expanzi), Altinity operator, alert na volné místo disku. Diagnostika telemetrie bez kubectl: `cluster.yml diag`.
+
+Výsledek měření: **96/96 PASS + 21 INFO** (`measure` run 42061788722, 4 běhy – nálezy níže). Nálezy (detail v README harnessu):
+
+1. **Okno rotace DB rolí bez restartu 77–123 s** (aplikace 43–95 s = kubelet obnoví soubor + poll 20 s; konzumenti 0–41 s) proti ~6 min
+   v P4-7 – rotace je za běhu provozu neviditelná (paměť a governance 200 po celou dobu).
+2. **Strop tenanta sčítal útratu od založení** (dev tenant beta vyčerpal 20 USD po ~2 měsících) → okno 30 dní jako u klíčů gateway; každý
+   strop potřebuje okno.
+3. **Plný disk ClickHouse ztrácel spany tiše** (Collector „Dropping data“, bez restartu, bez alertu) – ledger FinOps je jen tak důvěryhodný,
+   jak je zdravý jeho sklad; retence + E4d výše.
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -311,6 +340,9 @@ Výsledek měření: **93/93 PASS + 20 INFO** (`measure` run 41882561599, 2026-1
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-05: P4-8 hotovo na AKS (96/96 PASS + 21 INFO, 4 běhy) – rotace hesel DB rolí bez restartu: Secrety jako soubory v podech, aplikace
+  watcher → `ALTER ROLE`, paměť a Governance MCP DSN ze souboru per spojení; okno 77–123 s místo ~6 min. Nálezy: strop tenanta bez okna
+  (→ 30 d), plný PVC ClickHouse tiše zahazoval spany ledgeru (→ systémové logy vypnuté, TTL 7 d, E4d, akce `diag` a `clickhouse-retention`).
 - 2026-11-04: P4-7 hotovo na AKS (93/93 PASS + 20 INFO, 1 běh) – rotace tajemství jako provozní postup: nová verze v Key Vaultu → ESO force-sync → konzument
   (lidé a admin Keycloaku admin API, admin obnoven předchozí verzí z Key Vaultu; DB role restart aplikace → paměť + governance); workflow `rotate`,
   Terraform hodnoty po založení nepřepisuje. Nálezy: okno rotace = restart aplikace (~6 min), verze KV jako zdroj staré hodnoty.

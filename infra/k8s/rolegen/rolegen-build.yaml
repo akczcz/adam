@@ -286,7 +286,7 @@ data:
     \  \"role_pods\": true,\n  \"namespace\": \"tenant-acme\",\n  \"humans\": [\n\
     \   \"adam\"\n  ]\n },\n {\n  \"id\": \"beta\",\n  \"name\": \"Beta s.r.o. – první\
     \ externí zákazník (testovací)\",\n  \"profile\": \"standard\",\n  \"budget_usd\"\
-    : 20,\n  \"role_pods\": true,\n  \"namespace\": \"tenant-beta\",\n  \"humans\"\
+    : 50,\n  \"role_pods\": true,\n  \"namespace\": \"tenant-beta\",\n  \"humans\"\
     : [\n   \"bea\"\n  ]\n },\n {\n  \"id\": \"platform\",\n  \"name\": \"Platforma\
     \ – governance a průřez\",\n  \"profile\": \"standard\",\n  \"budget_usd\": 0,\n\
     \  \"role_pods\": false,\n  \"namespace\": null,\n  \"humans\": [\n   \"platform-admin\"\
@@ -689,7 +689,7 @@ data:
     \  \"repo:push:branch\",\n    \"issues:comment\",\n    \"pr:write\",\n    \"memory:search\"\
     ,\n    \"memory:propose\"\n   ],\n   \"version\": \"0.1.0\"\n  }\n },\n \"tenants\"\
     : {\n  \"acme\": {\n   \"budget_usd\": 100,\n   \"profile\": \"standard\",\n \
-    \  \"role_pods\": true\n  },\n  \"beta\": {\n   \"budget_usd\": 20,\n   \"profile\"\
+    \  \"role_pods\": true\n  },\n  \"beta\": {\n   \"budget_usd\": 50,\n   \"profile\"\
     : \"standard\",\n   \"role_pods\": true\n  },\n  \"platform\": {\n   \"budget_usd\"\
     : 0,\n   \"profile\": \"standard\",\n   \"role_pods\": false\n  }\n }\n}"
   apikeys-template.yaml: "policies:\n  apiKey:\n    mode: optional\n    location:\n\
