@@ -1179,12 +1179,12 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| R2a | 3 nové verze v KV → Secret → soubor v podu → `DB_ROLES_SYNC trigger=file source=file` 3 role, pod aplikace nezměněn | P48_R2A |
-| R2b | paměť 200, governance 200 bez restartu (pody nezměněny); Postgres nové přijato, staré odmítnuto ×3 | P48_R2B |
-| R2c | okno rotace bez restartu (časy) | P48_R2C |
-| E4d | retence ClickHouse (nové, běh 3): otel tabulky s TTL 7 d, vypnuté systémové logy se znovu nezaložily, volné místo ≥ 15 %, Collector od startu harnessu nic nezahodil | P48_E4D |
+| R2a | 3 nové verze v KV → Secret → soubor v podu → `DB_ROLES_SYNC trigger=file source=file` 3 role, pod aplikace nezměněn | ✅ ESO synced 2,7 s; `rollout: no-restart`, health 200, `DB_ROLES_SYNC` 3 role `source=file trigger=file`; pody zakazka/memory/governance nezměněny; aplikace 42,8 s |
+| R2b | paměť 200, governance 200 bez restartu (pody nezměněny); Postgres nové přijato, staré odmítnuto ×3 | ✅ memory 200, governance 200, pody nezměněny; `memory_app`/`org_reader`/`org_writer`: nové `true`, staré `denied` (FATAL password) |
+| R2c | okno rotace bez restartu (časy) | ℹ️ `total_s` 94,1 (aplikace 42,8 s, konzumenti OK 40,9 s), 3 verze v KV |
+| E4d | retence ClickHouse (nové, běh 3): otel tabulky s TTL 7 d, vypnuté systémové logy se znovu nezaložily, volné místo ≥ 15 %, Collector od startu harnessu nic nezahodil | ✅ volné 93,8 % (3,62/3,86 GB), 8 otel tabulek s TTL, `system_logs_on: []`, 0 drops; `ch_retention` na startu: dropped [], TTL doplněno jen `otel_traces_trace_id_ts` (zbytek z úklidu před během) |
 
-Výsledek: **P48_RESULT** (`measure` run P48_ID, P48_RUNS).
+Výsledek: **96/96 PASS + 21 INFO** (`measure` run 42061788722, 4 běhy: 41900608008 94/95, 41918926549 92/95, 41984163451 93/95, 42061788722 96/96).
 
 Nálezy:
 
@@ -1202,10 +1202,12 @@ Nálezy:
    exporter `ttl: 168h`, harness `ch_retention` na startu běhu (DROP vypnutých logů, `MODIFY TTL` 7 d u otel tabulek – materialized view
    přeskočit, `*_trace_id_ts` sloupec `Start`), kontrola **E4d**; operátorsky `cluster.yml` akce `clickhouse-retention` (`--ch-retention`):
    první úklid volné místo 9,4 % → 95,8 %.
-4. **Okno rotace bez restartu** (R2c): 77–123 s (běh 1 87 s, běh 2 123 s, běh 3 77,5 s) proti 334 s s restartem (P4-7): aplikace 46–95 s
+4. **Okno rotace bez restartu** (R2c): 77–123 s (běh 1 87 s, běh 2 123 s, běh 3 77,5 s, běh 4 94,1 s) proti 334 s s restartem (P4-7): aplikace 43–95 s
    (kubelet obnoví soubor do ~1 min + poll watcheru 20 s), konzumenti 0–36 s (DSN ze souboru per spojení, poslední funkční DSN do `ALTER ROLE`).
 5. Paměť posílá ~48 spanů/min i při nečinném clusteru (ClickHouse po 10 min: 480 `memory-server`, 0 `agentgateway`) – zdroj neověřen
    (kandidát: pravidelné volání paměti aplikací); s TTL 7 d je to ~0,5 M spanů v tabulce, bez TTL rostlo bez omezení.
+6. **Běh 4 (42061788722, 96/96):** po úklidu disku E4a/E4b bez rozdílu (všech 8 zakázek `diff: 0.0`), E4d PASS – ztráta spanů v bězích 2–3
+   byla jen plný disk, žádná změna v gateway ani Collectoru nebyla potřeba (hardening Collectoru z běhu 2 zůstává).
 
 ## Spuštění
 
