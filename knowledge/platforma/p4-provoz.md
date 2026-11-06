@@ -21,6 +21,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-7** Rotace tajemství jako provozní postup | nová verze v Key Vaultu → ESO force-sync → konzument (Keycloak admin API, restart aplikace/paměti/governance); workflow `rotate`, bez dev literálů a bez znalosti starého hesla | ✅ 2026-11-04 AKS 93/93 PASS + 20 INFO, 1 běh |
 | **P4-8** Rotace bez restartu | Secrety s hesly DB rolí jako soubory v podech (kubelet je obnoví), aplikace sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení | ✅ 2026-11-05 AKS 96/96 PASS + 21 INFO, 4 běhy |
 | **P4-9** Rotace admina Postgresu | heslo admina Flexible Serveru jako provozní postup: ARM PATCH (identita Actions) → nová verze v Key Vaultu → ESO → nové pody Keycloaku, gateway a aplikace; poslední „ruční postup“ z tabulky P4-7 | ✅ 2026-11-05 AKS 98/98 PASS + 22 INFO, 2 běhy |
+| **P4-10** Pojmenovaný tunnel + Cloudflare Access | stálá adresa GUI (`platforma.<doména>`), Access před hostname (e-mail OTP pro lidi, service token pro harness/operátora), origin ověřuje Access JWT (obrana při obejití Cloudflare); quick tunnel zůstává pro měření bez účtu | 🟡 kód 2026-11-06, měření bez Access P410_RESULT; **ostré nasazení čeká na Adama** (doména + účet Cloudflare, 6 hodnot v Key Vaultu – postup níže) |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -218,15 +219,9 @@ harness teď chyby `az keyvault` loguje; (5) zapomenutá instance Playwrightu po
 rolling restart s pojmenovaným tunelem (až 25 replik `cloudflared`) tento problém nemá. Tři ze sedmi neúspěšných běhů byly chyby v obnově URL
 v GUI klientovi harnessu, ne platformy – cena za quick tunnel bez stálého hostname.
 
-### Postup pojmenovaného tunelu s Access (až bude Adam chtít stabilní adresu)
+### Postup pojmenovaného tunelu s Access
 
-1. Cloudflare Zero Trust → Networks → Tunnels → Create tunnel (cloudflared) → zkopírovat **token**; Published application: hostname
-   `platforma.<doména>` → `http://127.0.0.1:8011` (doména musí být zóna v účtu Cloudflare, Free plán stačí).
-2. Access → Applications → self-hosted na ten hostname; policy Allow pro Adamův e-mail (OTP) a **service token** pro harness.
-3. Key Vault: `cloudflare-tunnel-token` = token, `cloudflare-tunnel-hostname` = hostname (portál nebo `az keyvault secret set`, nikdy do Gitu);
-   ESO do 1 h nebo `force-sync`; `rollout restart deploy/zakazka` (env sidecaru).
-4. Harness: service token do Key Vaultu (`cloudflare-access-client-id/secret`, kandidát) → hlavičky `CF-Access-Client-*` u všech volání GUI/AG-UI.
-5. Quick tunnel po tu dobu nepoužívat (hostname bez Access je veřejný, i když náhodný).
+Rozpracováno a změřeno jako **P4-10** (níže) – kód je hotový, zbývá Adamův účet Cloudflare, doména a šest hodnot v Key Vaultu.
 
 ## P4-5 Zabezpečení veřejného vstupu
 
@@ -300,6 +295,8 @@ nastaví aplikace při startu. Terraform hodnoty po založení nepřepisuje (`ig
 | `pg-memory-app/org-reader/org-writer-password` (RLS role) | aplikace (`ALTER ROLE` při startu), paměť, Governance MCP (DSN z env) | nové pody aplikace → `DB_ROLES_SYNC` → nové pody paměti a governance | sekundy až desítky sekund (readiness) | `rotate` group `db-roles`, R1b |
 | `pg-platform-password` (admin Flexible Serveru) | Keycloak, gateway, Dapr state store, aplikace (FinOps/registr) | ~~`terraform apply -replace=random_password.pg`~~ **P4-9**: ARM PATCH hesla serveru (identita Actions) → nová verze v Key Vaultu → force-sync → nové pody Keycloaku, gateway, aplikace (+ daprd) | minuty (restart tří konzumentů) | `rotate` group `pg-admin`, R3a–c |
 | `anthropic-api-key`, `github-token`, `cloudflare-tunnel-*` | gateway / sidecar (env, soubor) | nová hodnota od Adama v Key Vaultu → force-sync → nové pody gateway / aplikace | sekundy | ruční postup (hodnoty mimo Terraform) |
+| `cloudflare-access-client-id/secret` (service token harnessu, **P4-10**) | harness, workflow `measure` (hlavičky `CF-Access-Client-*`) – žádný pod | nový token v Cloudflare (Zero Trust → Service credentials; rotace secretu API s dobou doběhu starého) → Key Vault → force-sync; harness čte Secret při startu běhu | žádný | ruční (hodnota z Cloudflare) |
+| `cloudflare-access-team-domain/aud` (**P4-10**) | aplikace (env – ověření JWT) | mění se jen při nové Access aplikaci / týmu → Key Vault → force-sync → nový pod aplikace | restart aplikace | ruční (hodnota z Cloudflare) |
 | `openbao-init` (root token, recovery) | nikdo za běhu (E10 scoped operátor) | nerotuje se; rotace root tokenu = `generate-root` (kandidát) | – | – |
 
 Fakta: Keycloak 26.8.1 `bootstrap-admin user` vyžaduje zastavené všechny uzly serveru (`docs/guides/server/bootstrap-admin-recovery.adoc`,
@@ -379,6 +376,68 @@ Nálezy (detail v README harnessu):
    platí pro `measure` i `rotate`. Žádná role navíc: Contributor na RG stačí pro ARM PATCH hesla serveru.
 3. Rollback serveru na starou hodnotu při selhání zápisu do Key Vaultu zůstává netestovaná větev (zápis uspěl).
 
+## P4-10 Pojmenovaný tunnel + Cloudflare Access
+
+**Rozhodnutí:** stálá adresa GUI = pojmenovaný (remotely-managed) Cloudflare Tunnel s published application `platforma.<doména>` →
+`http://127.0.0.1:8011` a před ním **Cloudflare Access** (self-hosted aplikace na ten hostname). Dvě vrstvy přihlášení s různou rolí:
+Access rozhoduje, **kdo se k hostname vůbec dostane** (e-mail OTP pro lidi, service token pro harness a operátora – policy *Service Auth*),
+Keycloak rozhoduje, **kdo je v platformě** (tenant, role, mandát). Origin (veřejný listener aplikace) navíc **ověřuje Access JWT**
+`Cf-Access-Jwt-Assertion` (RS256, klíče z `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` podle `kid`, `aud` = AUD tag aplikace,
+`iss` = team domain) – podle docs „requests which bypass Cloudflare Access (for example, due to a network misconfiguration) are rejected“.
+Bez nasazení (Key Vault `cloudflare-*` = `quick`/`none`) běží dál quick tunnel bez Access jako dosud (měření, dev). Quick tunnel po nasazení
+Access **nepoužívat** – náhodný hostname bez Access je veřejný.
+
+| Varianta | Proč ne / proč ano |
+|---|---|
+| quick tunnel (P4-4) | bez účtu a domény, ale hostname náhodný per start podu, bez SLA a bez Access – jen měření/dev |
+| pojmenovaný tunnel bez Access | stálá adresa, ale přihlášení chrání jen Keycloak + P4-5 (zámek, rate limit); kdokoli na internetu zkouší hesla |
+| **pojmenovaný tunnel + Access + ověření JWT na originu** (zvoleno) | zdarma (Free plán, 50 uživatelů Zero Trust – neověřeno v docs limitů), OTP e-mailem bez IdP, service token pro automaty (50/účet), audit v Cloudflare i v ledgeru; origin odmítne vše, co nepřišlo přes Access |
+| „Protect with Access“ na published application (cloudflared ověřuje JWT sám) | stejná ochrana bez kódu v aplikaci; zvoleno ověření v aplikaci kvůli auditu (`ACCESS_DENIED`, identita Access v `GUI_LOGIN`) – lze zapnout obojí |
+| Ingress + cert-manager + veřejná IP | záloha z P4-4; platí se za LB/IP a chybí Access vrstva |
+
+**Fakta (Cloudflare docs – zdrojové soubory `cloudflare/cloudflare-docs`, ověřeno 2026-11-06):**
+- JWT: header `Cf-Access-Jwt-Assertion` (cookie `CF_Authorization` není zaručená), klíče na `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`
+  (`keys` JWK, rotace po 6 týdnech, starý klíč platí 7 dní – párovat podle `kid`, nekešovat natvrdo), `aud` = Application Audience (AUD) Tag
+  (Zero Trust → Access controls → Applications → Edit → Additional settings), `iss` = team domain (`validating-json.mdx`).
+- Identita v JWT: člověk `email`, `sub`; service token `common_name` = Client ID, `sub` prázdný (`application-token.mdx`).
+- Service token: hlavičky `CF-Access-Client-Id` / `CF-Access-Client-Secret`, policy s akcí **Service Auth**; nové secrety od 2026-08-26 ve tvaru
+  `cfast_…` (pro skenery); rotace API s `previous_client_secret_expires_at`; limit 50 tokenů/účet (`service-tokens.mdx`, `account-limits.mdx`).
+- Published application vyžaduje **aktivní doménu (zónu) v účtu Cloudflare** (full nebo partial CNAME setup); zone apex nemůže být CNAME
+  (`self-hosted-public-app.mdx`, `create-remote-tunnel.mdx`). Víceúrovňová subdoména vyžaduje Advanced Certificate → použít jednu úroveň
+  (`platforma.<doména>`).
+- Doporučení docs: Access aplikaci založit **před** published application, jinak je hostname do té doby veřejný.
+
+Tok: člověk → `https://platforma.<doména>` → Access (OTP e-mail) → JWT v hlavičce → tunnel → sidecar → `127.0.0.1:8011` → middleware ověří JWT
+(403 + `ACCESS_DENIED` bez platného) → GUI / AG-UI (Keycloak jako dosud; `GUI_LOGIN` nese `access.email_hash` / `service_token`). Harness: service
+token ze Secretu `cloudflare-access` do hlaviček všech volání přes tunel i do kontextu prohlížeče (Playwright `extra_http_headers` – nese je i
+fetch z GUI). Tajemství: Key Vault `cloudflare-tunnel-token/hostname` (P4-4) + `cloudflare-access-team-domain/aud/client-id/client-secret`
+(Terraform výchozí `none`, `ignore_changes`) → ESO → Secrety `cloudflare-tunnel`, `cloudflare-access` → env sidecaru a aplikace.
+
+### Co musí udělat Adam (ostré nasazení, ~30 min, zdarma kromě domény)
+
+1. **Doména v Cloudflare:** vlastní doménu přidat jako zónu (nameservery na Cloudflare = full setup; nebo partial CNAME), případně koupit
+   přes Cloudflare Registrar. Bez zóny published application nejde (docs).
+2. **Zero Trust:** založit tým (team name → `https://<team>.cloudflareaccess.com`), Free plán.
+3. **Access aplikace nejdřív:** Access controls → Applications → Add → Self-hosted, hostname `platforma.<doména>`; policy *Allow* pro Adamův
+   e-mail (One-time PIN); druhá policy **Service Auth** pro service token harnessu. Z *Additional settings* zkopírovat **AUD tag**.
+4. **Service token:** Access controls → Service credentials → Service Tokens → Create (doba např. 1 rok) → Client ID + Client Secret.
+5. **Tunnel:** Networks → Tunnels → Create tunnel (cloudflared) → zkopírovat **token**; Published application: `platforma.<doména>` →
+   `http://127.0.0.1:8011`. (Volitelně *Protect with Access* na published application.)
+6. **Key Vault** `kv-platform-dev-<suffix>` → Secrets → *New version* (portál, nikdy do Gitu ani do chatu):
+   `cloudflare-tunnel-token`, `cloudflare-tunnel-hostname` = `platforma.<doména>`, `cloudflare-access-team-domain` =
+   `https://<team>.cloudflareaccess.com`, `cloudflare-access-aud`, `cloudflare-access-client-id`, `cloudflare-access-client-secret`.
+7. Hodnoty před startem clusteru → pody nabootují s nimi (jinak ESO do 1 h / force-sync + restart aplikace). Pak Actions → `cluster` →
+   `status`: Summary ukáže `https://platforma.<doména>/gui – Cloudflare Access (nejdřív e-mail OTP), pak přihlášení …` a `vstup access=True`.
+8. Měření: Actions → `measure` → `e2e: p4-10` → N3a/N3b PASS (bez nasazení SKIP). Zpět na quick tunnel = hodnoty `quick`/`none`.
+
+Měření `--step p4-10` = p4-9 + **N3a–c**: N3a zvenčí (hostname ze Secretu, sidecar připojený tokenem, bez service tokenu zastaví edge 302/403,
+s ním GUI 200 / AG-UI 401 / `/health` `access=True`, `GUI_LOGIN` s identitou Access), N3b zevnitř podu (origin bez JWT i s podvrženým 403,
+`ACCESS_DENIED` s důvodem a hashem IP), N3c INFO (spojení sidecaru, čas). Bez nasazení N3a–b **SKIP**.
+
+Výsledek měření: **P410_RESULT** (`measure` run P410_ID, P410_RUNS). Nálezy (detail v README harnessu):
+
+P410_FINDINGS
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -386,7 +445,8 @@ Nálezy (detail v README harnessu):
 | PAT v gateway smí víc než zakázka potřebuje | fine-grained PAT jen na repozitář platformy + autorizace routy gateway (cesta `/repos/akczcz/adam/`, metody GET/POST/PATCH/PUT) + ruleset `main`; revokace po běhu |
 | Živý model = útrata; alias `live-*` může použít kdokoli s klíčem role | klíče role × zakázka mají rozpočty (Block 24h/30d), strop zakázky (`zakazka-30d-block`), ledger gateway per request → FinOps; klíč modelu s limitem workspace |
 | Neznámý alias modelu (překlep, dvojí prefix) spadne do catch-all `*` = mock a zakázka „live“ běží tiše na mocku | `AGENT_RUN.model` v ledgeru + check L1c/V1c; ~~catch-all odstranit~~ **P4-3**: konfigurace bez `*`, neznámý alias → 404 (L2a) |
-| Veřejná URL GUI (quick tunnel) bez Access: kdokoli s adresou může zkoušet přihlášení | hostname náhodný per start podu a jen po dobu měření; veřejný listener nese jen GUI + AG-UI (interní API ne); ~~brute-force detection kandidát~~ **P4-5**: zámek účtu po 5 selháních, 20 loginů/min/IP, audit s hashem IP, idle odhlášení; pro stálý provoz pojmenovaný tunnel + Access (P4-4 postup) |
+| Veřejná URL GUI (quick tunnel) bez Access: kdokoli s adresou může zkoušet přihlášení | hostname náhodný per start podu a jen po dobu měření; veřejný listener nese jen GUI + AG-UI (interní API ne); ~~brute-force detection kandidát~~ **P4-5**: zámek účtu po 5 selháních, 20 loginů/min/IP, audit s hashem IP, idle odhlášení; ~~pro stálý provoz pojmenovaný tunnel + Access (P4-4 postup)~~ **P4-10**: pojmenovaný tunnel + Access (OTP e-mail / service token) + ověření JWT na originu – nasazení čeká na doménu a účet Adama |
+| Origin za tunelem důvěřuje všemu, co přijde (obejití Cloudflare chybnou konfigurací sítě) | **P4-10**: middleware odmítne požadavek bez platného Access JWT (403, `ACCESS_DENIED`); `/health` bez dat zůstává otevřený |
 | Dev hesla lidí harnessu (`adam/adam`, `bea/bea`, `platform-admin/…`) v realmu z Gitu na veřejné URL | ~~jen po dobu měření na náhodném hostname; hesla do Key Vaultu – kandidát~~ **P4-6**: hesla z Key Vaultu (ESO `keycloak-humans`), realm z Gitu jen s placeholdery, harness čte hesla ze Secretu |
 | Závislost na Cloudflare (výpadek edge, změna podmínek Free plánu) | Ingress s veřejnou IP jako záložní varianta (rozhodnutí P4-4); aplikace uvnitř clusteru běží dál, tunnel bez readiness proby nic neshodí |
 | Selhání publikace na GitHub (výpadek, vypršelý PAT, 422) v ostrém běhu | ~~instance FAILED bez eskalace~~ **P4-3**: rozhodovací bod `publikace` (opakovat / pozastavit), ledger `PUBLISH_FAILED`, SLA 4 h → eskalace provozu |
@@ -396,6 +456,9 @@ Nálezy (detail v README harnessu):
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-06: P4-10 kód + měření bez Access (P410_RESULT) – pojmenovaný tunnel + Cloudflare Access: origin ověřuje Access JWT (`ACCESS_DENIED`,
+  identita Access v `GUI_LOGIN`), service token harnessu v hlavičkách i v prohlížeči, Key Vault `cloudflare-access-*` (výchozí `none`), checky
+  N3a–c (SKIP bez nasazení), `cluster status` hlásí režim vstupu. Ostré nasazení = Adamova doména a účet Cloudflare (postup v sekci P4-10).
 - 2026-11-05: P4-9 hotovo na AKS (98/98 PASS + 22 INFO, 2 běhy) – rotace hesla admina Flexible Serveru jako provozní postup: ARM PATCH
   identitou Actions (hodnota v těle requestu) → nová verze v Key Vaultu → ESO force-sync → nové pody Keycloaku, gateway a aplikace; okno 105 s,
   staré heslo odmítnuto; workflow `rotate` group `pg-admin`; poslední ruční postup z tabulky P4-7 odstraněn. Nálezy: assertion azure/login

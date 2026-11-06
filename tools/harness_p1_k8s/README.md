@@ -1245,6 +1245,30 @@ Nálezy:
 4. Staré heslo je po rotaci opravdu neplatné (`FATAL: password authentication failed` přes socat na private endpoint) – rollback na starou
    hodnotu při selhání zápisu do Key Vaultu nebyl v měření potřeba (`kv: true`), zůstává netestovaná větev.
 
+## P4-10 N3 – pojmenovaný tunnel + Cloudflare Access (2026-11-06, AKS, `--step p4-10` = p4-9 + **N3a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-10-pojmenovaný-tunnel--cloudflare-access)): stálý hostname
+  (pojmenovaný tunnel, token v Key Vaultu) + Access před ním (OTP e-mail / service token, policy Service Auth) + ověření Access JWT na originu.
+- **Harness:** `load_cf_access()` čte Secret `cloudflare-access` (service token → `CF_H`, sdílené s GUI klientem jako `extra_http_headers`
+  kontextu Playwrightu – nese je i fetch z GUI); `cfh()` přidává hlavičky ke každému volání přes tunel (`public_url`, `gui_base`, N1b, N2, Q1).
+  `n3_access_checks()`: N3a zvenčí (`follow_redirects=False` bez tokenu → 302 na `*.cloudflareaccess.com` / 403), N3b zevnitř podu
+  (`kubectl exec … python3` na `127.0.0.1:8011` bez JWT a s podvrženým JWT → 403, `/health` 200), ledger `ACCESS_DENIED`, `PUBLIC_LISTENER.access`.
+  Bez nasazení (Key Vault `cloudflare-*` = `quick`/`none`) N3a–b **SKIP**, N3c INFO.
+- Lokální test middlewaru (vlastní RSA klíč jako JWKS, PyJWT): platný JWT 200 (identita člověka / service tokenu), chybějící 403 `missing_jwt`,
+  podvržený 403 `DecodeError`, cizí `aud` 403 `InvalidAudienceError`, cookie `CF_Authorization` 200, `/health` vždy 200 – 2026-11-06 OK.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| N3a | hostname ze Secretu, sidecar připojený tokenem; bez service tokenu zastaví edge; s ním GUI 200 / AG-UI 401 / `/health` access=True; GUI_LOGIN s identitou Access | P410_N3A |
+| N3b | origin zevnitř podu bez JWT i s podvrženým 403, `/health` 200; `ACCESS_DENIED` s důvodem a hashem IP; `PUBLIC_LISTENER.access` | P410_N3B |
+| N3c | režim vstupu, spojení sidecaru, čas | P410_N3C |
+
+Výsledek: **P410_RESULT** (`measure` run P410_ID, P410_RUNS).
+
+Nálezy:
+
+P410_FINDINGS
+
 ## Spuštění
 
 ```bash
