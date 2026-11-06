@@ -242,6 +242,22 @@ def _probe(zid, key):
     return wait_s, status, done, targets
 
 
+def _unregister_probe(zid):
+    """Odebere hlídací klíč re-registrace (metadata.probe=reissue) zakázky z ConfigMapy; klíče rolí zůstávají. Zbytek po pádu procesu uklidí
+    příští `_register` téže zakázky (odebírá všechny její položky) nebo GC."""
+    ns = _ns()
+    for attempt in range(6):
+        cm = role_pod.k8s("GET", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys")
+        cur = yaml.safe_load((cm.get("data") or {}).get("keys.yaml") or "[]") or []
+        kept = [c for c in cur if not ((c.get("metadata") or {}).get("zakazka") == zid and (c.get("metadata") or {}).get("probe") == "reissue")]
+        if len(kept) == len(cur): return
+        cm["data"] = {"keys.yaml": yaml.safe_dump(kept, sort_keys=False, allow_unicode=True)}
+        try: role_pod.k8s("PUT", f"/api/v1/namespaces/{ns}/configmaps/agentgateway-keys", cm); return
+        except RuntimeError as e:
+            if "409" not in str(e) or attempt == 5: raise
+            time.sleep(0.5)
+
+
 def _cm_has(zid):
     cm = role_pod.k8s("GET", f"/api/v1/namespaces/{_ns()}/configmaps/agentgateway-keys")
     cur = yaml.safe_load((cm.get("data") or {}).get("keys.yaml") or "[]") or []
@@ -289,11 +305,19 @@ def issue(zid, ledger=None, tenant=None, cap_usd=None):
             # nebo nový proces aplikace po GC; bez registrace by role dostala 401 → znovu zaregistrovat a počkat na propagaci. Hodnota klíče stejná
             # (audit v OpenBao drží), rozpočty ze šablony + aktuální strop zakázky.
             if not _cm_has(zid):
-                t0 = time.time(); entries = _entries(zid, found, tenant, cap_usd); cm = _register(zid, entries, ledger)
-                wait_s, status, done, targets = _probe(zid, found[next(iter(found))])
+                # P4-10 běh 2 nález (L2b): sonda týmž klíčem nerozliší repliku se STAROU konfigurací (klíče ještě neodebrané – kubelet sync ConfigMapy
+                # ~40–90 s per replika) od nové: dala 200 hned (propagation_s 0), pak replika načetla verzi BEZ klíčů a role dostala 401, než dorazila
+                # verze s re-registrací. → sonda hlídacím klíčem s NOVOU hodnotou, zapsaným spolu s klíči rolí (stejné rozpočty): 200 na replice dokazuje,
+                # že načetla verzi s re-registrací. Hlídací klíč se po sondě z ConfigMapy odebere (hodnota jen v paměti procesu, v OpenBao nikdy).
+                t0 = time.time(); entries = _entries(zid, found, tenant, cap_usd)
+                sentinel = f"sk-gw-{_safe(zid)}-probe-{_secrets.token_hex(10)}"
+                s_entry = json.loads(json.dumps(entries[0] if entries else {"metadata": {"zakazka": zid, "tenant": tenant or os.environ.get("P0_TENANT", "acme")}, "budgets": []})); s_entry["metadata"] = {**s_entry["metadata"], "role": "probe", "probe": "reissue"}; s_entry["keyHash"] = "sha256:" + hashlib.sha256(sentinel.encode()).hexdigest()
+                cm = _register(zid, entries + [s_entry], ledger)
+                wait_s, status, done, targets = _probe(zid, sentinel)
+                _unregister_probe(zid)
                 _HASHES[zid] = {e["metadata"]["role"]: e["keyHash"].split(":", 1)[1] for e in entries}
                 if ledger: ledger("GATEWAY_KEYS_REISSUED", zakazka=zid, roles=sorted(found), hashes=[e["keyHash"][7:19] for e in entries], configmap_rv=cm.get("metadata", {}).get("resourceVersion"), keys_source=src, cap_usd=cap_usd,
-                                  propagation_s=wait_s, probe_status=200 if len(done) == len(targets) and all(v == 200 for v in status.values()) else status, replicas_probed=len(targets), propagation_by_replica=done, total_s=round(time.time() - t0, 1))
+                                  propagation_s=wait_s, probe_status=200 if len(done) == len(targets) and all(v == 200 for v in status.values()) else status, replicas_probed=len(targets), propagation_by_replica=done, probe="sentinel", total_s=round(time.time() - t0, 1))
             _CACHE[zid] = found; _SOURCE[zid] = src; return found
         t0 = time.time(); keys = {}; entropy = set()
         for k in _template()["keys"]:

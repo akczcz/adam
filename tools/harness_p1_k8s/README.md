@@ -1263,24 +1263,30 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| N3a | hostname ze Secretu, sidecar připojený tokenem; bez service tokenu zastaví edge; s ním GUI 200 / AG-UI 401 / `/health` access=True; GUI_LOGIN s identitou Access | ⏭️ SKIP – Key Vault `cloudflare-tunnel-*`/`cloudflare-access-*` = `quick`/`none` (quick tunnel z logu sidecaru, `/health` `access=False`, 1 spojení sidecaru, CF-Ray DFW) |
-| N3b | origin zevnitř podu bez JWT i s podvrženým 403, `/health` 200; `ACCESS_DENIED` s důvodem a hashem IP; `PUBLIC_LISTENER.access` | ⏭️ SKIP – Access nenasazen (`configured: false`) |
-| N3c | režim vstupu, spojení sidecaru, čas | ℹ️ Secret `cloudflare-access` v clusteru (ESO) s hodnotami `none`, `url_source: quick-tunnel-log`, `tunnel_connections: 1`, service token nepoužit |
+| N3a | hostname ze Secretu, sidecar připojený tokenem; bez service tokenu zastaví edge; s ním GUI 200 / AG-UI 401 / `/health` access=True; GUI_LOGIN s identitou Access | ✅ `url_source: secret` (`platforma.autonomous.place`), `quick_in_log: false`, 4 spojení tunelu; bez tokenu `/gui/` i `/agui/threads` 302 na `autonomous-place.cloudflareaccess.com`; s tokenem GUI 200, AG-UI 401, `/health` `access=True`; `GUI_LOGIN` 16× s identitou service tokenu (CF-Ray EWR) |
+| N3b | origin zevnitř podu bez JWT i s podvrženým 403, `/health` 200; `ACCESS_DENIED` s důvodem a hashem IP; `PUBLIC_LISTENER.access` | ✅ `gui_no_jwt` 403, `agui_no_jwt` 403, `gui_bogus_jwt` 403, `/health` 200; ledger `ACCESS_DENIED` 3× (`missing_jwt`, `DecodeError`, hash IP); `PUBLIC_LISTENER.access=True`, team `autonomous-place.cloudflareaccess.com` |
+| N3c | režim vstupu, spojení sidecaru, čas | ℹ️ `configured: true`, `service_token: true`, `aud_set: true`, `tunnel_connections: 4`, `gui_login_access {n: 16, service_token: 16, email_hash: 0}`, wall 3791 s |
 
-Výsledek: **98 PASS / 0 FAIL / 23 INFO / 2 SKIP** (`measure` run 42194513070, 1 běh, head 2226318; e2e 87 min, cluster se zastavil sám).
+Výsledek: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run 42289070940, ostrý tunnel + Access, head 1d5a500; e2e 109 min, L2b `probe: sentinel`, cluster se zastavil sám). Předchozí běhy:
+42194513070 bez Access 98/0/23/**2 SKIP** (head 2226318), 42258369131 ostrý 99/**1**/23/0 (L2b – nález 2; N3a/N3b už PASS).
 
 Nálezy:
 
-1. **Měření bez Access prokazuje jen „žádná regrese“**: všech 98 checků P4-9 prošlo i s novým middlewarem (vypnutý při `none`), hlavičkami
-   `cfh()` na každém volání přes tunel a polem `access` v `/health`. O Access samotném zatím neříká nic – N3a/N3b jsou SKIP, dokud Adam
-   nenasadí doménu, Access aplikaci a 6 hodnot v Key Vaultu (postup v p4-provoz.md P4-10).
-2. **Ověření JWT je otestované jen lokálně** (vlastní RSA JWKS, PyJWT 2.15): chování proti skutečným klíčům Cloudflare
-   (`/cdn-cgi/access/certs`, rotace po 6 týdnech, výběr podle `kid`, tvar `iss` = team domain) se ukáže až v prvním ostrém běhu –
-   případný rozdíl spadne do `ACCESS_DENIED` s názvem výjimky PyJWT, takže bude v ledgeru vidět, co opravit.
+1. **Access a ověření JWT na originu fungují proti skutečnému Cloudflare** (runy 42258369131 a 42289070940): JWKS `autonomous-place.cloudflareaccess.com/cdn-cgi/access/certs`,
+   `kid`, `aud` = AUD tag, `iss` = team domain – middleware z lokálního testu (vlastní RSA JWKS, PyJWT 2.15) prošel bez změny.
+   Quick tunnel držel 1 spojení sidecaru, pojmenovaný 4 (2 datacentra); CF-Ray EWR místo DFW (podle polohy runneru).
+2. **L2b: re-registrace klíčů gateway po úklidu měla okno 401** (run 42258369131): `evict` odebral klíče z ConfigMapy, re-registrace
+   (tytéž hodnoty z OpenBao) sondovala **týmž klíčem** a dostala 200 hned (`propagation_s 0.0`) – ze **staré** konfigurace repliky, která
+   odebrání ještě nenačetla (kubelet sync ConfigMapy ~40–90 s per replika). Pak replika načetla verzi bez klíčů a role architekt dostala
+   `401 invalid credentials`, než dorazila verze s re-registrací. Oprava (`gateway_keys.issue`): spolu s klíči rolí se zapíše **hlídací klíč
+   s novou hodnotou** (`metadata.probe=reissue`, stejné rozpočty), sonda jím proti všem replikám – 200 dokazuje načtení verze s re-registrací –
+   a pak `_unregister_probe` ho z ConfigMapy odebere (hodnota jen v paměti procesu). Ledger `GATEWAY_KEYS_REISSUED.probe=sentinel`, L2b
+   to vyžaduje. Stejné okno měl produkční GC (resume zakázky do ~90 s po úklidu) – oprava platí i pro něj. Lokálně ověřeno proti falešnému
+   k8s API a gateway (zastaralá replika → 401 → 200 po „syncu“, hlídací klíč v ConfigMapě jen po dobu sondy).
 3. **Terraform**: `for_each` nad `sensitive` proměnnou je chyba validace (infra apply 42180362186) – klíče Key Vault secretů jsou pevně
    v `toset([...])`, hodnoty přes `lookup(var.cloudflare_access, key, "none")` (2226318; apply 42194305253 založil 4 secrety `none`).
-4. Quick tunnel drží **1 spojení** sidecaru (pojmenovaný tunnel standardně 4 na 2 datacentra) – N3a po nasazení vyžaduje ≥1 `Registered
-   tunnel connection`, počet je jen informace v N3c.
+4. **`cf_sync` v ostrém běhu nezasahoval** (`eso_synced: True`, `stale: False`): `cloudflare setup` běžel při zastaveném clusteru, pody
+   vznikly už s hodnotami z Key Vaultu. Pojistka platí pro `setup`/`teardown` za běhu (`restart_pods` + rollout).
 
 ## Spuštění
 
