@@ -266,7 +266,7 @@ Pod aplikace nemá NetworkPolicy na egress → `<team>.cloudflareaccess.com:443`
 `CF-Access-Client-*`, i Playwright), žádný pod ho nepotřebuje. Objekty v Cloudflare (organizace, OTP, service token, Access aplikace + policy,
 tunnel + ingress, DNS CNAME) zakládá workflow **`cloudflare`** (`tools/cloudflare/cf_setup.py`, API token jen jako secret prostředí dev
 `CLOUDFLARE_ZT_TOKEN`) a hodnoty zapíše do Key Vaultu `az keyvault secret set --file` (nic v argumentech ani v logu); `status` čte, `teardown`
-vrací quick tunnel. Postup pro Adama (zóna, Zero Trust onboarding, API token, workflow) je v `knowledge/platforma/p4-provoz.md` – P4-10.
+vrací quick tunnel. Nasazeno 2026-11-06 na `platforma.autonomous.place` (cloudflare setup 42256617813, measure RUN3 100/100 PASS). Postup (zóna, Zero Trust onboarding, API token, workflow) je v `knowledge/platforma/p4-provoz.md` – P4-10.
 
 ## P4-9: rotace admina Postgresu (2026-11-05)
 
