@@ -626,6 +626,41 @@ def load_cf_access(a):
     return dict(CF_ACCESS)
 
 
+def cf_sync(a, timeout_s=90):
+    """P4-10b: hodnoty Cloudflare (token tunelu, Access) se mění mimo Git (workflow `cloudflare` → Key Vault); ESO je obnoví až po refreshInterval 1 h
+    a env sidecaru/aplikace jen novým podem. Před hledáním veřejné URL: force-sync obou ExternalSecretů, pak porovnat, co Secrety nesou, s tím,
+    v jakém režimu pod běží (sidecar quick tunnel = *.trycloudflare.com v logu; /health access) – při rozdílu nové pody aplikace (bez změny spec
+    Deploymentu, Flux nic nevrací). Bez nasazení (quick/none) nic nemění. Vrací jen příznaky."""
+    import base64 as _b, datetime as _dt
+    ts = str(int(time.time())); t0 = time.time()
+    for es in ("cloudflare-tunnel", "cloudflare-access"): kubectl(a, "-n", NS, "annotate", "externalsecret", es, f"force-sync={ts}", "--overwrite")
+    synced = False
+    while time.time() - t0 < timeout_s and not synced:
+        fresh = []
+        for es in ("cloudflare-tunnel", "cloudflare-access"):
+            rt = ((kj_static(a, "-n", NS, "get", "externalsecret", es).get("status") or {}).get("refreshTime") or "")
+            try: fresh.append(_dt.datetime.fromisoformat(rt.replace("Z", "+00:00")).timestamp() >= t0 - 5)
+            except ValueError: fresh.append(False)
+        synced = all(fresh)
+        if not synced: time.sleep(3)
+    def val(sec, k):
+        try: return _b.b64decode((kj_static(a, "-n", NS, "get", "secret", sec).get("data") or {}).get(k) or "").decode().strip().lower()
+        except Exception: return ""
+    named = val("cloudflare-tunnel", "token") not in ("", "quick"); access = val("cloudflare-access", "aud") not in ("", "none") and val("cloudflare-access", "team-domain") not in ("", "none")
+    pod = newest_app_pod(a); log = kubectl(a, "-n", NS, "logs", pod, "-c", "cloudflared", "--tail=600").stdout if pod else ""
+    quick_in_log = bool(re.search(r"trycloudflare\.com", log)); registered = len(re.findall(r"Registered tunnel connection", log))
+    r = kubectl(a, "-n", NS, "exec", "-i", "deploy/zakazka", "-c", "app", "--", "python3", "-c", "import json,urllib.request; print(json.dumps(json.load(urllib.request.urlopen('http://127.0.0.1:8011/health', timeout=20))))", timeout=60)
+    try: pod_access = json.loads((r.stdout or "").strip().splitlines()[-1]).get("access")
+    except Exception: pod_access = None
+    stale = (access != (pod_access is True)) or (named and quick_in_log) or (not named and bool(log) and not quick_in_log and registered > 0)
+    info = {"eso_synced": synced, "eso_s": round(time.time() - t0, 1), "secret_named_tunnel": named, "secret_access": access, "pod_access": pod_access, "pod_quick_tunnel": quick_in_log, "stale": stale}
+    if stale:
+        restart_pods(a, "zakazka"); time.sleep(5)
+        info["rollout"] = kubectl(a, "-n", NS, "rollout", "status", "deployment/zakazka", "--timeout=420s", timeout=440).returncode == 0
+        info["restart_s"] = round(time.time() - t0, 1)
+    return info
+
+
 def n3_access_checks(a, rep, led, pub_info, t_n):
     """P4-10 N3a–c: pojmenovaný tunnel + Cloudflare Access. Bez nasazeného Access (Key Vault cloudflare-access-* = none, tunnel quick) N3a–b SKIP.
     N3a (zvenčí): hostname ze Secretu, sidecar připojený tokenem (žádný *.trycloudflare.com), /health hlásí access=True, bez service tokenu Access
@@ -3254,7 +3289,8 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
         if n1:   # P4-4: veřejný vstup přes Cloudflare Tunnel – zjistit URL a ověřit hranici veřejného listeneru dřív, než GUI toky začnou
             global PUBLIC_URL
-            t_n = time.time(); cfa = load_cf_access(a); print(f"  Access: {cfa}", flush=True)   # P4-10: service token do hlaviček dřív, než se hledá URL (/health za Access)
+            t_n = time.time(); print(f"  cf_sync: {cf_sync(a)}", flush=True)   # P4-10b: Secrety cloudflare-* z Key Vaultu (force-sync) a pod v jejich režimu (jinak nové pody)
+            cfa = load_cf_access(a); print(f"  Access: {cfa}", flush=True)   # P4-10: service token do hlaviček dřív, než se hledá URL (/health za Access)
             PUBLIC_URL, pub_info = public_url(a, http); _PUB_CTX.update(a=a, http=http, pod=pub_info.get("pod"))
             sys.path.insert(0, str(HERE)); import gui_checks as _gcm; _gcm.REBASE = lambda: (gui_base(APP) if PUBLIC_URL else None)   # GUI klient si po chybě navigace vyžádá nový základ URL (včetně /gui/ – běh 7: bez něj goto mířilo na kořen → 404 → timeout loginu)
             pods = kj("-n", NS, "get", "pods", "-l", "app=zakazka").get("items", [])

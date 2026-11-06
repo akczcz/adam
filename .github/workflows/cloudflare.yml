@@ -1,0 +1,80 @@
+name: cloudflare
+# P4-10b: stálý vstup platformy – pojmenovaný tunnel + Cloudflare Access – založí/aktualizuje API Cloudflare (tools/cloudflare/cf_setup.py)
+# a hodnoty (token tunelu, AUD tag, service token, team domain, hostname) zapíše identitou runneru rovnou do Key Vaultu. Nic tajného v logu.
+# Potřebuje secret prostředí dev `CLOUDFLARE_ZT_TOKEN` (API token: Account → Cloudflare Tunnel Edit, Access: Apps and Policies Edit,
+# Access: Service Tokens Edit, Access: Organizations, Identity Providers, and Groups Edit; Zone → Zone Read, DNS Edit – jen zóna platformy).
+# Zero Trust organizace (team name + Free plán) musí existovat – když ne, skript ji zkusí založit, jinak řekne, že je třeba onboarding v dashboardu.
+# Když cluster běží, po `setup`/`teardown` vynutí ESO sync a nové pody aplikace (env sidecaru i aplikace jsou ze Secretů); `measure` to umí sám (cf_sync).
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: status (jen čtení) | setup (založit/aktualizovat + Key Vault) | teardown (zpět na quick tunnel bez Access)
+        default: status
+        type: choice
+        options: [status, setup, teardown]
+      zone:
+        description: doména (zóna) v účtu Cloudflare
+        default: autonomous.place
+        type: string
+      host:
+        description: subdoména GUI (jedna úroveň)
+        default: platforma
+        type: string
+      team:
+        description: team name Zero Trust jen při zakládání organizace (existující se použije)
+        default: autonomous-place
+        type: string
+      email:
+        description: setup – e-maily lidí, kteří se smí přihlásit přes Access (OTP), oddělené čárkou; prázdné = zachovat existující policy
+        default: ""
+        type: string
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  cloudflare:
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      RG: ${{ vars.TF_STATE_RG }}
+      CLUSTER: aks-platform-dev
+      KV: kv-platform-dev-${{ vars.NAME_SUFFIX }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: cloudflare ${{ inputs.action }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_ZT_TOKEN }}
+          EMAILS: ${{ inputs.email }}
+        run: |
+          set -o pipefail
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::secret CLOUDFLARE_ZT_TOKEN v prostředí dev chybí (API token Cloudflare – práva v hlavičce workflow)"; exit 1; }
+          python3 tools/cloudflare/cf_setup.py --action "${{ inputs.action }}" --zone "${{ inputs.zone }}" --host "${{ inputs.host }}" --team "${{ inputs.team }}" --email "$EMAILS" --kv "$KV" 2>&1 | tee "$RUNNER_TEMP/cf.log"
+          { echo "## cloudflare ${{ inputs.action }}"; echo '```'; grep -E "^(✅|❌)" "$RUNNER_TEMP/cf.log" | cut -c1-3000; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # nové hodnoty do běžícího clusteru: ESO force-sync Secretů cloudflare-tunnel/cloudflare-access a nové pody aplikace (env se mění jen restartem)
+      - name: cluster – ESO sync a nové pody aplikace
+        if: inputs.action != 'status'
+        run: |
+          set +e
+          [ "$(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv)" = "Running" ] || { echo "cluster neběží – hodnoty se načtou při startu (measure si je zkontroluje přes cf_sync)" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
+          az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing -o none
+          ts=$(date +%s)
+          kubectl -n platform-data annotate externalsecret cloudflare-tunnel cloudflare-access "force-sync=$ts" --overwrite
+          for i in $(seq 1 30); do
+            ok=1
+            for es in cloudflare-tunnel cloudflare-access; do
+              rt=$(kubectl -n platform-data get externalsecret "$es" -o jsonpath='{.status.refreshTime}'); [ -n "$rt" ] && [ "$(date -d "$rt" +%s)" -ge "$((ts - 5))" ] || ok=0
+            done
+            [ "$ok" = 1 ] && break; sleep 3
+          done
+          echo "ESO refresh: ok=$ok ($((i*3)) s)"
+          kubectl -n platform-data delete pod -l app=zakazka --wait=false
+          kubectl -n platform-data rollout status deployment/zakazka --timeout=420s
+          { echo "## cluster"; echo "ESO sync ok=$ok, nové pody aplikace: $(kubectl -n platform-data get pods -l app=zakazka --no-headers | awk '{print $1, $2, $3}' | tr '\n' ';')"
+            echo "Adresa a režim vstupu: Actions → cluster → status (vstup access=True)"; } | tee -a "$GITHUB_STEP_SUMMARY"

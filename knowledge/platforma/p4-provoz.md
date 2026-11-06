@@ -295,7 +295,7 @@ nastaví aplikace při startu. Terraform hodnoty po založení nepřepisuje (`ig
 | `pg-memory-app/org-reader/org-writer-password` (RLS role) | aplikace (`ALTER ROLE` při startu), paměť, Governance MCP (DSN z env) | nové pody aplikace → `DB_ROLES_SYNC` → nové pody paměti a governance | sekundy až desítky sekund (readiness) | `rotate` group `db-roles`, R1b |
 | `pg-platform-password` (admin Flexible Serveru) | Keycloak, gateway, Dapr state store, aplikace (FinOps/registr) | ~~`terraform apply -replace=random_password.pg`~~ **P4-9**: ARM PATCH hesla serveru (identita Actions) → nová verze v Key Vaultu → force-sync → nové pody Keycloaku, gateway, aplikace (+ daprd) | minuty (restart tří konzumentů) | `rotate` group `pg-admin`, R3a–c |
 | `anthropic-api-key`, `github-token`, `cloudflare-tunnel-*` | gateway / sidecar (env, soubor) | nová hodnota od Adama v Key Vaultu → force-sync → nové pody gateway / aplikace | sekundy | ruční postup (hodnoty mimo Terraform) |
-| `cloudflare-access-client-id/secret` (service token harnessu, **P4-10**) | harness, workflow `measure` (hlavičky `CF-Access-Client-*`) – žádný pod | nový token v Cloudflare (Zero Trust → Service credentials; rotace secretu API s dobou doběhu starého) → Key Vault → force-sync; harness čte Secret při startu běhu | žádný | ruční (hodnota z Cloudflare) |
+| `cloudflare-access-client-id/secret` (service token harnessu, **P4-10**) | harness, workflow `measure` (hlavičky `CF-Access-Client-*`) – žádný pod | workflow `cloudflare` → `setup` (existující token rotuje API, nová hodnota rovnou do Key Vaultu; harness čte Secret při startu běhu, `cf_sync` force-sync) | žádný | workflow `cloudflare` (P4-10b) |
 | `cloudflare-access-team-domain/aud` (**P4-10**) | aplikace (env – ověření JWT) | mění se jen při nové Access aplikaci / týmu → Key Vault → force-sync → nový pod aplikace | restart aplikace | ruční (hodnota z Cloudflare) |
 | `openbao-init` (root token, recovery) | nikdo za běhu (E10 scoped operátor) | nerotuje se; rotace root tokenu = `generate-root` (kandidát) | – | – |
 
@@ -413,22 +413,31 @@ token ze Secretu `cloudflare-access` do hlaviček všech volání přes tunel i 
 fetch z GUI). Tajemství: Key Vault `cloudflare-tunnel-token/hostname` (P4-4) + `cloudflare-access-team-domain/aud/client-id/client-secret`
 (Terraform výchozí `none`, `ignore_changes`) → ESO → Secrety `cloudflare-tunnel`, `cloudflare-access` → env sidecaru a aplikace.
 
-### Co musí udělat Adam (ostré nasazení, ~30 min, zdarma kromě domény)
+### Postup ostrého nasazení (doména `autonomous.place`, 2026-11-06)
 
-1. **Doména v Cloudflare:** vlastní doménu přidat jako zónu (nameservery na Cloudflare = full setup; nebo partial CNAME), případně koupit
-   přes Cloudflare Registrar. Bez zóny published application nejde (docs).
-2. **Zero Trust:** založit tým (team name → `https://<team>.cloudflareaccess.com`), Free plán.
-3. **Access aplikace nejdřív:** Access controls → Applications → Add → Self-hosted, hostname `platforma.<doména>`; policy *Allow* pro Adamův
-   e-mail (One-time PIN); druhá policy **Service Auth** pro service token harnessu. Z *Additional settings* zkopírovat **AUD tag**.
-4. **Service token:** Access controls → Service credentials → Service Tokens → Create (doba např. 1 rok) → Client ID + Client Secret.
-5. **Tunnel:** Networks → Tunnels → Create tunnel (cloudflared) → zkopírovat **token**; Published application: `platforma.<doména>` →
-   `http://127.0.0.1:8011`. (Volitelně *Protect with Access* na published application.)
-6. **Key Vault** `kv-platform-dev-<suffix>` → Secrets → *New version* (portál, nikdy do Gitu ani do chatu):
-   `cloudflare-tunnel-token`, `cloudflare-tunnel-hostname` = `platforma.<doména>`, `cloudflare-access-team-domain` =
-   `https://<team>.cloudflareaccess.com`, `cloudflare-access-aud`, `cloudflare-access-client-id`, `cloudflare-access-client-secret`.
-7. Hodnoty před startem clusteru → pody nabootují s nimi (jinak ESO do 1 h / force-sync + restart aplikace). Pak Actions → `cluster` →
-   `status`: Summary ukáže `https://platforma.<doména>/gui – Cloudflare Access (nejdřív e-mail OTP), pak přihlášení …` a `vstup access=True`.
-8. Měření: Actions → `measure` → `e2e: p4-10` → N3a/N3b PASS (bez nasazení SKIP). Zpět na quick tunnel = hodnoty `quick`/`none`.
+Cloudflare objekty zakládá workflow **`cloudflare`** (`tools/cloudflare/cf_setup.py`, idempotentní) a hodnoty zapíše identitou Actions
+rovnou do Key Vaultu – nic tajného neprojde chatem, Gitem ani logem (jen identifikátory a AUD tag). Adam dělá jen to, co API neumí:
+
+1. **Doména jako zóna** v účtu Cloudflare (hotovo: `autonomous.place` koupena přes Registrar = zóna `active`).
+2. **Zero Trust onboarding** v dashboardu: Zero Trust → team name (např. `autonomous-place` → `https://autonomous-place.cloudflareaccess.com`),
+   plán **Free**, platební údaje (docs `choose-team-name.mdx`: krok je nutný i u Free, nic se neúčtuje). Skript organizaci zkusí založit API,
+   bez dokončeného onboardingu to ale může odmítnout → pak tento krok.
+3. **API token** (My Profile → API Tokens → Create Token → Custom): Account *Cloudflare Tunnel: Edit*, *Access: Apps and Policies: Edit*,
+   *Access: Service Tokens: Edit*, *Access: Organizations, Identity Providers, and Groups: Edit*; Zone *Zone: Read*, *DNS: Edit* – Zone Resources
+   jen `autonomous.place`. Token uložit jako secret prostředí **dev** `CLOUDFLARE_ZT_TOKEN` (repo → Settings → Environments → dev → Secrets);
+   po nasazení ho lze smazat/revokovat (objekty už existují), pro rotaci service tokenu založit znovu.
+4. **Actions → `cloudflare` → `setup`** (zone `autonomous.place`, host `platforma`, team `autonomous-place`, email = e-maily lidí pro OTP):
+   zóna → organizace → IdP One-time PIN → service token `platforma-harness` (existující se rotuje) → Access aplikace `platforma.autonomous.place`
+   (policy *Service Auth* pro service token + *Allow* e-maily, session 24 h, bez App Launcheru) → tunnel `platforma` (remotely-managed, ingress
+   `platforma.autonomous.place` → `http://127.0.0.1:8011`, fallback 404) → DNS CNAME `platforma` → `<tunnel>.cfargotunnel.com` (proxied) →
+   Key Vault 6 hodnot. Když cluster běží, workflow vynutí ESO sync a nové pody aplikace; když neběží, hodnoty se načtou při startu
+   (`measure` si to pojistí `cf_sync`: force-sync + nové pody, pokud pod běží ve starém režimu).
+5. **Actions → `cluster` → `start`**, po 3 min **`status`**: Summary `https://platforma.autonomous.place/gui – Cloudflare Access (nejdřív e-mail OTP), pak …`
+   a `vstup access=True`. V prohlížeči: Access stránka → e-mail → kód z mailu → Keycloak login jako dosud.
+6. **Actions → `measure` → `e2e: p4-10`** → N3a/N3b PASS. `cloudflare` → `status` kdykoli ukáže stav objektů a shodu Key Vaultu (bez hodnot);
+   `teardown` vrátí quick tunnel bez Access (smaže DNS, tunnel, aplikaci, service token, Key Vault `quick`/`none`; organizace a OTP zůstávají).
+
+Ruční varianta (dashboard místo workflow) zůstává možná: stejné objekty, hodnoty do Key Vaultu přes portál jako *New version* – nikdy do Gitu ani do chatu.
 
 Měření `--step p4-10` = p4-9 + **N3a–c**: N3a zvenčí (hostname ze Secretu, sidecar připojený tokenem, bez service tokenu zastaví edge 302/403,
 s ním GUI 200 / AG-UI 401 / `/health` `access=True`, `GUI_LOGIN` s identitou Access), N3b zevnitř podu (origin bez JWT i s podvrženým 403,
