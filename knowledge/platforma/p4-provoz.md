@@ -21,7 +21,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-7** Rotace tajemství jako provozní postup | nová verze v Key Vaultu → ESO force-sync → konzument (Keycloak admin API, restart aplikace/paměti/governance); workflow `rotate`, bez dev literálů a bez znalosti starého hesla | ✅ 2026-11-04 AKS 93/93 PASS + 20 INFO, 1 běh |
 | **P4-8** Rotace bez restartu | Secrety s hesly DB rolí jako soubory v podech (kubelet je obnoví), aplikace sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení | ✅ 2026-11-05 AKS 96/96 PASS + 21 INFO, 4 běhy |
 | **P4-9** Rotace admina Postgresu | heslo admina Flexible Serveru jako provozní postup: ARM PATCH (identita Actions) → nová verze v Key Vaultu → ESO → nové pody Keycloaku, gateway a aplikace; poslední „ruční postup“ z tabulky P4-7 | ✅ 2026-11-05 AKS 98/98 PASS + 22 INFO, 2 běhy |
-| **P4-10** Pojmenovaný tunnel + Cloudflare Access | stálá adresa GUI (`platforma.<doména>`), Access před hostname (e-mail OTP pro lidi, service token pro harness/operátora), origin ověřuje Access JWT (obrana při obejití Cloudflare); quick tunnel zůstává pro měření bez účtu | 🟡 kód 2026-11-06, měření bez Access P410_RESULT; **ostré nasazení čeká na Adama** (doména + účet Cloudflare, 6 hodnot v Key Vaultu – postup níže) |
+| **P4-10** Pojmenovaný tunnel + Cloudflare Access | stálá adresa GUI (`platforma.<doména>`), Access před hostname (e-mail OTP pro lidi, service token pro harness/operátora), origin ověřuje Access JWT (obrana při obejití Cloudflare); quick tunnel zůstává pro měření bez účtu | 🟡 kód 2026-11-06, měření bez Access 98/98 PASS + 23 INFO, N3a–b SKIP (run 42194513070); **ostré nasazení čeká na Adama** (doména + účet Cloudflare, 6 hodnot v Key Vaultu – postup níže) |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -434,9 +434,15 @@ Měření `--step p4-10` = p4-9 + **N3a–c**: N3a zvenčí (hostname ze Secretu
 s ním GUI 200 / AG-UI 401 / `/health` `access=True`, `GUI_LOGIN` s identitou Access), N3b zevnitř podu (origin bez JWT i s podvrženým 403,
 `ACCESS_DENIED` s důvodem a hashem IP), N3c INFO (spojení sidecaru, čas). Bez nasazení N3a–b **SKIP**.
 
-Výsledek měření: **P410_RESULT** (`measure` run P410_ID, P410_RUNS). Nálezy (detail v README harnessu):
+Výsledek měření: **98 PASS / 0 FAIL / 23 INFO / 2 SKIP** (`measure` run 42194513070, 1 běh, quick tunnel bez Access – N3a/N3b SKIP).
+Nálezy (detail v README harnessu):
 
-P410_FINDINGS
+1. Měření bez Access prokazuje jen, že nový middleware (vypnutý při `none`), service-token hlavičky harnessu a pole `access` v `/health`
+   nic nerozbily – 98 checků P4-9 beze změny. Důkaz o Access (N3a/N3b PASS) přinese až ostré nasazení podle postupu výše.
+2. Ověření Access JWT je otestované lokálně (vlastní JWKS, PyJWT); proti skutečným klíčům Cloudflare (rotace po 6 týdnech, `kid`,
+   tvar `iss`) ho prověří první ostrý běh – odchylka se objeví jako `ACCESS_DENIED` s názvem výjimky v ledgeru.
+3. Terraform: `for_each` nesmí být odvozeno ze `sensitive` proměnné (apply 42180362186 selhal na validaci) – klíče secretů jsou pevné,
+   hodnoty `lookup(...)`; apply 42194305253 založil `cloudflare-access-{team-domain,aud,client-id,client-secret}` = `none`.
 
 ## Rizika
 
@@ -456,7 +462,7 @@ P410_FINDINGS
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
-- 2026-11-06: P4-10 kód + měření bez Access (P410_RESULT) – pojmenovaný tunnel + Cloudflare Access: origin ověřuje Access JWT (`ACCESS_DENIED`,
+- 2026-11-06: P4-10 kód + měření bez Access (98/98 PASS + 23 INFO, N3a–b SKIP, run 42194513070) – pojmenovaný tunnel + Cloudflare Access: origin ověřuje Access JWT (`ACCESS_DENIED`,
   identita Access v `GUI_LOGIN`), service token harnessu v hlavičkách i v prohlížeči, Key Vault `cloudflare-access-*` (výchozí `none`), checky
   N3a–c (SKIP bez nasazení), `cluster status` hlásí režim vstupu. Ostré nasazení = Adamova doména a účet Cloudflare (postup v sekci P4-10).
 - 2026-11-05: P4-9 hotovo na AKS (98/98 PASS + 22 INFO, 2 běhy) – rotace hesla admina Flexible Serveru jako provozní postup: ARM PATCH
