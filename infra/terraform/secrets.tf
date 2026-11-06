@@ -105,9 +105,9 @@ resource "azurerm_key_vault_secret" "cloudflare_tunnel_hostname" {
 # service token harnessu/operátora (Client ID + Client Secret, policy Service Auth). Výchozí "none" = bez Access (quick tunnel); ostré hodnoty nastaví
 # Adam v Key Vaultu, Terraform je nepřepisuje.
 resource "azurerm_key_vault_secret" "cloudflare_access" {
-  for_each     = var.cloudflare_access
+  for_each     = toset(["team-domain", "aud", "client-id", "client-secret"]) # klíče pevně (for_each nesmí být odvozeno ze sensitive proměnné)
   name         = "cloudflare-access-${each.key}"
-  value        = each.value
+  value        = lookup(var.cloudflare_access, each.key, "none")
   key_vault_id = azurerm_key_vault.kv.id
   content_type = "Cloudflare Access (P4-10) ${each.key}; 'none' = Access není nasazen (quick tunnel). Ostrou hodnotu nastaví Adam, Terraform nepřepisuje"
   tags         = var.tags
