@@ -1245,6 +1245,39 @@ Nálezy:
 4. Staré heslo je po rotaci opravdu neplatné (`FATAL: password authentication failed` přes socat na private endpoint) – rollback na starou
    hodnotu při selhání zápisu do Key Vaultu nebyl v měření potřeba (`kv: true`), zůstává netestovaná větev.
 
+## P4-10 N3 – pojmenovaný tunnel + Cloudflare Access (2026-11-06, AKS, `--step p4-10` = p4-9 + **N3a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-10-pojmenovaný-tunnel--cloudflare-access)): stálý hostname
+  (pojmenovaný tunnel, token v Key Vaultu) + Access před ním (OTP e-mail / service token, policy Service Auth) + ověření Access JWT na originu.
+- **Harness:** `load_cf_access()` čte Secret `cloudflare-access` (service token → `CF_H`, sdílené s GUI klientem jako `extra_http_headers`
+  kontextu Playwrightu – nese je i fetch z GUI); `cfh()` přidává hlavičky ke každému volání přes tunel (`public_url`, `gui_base`, N1b, N2, Q1).
+  `n3_access_checks()`: N3a zvenčí (`follow_redirects=False` bez tokenu → 302 na `*.cloudflareaccess.com` / 403), N3b zevnitř podu
+  (`kubectl exec … python3` na `127.0.0.1:8011` bez JWT a s podvrženým JWT → 403, `/health` 200), ledger `ACCESS_DENIED`, `PUBLIC_LISTENER.access`.
+  Bez nasazení (Key Vault `cloudflare-*` = `quick`/`none`) N3a–b **SKIP**, N3c INFO.
+- Lokální test middlewaru (vlastní RSA klíč jako JWKS, PyJWT): platný JWT 200 (identita člověka / service tokenu), chybějící 403 `missing_jwt`,
+  podvržený 403 `DecodeError`, cizí `aud` 403 `InvalidAudienceError`, cookie `CF_Authorization` 200, `/health` vždy 200 – 2026-11-06 OK.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| N3a | hostname ze Secretu, sidecar připojený tokenem; bez service tokenu zastaví edge; s ním GUI 200 / AG-UI 401 / `/health` access=True; GUI_LOGIN s identitou Access | ⏭️ SKIP – Key Vault `cloudflare-tunnel-*`/`cloudflare-access-*` = `quick`/`none` (quick tunnel z logu sidecaru, `/health` `access=False`, 1 spojení sidecaru, CF-Ray DFW) |
+| N3b | origin zevnitř podu bez JWT i s podvrženým 403, `/health` 200; `ACCESS_DENIED` s důvodem a hashem IP; `PUBLIC_LISTENER.access` | ⏭️ SKIP – Access nenasazen (`configured: false`) |
+| N3c | režim vstupu, spojení sidecaru, čas | ℹ️ Secret `cloudflare-access` v clusteru (ESO) s hodnotami `none`, `url_source: quick-tunnel-log`, `tunnel_connections: 1`, service token nepoužit |
+
+Výsledek: **98 PASS / 0 FAIL / 23 INFO / 2 SKIP** (`measure` run 42194513070, 1 běh, head 2226318; e2e 87 min, cluster se zastavil sám).
+
+Nálezy:
+
+1. **Měření bez Access prokazuje jen „žádná regrese“**: všech 98 checků P4-9 prošlo i s novým middlewarem (vypnutý při `none`), hlavičkami
+   `cfh()` na každém volání přes tunel a polem `access` v `/health`. O Access samotném zatím neříká nic – N3a/N3b jsou SKIP, dokud Adam
+   nenasadí doménu, Access aplikaci a 6 hodnot v Key Vaultu (postup v p4-provoz.md P4-10).
+2. **Ověření JWT je otestované jen lokálně** (vlastní RSA JWKS, PyJWT 2.15): chování proti skutečným klíčům Cloudflare
+   (`/cdn-cgi/access/certs`, rotace po 6 týdnech, výběr podle `kid`, tvar `iss` = team domain) se ukáže až v prvním ostrém běhu –
+   případný rozdíl spadne do `ACCESS_DENIED` s názvem výjimky PyJWT, takže bude v ledgeru vidět, co opravit.
+3. **Terraform**: `for_each` nad `sensitive` proměnnou je chyba validace (infra apply 42180362186) – klíče Key Vault secretů jsou pevně
+   v `toset([...])`, hodnoty přes `lookup(var.cloudflare_access, key, "none")` (2226318; apply 42194305253 založil 4 secrety `none`).
+4. Quick tunnel drží **1 spojení** sidecaru (pojmenovaný tunnel standardně 4 na 2 datacentra) – N3a po nasazení vyžaduje ≥1 `Registered
+   tunnel connection`, počet je jen informace v N3c.
+
 ## Spuštění
 
 ```bash

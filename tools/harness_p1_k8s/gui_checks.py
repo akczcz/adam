@@ -21,6 +21,7 @@ KLAS_NO = {k: False for k in KLAS_KEYS}   # P3-4: dogfooding = vše „ne“ →
 
 REBASE = None     # P4-4: harness dodá funkci → aktuální základ URL GUI (quick tunnel Cloudflare mění hostname s každým restartem podu aplikace)
 HUMAN_PW: dict = {}   # P4-6: hesla lidí harnessu ze Secretu keycloak-humans (Key Vault přes ESO); harness/promo je naplní, hodnoty se nelogují
+EXTRA_HEADERS: dict = {}   # P4-10: service token Cloudflare Access (CF-Access-Client-Id/Secret) – extra_http_headers kontextu prohlížeče, nese je i fetch z GUI; hodnoty se nelogují
 
 
 def hpw(user):
@@ -44,7 +45,7 @@ class Gui:
             except Exception: pass
         self.pw = sync_playwright().start(); _ACTIVE.append(self)
         self.browser = self.pw.chromium.launch(headless=self.headless, executable_path=self.chromium or None, slow_mo=self.slow)
-        self.page = self.browser.new_context(viewport={"width": 1280, "height": 900}, locale="cs-CZ").new_page()
+        self.page = self.browser.new_context(viewport={"width": 1280, "height": 900}, locale="cs-CZ", extra_http_headers=(dict(EXTRA_HEADERS) or None)).new_page()
         self.page.set_default_timeout(30_000)
         self.page.on("console", lambda m: self.log.append(f"[{m.type}] {m.text[:200]}") if m.type in ("error", "warning") else None)
         self.goto("")

@@ -255,6 +255,17 @@ v `budget_usage`/ClickHouse zůstávají. **Ledger aplikace** (JSONL na PVC) se 
 timeouty readiness proby; čte se přírůstkově. Výhled: klíče per zakázka patří do Secretu/OpenBao-agent nebo do více ConfigMap (per tenant), ne do
 jedné; ledger patří do databáze (ClickHouse/Postgres), ne do souboru.
 
+## P4-10: pojmenovaný tunnel + Cloudflare Access (2026-11-06)
+
+Stálá adresa GUI = pojmenovaný tunnel (token + hostname v Key Vaultu, P4-4) a před ním Cloudflare Access. Key Vault navíc
+`cloudflare-access-team-domain` (`https://<team>.cloudflareaccess.com`), `cloudflare-access-aud` (AUD tag Access aplikace), `cloudflare-access-client-id`
+a `cloudflare-access-client-secret` (service token harnessu/operátora) – Terraform `for_each` s výchozím `none` a `ignore_changes`; ESO → Secret
+`cloudflare-access` → env `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` kontejneru `app` (overlay aks). Aplikace s nimi ověřuje JWT `Cf-Access-Jwt-Assertion`
+na veřejném listeneru 8011 (RS256, JWKS z team domain podle `kid`, `aud`, `iss`; `/health` bez ověření); bez nich (`none`) se nic neověřuje = quick tunnel.
+Pod aplikace nemá NetworkPolicy na egress → `<team>.cloudflareaccess.com:443` jde. Service token čte harness ze Secretu při startu běhu (hlavičky
+`CF-Access-Client-*`, i Playwright), žádný pod ho nepotřebuje. Postup pro Adama (doména, Zero Trust, Access aplikace, service token, tunnel, 6 hodnot
+v Key Vaultu) je v `knowledge/platforma/p4-provoz.md` – P4-10.
+
 ## P4-9: rotace admina Postgresu (2026-11-05)
 
 Heslo admina Flexible Serveru (`pg-platform-password`, user `platform`) rotuje `harness.py --rotate pg-admin` (workflow `rotate` group
