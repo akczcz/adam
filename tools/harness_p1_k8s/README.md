@@ -1267,12 +1267,12 @@ Nálezy:
 | N3b | origin zevnitř podu bez JWT i s podvrženým 403, `/health` 200; `ACCESS_DENIED` s důvodem a hashem IP; `PUBLIC_LISTENER.access` | ✅ `gui_no_jwt` 403, `agui_no_jwt` 403, `gui_bogus_jwt` 403, `/health` 200; ledger `ACCESS_DENIED` 3× (`missing_jwt`, `DecodeError`, hash IP); `PUBLIC_LISTENER.access=True`, team `autonomous-place.cloudflareaccess.com` |
 | N3c | režim vstupu, spojení sidecaru, čas | ℹ️ `configured: true`, `service_token: true`, `aud_set: true`, `tunnel_connections: 4`, `gui_login_access {n: 16, service_token: 16, email_hash: 0}`, wall 3791 s |
 
-Výsledek: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run RUN3, ostrý tunnel + Access; cluster se zastavil sám). Předchozí běhy:
+Výsledek: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run 42289070940, ostrý tunnel + Access, head 1d5a500; e2e 109 min, L2b `probe: sentinel`, cluster se zastavil sám). Předchozí běhy:
 42194513070 bez Access 98/0/23/**2 SKIP** (head 2226318), 42258369131 ostrý 99/**1**/23/0 (L2b – nález 2; N3a/N3b už PASS).
 
 Nálezy:
 
-1. **Access a ověření JWT na originu fungují proti skutečnému Cloudflare** (run 42258369131, RUN3): JWKS `autonomous-place.cloudflareaccess.com/cdn-cgi/access/certs`,
+1. **Access a ověření JWT na originu fungují proti skutečnému Cloudflare** (runy 42258369131 a 42289070940): JWKS `autonomous-place.cloudflareaccess.com/cdn-cgi/access/certs`,
    `kid`, `aud` = AUD tag, `iss` = team domain – middleware z lokálního testu (vlastní RSA JWKS, PyJWT 2.15) prošel bez změny.
    Quick tunnel držel 1 spojení sidecaru, pojmenovaný 4 (2 datacentra); CF-Ray EWR místo DFW (podle polohy runneru).
 2. **L2b: re-registrace klíčů gateway po úklidu měla okno 401** (run 42258369131): `evict` odebral klíče z ConfigMapy, re-registrace

@@ -443,7 +443,7 @@ organizace `autonomous-place.cloudflareaccess.com` z onboardingu, nic dalšího)
 token `platforma-harness` do 2027-11-06, Access aplikace `platforma.autonomous.place` s policy Service Auth + Allow pro e-mail Adama, tunnel
 `platforma` + ingress, DNS CNAME, 6 hodnot v Key Vaultu; cluster stál) → `cluster start` 42256769898 → `measure p4-10` 42258369131
 (cf_sync: pody už v režimu named+access, `stale: False`; **N3a/N3b PASS**, 99/1 – nález L2b níže) → oprava → `images` 42286347613 →
-`measure p4-10` RUN3. Token `CLOUDFLARE_ZT_TOKEN` v prostředí `dev` lze po nasazení smazat (objekty existují); pro rotaci service tokenu
+`measure p4-10` 42289070940. Token `CLOUDFLARE_ZT_TOKEN` v prostředí `dev` lze po nasazení smazat (objekty existují); pro rotaci service tokenu
 (`cloudflare setup` znovu) založit nový s týmiž právy.
 
 Ruční varianta (dashboard místo workflow) zůstává možná: stejné objekty, hodnoty do Key Vaultu přes portál jako *New version* – nikdy do Gitu ani do chatu.
@@ -452,7 +452,7 @@ Měření `--step p4-10` = p4-9 + **N3a–c**: N3a zvenčí (hostname ze Secretu
 s ním GUI 200 / AG-UI 401 / `/health` `access=True`, `GUI_LOGIN` s identitou Access), N3b zevnitř podu (origin bez JWT i s podvrženým 403,
 `ACCESS_DENIED` s důvodem a hashem IP), N3c INFO (spojení sidecaru, čas). Bez nasazení N3a–b **SKIP**.
 
-Výsledek měření: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run RUN3, ostrý tunnel + Access; předtím run 42194513070 bez Access
+Výsledek měření: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run 42289070940, ostrý tunnel + Access; předtím run 42194513070 bez Access
 98/0/23/2 SKIP a run 42258369131 ostrý 99/1 – nález 2). Nálezy (detail v README harnessu):
 
 1. **Access funguje tak, jak docs slibují, a origin ho ověřuje proti skutečným klíčům Cloudflare**: bez service tokenu edge vrací 302 na
@@ -487,7 +487,7 @@ Výsledek měření: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run RUN
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
-- 2026-11-06: P4-10 hotovo na AKS (100/100 PASS + 23 INFO, run RUN3) – ostré nasazení na `platforma.autonomous.place` workflow `cloudflare`
+- 2026-11-06: P4-10 hotovo na AKS (100/100 PASS + 23 INFO, run 42289070940) – ostré nasazení na `platforma.autonomous.place` workflow `cloudflare`
   (`tools/cloudflare/cf_setup.py`: zóna, Zero Trust organizace, OTP IdP, service token, Access aplikace + policy, tunnel + ingress, DNS, Key Vault),
   harness `cf_sync`; N3a/N3b PASS proti skutečnému Access. Nález L2b: re-registrace klíčů gateway sonduje hlídacím klíčem (okno 401 po úklidu).
 - 2026-11-06: P4-10 kód + měření bez Access (98/98 PASS + 23 INFO, N3a–b SKIP, run 42194513070) – pojmenovaný tunnel + Cloudflare Access: origin ověřuje Access JWT (`ACCESS_DENIED`,
