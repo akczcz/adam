@@ -12,7 +12,7 @@ on:
         description: krok harnessu P1/P2 (zakázka end-to-end v AKS, role jako Kata pody; ~15–30 min, škáluje pool kata z 0) – none = jen stav
         type: choice
         default: none
-        options: [none, p4-8, p4-7, p4-6, p4-5, p4-4, p4-3, p4-2, p4-2-live, p4-1, p3-6, p3-5, p3-4, p3-3, p3-2, p3-1, p2-6, p2-4, p2-3, p2-5, p2-2, p2-1]   # p4-2-live = ostrý běh (živý model, skutečný GitHub; vyžaduje ostrá tajemství v Key Vaultu, platí se)
+        options: [none, p4-9, p4-8, p4-7, p4-6, p4-5, p4-4, p4-3, p4-2, p4-2-live, p4-1, p3-6, p3-5, p3-4, p3-3, p3-2, p3-1, p2-6, p2-4, p2-3, p2-5, p2-2, p2-1]   # p4-2-live = ostrý běh (živý model, skutečný GitHub; vyžaduje ostrá tajemství v Key Vaultu, platí se)
       stop:
         description: po měření zastavit cluster (AKS + Flexible Server) – false = nechat běžet (např. ostrá zakázka z GUI)
         type: boolean
@@ -71,6 +71,10 @@ jobs:
         id: e2e
         if: inputs.e2e != 'none'
         continue-on-error: true
+        env:   # P4-9: harness si umí obnovit přihlášení az (OIDC assertion azure/login platí 5 min; Key Vault/ARM po ~100 min běhu → AADSTS700024) – stejné hodnoty jako azure/login, nejsou tajemství
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -o pipefail
           pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]' fastapi opentelemetry-sdk inspect-ai anthropic uvicorn pandas pyarrow   # fastapi/otel: embedding M1; inspect-ai…: negativní kontrola evalů (p2-5)

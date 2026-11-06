@@ -20,6 +20,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-6** Hesla lidí mimo Git | hesla lidí harnessu (adam, bea, platform-admin, probe) z Key Vaultu přes ESO; realm JSON z Gitu nese jen placeholdery `${KC_HUMAN_PW_*}`, běžící realm otočí harness admin API | ✅ 2026-11-04 AKS 90/90 PASS + 19 INFO, 3 běhy |
 | **P4-7** Rotace tajemství jako provozní postup | nová verze v Key Vaultu → ESO force-sync → konzument (Keycloak admin API, restart aplikace/paměti/governance); workflow `rotate`, bez dev literálů a bez znalosti starého hesla | ✅ 2026-11-04 AKS 93/93 PASS + 20 INFO, 1 běh |
 | **P4-8** Rotace bez restartu | Secrety s hesly DB rolí jako soubory v podech (kubelet je obnoví), aplikace sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení | ✅ 2026-11-05 AKS 96/96 PASS + 21 INFO, 4 běhy |
+| **P4-9** Rotace admina Postgresu | heslo admina Flexible Serveru jako provozní postup: ARM PATCH (identita Actions) → nová verze v Key Vaultu → ESO → nové pody Keycloaku, gateway a aplikace; poslední „ruční postup“ z tabulky P4-7 | ✅ 2026-11-05 AKS 98/98 PASS + 22 INFO, 2 běhy |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -297,7 +298,7 @@ nastaví aplikace při startu. Terraform hodnoty po založení nepřepisuje (`ig
 | `kc-user-<jméno>-password` (lidé harnessu) | Keycloak realm p0, harness, promo | admin API `reset-password` (harness `kc_humans_sync`, idempotentní) | žádný (běžící relace platí do vypršení tokenu) | `rotate` group `keycloak-humans`, R1a |
 | `keycloak-admin-password` | Keycloak realm master, harness jako operátor | přihlášení **předchozí verzí z Key Vaultu** → `reset-password`; `bootstrap-admin` CLI jen při zastaveném Keycloaku (poslední záchrana) | žádný | `rotate` group `keycloak-admin`, R1c |
 | `pg-memory-app/org-reader/org-writer-password` (RLS role) | aplikace (`ALTER ROLE` při startu), paměť, Governance MCP (DSN z env) | nové pody aplikace → `DB_ROLES_SYNC` → nové pody paměti a governance | sekundy až desítky sekund (readiness) | `rotate` group `db-roles`, R1b |
-| `pg-platform-password` (admin Flexible Serveru) | Terraform (heslo serveru), Keycloak, gateway, Dapr, aplikace | `terraform apply -replace=random_password.pg` (server + Key Vault naráz) → force-sync → restart všech konzumentů | minuty (restart platformy) | ruční postup (kandidát) |
+| `pg-platform-password` (admin Flexible Serveru) | Keycloak, gateway, Dapr state store, aplikace (FinOps/registr) | ~~`terraform apply -replace=random_password.pg`~~ **P4-9**: ARM PATCH hesla serveru (identita Actions) → nová verze v Key Vaultu → force-sync → nové pody Keycloaku, gateway, aplikace (+ daprd) | minuty (restart tří konzumentů) | `rotate` group `pg-admin`, R3a–c |
 | `anthropic-api-key`, `github-token`, `cloudflare-tunnel-*` | gateway / sidecar (env, soubor) | nová hodnota od Adama v Key Vaultu → force-sync → nové pody gateway / aplikace | sekundy | ruční postup (hodnoty mimo Terraform) |
 | `openbao-init` (root token, recovery) | nikdo za běhu (E10 scoped operátor) | nerotuje se; rotace root tokenu = `generate-root` (kandidát) | – | – |
 
@@ -345,6 +346,39 @@ Výsledek měření: **96/96 PASS + 21 INFO** (`measure` run 42061788722, 4 běh
 3. **Plný disk ClickHouse ztrácel spany tiše** (Collector „Dropping data“, bez restartu, bez alertu) – ledger FinOps je jen tak důvěryhodný,
    jak je zdravý jeho sklad; retence + E4d výše.
 
+## P4-9 Rotace admina Postgresu
+
+**Rozhodnutí:** heslo admina Flexible Serveru (`platform`) rotuje stejný postup jako ostatní tajemství (P4-7), jen krok „nová hodnota“ má dvě
+strany: **server** (ARM `PATCH …/flexibleServers/<n>` `administratorLoginPassword` identitou GitHub Actions – Contributor na RG; hodnota jde
+tělem requestu, ne argumentem procesu) a **Key Vault** (nová verze `pg-platform-password`). Pak ESO force-sync Secretů `postgres-auth`,
+`agentgateway-secrets`, `zakazka-finops`, `dapr-components` a nové pody konzumentů: Keycloak (JDBC), gateway (sqlx), aplikace (FinOps/registr
+DSN) s daprd (state store). Paměť a Governance MCP admina nepoužívají (RLS role, P4-8) a nerestartují se. Terraform heslo serveru ani verzi
+v Key Vaultu po založení nepřepisuje (`ignore_changes`), `random_password.pg` slouží jen prvnímu apply. Selhání zápisu do Key Vaultu vrací
+server na starou hodnotu (Secrety i pody ji mají), takže postup nikdy neskončí s heslem, které nikdo nezná.
+
+| Varianta | Proč ne / proč ano |
+|---|---|
+| `terraform apply -replace=random_password.pg` (server + KV naráz) | konzistentní state, ale rotace = běh Terraformu s právy na celou infrastrukturu; workflow `infra` není nástroj operátora; hodnota projde state souborem |
+| `az postgres flexible-server update --admin-password` | hodnota v argumentech procesu (ps, log runneru) – porušuje pravidlo platformy |
+| **ARM PATCH + Key Vault + ESO + nové pody** (zvoleno) | stejný tvar jako P4-7, žádná stará hodnota, hodnota jen v těle requestu a v Key Vaultu; okno = restart tří konzumentů |
+| Entra ID autentizace (passwordless, managed identity → token) | cílový tvar bez hesla; Keycloak JDBC a gateway sqlx token refresh neumí bez proxy/sidecaru – kandidát |
+| služební role per konzument místo admina (keycloak, agentgateway, dapr, app) | least privilege, rotace per služba bez dopadu na ostatní; vyžaduje migraci vlastnictví schémat – kandidát |
+
+Okno: mezi změnou hesla na serveru a Ready novými pody selhávají **nová** spojení konzumentů (pooly držených spojení běží dál); stejně jako
+u DB rolí s restartem v P4-7 jde o minuty. Měření `--step p4-9` = p4-8 + **R3a–c** (rotace úplně na konci běhu, po ní harness staré heslo
+nepoužije).
+
+Výsledek měření: **98/98 PASS + 22 INFO** (`measure` run 42094889686, 2 běhy – běh 1 selhal před rotací na vypršelé assertion azure/login).
+Nálezy (detail v README harnessu):
+
+1. **Okno rotace admina 105 s** (ARM PATCH 11,5 s → KV → ESO 2,3 s → restart Keycloak/gateway/aplikace 60 s → konzumenti funkční za 24 s);
+   staré heslo po rotaci odmítnuto, Keycloak vydává tokeny, Dapr state store čte, gateway bez chyb autentizace, FinOps bez chyb. Délku určuje
+   start Keycloaku; paměť a Governance MCP bez přerušení.
+2. **Identita GitHub Actions v dlouhém běhu**: assertion azure/login platí 5 min, az CLI pak nedostane token pro resource, který ještě nemá
+   v cache (`AADSTS700024`); harness si obnoví přihlášení novým OIDC tokenem runneru (`az login --federated-token`) a opakuje volání –
+   platí pro `measure` i `rotate`. Žádná role navíc: Contributor na RG stačí pro ARM PATCH hesla serveru.
+3. Rollback serveru na starou hodnotu při selhání zápisu do Key Vaultu zůstává netestovaná větev (zápis uspěl).
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -362,6 +396,10 @@ Výsledek měření: **96/96 PASS + 21 INFO** (`measure` run 42061788722, 4 běh
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-05: P4-9 hotovo na AKS (98/98 PASS + 22 INFO, 2 běhy) – rotace hesla admina Flexible Serveru jako provozní postup: ARM PATCH
+  identitou Actions (hodnota v těle requestu) → nová verze v Key Vaultu → ESO force-sync → nové pody Keycloaku, gateway a aplikace; okno 105 s,
+  staré heslo odmítnuto; workflow `rotate` group `pg-admin`; poslední ruční postup z tabulky P4-7 odstraněn. Nálezy: assertion azure/login
+  platí 5 min → harness si obnovuje přihlášení novým OIDC tokenem; kandidáti Entra ID autentizace a služební role per konzument.
 - 2026-11-05: P4-8 hotovo na AKS (96/96 PASS + 21 INFO, 4 běhy) – rotace hesel DB rolí bez restartu: Secrety jako soubory v podech, aplikace
   watcher → `ALTER ROLE`, paměť a Governance MCP DSN ze souboru per spojení; okno 77–123 s místo ~6 min. Nálezy: strop tenanta bez okna
   (→ 30 d), plný PVC ClickHouse tiše zahazoval spany ledgeru (→ systémové logy vypnuté, TTL 7 d, E4d, akce `diag` a `clickhouse-retention`).

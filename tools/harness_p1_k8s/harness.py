@@ -1599,9 +1599,35 @@ def kv_name_of(kj):
     return ((((k.get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME")) or ""
 
 
+def az_relogin():
+    """Runner GitHub Actions: OIDC assertion z azure/login platí 5 min; az CLI pak nezíská token pro další resource (Key Vault, ARM) ani neobnoví
+    prošlý access token (AADSTS700024 – běh 1 P4-9 po 10 min, P4-4 nález 4). Nové přihlášení = nový OIDC token z GitHubu (ACTIONS_ID_TOKEN_REQUEST_URL/
+    TOKEN, audience api://AzureADTokenExchange) + `az login --federated-token` (totéž dělá azure/login; token = 5min JWT identity runneru, ne tajemství
+    platformy). Mimo Actions (bez env) nic nedělá a vrací False."""
+    url, rt, cid, tid = (os.environ.get(k) for k in ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "AZURE_CLIENT_ID", "AZURE_TENANT_ID"))
+    if not (url and rt and cid and tid): return False
+    try:
+        jwt_ = httpx.get(f"{url}&audience=api://AzureADTokenExchange", headers={"Authorization": f"bearer {rt}"}, timeout=30).json().get("value")
+        if not jwt_: return False
+        r = subprocess.run(["az", "login", "--service-principal", "-u", cid, "--tenant", tid, "--federated-token", jwt_, "-o", "none"], capture_output=True, text=True, timeout=120)
+        sub = os.environ.get("AZURE_SUBSCRIPTION_ID")
+        if r.returncode == 0 and sub: subprocess.run(["az", "account", "set", "-s", sub], capture_output=True, text=True, timeout=60)
+        print(f"  az relogin: {'ok' if r.returncode == 0 else (r.stderr or '')[-200:]}", flush=True); return r.returncode == 0
+    except Exception as e:
+        print(f"  az relogin: {type(e).__name__}: {str(e)[:120]}", flush=True); return False
+
+
+def az_run(args, timeout=120):
+    """`az …` s jedním opakováním po novém přihlášení, když Entra odmítne prošlou assertion nebo token (AADSTS…)."""
+    r = subprocess.run(["az", *args], capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0 and re.search(r"AADSTS\d+|ExpiredAuthenticationToken|InvalidAuthenticationToken|run 'az login'", r.stderr or "") and az_relogin():
+        r = subprocess.run(["az", *args], capture_output=True, text=True, timeout=timeout)
+    return r
+
+
 def kv_get(kv_name, name):
     """Hodnota tajemství z Key Vaultu identitou runneru (az login OIDC; role Key Vault Secrets Officer z Terraformu secrets.tf); None když chybí."""
-    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "value", "-o", "tsv"], timeout=120)
     if r.returncode != 0: _kv_err(kv_name, name, r)   # P4-4 běh 2: všechna čtení Key Vaultu z runneru naráz „chyběla“ – bez stderr nešlo poznat proč (hodnota se neloguje, jen chyba az)
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
@@ -1617,13 +1643,13 @@ def _kv_err(kv_name, name, r):
 def kv_versions(kv_name, name, n=4):
     """P4-7: hodnoty tajemství v Key Vaultu od nejnovější (aktuální první, max n) – při rotaci zná starou hodnotu jen Key Vault (verze), ESO dává jen aktuální.
     Hodnoty se nelogují; chyba az jde do KV_ERRORS."""
-    r = subprocess.run(["az", "keyvault", "secret", "list-versions", "--vault-name", kv_name, "-n", name, "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "list-versions", "--vault-name", kv_name, "-n", name, "-o", "json"], timeout=120)
     if r.returncode != 0: _kv_err(kv_name, name, r); return []
     try: vers = sorted((v for v in json.loads(r.stdout) if (v.get("attributes") or {}).get("enabled", True)), key=lambda v: (v.get("attributes") or {}).get("created") or "", reverse=True)
     except ValueError: return []
     out = []
     for v in vers[:n]:
-        x = subprocess.run(["az", "keyvault", "secret", "show", "--id", v["id"], "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120)
+        x = az_run(["keyvault", "secret", "show", "--id", v["id"], "--query", "value", "-o", "tsv"], timeout=120)
         if x.returncode == 0 and x.stdout.strip(): out.append(x.stdout.strip())
     return out
 
@@ -1655,14 +1681,14 @@ def kv_set(kv_name, name, value, content_type):
     """Zápis tajemství do Key Vaultu přes dočasný soubor (hodnota není v argumentech procesu ani v logs/, které jdou do artefaktu běhu)."""
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f: f.write(value); tmp = f.name
-    try: r = subprocess.run(["az", "keyvault", "secret", "set", "--vault-name", kv_name, "-n", name, "--file", tmp, "--encoding", "utf-8", "--content-type", content_type, "-o", "none"], capture_output=True, text=True, timeout=180)
+    try: r = az_run(["keyvault", "secret", "set", "--vault-name", kv_name, "-n", name, "--file", tmp, "--encoding", "utf-8", "--content-type", content_type, "-o", "none"], timeout=180)
     finally: os.unlink(tmp)
     return r.returncode == 0 or (r.stderr or "")[-300:]
 
 
 def kv_attrs(kv_name, name):
     """Jen atributy tajemství (enabled, contentType) – hodnotu harness nedrží (P3-6 E10: root token OpenBao se čte jen při bootstrapu); None když chybí."""
-    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "{contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name, "-n", name, "--query", "{contentType:contentType,enabled:attributes.enabled}", "-o", "json"], timeout=120)
     if r.returncode != 0: _kv_err(kv_name, name, r)
     return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
 
@@ -1928,6 +1954,100 @@ def r2_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn):
     rep.add("R2c", "R2: okno rotace bez restartu (Key Vault → Secret → soubor v podu → ALTER ROLE → konzumenti)", "INFO", {"timing": d["timing"], "wall_s": round(time.time() - t_r, 1), "kv_rotated": d["kv_rotated"]})
 
 
+def rotate_pg_admin(a, http, KC, APP, kv_name, secret, led, pfs, pg_try=None):
+    """P4-9 R3: rotace hesla admina Flexible Serveru (`platform`) bez znalosti staré hodnoty: ARM PATCH `administratorLoginPassword` (identita
+    runneru = Contributor na RG; hodnota jde tělem requestu, ne argumentem procesu) → čekání na Azure-AsyncOperation → nová verze `pg-platform-password`
+    v Key Vaultu (selhání KV → server vrácen na starou hodnotu) → ESO force-sync (postgres-auth, agentgateway-secrets, zakazka-finops, dapr-components)
+    → nové pody konzumentů (Keycloak, gateway, aplikace + daprd; paměť a governance admina nepoužívají) → Keycloak vydává tokeny, aplikace zdravá,
+    Dapr čte stav (seznam threadů), gateway bez chyb autentizace k DB, aplikace bez FINOPS_ERROR; Postgres: nové heslo přijato, staré odmítnuto.
+    Okno = nová spojení mezi změnou na serveru a Ready novými pody (jako P4-7 u DB rolí s restartem)."""
+    import secrets as _sec
+    from datetime import datetime, timezone
+    t0 = time.time(); tm = {}; arm = {}
+    old = secret("postgres-auth", "POSTGRES_PASSWORD") or ""
+    new = _sec.token_urlsafe(24) + "Aa1"   # Azure: 8–128 znaků, 3 ze 4 kategorií; bez znaků, které by rozbily DSN/URL (token_urlsafe = [A-Za-z0-9_-])
+    pg_host = kubectl(a, "-n", NS, "get", "svc", "postgres", "-o", "jsonpath={.spec.externalName}").stdout.strip(); pg_name = pg_host.split(".")[0]
+    relogin = az_relogin()   # na konci běhu (~100 min) může být access token ARM/KV po platnosti a OIDC assertion z azure/login je dávno pryč → nový OIDC token
+    rid =az_run(["resource", "list", "--name", pg_name, "--resource-type", "Microsoft.DBforPostgreSQL/flexibleServers", "--query", "[0].id", "-o", "tsv"], timeout=120).stdout.strip()
+    tok = az_run(["account", "get-access-token", "--resource", "https://management.azure.com/", "--query", "accessToken", "-o", "tsv"], timeout=120).stdout.strip()
+    arm = {"server": pg_name, "id": bool(rid), "token": bool(tok), "relogin": relogin}
+    def arm_set(pw):
+        """PATCH hesla + čekání na dokončení (Azure-AsyncOperation → status Succeeded; bez hlavičky stav serveru Ready). Vrací (http, výsledek)."""
+        try:
+            r = httpx.patch(f"https://management.azure.com{rid}?api-version=2024-08-01", json={"properties": {"administratorLoginPassword": pw}}, headers={"Authorization": f"Bearer {tok}"}, timeout=120)
+        except Exception as e: return None, f"{type(e).__name__}: {str(e)[:120]}"
+        if r.status_code not in (200, 202): return r.status_code, r.text[:200]
+        op = r.headers.get("Azure-AsyncOperation") or r.headers.get("Location"); st = None
+        for _ in range(60):
+            time.sleep(5)
+            try:
+                if op:
+                    x = httpx.get(op, headers={"Authorization": f"Bearer {tok}"}, timeout=60); st = (x.json() if x.text else {}).get("status") or (f"http{x.status_code}" if x.status_code != 200 else "Succeeded")
+                else:
+                    st = az_run(["resource", "show", "--ids", rid, "--query", "properties.state", "-o", "tsv"], timeout=120).stdout.strip(); st = "Succeeded" if st == "Ready" else st
+            except Exception as e: st = f"{type(e).__name__}"
+            if st in ("Succeeded", "Failed", "Canceled"): break
+        return r.status_code, st
+    if rid and tok: arm["patch"], arm["result"] = arm_set(new)
+    server_ok = arm.get("patch") in (200, 202) and arm.get("result") == "Succeeded"; tm["server_s"] = round(time.time() - t0, 1)
+    pg = {"new": None, "old": None}
+    if pg_try and server_ok:
+        for _ in range(24):
+            pg["new"] = pg_try("platform", new, "org")
+            if pg["new"] is True: break
+            time.sleep(5)
+        pg["old"] = pg_try("platform", old, "org") if old else None
+    kv = kv_set(kv_name, "pg-platform-password", new, "heslo admin účtu Flexible Serveru – rotace (operátor = harness R3)") if server_ok else "server nerotován"
+    if kv is not True and server_ok: arm["rollback"] = arm_set(old)   # KV selhal → Secrety a pody mají starou hodnotu, server musí zpět
+    t1 = time.time()
+    sync = eso_force_sync(a, {"postgres-auth": [("postgres-auth", "POSTGRES_PASSWORD", new)], "agentgateway-secrets": [("agentgateway-secrets", "AGW_DATABASE_URL", new)],
+                              "zakazka-finops": [("zakazka-finops", "P0_FINOPS_DSN", new)], "dapr-components": [("dapr-components", "statestore\\.yaml", new)]}) if kv is True else {"synced": False, "s": 0, "pending": ["kv"]}
+    rolls = {}; pods0 = _pods_of(a, "keycloak", "agentgateway", "zakazka")
+    if sync["synced"]:
+        restart_pods(a, "keycloak", "agentgateway", "zakazka"); time.sleep(5)
+        rolls = {d: kubectl(a, "-n", NS, "rollout", "status", f"deployment/{d}", "--timeout=420s", timeout=440).returncode == 0 for d in ("keycloak", "agentgateway", "zakazka")}
+        for n in ("keycloak", "zakazka"):
+            if n in pfs: pfs[n].start()
+    tm["restart_s"] = round(time.time() - t1, 1); t2 = time.time()
+    kc_code = app_h = threads = None; tk = None
+    for _ in range(36):
+        try:
+            r = http("POST", f"{KC}/realms/p0/protocol/openid-connect/token", data={"grant_type": "password", "client_id": "harness-human", "username": "adam", "password": hpw("adam")}, timeout=15)
+            kc_code = r.status_code; tk = r.json().get("access_token") if kc_code == 200 else None
+            app_h = http("GET", f"{APP}/health", timeout=10).status_code
+            threads = http("GET", f"{APP}/agui/threads", headers={"Authorization": f"Bearer {tk}"}, timeout=90).status_code if tk else None   # Dapr state store (daprd s novým connection stringem)
+        except Exception as e: app_h = app_h if app_h == 200 else type(e).__name__
+        if kc_code == 200 and app_h == 200 and threads == 200: break
+        time.sleep(5)
+    tm["consumers_ok_s"] = round(time.time() - t2, 1)
+    since = datetime.fromtimestamp(t1, timezone.utc).isoformat().replace("+00:00", "Z")
+    gw_log = kubectl(a, "-n", NS, "logs", "-l", "app=agentgateway", "-c", "agentgateway", "--tail=400", f"--since-time={since}").stdout
+    gw_auth_err = len(re.findall(r"password authentication failed|28P01", gw_log))
+    try: fin_err = [e for e in led() if e.get("kind") == "FINOPS_ERROR" and e.get("ts", 0) > t1][-3:]
+    except Exception as e: fin_err = [f"ledger: {type(e).__name__}"]
+    pods1 = _pods_of(a, "keycloak", "agentgateway", "zakazka"); restarted = {d: pods0[d] != pods1[d] for d in pods0}
+    ok = (server_ok and kv is True and sync["synced"] and all(rolls.values()) and len(rolls) == 3 and kc_code == 200 and app_h == 200 and threads == 200 and gw_auth_err == 0 and not fin_err
+          and (pg_try is None or (pg["new"] is True and pg["old"] is not True)))
+    return ok, {"arm": arm, "kv": kv is True, "eso": sync, "restart": rolls, "pods_restarted": restarted, "keycloak_token_http": kc_code, "app_health": app_h, "dapr_threads_http": threads,
+                "gateway_db_auth_errors": gw_auth_err, "finops_errors": fin_err, "postgres": pg, "timing": {**tm, "total_s": round(time.time() - t0, 1)}}
+
+
+def r3_rotation(a, rep, http, KC, APP, secret, kv_name, led, pfs, dsn):
+    """R3 (P4-9): rotace hesla admina Flexible Serveru jako provozní postup – poslední „ruční postup“ z tabulky rotací P4-7."""
+    import psycopg
+    t_r = time.time(); hostport = dsn("org").split("@")[1].split("/")[0]
+    def pg_try(role, pw, db):
+        try:
+            with psycopg.connect(f"postgresql://{role}:{pw}@{hostport}/{db}?sslmode=require", connect_timeout=10) as c: return c.execute("SELECT current_user").fetchone()[0] == role
+        except psycopg.OperationalError as e: return f"denied: {str(e).splitlines()[0][:90]}"
+    ok, d = rotate_pg_admin(a, http, KC, APP, kv_name, secret, led, pfs, pg_try)
+    srv_ok = (d["arm"].get("patch") in (200, 202)) and d["arm"].get("result") == "Succeeded" and d["kv"] and d["eso"]["synced"] and d["postgres"]["new"] is True and d["postgres"]["old"] is not True
+    cons_ok = all(d["restart"].values()) and len(d["restart"]) == 3 and d["keycloak_token_http"] == 200 and d["app_health"] == 200 and d["dapr_threads_http"] == 200 and d["gateway_db_auth_errors"] == 0 and not d["finops_errors"]
+    rep.add("R3a", "Rotace hesla admina Flexible Serveru (P4-9): nové heslo nastaví ARM PATCH administratorLoginPassword (identita runneru, hodnota v těle requestu, Azure-AsyncOperation Succeeded) → nová verze pg-platform-password v Key Vaultu → ESO force-sync Secretů postgres-auth, agentgateway-secrets, zakazka-finops, dapr-components; Postgres: nové heslo přijato, staré odmítnuto – nikdo nepotřebuje starou hodnotu", "PASS" if srv_ok else "FAIL", {"arm": d["arm"], "kv": d["kv"], "eso": d["eso"], "postgres": d["postgres"], "server_s": d["timing"].get("server_s")})
+    rep.add("R3b", "Konzumenti admina po rotaci (P4-9): nové pody Keycloaku, gateway a aplikace (+ daprd) → Keycloak vydává tokeny (DB), aplikace 200, Dapr state store čte (seznam threadů 200), gateway bez chyb autentizace k DB v logu, aplikace bez FINOPS_ERROR; paměť a Governance MCP se nerestartují (admina nepoužívají)", "PASS" if cons_ok else "FAIL", {k: d[k] for k in ("restart", "pods_restarted", "keycloak_token_http", "app_health", "dapr_threads_http", "gateway_db_auth_errors", "finops_errors")} | {"restart_s": d["timing"].get("restart_s"), "consumers_ok_s": d["timing"].get("consumers_ok_s")})
+    rep.add("R3c", "R3: okno rotace admina (ARM → KV → ESO → nové pody → konzumenti) a verze v Key Vaultu", "INFO", {"timing": d["timing"], "wall_s": round(time.time() - t_r, 1), "kv_versions": len(kv_versions(kv_name, "pg-platform-password", 10)), "kv_errors": KV_ERRORS[-3:]})
+
+
 def q1_checks(a, rep, http, KC, secret, kv_name, rendered, kc_migr, humans):
     """Q1 (P4-6): hesla lidí harnessu (adam, bea, platform-admin, probe) nejsou literál v realm JSON z Gitu (a tím ani na veřejné URL z P4-4):
     Terraform random_password → Key Vault kc-user-<jméno>-password → ESO Secret keycloak-humans (KC_HUMAN_PW_* pro placeholdery ${…} Keycloak
@@ -2020,14 +2140,14 @@ def e8_checks(a, rep, kj, kv_name, BAO, init, seal0, migrated, secret, kv_meta):
     """E8 (P3-6): bootstrap OpenBao (root token + recovery klíč z `sys/init`) žije jen v Key Vaultu platformy (secret `openbao-init`, zapsal operátor =
     harness identitou runneru), v clusteru žádný Secret; unseal dělá Key Vault (seal azurekeyvault) bez operátora. P3-6 E10: hodnota (root token)
     se čte jen při bootstrapu – `init` je None, když ji tento běh nepotřeboval; platnost root tokenu se už neověřuje lookupem (root se nepoužívá)."""
-    r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name, "-n", "openbao-init", "--query", "{contentType:contentType,enabled:attributes.enabled,created:attributes.created,updated:attributes.updated,recoveryLevel:attributes.recoveryLevel}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name, "-n", "openbao-init", "--query", "{contentType:contentType,enabled:attributes.enabled,created:attributes.created,updated:attributes.updated,recoveryLevel:attributes.recoveryLevel}", "-o", "json"], timeout=120)
     meta = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stderr or "")[-200:]}
     k8s_secret = secret("openbao-init", "init\\.json")
     by_kubectl = sorted(s_["metadata"]["name"] for s_ in kj("-n", NS, "get", "secrets").get("items", []) if any(m.get("manager", "").startswith("kubectl") for m in s_["metadata"].get("managedFields", [])))
     init = init or {}
     seal = httpx.get(f"{BAO}/v1/sys/seal-status", timeout=10).json()
     rep.add("E8a", "Bootstrap OpenBao jen v Key Vaultu: `sys/init` (recovery_shares 1) provádí operátor (harness identitou runneru, OIDC) a výsledek ukládá do Key Vault secretu `openbao-init` (contentType, soft-delete/purge protection Key Vaultu), ne do Kubernetes Secretu – v platform-data žádný Secret `openbao-init` ani jiný se stopou kubectl; při startu clusteru unseal zajistí seal azurekeyvault (při příchodu harnessu už unsealed, type azurekeyvault, recovery seal); hodnota (root token, recovery klíč) se čte jen při bootstrapu (E10), ne každý běh; migrace ze staršího Secretu proběhla jednorázově a Secret byl smazán", "PASS" if meta.get("enabled") is True and meta.get("contentType") and not k8s_secret and not by_kubectl and seal0.get("sealed") is False and seal0.get("type") == "azurekeyvault" and seal0.get("recovery_seal") is True and (not init or len(init.get("recovery_keys_base64") or init.get("keys_base64") or []) == 1) and not seal.get("sealed") else "FAIL", {"keyvault": {"name": kv_name, "secret": meta}, "k8s_secret_openbao_init": bool(k8s_secret), "secrets_by_kubectl": by_kubectl, "seal_at_start": {k: seal0.get(k) for k in ("sealed", "type", "recovery_seal", "initialized")}, "value_read_this_run": bool(init), "recovery_keys": (len(init.get("recovery_keys_base64") or init.get("keys_base64") or []) if init else "nečteno (E10: jen při bootstrapu)"), "recovery_keys_origin": ("recovery" if init.get("recovery_keys_base64") else "shamir→azurekeyvault migrace (keys_base64)") if init else None, "migrated_this_run": migrated})
-    r = subprocess.run(["az", "keyvault", "secret", "list", "--vault-name", kv_name, "--query", "[].{name:name,contentType:contentType,enabled:attributes.enabled}", "-o", "json"], capture_output=True, text=True, timeout=120)
+    r = az_run(["keyvault", "secret", "list", "--vault-name", kv_name, "--query", "[].{name:name,contentType:contentType,enabled:attributes.enabled}", "-o", "json"], timeout=120)
     rep.add("E8b", "E8: inventář tajemství platformy v Key Vaultu (Terraform secrets.tf + bootstrap OpenBao); runner čte/zapisuje jako Key Vault Secrets Officer, pody přes ESO jako Secrets User", "INFO", {"secrets": json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else (r.stderr or "")[-200:]})
 
 
@@ -2704,7 +2824,7 @@ def e12_checks(a, rep, kj, pg_host, pg_via, pg_ep, pg_pw):
     import socket, ipaddress
     rg = os.environ.get("RG", "rg-platform-dev")
     def az(*args):
-        r = subprocess.run(["az", *args, "-o", "json"], capture_output=True, text=True, timeout=180)
+        r = az_run([*args, "-o", "json"], timeout=180)
         try: return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"error": (r.stderr or r.stdout)[-300:]}
         except Exception as e: return {"error": f"{type(e).__name__}: {r.stdout[:200]}"}
     pg_name = pg_host.split(".")[0]
@@ -2780,7 +2900,7 @@ def e1_checks(a, rep, kj, pre):
     owned = {n: any(o.get("kind") == "ExternalSecret" and o.get("name") == n for o in ((s_.get("metadata") or {}).get("ownerReferences") or [])) for n, s_ in secs.items()}
     kv_name = ((((get("flux-system", "kustomization", "platform-trust").get("spec") or {}).get("postBuild") or {}).get("substitute") or {}).get("KV_NAME"))
     def kv(name):
-        r = subprocess.run(["az", "keyvault", "secret", "show", "--vault-name", kv_name or "", "-n", name, "--query", "value", "-o", "tsv"], capture_output=True, text=True, timeout=120); return r.stdout.strip() if r.returncode == 0 else None
+        r = az_run(["keyvault", "secret", "show", "--vault-name", kv_name or "", "-n", name, "--query", "value", "-o", "tsv"], timeout=120); return r.stdout.strip() if r.returncode == 0 else None
     kv_tok, kv_pg = kv("git-backend-token"), kv("pg-platform-password")
     tok = _b64.b64decode((secs["agentgateway-git-token"].get("data") or {}).get("token", "")).decode(); pg = _b64.b64decode((secs["postgres-auth"].get("data") or {}).get("POSTGRES_PASSWORD", "")).decode()
     agw_url = _b64.b64decode((secs["agentgateway-secrets"].get("data") or {}).get("AGW_DATABASE_URL", "")).decode(); dapr = _b64.b64decode((secs["dapr-components"].get("data") or {}).get("statestore.yaml", "")).decode()
@@ -2836,7 +2956,7 @@ def step_live(a, rep, env):
     return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False, r2=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False, r2=False, r3=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -3445,6 +3565,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
 
         if r1: r1_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn)   # P4-7: rotace tajemství (lidé, admin Keycloaku, DB role) – až na konci, restartuje aplikaci, paměť a governance
         if r2: r2_rotation(a, rep, http, KC, APP, MEM, secret, kv_name, led, pfs, dsn)   # P4-8: rotace DB rolí bez restartu (Secrety jako soubory, watcher aplikace)
+        if r3: r3_rotation(a, rep, http, KC, APP, secret, kv_name, led, pfs, dsn)   # P4-9: rotace admina Postgresu – úplně poslední (po ní harness staré heslo z dsn() už nepoužije)
         pods = kj("-n", NS, "get", "pods").get("items", [])
         rep.add("P21h", "Pody P2-1 a uzly", "INFO", {p["metadata"]["name"]: {"image": [c["image"].split("/")[-1] for c in p["spec"]["containers"]], "restarts": [c.get("restartCount") for c in p["status"].get("containerStatuses", [])]} for p in pods if p["metadata"]["name"].split("-")[0] in ("zakazka", "memory", "bridge", "mock", "opa", "placement", "scheduler", "agentgateway")} | {"nodes": nodes, "wall_s": round(time.time() - t_all, 1)})
     finally:
@@ -3487,7 +3608,8 @@ def rotate_cli(a):
     try:
         load_human_pw(a)
         ok, d = {"keycloak-humans": lambda: rotate_humans(a, http, KC, kv_name, secret), "keycloak-admin": lambda: rotate_admin(a, http, KC, kv_name, secret),
-                 "db-roles": lambda: rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, restart=a.rotate_restart)}[a.rotate]()
+                 "db-roles": lambda: rotate_db_roles(a, http, KC, APP, MEM, kv_name, secret, led, pfs, restart=a.rotate_restart),
+                 "pg-admin": lambda: rotate_pg_admin(a, http, KC, APP, kv_name, secret, led, pfs)}[a.rotate]()   # P4-9: bez přímé kontroly Postgresu (private endpoint), stačí konzumenti
         print(f"{'✅' if ok else '❌'} rotace {a.rotate}: {json.dumps(d, ensure_ascii=False)[:3000]}", flush=True)
         return 0 if ok else 1
     finally:
@@ -3496,7 +3618,7 @@ def rotate_cli(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-2-live"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -3504,7 +3626,7 @@ def main():
     ap.add_argument("--context", default="kind-platform", help="p1-6: kontext AKS, např. aks-platform-dev-admin")
     ap.add_argument("--acr", default=os.getenv("ACR_LOGIN_SERVER", ""), help="p1-6: login server ACR (socat pod pro Postgres, když runner nedosáhne na Flexible Server)")
     ap.add_argument("--create-kind", action="store_true", help="postavit obraz uzlu, cluster a nahrát obrazy (docker daemon)")
-    ap.add_argument("--rotate", choices=["keycloak-humans", "keycloak-admin", "db-roles"], default="", help="P4-7: jen rotace tajemství (operátorský postup, workflow rotate.yml) – bez měření")
+    ap.add_argument("--rotate", choices=["keycloak-humans", "keycloak-admin", "db-roles", "pg-admin"], default="", help="P4-7: jen rotace tajemství (operátorský postup, workflow rotate.yml) – bez měření; pg-admin = P4-9 heslo admina Flexible Serveru (restart Keycloaku, gateway, aplikace)")
     ap.add_argument("--ch-retention", action="store_true", help="P4-8: jen retence ClickHouse (úklid systémových logů, TTL otel tabulek, stav disku; workflow cluster.yml clickhouse-retention) – bez měření")
     ap.add_argument("--rotate-restart", action="store_true", help="P4-8: db-roles s restartem podů (výchozí bez restartu – Secrety jako soubory)")
     ap.add_argument("--opa-bin", default=os.getenv("OPA_BIN", shutil.which("opa") or ""))
@@ -3518,7 +3640,7 @@ def main():
         assert a.kubectl, "chybí KUBECTL"
         for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
         sys.exit(rotate_cli(a))
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -3542,6 +3664,7 @@ def main():
      "p4-6": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True),   # P4-6: p4-5 + Q1a–b (hesla lidí z Key Vaultu, realm z Gitu bez literálů)
      "p4-7": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True),   # P4-7: p4-6 + R1a–d (rotace tajemství)
      "p4-8": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True),   # P4-8: p4-7 + R2a–c (rotace DB rolí bez restartu)
+     "p4-9": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True, r3=True),   # P4-9: p4-8 + R3a–c (rotace admina Postgresu)
      "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
