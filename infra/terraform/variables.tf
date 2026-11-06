@@ -104,6 +104,12 @@ variable "cloudflare_tunnel_hostname" {
   default     = "quick"
   description = "Veřejný hostname pojmenovaného tunelu (published application v Cloudflare Zero Trust); 'quick' = harness čte hostname z logu sidecaru"
 }
+variable "cloudflare_access" {
+  type        = map(string)
+  default     = { team-domain = "none", aud = "none", client-id = "none", client-secret = "none" }
+  sensitive   = true
+  description = "P4-10: Cloudflare Access před pojmenovaným tunelem – team-domain (https://<team>.cloudflareaccess.com), aud (AUD tag Access aplikace), client-id/client-secret (service token harnessu). 'none' = Access není nasazen; ostré hodnoty nastaví Adam v Key Vaultu, Terraform je nepřepisuje"
+}
 variable "role_clients" {
   type        = list(string)
   default     = ["account", "architekt", "vyvojar", "reviewer", "sre"]

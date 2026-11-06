@@ -598,6 +598,78 @@ PUBLIC_URL = None   # P4-4: veřejná URL aplikace přes Cloudflare Tunnel (side
 
 
 _PUB_CTX: dict = {}
+CF_H: dict = {}   # P4-10: service token Cloudflare Access (hlavičky CF-Access-Client-Id/Secret) ze Secretu cloudflare-access – u každého volání přes tunel; hodnoty se nelogují
+CF_ACCESS: dict = {}   # P4-10: co o Access ví harness (configured, team_host, aud_set) – bez hodnot
+
+
+def cfh(h=None):
+    """Hlavičky pro volání přes Cloudflare (P4-10: service token Access, pokud je nasazen) + vlastní hlavičky."""
+    return {**CF_H, **(h or {})}
+
+
+def load_cf_access(a):
+    """P4-10: service token Access a team domain ze Secretu cloudflare-access (ESO ← Key Vault); 'none' = Access není nasazen (quick tunnel). Sdílí
+    hlavičky s GUI klientem (Playwright extra_http_headers – i fetch z prohlížeče je nese). Vrací jen příznaky, žádné hodnoty."""
+    import base64 as _b
+    CF_H.clear(); CF_ACCESS.clear()
+    d = (kj_static(a, "-n", NS, "get", "secret", "cloudflare-access").get("data") or {})
+    def val(k):
+        try: v = _b.b64decode(d.get(k) or "").decode().strip()
+        except Exception: v = ""
+        return "" if v.lower() in ("", "none") else v
+    cid, csec, team, aud = val("client-id"), val("client-secret"), val("team-domain"), val("aud")
+    if cid and csec: CF_H.update({"CF-Access-Client-Id": cid, "CF-Access-Client-Secret": csec})
+    CF_ACCESS.update({"secret": bool(d), "configured": bool(team and aud), "service_token": bool(cid and csec), "team_host": team.split("//")[-1].rstrip("/") if team else None, "aud_set": bool(aud)})
+    try:
+        sys.path.insert(0, str(HERE)); import gui_checks as _g; _g.EXTRA_HEADERS.clear(); _g.EXTRA_HEADERS.update(CF_H)
+    except Exception: pass
+    return dict(CF_ACCESS)
+
+
+def n3_access_checks(a, rep, led, pub_info, t_n):
+    """P4-10 N3a–c: pojmenovaný tunnel + Cloudflare Access. Bez nasazeného Access (Key Vault cloudflare-access-* = none, tunnel quick) N3a–b SKIP.
+    N3a (zvenčí): hostname ze Secretu, sidecar připojený tokenem (žádný *.trycloudflare.com), /health hlásí access=True, bez service tokenu Access
+    požadavek zastaví na edgi (302 na <team>.cloudflareaccess.com / 403, aplikaci nic nedojde), se service tokenem GUI 200 a AG-UI 401 (N1a),
+    GUI_LOGIN v ledgeru nese identitu Access (service_token). N3b (zevnitř podu): origin bez platného JWT odmítne 403 (chybějící i podvržený),
+    /health 200 – obrana při obejití Cloudflare; ACCESS_DENIED v ledgeru s důvodem, bez tokenu."""
+    cfa = dict(CF_ACCESS); pod = newest_app_pod(a); log = kubectl(a, "-n", NS, "logs", pod, "-c", "cloudflared", "--tail=600").stdout if pod else ""
+    conns = len(re.findall(r"Registered tunnel connection", log)); quick = bool(re.search(r"trycloudflare\.com", log))
+    info = {**cfa, "url_source": pub_info.get("source"), "health_access": pub_info.get("access"), "tunnel_connections": conns, "quick_in_log": quick, "cf_ray": pub_info.get("cf_ray")}
+    if not (cfa.get("configured") and cfa.get("service_token") and pub_info.get("source") == "secret"):
+        why = "pojmenovaný tunnel a Access nejsou nasazeny (Key Vault cloudflare-tunnel-* / cloudflare-access-* = quick/none) – postup v p4-provoz.md P4-10"
+        rep.add("N3a", f"Pojmenovaný tunnel + Cloudflare Access (P4-10): {why}", "SKIP", info); rep.add("N3b", "Origin ověřuje Access JWT (P4-10): " + why, "SKIP", {"configured": False})
+        rep.add("N3c", "N3: režim vstupu", "INFO", info); return
+    n3a = dict(info)
+    def raw(path, headers=None):
+        try:
+            r = httpx.get(f"{PUBLIC_URL}{path}", headers=headers or {}, timeout=20, follow_redirects=False)
+            return {"status": r.status_code, "location_host": (r.headers.get("location") or "").split("/")[2] if r.headers.get("location", "").startswith("http") else None, "cf_ray": r.headers.get("cf-ray")}
+        except Exception as e: return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+    n3a["no_token"] = {p: raw(p) for p in ("/gui/", "/agui/threads", "/health")}
+    n3a["with_token"] = {p: raw(p, cfh()) for p in ("/gui/", "/agui/threads", "/health")}
+    def blocked(x): return x.get("status") in (302, 401, 403) and (x.get("status") != 302 or (x.get("location_host") or "").endswith("cloudflareaccess.com"))
+    lg = [e for e in led() if e.get("kind") == "GUI_LOGIN" and e.get("via") == "cloudflare" and e.get("ts", 0) > t_n]
+    n3a["gui_login_access"] = {"n": len(lg), "service_token": sum(1 for e in lg if (e.get("access") or {}).get("service_token") is True), "email_hash": sum(1 for e in lg if (e.get("access") or {}).get("email_hash"))}
+    ok_a = (not quick and conns >= 1 and pub_info.get("access") is True and all(blocked(x) for x in n3a["no_token"].values()) and n3a["with_token"]["/gui/"].get("status") == 200
+            and n3a["with_token"]["/agui/threads"].get("status") == 401 and n3a["with_token"]["/health"].get("status") == 200 and lg and n3a["gui_login_access"]["service_token"] == len(lg))
+    rep.add("N3a", "Pojmenovaný tunnel + Cloudflare Access (P4-10): stálý hostname ze Secretu (token tunelu z Key Vaultu, sidecar připojený, žádný *.trycloudflare.com), Access před hostname – bez service tokenu zastaví edge (302 na <team>.cloudflareaccess.com / 403, origin nic nevidí), se service tokenem harnessu (policy Service Auth) GUI 200, AG-UI bez Keycloak tokenu 401, /health 200 s access=True; GUI_LOGIN v auditu nese identitu Access (service token) – dvě vrstvy přihlášení: Access (kdo smí k hostname) + Keycloak (kdo je v platformě)", "PASS" if ok_a else "FAIL", n3a)
+    # N3b: zevnitř podu – origin bez JWT (obejití Cloudflare) odmítá
+    t_b = time.time(); n3b = {}
+    py = ("import json,urllib.request,urllib.error\n"
+          "def g(p,h={}):\n"
+          "  try: r=urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8011'+p,headers=h),timeout=20); return r.status\n"
+          "  except urllib.error.HTTPError as e: return e.code\n"
+          "  except Exception as e: return type(e).__name__\n"
+          "print(json.dumps({'gui_no_jwt': g('/gui/'), 'agui_no_jwt': g('/agui/threads'), 'gui_bogus_jwt': g('/gui/', {'Cf-Access-Jwt-Assertion': 'eyJhbGciOiJSUzI1NiJ9.e30.x'}), 'health': g('/health')}))\n")
+    r = kubectl(a, "-n", NS, "exec", "-i", "deploy/zakazka", "-c", "app", "--", "python3", "-c", py, timeout=120)
+    try: n3b = json.loads((r.stdout or "").strip().splitlines()[-1])
+    except Exception: n3b = {"error": (r.stderr or r.stdout or "")[-200:]}
+    den = [e for e in led() if e.get("kind") == "ACCESS_DENIED" and e.get("ts", 0) > t_b]
+    n3b["access_denied_ledger"] = {"n": len(den), "reasons": sorted({e.get("reason") for e in den}), "paths": sorted({e.get("path") for e in den}), "ip_hash_present": all(bool(e.get("ip_hash")) for e in den)}
+    pl = [e for e in led() if e.get("kind") == "PUBLIC_LISTENER"]; n3b["public_listener"] = {"access": (pl[-1].get("access") if pl else None), "team": (pl[-1].get("access_team") if pl else None)}
+    ok_b = n3b.get("gui_no_jwt") == 403 and n3b.get("agui_no_jwt") == 403 and n3b.get("gui_bogus_jwt") == 403 and n3b.get("health") == 200 and len(den) >= 3 and "missing_jwt" in n3b["access_denied_ledger"]["reasons"] and len(n3b["access_denied_ledger"]["reasons"]) >= 2 and n3b["access_denied_ledger"]["ip_hash_present"] and n3b["public_listener"]["access"] is True
+    rep.add("N3b", "Origin ověřuje Access JWT (P4-10, docs: „validate the token … requests which bypass Cloudflare Access are rejected“): veřejný listener uvnitř podu bez hlavičky Cf-Access-Jwt-Assertion i s podvrženým JWT vrací 403 (GUI i AG-UI), /health 200; každé odmítnutí v ledgeru ACCESS_DENIED s důvodem (missing_jwt / DecodeError) a hashem IP, nikdy s tokenem; PUBLIC_LISTENER hlásí access=True – klíče z <team>.cloudflareaccess.com/cdn-cgi/access/certs (kid, RS256), aud = AUD tag aplikace", "PASS" if ok_b else "FAIL", n3b)
+    rep.add("N3c", "N3: pojmenovaný tunnel – spojení sidecaru, Access identita v auditu, čas", "INFO", {**info, "wall_s": round(time.time() - t_n, 1), "gui_login_access": n3a["gui_login_access"]})
 
 
 def gui_base(app_url):
@@ -608,7 +680,7 @@ def gui_base(app_url):
     if PUBLIC_URL and _PUB_CTX:
         same_pod = _PUB_CTX.get("pod") == newest_app_pod(_PUB_CTX["a"])   # jiný pod = jiný tunel, i kdyby starý ještě odpovídal
         try:
-            if same_pod and httpx.get(f"{PUBLIC_URL}/health", timeout=8).status_code == 200: return f"{PUBLIC_URL}/gui/"
+            if same_pod and httpx.get(f"{PUBLIC_URL}/health", headers=cfh(), timeout=8).status_code == 200: return f"{PUBLIC_URL}/gui/"
         except Exception: pass
         PUBLIC_URL, info = public_url(_PUB_CTX["a"], _PUB_CTX["http"], timeout_s=150); _PUB_CTX["pod"] = info.get("pod"); _PUB_CTX.setdefault("rediscover", []).append({"t": time.strftime("%H:%M:%S"), "url": PUBLIC_URL, **{k: v for k, v in info.items() if k != "log_tail"}})
         print(f"  veřejná URL znovu: {PUBLIC_URL} ({info.get('source')}, {info.get('s')} s)", flush=True)
@@ -631,8 +703,8 @@ def public_url(a, http, timeout_s=150):
             url = m[-1] if m else None
         if url:
             try:
-                r = httpx.get(f"{url}/health", timeout=15, follow_redirects=True)
-                if r.status_code == 200 and r.json().get("public"): return url, {"source": "secret" if host and host != "quick" else "quick-tunnel-log", "pod": pod, "s": round(time.time() - t0, 1), "cf_ray": r.headers.get("cf-ray"), "server": r.headers.get("server")}
+                r = httpx.get(f"{url}/health", headers=cfh(), timeout=15, follow_redirects=True)   # P4-10: za Access i /health vyžaduje service token (policy Service Auth)
+                if r.status_code == 200 and r.json().get("public"): return url, {"source": "secret" if host and host != "quick" else "quick-tunnel-log", "pod": pod, "s": round(time.time() - t0, 1), "cf_ray": r.headers.get("cf-ray"), "server": r.headers.get("server"), "access": r.json().get("access")}
             except Exception: pass
         time.sleep(5)
     return None, {"source": None, "pod": pod, "s": round(time.time() - t0, 1), "log_tail": log_tail[-400:]}
@@ -1848,7 +1920,7 @@ def rotate_humans(a, http, KC, kv_name, secret):
     logins = {u: {"new": _kc_login(http, KC, u, new[u] or ""), "old": _kc_login(http, KC, u, old[u])} for u in USERS}
     pub = None
     if PUBLIC_URL:
-        try: pub = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": "adam", "password": hpw("adam")}, timeout=30).status_code
+        try: pub = httpx.post(f"{PUBLIC_URL}/agui/login", headers=cfh(), json={"username": "adam", "password": hpw("adam")}, timeout=30).status_code
         except Exception as e: pub = type(e).__name__
     ok = (all(new.values()) and sync["synced"] and humans.get("secret") is True and all(HUMAN_PW.get(u) == new[u] for u in USERS)
           and all((hs.get(u) or {}).get("after") == 200 for u in USERS) and all(v["new"]["status"] == 200 and v["new"]["token"] and not v["old"]["token"] for v in logins.values()) and pub in (200, None))
@@ -2956,7 +3028,7 @@ def step_live(a, rep, env):
     return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False, r2=False, r3=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False, r2=False, r3=False, n3=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -3182,13 +3254,14 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
         health = {n: http("GET", f"http://127.0.0.1:{p}/health", timeout=10).status_code for n, p in (("app", 18010), ("memory", 19900), ("mock_github", 19801), ("bridge", 19802))}
         if n1:   # P4-4: veřejný vstup přes Cloudflare Tunnel – zjistit URL a ověřit hranici veřejného listeneru dřív, než GUI toky začnou
             global PUBLIC_URL
-            t_n = time.time(); PUBLIC_URL, pub_info = public_url(a, http); _PUB_CTX.update(a=a, http=http, pod=pub_info.get("pod"))
+            t_n = time.time(); cfa = load_cf_access(a); print(f"  Access: {cfa}", flush=True)   # P4-10: service token do hlaviček dřív, než se hledá URL (/health za Access)
+            PUBLIC_URL, pub_info = public_url(a, http); _PUB_CTX.update(a=a, http=http, pod=pub_info.get("pod"))
             sys.path.insert(0, str(HERE)); import gui_checks as _gcm; _gcm.REBASE = lambda: (gui_base(APP) if PUBLIC_URL else None)   # GUI klient si po chybě navigace vyžádá nový základ URL (včetně /gui/ – běh 7: bez něj goto mířilo na kořen → 404 → timeout loginu)
             pods = kj("-n", NS, "get", "pods", "-l", "app=zakazka").get("items", [])
             cf = next((c for p_ in pods for c in (p_.get("status") or {}).get("containerStatuses", []) if c.get("name") == "cloudflared"), {})
             def pub(path, **kw):
                 try:
-                    r = httpx.get(f"{PUBLIC_URL}{path}", timeout=20, **kw); return {"status": r.status_code, "cf_ray": r.headers.get("cf-ray"), "len": len(r.content)}
+                    kw["headers"] = cfh(kw.get("headers")); r = httpx.get(f"{PUBLIC_URL}{path}", timeout=20, **kw); return {"status": r.status_code, "cf_ray": r.headers.get("cf-ray"), "len": len(r.content)}
                 except Exception as e: return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
             n1d = {"url": PUBLIC_URL, **pub_info, "sidecar": {"ready": cf.get("ready"), "restarts": cf.get("restartCount"), "image": cf.get("image")}} if PUBLIC_URL else {"url": None, **pub_info}
             if PUBLIC_URL:
@@ -3296,11 +3369,11 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             t_b = time.time(); n1b = {}; gui_base(APP)   # obnovit URL po restartech podu v E6/E13
             n1b["url"] = PUBLIC_URL; n1b["rediscovered"] = _PUB_CTX.get("rediscover", [])
             try:
-                lg = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": "adam", "password": hpw("adam")}, timeout=30); n1b["login"] = lg.status_code
+                lg = httpx.post(f"{PUBLIC_URL}/agui/login", headers=cfh(), json={"username": "adam", "password": hpw("adam")}, timeout=30); n1b["login"] = lg.status_code
                 tokp = (lg.json() or {}).get("access_token") if lg.status_code == 200 else None
-                th = httpx.get(f"{PUBLIC_URL}/agui/threads", headers={"Authorization": f"Bearer {tokp}"}, timeout=30); n1b["threads"] = {"status": th.status_code, "n": len(th.json()) if th.status_code == 200 else None}
+                th = httpx.get(f"{PUBLIC_URL}/agui/threads", headers=cfh({"Authorization": f"Bearer {tokp}"}), timeout=30); n1b["threads"] = {"status": th.status_code, "n": len(th.json()) if th.status_code == 200 else None}
                 evs = []
-                with httpx.stream("POST", f"{PUBLIC_URL}/agui/run", headers={"Authorization": f"Bearer {tokp}", "Accept": "text/event-stream"}, json={"threadId": zid, "runId": f"n1b-{int(t_b)}", "messages": [], "state": {}, "tools": [], "context": [], "forwardedProps": {}}, timeout=httpx.Timeout(60, read=60)) as r:
+                with httpx.stream("POST", f"{PUBLIC_URL}/agui/run", headers=cfh({"Authorization": f"Bearer {tokp}", "Accept": "text/event-stream"}), json={"threadId": zid, "runId": f"n1b-{int(t_b)}", "messages": [], "state": {}, "tools": [], "context": [], "forwardedProps": {}}, timeout=httpx.Timeout(60, read=60)) as r:
                     n1b["run_status"] = r.status_code; n1b["content_type"] = r.headers.get("content-type"); n1b["cf_ray"] = r.headers.get("cf-ray")
                     for line in r.iter_lines():
                         if line.startswith("data:"):
@@ -3312,6 +3385,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             n1b["s"] = round(time.time() - t_b, 1)
             ok_n1b = n1b.get("login") == 200 and (n1b.get("threads") or {}).get("status") == 200 and n1b.get("run_status") == 200 and str(n1b.get("content_type", "")).startswith("text/event-stream") and "RUN_STARTED" in evs and "RUN_FINISHED" in evs
             rep.add("N1b", "AG-UI přes Cloudflare Tunnel: přihlášení člověka (password grant přes aplikaci), seznam threadů a run = SSE stream (RUN_STARTED … RUN_FINISHED) projdou proxy Cloudflare beze změny (content-type text/event-stream, cf-ray); GUI toky tohoto běhu (P21b, T1, K1, O3, E3/E4/E13, M1, L1) šly přes tunel místo port-forwardu", "PASS" if ok_n1b else "FAIL", n1b)
+            if n3: n3_access_checks(a, rep, led, pub_info, t_n)   # P4-10: pojmenovaný tunnel + Access (SKIP bez nasazení)
         if n2 and PUBLIC_URL:   # P4-5: zabezpečení veřejného vstupu – rate limit loginu, brute-force zámek Keycloaku, idle odhlášení GUI
             sys.path.insert(0, str(HERE)); from gui_checks import Gui as _Gui2
             t_2 = time.time(); gui_base(APP)
@@ -3324,7 +3398,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             realm = adm("GET", "")[1] or {}; n2r = {k: realm.get(k) for k in ("bruteForceProtected", "permanentLockout", "failureFactor", "waitIncrementSeconds", "maxFailureWaitSeconds")}
             def pub_login(user, pw):
                 try:
-                    r = httpx.post(f"{PUBLIC_URL}/agui/login", json={"username": user, "password": pw}, timeout=30); return r.status_code, r.headers.get("retry-after"), r.headers.get("cf-ray")
+                    r = httpx.post(f"{PUBLIC_URL}/agui/login", headers=cfh(), json={"username": user, "password": pw}, timeout=30); return r.status_code, r.headers.get("retry-after"), r.headers.get("cf-ray")
                 except Exception as e: return f"{type(e).__name__}", None, None
             # N2b: rate limit per IP jen na veřejném listeneru – správné heslo 25× rychle → prvních 20 projde, pak 429 + Retry-After; interní listener bez limitu
             time.sleep(62)   # čisté okno (GUI toky před chvílí přihlašovaly z téže IP runneru)
@@ -3618,7 +3692,7 @@ def rotate_cli(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-2-live"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-10", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -3640,7 +3714,7 @@ def main():
         assert a.kubectl, "chybí KUBECTL"
         for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
         sys.exit(rotate_cli(a))
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-10", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -3665,6 +3739,7 @@ def main():
      "p4-7": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True),   # P4-7: p4-6 + R1a–d (rotace tajemství)
      "p4-8": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True),   # P4-8: p4-7 + R2a–c (rotace DB rolí bez restartu)
      "p4-9": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True, r3=True),   # P4-9: p4-8 + R3a–c (rotace admina Postgresu)
+     "p4-10": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True, r3=True, n3=True),   # P4-10: p4-9 + N3a–c (pojmenovaný tunnel + Cloudflare Access; SKIP bez nasazení)
      "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))

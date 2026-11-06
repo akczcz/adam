@@ -131,8 +131,10 @@ jobs:
             pod=$(kubectl -n platform-data get pods -l app=zakazka --field-selector=status.phase=Running --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | tail -1)
             [ -n "$pod" ] && url=$(kubectl -n platform-data logs "$pod" -c cloudflared --tail=400 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)
           fi
+          # P4-10: pojmenovaný tunnel + Cloudflare Access – před GUI přihlášení e-mailem (OTP) do Access, pak Keycloak; origin ověřuje Access JWT (access=True v /health)
+          acc=$(kubectl -n platform-data get secret cloudflare-access -o jsonpath='{.data.aud}' 2>/dev/null | base64 -d); [ -n "$acc" ] && [ "$acc" != "none" ] && acc="Cloudflare Access (nejdřív e-mail OTP), pak " || acc=""
           { echo "## GUI"
-            if [ -n "$url" ]; then echo "$url/gui – přihlášení uživatelem z Keycloaku (adam = tenant acme, bea = beta, platform-admin), heslo v Key Vaultu \`kc-user-<jméno>-password\`"
+            if [ -n "$url" ]; then echo "$url/gui – ${acc}přihlášení uživatelem z Keycloaku (adam = tenant acme, bea = beta, platform-admin), heslo v Key Vaultu \`kc-user-<jméno>-password\`"
             else echo "URL tunelu zatím není (pod aplikace startuje) – spusť \`status\` za 2–3 min"; fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
           # předletová kontrola ostrého běhu (P4-2 /_live): ok=True = klíč modelu / PAT z Key Vaultu platí (1 token), wired=True + 401 = cesta funguje, hodnoty výchozí (mock)
@@ -145,4 +147,8 @@ jobs:
                   print(p, "ok=%s status=%s wired=%s" % (j.get("ok"), j.get("status"), j.get("wired")), "" if j.get("ok") else "(ostrý běh neprojde – hodnota v Key Vaultu je výchozí nebo ESO ještě nesynchronizovalo)")
               except Exception as e:
                   print(p, "chyba %s: %s" % (type(e).__name__, str(e)[:120]))
+          try:   # P4-10: veřejný listener – access=True = origin ověřuje JWT Cloudflare Access (pojmenovaný tunnel), False = quick tunnel bez Access
+              j = json.load(urllib.request.urlopen("http://127.0.0.1:8011/health", timeout=30)); print("vstup", "access=%s" % j.get("access"), "" if j.get("access") else "(quick tunnel bez Access – postup P4-10 v p4-provoz.md)")
+          except Exception as e:
+              print("vstup", "chyba %s: %s" % (type(e).__name__, str(e)[:120]))
           PY

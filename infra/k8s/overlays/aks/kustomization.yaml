@@ -92,9 +92,12 @@ patches:
         securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: [ALL]}}
 # P3-6 E11: daprd (state store Postgres, pgx) čte sslrootcert z bundle platformy; paměť posílá spany na https Collector (OTEL_EXPORTER_OTLP_CERTIFICATE –
 # exporter requests nectí SSL_CERT_FILE); Governance MCP čte ClickHouse přes https (httpx + SSL_CERT_FILE)
+# P4-10: aplikace ověřuje JWT Cloudflare Access na veřejném listeneru – team domain a AUD tag ze Secretu cloudflare-access (ESO ← Key Vault; "none" = bez Access)
 - target: {kind: Deployment, name: zakazka}
   patch: |
     - {op: add, path: /spec/template/spec/containers/1/volumeMounts/-, value: {name: platform-ca, mountPath: /etc/platform/ca, readOnly: true}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: CF_ACCESS_TEAM_DOMAIN, valueFrom: {secretKeyRef: {name: cloudflare-access, key: team-domain, optional: true}}}}
+    - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: CF_ACCESS_AUD, valueFrom: {secretKeyRef: {name: cloudflare-access, key: aud, optional: true}}}}
 - target: {kind: Deployment, name: memory}
   patch: |
     - {op: replace, path: /spec/template/spec/containers/0/env/8/value, value: https://otel-collector:4318}

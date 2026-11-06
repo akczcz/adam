@@ -1253,8 +1253,48 @@ async def public_rate_limit(request: Request, call_next):
     return await call_next(request)
 
 
+# P4-10: Cloudflare Access před pojmenovaným tunelem – origin ověřuje JWT `Cf-Access-Jwt-Assertion` (RS256, klíče z <team>.cloudflareaccess.com
+# /cdn-cgi/access/certs, aud = AUD tag Access aplikace, iss = team domain; docs validating-json.mdx 2026-11-06). Bez CF_ACCESS_* (quick tunnel,
+# kind) se nic neověřuje. Obrana při obejití Cloudflare (chybná konfigurace sítě): požadavek bez platného JWT dostane 403, v ledgeru ACCESS_DENIED
+# (důvod, hash IP, nikdy token). Identita z Access (e-mail jako hash, service token) jde do GUI_LOGIN – vazba Access → Keycloak v auditu.
+CF_ACCESS_TEAM = (os.environ.get("CF_ACCESS_TEAM_DOMAIN") or "").strip().rstrip("/"); CF_ACCESS_AUD = (os.environ.get("CF_ACCESS_AUD") or "").strip()
+CF_ACCESS = bool(CF_ACCESS_TEAM and CF_ACCESS_AUD) and CF_ACCESS_TEAM.lower() != "none" and CF_ACCESS_AUD.lower() != "none"
+_CF_JWKS = None
+
+
+def _cf_jwks():
+    global _CF_JWKS
+    if _CF_JWKS is None and CF_ACCESS:
+        import jwt as _jwt
+        _CF_JWKS = _jwt.PyJWKClient(f"{CF_ACCESS_TEAM}/cdn-cgi/access/certs", cache_keys=True, lifespan=3600)   # Access rotuje klíč po 6 týdnech, starý platí 7 dní; neznámý kid → nové stažení
+    return _CF_JWKS
+
+
+def _cf_access_claims(tok):
+    import jwt as _jwt
+    key = _cf_jwks().get_signing_key_from_jwt(tok).key
+    return _jwt.decode(tok, key, algorithms=["RS256"], audience=CF_ACCESS_AUD, issuer=CF_ACCESS_TEAM, options={"require": ["exp", "iss", "aud"]})
+
+
+@public.middleware("http")
+async def public_access_jwt(request: Request, call_next):
+    if not CF_ACCESS or request.url.path == "/health": return await call_next(request)
+    tok = request.headers.get("cf-access-jwt-assertion") or request.cookies.get("CF_Authorization")
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    try:
+        if not tok: raise ValueError("missing_jwt")
+        c = await asyncio.to_thread(_cf_access_claims, tok)
+    except Exception as e:
+        ledger("ACCESS_DENIED", path=request.url.path, reason=("missing_jwt" if not tok else type(e).__name__), ip_hash=hashlib.sha256(ip.encode()).hexdigest()[:12])
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "vstup vyžaduje přihlášení přes Cloudflare Access"}, status_code=403)
+    email = c.get("email") or ""
+    request.state.cf_access = {"service_token": bool(c.get("common_name")) or not c.get("sub"), "email_hash": hashlib.sha256(email.encode()).hexdigest()[:12] if email else None, "exp": c.get("exp")}
+    return await call_next(request)
+
+
 @public.get("/health")
-async def public_health(): return {"ok": True, "public": True}
+async def public_health(): return {"ok": True, "public": True, "access": CF_ACCESS}
 
 
 _GUI_DIR = os.environ.get("P0_GUI_DIR", "/app/gui")
@@ -1301,5 +1341,5 @@ if __name__ == "__main__":
     if os.environ.get("APP_PUBLIC_PORT"):   # P4-4: veřejný listener ve vlákně (uvicorn mimo hlavní vlákno neinstaluje signal handlery – ty drží hlavní server)
         import threading
         threading.Thread(target=uvicorn.run, kwargs={"app": public, "host": os.environ.get("APP_HOST", "127.0.0.1"), "port": int(os.environ["APP_PUBLIC_PORT"]), "log_level": "warning"}, daemon=True, name="public").start()
-        ledger("PUBLIC_LISTENER", port=int(os.environ["APP_PUBLIC_PORT"]), routes=["/gui", "/agui/*", "/health"])
+        ledger("PUBLIC_LISTENER", port=int(os.environ["APP_PUBLIC_PORT"]), routes=["/gui", "/agui/*", "/health"], access=CF_ACCESS, access_team=(CF_ACCESS_TEAM.split("//")[-1] if CF_ACCESS else None))   # P4-10: origin ověřuje Access JWT
     uvicorn.run(app, host=os.environ.get("APP_HOST", "127.0.0.1"), port=int(os.environ.get("APP_PORT", "8010")), log_level="warning")

@@ -101,6 +101,20 @@ resource "azurerm_key_vault_secret" "cloudflare_tunnel_hostname" {
   lifecycle { ignore_changes = [value] }
 }
 
+# P4-10: Cloudflare Access před pojmenovaným tunelem – team domain (https://<team>.cloudflareaccess.com) a AUD tag Access aplikace (origin ověřuje JWT),
+# service token harnessu/operátora (Client ID + Client Secret, policy Service Auth). Výchozí "none" = bez Access (quick tunnel); ostré hodnoty nastaví
+# Adam v Key Vaultu, Terraform je nepřepisuje.
+resource "azurerm_key_vault_secret" "cloudflare_access" {
+  for_each     = var.cloudflare_access
+  name         = "cloudflare-access-${each.key}"
+  value        = each.value
+  key_vault_id = azurerm_key_vault.kv.id
+  content_type = "Cloudflare Access (P4-10) ${each.key}; 'none' = Access není nasazen (quick tunnel). Ostrou hodnotu nastaví Adam, Terraform nepřepisuje"
+  tags         = var.tags
+  depends_on   = [time_sleep.kv_rbac]
+  lifecycle { ignore_changes = [value] }
+}
+
 # client secrety service-account klientů rolí v Keycloaku (realm p0 z Gitu – dev hodnoty); rotace = změna v Keycloaku + tady
 resource "azurerm_key_vault_secret" "role_client_secrets" {
   name         = "role-client-secrets"
