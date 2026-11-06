@@ -1254,6 +1254,10 @@ Nálezy:
   `n3_access_checks()`: N3a zvenčí (`follow_redirects=False` bez tokenu → 302 na `*.cloudflareaccess.com` / 403), N3b zevnitř podu
   (`kubectl exec … python3` na `127.0.0.1:8011` bez JWT a s podvrženým JWT → 403, `/health` 200), ledger `ACCESS_DENIED`, `PUBLIC_LISTENER.access`.
   Bez nasazení (Key Vault `cloudflare-*` = `quick`/`none`) N3a–b **SKIP**, N3c INFO.
+- **`cf_sync()`** (P4-10b, před hledáním veřejné URL): hodnoty Cloudflare se mění mimo Git (workflow `cloudflare` → Key Vault) – force-sync
+  ExternalSecretů `cloudflare-tunnel`/`cloudflare-access`, porovnání Secretů s režimem běžícího podu (`/health` `access` zevnitř, `*.trycloudflare.com`
+  v logu sidecaru) a při rozdílu nové pody aplikace (`restart_pods`, Flux nic nevrací). Objekty v Cloudflare zakládá `tools/cloudflare/cf_setup.py`
+  (lokálně otestováno proti falešnému API: setup → status → setup znovu (rotace service tokenu, DNS keep) → teardown; Key Vault jen přes `--file`).
 - Lokální test middlewaru (vlastní RSA klíč jako JWKS, PyJWT): platný JWT 200 (identita člověka / service tokenu), chybějící 403 `missing_jwt`,
   podvržený 403 `DecodeError`, cizí `aud` 403 `InvalidAudienceError`, cookie `CF_Authorization` 200, `/health` vždy 200 – 2026-11-06 OK.
 
