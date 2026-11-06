@@ -1223,15 +1223,27 @@ Nálezy:
 
 | Check | Tvrzení | Výsledek |
 |---|---|---|
-| R3a | ARM PATCH Succeeded → KV nová verze → ESO 4 Secrety; Postgres nové přijato, staré odmítnuto | P49_R3A |
-| R3b | nové pody keycloak/agentgateway/zakazka; Keycloak token 200, app 200, Dapr threads 200, gateway bez chyb auth, bez FINOPS_ERROR | P49_R3B |
-| R3c | okno rotace admina (časy), verze v KV | P49_R3C |
+| R3a | ARM PATCH Succeeded → KV nová verze → ESO 4 Secrety; Postgres nové přijato, staré odmítnuto | ✅ PATCH 202 → `Succeeded` za 11,5 s; KV `true`; ESO 4/4 za 2,3 s; Postgres nové `true`, staré `denied` (FATAL password) |
+| R3b | nové pody keycloak/agentgateway/zakazka; Keycloak token 200, app 200, Dapr threads 200, gateway bez chyb auth, bez FINOPS_ERROR | ✅ rollouty 3/3 za 60,3 s; token 200, `/health` 200, threads 200; gateway 0 chyb auth; `finops_errors: []`; konzumenti OK za 24 s |
+| R3c | okno rotace admina (časy), verze v KV | ℹ️ server 11,5 s + restart 60,3 s + konzumenti 24,0 s = **105,2 s**; `kv_versions: 2`, `kv_errors: []` |
 
-Výsledek: **P49_RESULT** (`measure` run P49_ID, P49_RUNS).
+Výsledek: **98/98 PASS + 22 INFO** (`measure` run 42094889686, 2 běhy – běh 1 42090623450 selhal před R3 na `AADSTS700024`, viz nález 1).
 
 Nálezy:
 
-P49_FINDINGS
+1. **Assertion azure/login platí 5 min** (běh 1, 42090623450): E1b FAIL a pád v E8 („Key Vault secret openbao-init chybí“) – první volání
+   `az keyvault` přišlo 10 min po loginu a az CLI nedostalo token pro nový resource (`AADSTS700024: Client assertion is not within its valid
+   time range`); dřívější kroky to neviděly, protože token pro Key Vault už byl v cache z měření bez tak dlouhého rozjezdu. Oprava (5ed8aac):
+   `az_relogin()` – nový OIDC token z `ACTIONS_ID_TOKEN_REQUEST_URL` (audience `api://AzureADTokenExchange`) → `az login --federated-token`
+   (stejně jako azure/login; JWT 5 min, nikdy v logu); `az_run()` opakuje volání po `AADSTS*`/`ExpiredAuthenticationToken`; před rotací admina
+   relogin proaktivně (ARM token). Workflow `measure` a `rotate` předávají `AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID` do env kroku.
+2. **Rotace admina je bezvýpadková jen pro držená spojení**: okno 105 s (ARM 11,5 s, restart tří konzumentů 60 s, konzumenti funkční
+   24 s po Ready) – delší než DB role bez restartu (77–123 s, P4-8), ale kratší než rotace s restartem v P4-7 (334 s). Keycloak start
+   (JDBC + import realmu) určuje délku restartu; paměť a Governance MCP běží bez přerušení (RLS role, admina nepoužívají).
+3. **ARM PATCH identitou Actions** stačí Contributor na RG (žádná role navíc); odpověď 202 + `Azure-AsyncOperation`, `Succeeded` do 15 s –
+   Flexible Server heslo mění bez restartu serveru. Hodnota je jen v těle requestu a v Key Vaultu (verze 2 po rotaci), žádný argument procesu.
+4. Staré heslo je po rotaci opravdu neplatné (`FATAL: password authentication failed` přes socat na private endpoint) – rollback na starou
+   hodnotu při selhání zápisu do Key Vaultu nebyl v měření potřeba (`kv: true`), zůstává netestovaná větev.
 
 ## Spuštění
 
