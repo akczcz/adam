@@ -424,7 +424,8 @@ rovnou do Key Vaultu – nic tajného neprojde chatem, Gitem ani logem (jen iden
    bez dokončeného onboardingu to ale může odmítnout → pak tento krok.
 3. **API token** (My Profile → API Tokens → Create Token → Custom): Account *Cloudflare Tunnel: Edit*, *Access: Apps and Policies: Edit*,
    *Access: Service Tokens: Edit*, *Access: Organizations, Identity Providers, and Groups: Edit*; Zone *Zone: Read*, *DNS: Edit* – Zone Resources
-   jen `autonomous.place`. Token uložit jako secret prostředí **dev** `CLOUDFLARE_ZT_TOKEN` (repo → Settings → Environments → dev → Secrets);
+   jen `autonomous.place` (v novém UI tokenů = druhá policy se scope zóny; bez zónových práv skript DNS přeskočí a vypíše CNAME k ručnímu
+   naklikání). Token uložit jako secret prostředí **dev** `CLOUDFLARE_ZT_TOKEN` (repo → Settings → Environments → dev → Secrets);
    po nasazení ho lze smazat/revokovat (objekty už existují), pro rotaci service tokenu založit znovu.
 4. **Actions → `cloudflare` → `setup`** (zone `autonomous.place`, host `platforma`, team `autonomous-place`, email = e-maily lidí pro OTP):
    zóna → organizace → IdP One-time PIN → service token `platforma-harness` (existující se rotuje) → Access aplikace `platforma.autonomous.place`

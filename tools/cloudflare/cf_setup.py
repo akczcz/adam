@@ -110,11 +110,21 @@ def kv_value(kv: str, name: str):
 
 # --- Cloudflare objekty -----------------------------------------------------------------------------------------------------------------
 def zone(name: str):
-    zs = api("GET", "/zones", params={"name": name}) or []
-    if not zs:
-        raise CfError(f"zóna {name} v účtu není – doménu nejdřív přidat do Cloudflare (Add a domain) nebo koupit přes Registrar")
-    z = zs[0]
-    return {"zone_id": z["id"], "account_id": z["account"]["id"], "status": z.get("status"), "name_servers": z.get("name_servers")}
+    """Zóna a účet. Bez zónových práv tokenu (Zone Read / DNS Edit) se účet vezme z GET /accounts a DNS se přeskočí – CNAME pak nakliká Adam ručně
+    (skript vypíše cíl `<tunnel_id>.cfargotunnel.com`)."""
+    try:
+        zs = api("GET", "/zones", params={"name": name}) or []
+    except CfError as e:
+        zs = None; err = str(e)
+    if zs:
+        z = zs[0]
+        return {"zone_id": z["id"], "account_id": z["account"]["id"], "status": z.get("status"), "name_servers": z.get("name_servers")}
+    if zs == [] :
+        raise CfError(f"zóna {name} v účtu není (nebo token nemá Zone Read na ni) – doménu přidat do Cloudflare (Add a domain) nebo koupit přes Registrar")
+    accs = api("GET", "/accounts") or []
+    if not accs:
+        raise CfError(f"token nemá Zone Read ({err}) a GET /accounts nic nevrátil – přidat do tokenu scope zóny {name} (Zone Read, DNS Edit)")
+    return {"zone_id": None, "account_id": accs[0]["id"], "status": "no-zone-scope", "name_servers": None, "note": f"token bez zónových práv ({err[:120]}) – DNS CNAME ručně"}
 
 
 def organization(acc: str, team: str | None, create: bool):
@@ -205,7 +215,7 @@ def dns(zone_id: str, fqdn: str, tunnel_id: str):
 def setup(a):
     fqdn = f"{a.host}.{a.zone}"; out = {"fqdn": fqdn}
     z = zone(a.zone); out["zone"] = {k: v for k, v in z.items() if k != "account_id"}; acc = z["account_id"]
-    if z.get("status") != "active":
+    if z.get("zone_id") and z.get("status") != "active":
         raise CfError(f"zóna {a.zone} není active ({z.get('status')}) – nameservery u registrátora musí mířit na {z.get('name_servers')}")
     out["organization"] = organization(acc, a.team, create=True); team_domain = "https://" + out["organization"]["auth_domain"]
     out["otp"] = otp_idp(acc)
@@ -213,7 +223,7 @@ def setup(a):
     emails = [e.strip() for e in (a.email or "").split(",") if e.strip()]; out["emails_hash"] = [h(e) for e in emails]
     out["app"] = access_app(acc, fqdn, out["otp"]["id"], st["id"], emails)
     tn = tunnel(acc, fqdn); out["tunnel"] = {k: v for k, v in tn.items() if k != "token"}
-    out["dns"] = dns(z["zone_id"], fqdn, tn["id"])
+    out["dns"] = dns(z["zone_id"], fqdn, tn["id"]) if z.get("zone_id") else {"op": "manual", "todo": f"DNS → Records → CNAME `{a.host}` → `{tn['id']}.cfargotunnel.com`, Proxied (token nemá práva na zónu)"}
     if a.kv:
         vals = {"cloudflare-tunnel-token": tn["token"], "cloudflare-tunnel-hostname": fqdn, "cloudflare-access-team-domain": team_domain, "cloudflare-access-aud": out["app"]["aud"],
                 "cloudflare-access-client-id": st["client_id"], "cloudflare-access-client-secret": st["client_secret"]}
@@ -244,8 +254,8 @@ def status(a):
     if tn:
         cfg = (api("GET", f"/accounts/{acc}/cfd_tunnel/{tn['id']}/configurations") or {}).get("config") or {}
         out["tunnel"] = {"id": tn["id"], "status": tn.get("status"), "connections": len(tn.get("connections") or []), "ingress": [(i.get("hostname"), i.get("service")) for i in (cfg.get("ingress") or [])]}
-        recs = api("GET", f"/zones/{z['zone_id']}/dns_records", params={"name": fqdn}) or []
-        out["dns"] = [(r.get("type"), r.get("content"), r.get("proxied")) for r in recs]
+        recs = (api("GET", f"/zones/{z['zone_id']}/dns_records", params={"name": fqdn}) or []) if z.get("zone_id") else None
+        out["dns"] = [(r.get("type"), r.get("content"), r.get("proxied")) for r in recs] if recs is not None else f"bez zónových práv – očekávaný CNAME {tn['id']}.cfargotunnel.com"
     else:
         out["tunnel"] = None; out["dns"] = None
     if a.kv:
@@ -258,8 +268,10 @@ def status(a):
 def teardown(a):
     fqdn = f"{a.host}.{a.zone}"; out = {"fqdn": fqdn}
     z = zone(a.zone); acc = z["account_id"]
-    for r in api("GET", f"/zones/{z['zone_id']}/dns_records", params={"name": fqdn}) or []:
+    for r in (api("GET", f"/zones/{z['zone_id']}/dns_records", params={"name": fqdn}) or []) if z.get("zone_id") else []:
         api("DELETE", f"/zones/{z['zone_id']}/dns_records/{r['id']}"); out.setdefault("dns_deleted", []).append(r.get("type"))
+    if not z.get("zone_id"):
+        out["dns"] = f"bez zónových práv – CNAME {a.host} smazat ručně"
     for t in api("GET", f"/accounts/{acc}/cfd_tunnel", params={"name": TUNNEL_NAME, "is_deleted": "false"}) or []:
         if t.get("name") != TUNNEL_NAME:
             continue
