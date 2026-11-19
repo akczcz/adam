@@ -110,9 +110,9 @@ L1c/V1c ho vyžadují u každé role. **Pro ostrý provoz: catch-all `*` → moc
 1. Adam nastaví v Key Vaultu platformy (Terraform `azurerm_key_vault.kv`) ostré hodnoty (portál nebo `az keyvault secret set`, nikdy do Gitu ani do chatu):
    `anthropic-api-key` (klíč workspace s limitem útraty) a `github-token` (fine-grained PAT **jen** na `akczcz/adam`: Contents RW, Issues RW,
    Pull requests RW; platnost 1 den). Terraform je nepřepíše (`ignore_changes`).
-2. Synchronizace ESO (do 1 h, nebo vynutit: `kubectl -n platform-data annotate externalsecret agentgateway-secrets agentgateway-github-token
-   zakazka-secrets force-sync=$(date +%s) --overwrite`); gateway soubor PAT sleduje (watched), klíč modelu z env Secretu vyžaduje restart podů gateway
-   (`rollout restart deploy/agentgateway`).
+2. Synchronizace ESO (do 1 h, nebo vynutit: Actions → `cluster` → **`live-sync`** = anotace force-sync na `agentgateway-secrets`,
+   `agentgateway-github-token`, `zakazka-secrets`, nové pody gateway a aplikace, předletová kontrola; ručně totéž `kubectl … annotate … force-sync`
+   + `rollout restart`); gateway soubor PAT sleduje (watched), klíč modelu z env Secretu vyžaduje nové pody gateway – `live-sync` to dělá.
 3. Doporučení pro repozitář: ruleset na `main` „změny jen přes PR“ (merge-executor merguje PR přes API, přímý push PAT nejde) – kontrola na straně GitHubu,
    gateway hlídá jen cesty a metody.
 4. `measure` s `e2e=p4-2-live` (cluster běží): V1a předletová kontrola → bez 200/200 se nic nezakládá a neutratí; jinak zakázka `<tag>-live`
@@ -128,13 +128,19 @@ Všechno jde z GitHubu (Actions → workflow `cluster`) a z Azure portálu; `kub
 1. **Tajemství před startem clusteru** (Key Vault `kv-platform-dev-<suffix>`, portál → Secrets → *New version*; nikdy do Gitu ani do chatu):
    `anthropic-api-key` = klíč workspace s limitem útraty; `github-token` = fine-grained PAT jen na `akczcz/adam` (Contents RW, Issues RW,
    Pull requests RW, platnost 1 den). Když jsou hodnoty v Key Vaultu **před** startem, pody gateway nabootují s nimi a ESO ani restart netřeba.
-   Volitelně `cloudflare-tunnel-token` + `cloudflare-tunnel-hostname` pro stálou adresu (postup výše), jinak quick tunnel.
+   Stálá adresa a Access (`cloudflare-*`) jsou od P4-10 nasazené (workflow `cloudflare`), nic dalšího nastavovat. Hodnoty nastavené **až po
+   startu** clusteru dostaneš do podů bez restartu clusteru: Actions → `cluster` → `action: live-sync` (ESO force-sync + nové pody gateway
+   a aplikace, ~3 min, na konci předletová kontrola jako `status`).
 2. **Start:** Actions → `cluster` → *Run workflow* → `action: start` (≈ 5 min AKS + Postgres, pody platformy dalších 3–5 min).
-3. **Adresa a kontrola:** Actions → `cluster` → `action: status` → v *Summary* běhu je `https://<hostname>/gui` a řádky
-   `ostrá tajemství: model ok=True`, `github ok=True` (předletová kontrola `/_live`, 1 token). Bez obou `ok=True` zakázku nezakládat – ostrý
-   běh by skončil na 401 v rozhodovacím bodě `publikace` nebo u role. Pokud URL chybí, pod aplikace ještě startuje → `status` znovu.
-4. **Přihlášení:** uživatel `adam` (tenant acme; `bea` = beta, `platform-admin` = governance), heslo = Key Vault secret
-   `kc-user-adam-password` (portál → Secrets → aktuální verze → *Show secret value*). Idle odhlášení 30 min (P4-5).
+3. **Adresa a kontrola:** Actions → `cluster` → `action: status` → v *Summary* běhu je `https://platforma.autonomous.place/gui – Cloudflare Access
+   (nejdřív e-mail OTP), pak …`, `vstup access=True` a řádky `ostrá tajemství: model ok=True`, `github ok=True` (předletová kontrola `/_live`,
+   1 token). Bez obou `ok=True` zakázku nezakládat – ostrý běh by skončil na 401 v rozhodovacím bodě `publikace` nebo u role. Pokud URL
+   chybí, pod aplikace ještě startuje → `status` znovu.
+4. **Přihlášení (dvě vrstvy, P4-10):** (a) Cloudflare Access na `https://platforma.autonomous.place/gui`: zadat e-mail z policy *Allow*
+   (ten, který šel do `cloudflare setup` jako `email`), kód z e-mailu („Your Cloudflare Access code“), session 24 h; (b) Keycloak: uživatel
+   `adam` (tenant acme; `bea` = beta, `platform-admin` = governance), heslo = Key Vault secret `kc-user-adam-password` (portál → Secrets →
+   aktuální verze → *Show secret value*). Idle odhlášení 30 min (P4-5). Jiný e-mail Access odmítne (403), další lidi přidá
+   `cloudflare setup` s více e-maily (čárkou).
 5. **Nová zakázka:** ID (např. `E1-<datum>`), rozpočet v USD (30 d), poptávka, dotazník K1–K6, zaškrtnout **Ostrý běh** → *Založit a sledovat*.
    Pak jen HITL: dialog Account (pokud se ptá), H1 zadání, H2 návrh, H4 merge, H5 nasazení – každé rozhodnutí s důvodem ≥ 10 znaků.
    Výsledek: issue → PR → merge v `akczcz/adam` (soubory `zakazky/<id>/…`), stav `Dokonceno`; cena v GUI FinOps.
