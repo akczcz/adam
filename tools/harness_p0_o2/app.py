@@ -138,7 +138,7 @@ rt = wf.WorkflowRuntime()
 # --- role přes Claude Agent SDK ---------------------------------------------------------------------------------------
 ROLE_PROMPTS = {
     "account": "Jsi role Account virtuální IT firmy (P1 Přijetí zadání). Z poptávky sepiš Zadání do artifacts/zadani.md (write_artifact): cíl, akceptační kritéria, hranice, vstupy klasifikační brány. Nejdřív si najdi fakta o zákazníkovi (search_memory). Nikdy neslibuj cenu ani termín, nic neposílej ven – zadání schvaluje člověk zákazníka.",
-    "architekt": "Jsi role Architekt (P2 Návrh). Přečti artifacts/zadani.md (read_artifact), najdi fakta a konvence (search_memory) a napiš ADR do artifacts/adr.md (write_artifact): kontext, varianty v tabulce, rozhodnutí, rizika, odhad ceny, plán úkolů. Návrh schvaluje člověk (H2).",
+    "architekt": "Jsi role Architekt (P2 Návrh). Přečti artifacts/zadani.md (read_artifact), najdi fakta a konvence (search_memory) a napiš ADR do artifacts/adr.md (write_artifact): kontext, varianty v tabulce, rozhodnutí, rizika, odhad ceny, plán úkolů. Tvůj JEDINÝ výstup je write_artifact s path přesně 'artifacts/adr.md' – soubory řešení (NOTES.md, kód, cokoli pod zakazky/ nebo work/) nevytvářej, to dělá Vývojář až po schválení. Návrh schvaluje člověk (H2).",
     "vyvojar": "Jsi role Vývojář (P3 Implementace). Pracuj jen na větvi {branch} v sandboxu (sandboxed_bash); pracovní adresář úkolu je {work} (prázdný, zapisovatelný), vzdálený repozitář zakázky https://git.harness.test/acme/platform.git. Před prací si najdi fakta v paměti (search_memory), nové poznatky zapiš create_memory. Nikdy nepushuj do main – merge dělá workflow po schválení. Buď úsporný: malé množství kroků, pak krátké shrnutí.",
     "reviewer": "Jsi role Reviewer/QA (P4 Review). Přečti soubory PR (read_artifact s cestou work/...), spusť evaly (run_evals) a napiš review do artifacts/review.md (write_artifact) s řádkem 'verdict: ok' nebo 'verdict: changes_requested' a nalezenými vadami. Nemerguješ – merge dělá workflow po schválení člověkem.",
 }
@@ -343,6 +343,22 @@ def _art_hash(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()[:16] if os.path.exists(path) else None
 
 
+def agent_run_required(role, z, prompt, tool_names, required):
+    """Role s povinným artefaktem (2026-11-19, scénář 1 ostře, Z-11192036): Architekt (živý model) místo artifacts/adr.md zkusil zapsat
+    zakazky/<id>/NOTES.md (write_artifact odmítl – jen artifacts/), skončil bez ADR a orchestrátor otevřel H2 nad chybějícím artefaktem.
+    Když po běhu povinný soubor chybí (a role nebyla zastavena ani bez rozpočtu), jeden opakovaný běh s explicitní opravou v promptu;
+    cena se sčítá. Vrací výsledek posledního běhu + 'retried'. Chybí-li i pak, rozhodne člověk (HANDOFF file_exists=False, GUI varuje)."""
+    r = agent_run(role, z, prompt, tool_names); path = os.path.join(r["arts"], required)
+    if os.path.exists(path) or r.get("stopped") or r.get("budget_exceeded") or r.get("error"): return r
+    ledger("ARTIFACT_MISSING", zakazka=z["id"], role=role, required=f"artifacts/{required}", attempt=1, result_text=(r.get("text") or "")[:300])
+    fix = (f" OPRAVA (druhý pokus): předchozí běh nezapsal povinný artefakt artifacts/{required} – pokus o zápis mimo artifacts/ byl odmítnut."
+           f" Teď zavolej write_artifact s path přesně 'artifacts/{required}' a úplným obsahem; nic jiného nezapisuj.")
+    r2 = agent_run(role, z, prompt + fix, tool_names); r2["retried"] = True
+    r2["cost"] = (r.get("cost") or 0) + (r2.get("cost") or 0) if (r.get("cost") or r2.get("cost")) else None
+    if not os.path.exists(path): ledger("ARTIFACT_MISSING", zakazka=z["id"], role=role, required=f"artifacts/{required}", attempt=2, result_text=(r2.get("text") or "")[:300])
+    return r2
+
+
 @rt.activity(name="role_account")
 def role_account(ctx, z):
     r = agent_run("account", z, ROLE_PROMPTS["account"], ["search_memory", "read_artifact", "write_artifact"])
@@ -359,11 +375,11 @@ def role_account(ctx, z):
 
 @rt.activity(name="role_architekt")
 def role_architekt(ctx, z):
-    r = agent_run("architekt", z, ROLE_PROMPTS["architekt"], ["search_memory", "read_artifact", "write_artifact"])
+    r = agent_run_required("architekt", z, ROLE_PROMPTS["architekt"], ["search_memory", "read_artifact", "write_artifact"], "adr.md")
     p = os.path.join(r["arts"], "adr.md")
     art = {"type": "adr", "ref": f"adr://{z['id']}/001", "path": "artifacts/adr.md", "hash": _art_hash(p) or h("adr-missing" + z["id"])}
     art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False)
-    if not art["stopped"]: ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["architekt"]))
+    if not art["stopped"]: ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), retried=bool(r.get("retried")), cost_usd=(r["cost"] or COST["architekt"]))
     return art
 
 
@@ -387,7 +403,7 @@ def role_vyvojar(ctx, z):
 def role_reviewer(ctx, inp):
     z, pr = inp["z"], inp["pr"]
     files = ", ".join("work/" + f["path"] for f in pr.get("files", [])) or "(PR bez souborů)"
-    r = agent_run("reviewer", z, ROLE_PROMPTS["reviewer"] + f" Soubory PR: {files}.", ["read_artifact", "run_evals", "write_artifact"])
+    r = agent_run_required("reviewer", z, ROLE_PROMPTS["reviewer"] + f" Soubory PR: {files}.", ["read_artifact", "run_evals", "write_artifact"], "review.md")
     p = os.path.join(r["arts"], "review.md"); txt = open(p).read() if os.path.exists(p) else ""
     verdict = "ok" if "verdict: ok" in txt else ("changes_requested" if "verdict: changes_requested" in txt else "missing")
     rep = {"type": "review", "ref": f"review://{z['id']}/1", "verdict": verdict, "path": "artifacts/review.md", "pr_hash": pr["hash"], "hash": _art_hash(p) or pr["hash"]}

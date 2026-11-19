@@ -226,6 +226,12 @@ def _artifact_text(zid, e):
     try:
         if p: return open(os.path.join(root, p), encoding="utf-8", errors="replace").read()[:6000]
     except Exception: pass
+    # 2026-11-19 (Z-11192036): role artefakt nezapsala (HANDOFF file_exists=False) – člověk musí vidět, že chybí, a co role naposledy řekla;
+    # bez toho byla karta H2 jen hash bez obsahu. Doporučení = Zamítnout s důvodem (zakázka se pozastaví), ne schválit naslepo.
+    if p and e.get("file_exists") is False:
+        run = next((x for x in reversed(thread_entries(zid)) if x.get("kind") == "AGENT_RUN" and x.get("role") == frm), {})
+        return (f"⚠️ **Artefakt `{p}` chybí** – role ho nezapsala (pokus o zápis mimo `artifacts/` je odmítnut). Nelze posoudit → doporučení **Zamítnout** s důvodem.\n\n"
+                f"Poslední zpráva role: {(run.get('result_text') or '(prázdné)')[:1500]}")
     return ""
 
 
