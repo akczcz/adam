@@ -62,7 +62,9 @@ jobs:
             done
             echo '### události otel-collector/clickhouse'; kubectl -n $ns get events --sort-by=.lastTimestamp 2>/dev/null | grep -E 'otel-collector|clickhouse' | tail -20
           } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          [ -z "$TAG" ] && exit 0
+          [ -z "$TAG" ] && { { echo "## poslední zakázky (ledger ZAKAZKA_START) a HITL (posledních 40 událostí)"
+            kubectl -n $ns exec deploy/zakazka -c app -- sh -c "grep -E 'ZAKAZKA_START' /data/ledger.jsonl | tail -10 | cut -c1-300; echo; grep -E 'HITL|DIALOG|ZAKAZKA_|PUBLISH|AGENT_RUN|ROLE_POD' /data/ledger.jsonl | tail -40 | cut -c1-600" 2>&1
+            } | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
           kubectl -n cert-manager get secret platform-root-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > "$RUNNER_TEMP/ca.crt"
           kubectl -n $ns port-forward svc/clickhouse 18445:8443 >/dev/null 2>&1 & PF=$!; sleep 6
           q() { curl -sS --max-time 60 --cacert "$RUNNER_TEMP/ca.crt" --resolve clickhouse.platform-data.svc:18445:127.0.0.1 "https://clickhouse.platform-data.svc:18445/" --data-binary "$1 FORMAT PrettyCompactNoEscapes" 2>&1 | cut -c1-400; }
@@ -96,6 +98,11 @@ jobs:
             done
             echo "## ledger aplikace – tenant stop/resume, klíče, zabité pody ($TAG*)"
             kubectl -n $ns exec deploy/zakazka -c app -- sh -c "grep -E 'STOP_TENANT|RESUME_TENANT|GATEWAY_KEYS|ROLE_POD_KILLED|ROLE_CHECKPOINT|ROLE_STOPPED' /data/ledger.jsonl | grep -F '$TAG' | tail -40 | cut -c1-500" 2>&1
+            # 2026-11-19 (ruční ostrá zakázka): průběh zakázky pro podporu bez kubectl – HITL/dialog/role/publikace (bez tokenů: ledger je nenese), log aplikace
+            echo "## ledger aplikace – průběh zakázek $TAG* (HITL, dialog, role, publikace, stav; posledních 80)"
+            kubectl -n $ns exec deploy/zakazka -c app -- sh -c "grep -F '$TAG' /data/ledger.jsonl | grep -vE 'GATEWAY_KEYS|MEMORY_|FINOPS_|SPAN' | tail -80 | cut -c1-700" 2>&1
+            echo "## log aplikace – chyby a HITL (posledních 60 z 4000)"
+            kubectl -n $ns logs deploy/zakazka -c app --tail=4000 2>&1 | grep -iE 'error|traceback|hitl|approve|reject|interrupt|403|401|422' | grep -F "$TAG" | tail -60 | cut -c1-500
           } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           kill "$PF" 2>/dev/null; true
       # clickhouse-retention (P4-8 běh 3): plný PVC ClickHouse → Collector zahazoval spany. Stejný kód jako na startu měření (harness ch_retention):
