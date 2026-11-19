@@ -110,9 +110,9 @@ L1c/V1c ho vyžadují u každé role. **Pro ostrý provoz: catch-all `*` → moc
 1. Adam nastaví v Key Vaultu platformy (Terraform `azurerm_key_vault.kv`) ostré hodnoty (portál nebo `az keyvault secret set`, nikdy do Gitu ani do chatu):
    `anthropic-api-key` (klíč workspace s limitem útraty) a `github-token` (fine-grained PAT **jen** na `akczcz/adam`: Contents RW, Issues RW,
    Pull requests RW; platnost 1 den). Terraform je nepřepíše (`ignore_changes`).
-2. Synchronizace ESO (do 1 h, nebo vynutit: `kubectl -n platform-data annotate externalsecret agentgateway-secrets agentgateway-github-token
-   zakazka-secrets force-sync=$(date +%s) --overwrite`); gateway soubor PAT sleduje (watched), klíč modelu z env Secretu vyžaduje restart podů gateway
-   (`rollout restart deploy/agentgateway`).
+2. Synchronizace ESO (do 1 h, nebo vynutit: Actions → `cluster` → **`live-sync`** = anotace force-sync na `agentgateway-secrets`,
+   `agentgateway-github-token`, `zakazka-secrets`, nové pody gateway a aplikace, předletová kontrola; ručně totéž `kubectl … annotate … force-sync`
+   + `rollout restart`); gateway soubor PAT sleduje (watched), klíč modelu z env Secretu vyžaduje nové pody gateway – `live-sync` to dělá.
 3. Doporučení pro repozitář: ruleset na `main` „změny jen přes PR“ (merge-executor merguje PR přes API, přímý push PAT nejde) – kontrola na straně GitHubu,
    gateway hlídá jen cesty a metody.
 4. `measure` s `e2e=p4-2-live` (cluster běží): V1a předletová kontrola → bez 200/200 se nic nezakládá a neutratí; jinak zakázka `<tag>-live`
@@ -128,7 +128,9 @@ Všechno jde z GitHubu (Actions → workflow `cluster`) a z Azure portálu; `kub
 1. **Tajemství před startem clusteru** (Key Vault `kv-platform-dev-<suffix>`, portál → Secrets → *New version*; nikdy do Gitu ani do chatu):
    `anthropic-api-key` = klíč workspace s limitem útraty; `github-token` = fine-grained PAT jen na `akczcz/adam` (Contents RW, Issues RW,
    Pull requests RW, platnost 1 den). Když jsou hodnoty v Key Vaultu **před** startem, pody gateway nabootují s nimi a ESO ani restart netřeba.
-   Stálá adresa a Access (`cloudflare-*`) jsou od P4-10 nasazené (workflow `cloudflare`), nic dalšího nastavovat.
+   Stálá adresa a Access (`cloudflare-*`) jsou od P4-10 nasazené (workflow `cloudflare`), nic dalšího nastavovat. Hodnoty nastavené **až po
+   startu** clusteru dostaneš do podů bez restartu clusteru: Actions → `cluster` → `action: live-sync` (ESO force-sync + nové pody gateway
+   a aplikace, ~3 min, na konci předletová kontrola jako `status`).
 2. **Start:** Actions → `cluster` → *Run workflow* → `action: start` (≈ 5 min AKS + Postgres, pody platformy dalších 3–5 min).
 3. **Adresa a kontrola:** Actions → `cluster` → `action: status` → v *Summary* běhu je `https://platforma.autonomous.place/gui – Cloudflare Access
    (nejdřív e-mail OTP), pak …`, `vstup access=True` a řádky `ostrá tajemství: model ok=True`, `github ok=True` (předletová kontrola `/_live`,

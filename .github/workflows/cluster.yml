@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: stop | start | status | diag (diagnostika telemetrie – Collector, ClickHouse, gateway; nic nemění) | clickhouse-retention (úklid systémových logů ClickHouse a TTL otel tabulek – harness --ch-retention)
+        description: stop | start | status | live-sync (ostrá tajemství anthropic-api-key/github-token z Key Vaultu do běžícího clusteru – ESO force-sync, nové pody gateway a aplikace, předletová kontrola) | diag (diagnostika telemetrie – Collector, ClickHouse, gateway; nic nemění) | clickhouse-retention (úklid systémových logů ClickHouse a TTL otel tabulek – harness --ch-retention)
         default: status
         type: choice
-        options: [stop, start, status, diag, clickhouse-retention]
+        options: [stop, start, status, live-sync, diag, clickhouse-retention]
       tag:
         description: diag – prefix zakázek běhu harnessu (např. P31-071221); prázdné = jen stav podů a logy
         default: ''
@@ -113,6 +113,30 @@ jobs:
           pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]' cryptography certifi
           python tools/harness_p1_k8s/harness.py --ch-retention --context "$CLUSTER-admin" 2>&1 | tee "$RUNNER_TEMP/ch.log"
           { echo "## retence ClickHouse"; echo '```'; grep -E "^(✅|❌)" "$RUNNER_TEMP/ch.log" | cut -c1-3000; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # live-sync (P4-10, 2026-11-19): Adam nastavil ostré hodnoty v Key Vaultu až po startu clusteru → bez kubectl nešlo vynutit ESO sync a nové pody
+      # (klíč modelu je env gateway i aplikace; PAT je soubor gateway – watched). Anotace force-sync na třech ExternalSecretech, čekání na refreshTime,
+      # rollout restart gateway + aplikace; hodnoty se nikam nevypisují (jen „výchozí (mock)“ / „nastavena“). Předletová kontrola je ve kroku níže.
+      - if: inputs.action == 'live-sync'
+        name: live-sync
+        run: |
+          set +e
+          [ "$(az aks show -g "$RG" -n "$CLUSTER" --query powerState.code -o tsv)" = "Running" ] || { echo "live-sync: cluster neběží – nejdřív start" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }
+          az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing -o none
+          ns=platform-data; t0=$(date +%s)
+          for es in agentgateway-secrets agentgateway-github-token zakazka-secrets; do kubectl -n $ns annotate externalsecret $es "force-sync=$t0" --overwrite >/dev/null; done
+          for i in $(seq 1 60); do
+            ok=1; for es in agentgateway-secrets agentgateway-github-token zakazka-secrets; do
+              rt=$(kubectl -n $ns get externalsecret $es -o jsonpath='{.status.refreshTime}' 2>/dev/null); [ -n "$rt" ] && [ "$(date -d "$rt" +%s)" -ge $((t0-5)) ] || ok=0; done
+            [ $ok = 1 ] && break; sleep 3; done
+          { echo "## live-sync"; echo "ESO sync: $([ $ok = 1 ] && echo "hotovo za $(( $(date +%s) - t0 )) s" || echo "nedokončeno do 180 s – zkontroluj ExternalSecrety (cluster diag)")"
+            k=$(kubectl -n $ns get secret agentgateway-secrets -o jsonpath='{.data.ANTHROPIC_API_KEY}' | base64 -d); [ "$k" = "sk-ant-harness-mock" ] && echo "anthropic-api-key: výchozí (mock) – nastav v Key Vaultu novou verzi a spusť live-sync znovu" || echo "anthropic-api-key: nastavena (${#k} znaků)"
+            t=$(kubectl -n $ns get secret agentgateway-github-token -o jsonpath='{.data.token}' | base64 -d); [ "$t" = "mock-github-token" ] && echo "github-token: výchozí (mock) – nastav v Key Vaultu novou verzi a spusť live-sync znovu" || echo "github-token: nastaven (${#t} znaků)"
+            unset k t
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          kubectl -n $ns rollout restart deploy/agentgateway deploy/zakazka >/dev/null
+          kubectl -n $ns rollout status deploy/agentgateway --timeout=300s 2>&1 | tail -1 | tee -a "$GITHUB_STEP_SUMMARY"
+          kubectl -n $ns rollout status deploy/zakazka --timeout=420s 2>&1 | tail -1 | tee -a "$GITHUB_STEP_SUMMARY"
+          sleep 20   # sidecar tunelu a listener aplikace po startu podu
       - name: status
         run: |
           { echo "## $CLUSTER"; az aks show -g "$RG" -n "$CLUSTER" --query '{power:powerState.code, k8s:kubernetesVersion, provisioning:provisioningState}' -o table
@@ -138,7 +162,7 @@ jobs:
             else echo "URL tunelu zatím není (pod aplikace startuje) – spusť \`status\` za 2–3 min"; fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
           # předletová kontrola ostrého běhu (P4-2 /_live): ok=True = klíč modelu / PAT z Key Vaultu platí (1 token), wired=True + 401 = cesta funguje, hodnoty výchozí (mock)
-          [ "${{ inputs.action }}" = "status" ] || exit 0
+          case "${{ inputs.action }}" in status|live-sync) ;; *) exit 0;; esac
           kubectl -n platform-data exec -i deploy/zakazka -c app -- python3 - <<'PY' 2>&1 | sed 's/^/ostrá tajemství: /' | tee -a "$GITHUB_STEP_SUMMARY"
           import json, urllib.request
           for p in ("model", "github"):
