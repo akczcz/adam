@@ -400,7 +400,8 @@ async def run(req: Request):
                                     metadata={"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": art.get("frm"), "action": BOD_ACTION.get(w["bod"], w["bod"]), "process": BOD_PROCESS.get(w["bod"]),
                                               **({"role": exc.get("role") or w.get("artifact_hash"), "source": exc.get("source"), "limit_usd": bud.get("limit_usd"), "spent_usd": bud.get("spent_usd")} if w["bod"] == "rozpocet" else {}),
                                               **({"publish_kind": pf.get("publish_kind"), "error": pf.get("error"), "live": pf.get("live")} if w["bod"] == "publikace" else {}),
-                                              **({"role": rf.get("role"), "error": rf.get("error"), "attempt": rf.get("attempt")} if w["bod"] == "role" else {})})
+                                              **({"role": rf.get("role"), "error": rf.get("error"), "attempt": rf.get("attempt")} if w["bod"] == "role" else {}),
+                                              **({"verdict": art.get("verdict"), "pr_url": next((e.get("url") for e in reversed(ents) if e.get("kind") == "PUBLISHED" and e.get("publish_kind") == "pull_request"), None)} if w["bod"] == "H4" else {})})   # 2026-11-19 (Z-11192236): verdikt Reviewera a odkaz na PR přímo v kartě H4
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedInterruptOutcome(type="interrupt", interrupts=[itr]), result=state_of(zid, ents)))
                 return
             st = await asyncio.to_thread(CTX["wf_state"], zid) or {}   # P4-2: každou sekundu per otevřený stream – sync gRPC nesmí stát v event loopu

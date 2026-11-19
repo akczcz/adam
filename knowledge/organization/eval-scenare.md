@@ -1,7 +1,7 @@
 ---
 tema: Pět eval scénářů pro ruční zkoušku autonomní IT firmy z GUI – od smoke testu po adversariální zakázku; co zadat, co má nastat, co měřit
-naposledy_overeno: 2026-11-05
-zralost: n/a (návrh scénářů; výsledky doplnit po každém běhu)
+naposledy_overeno: 2026-11-19
+zralost: scénář 1 ověřen ostře (2026-11-19); 2–5 čekají
 primarni_zdroje:
   - knowledge/organization/procesy.md
   - knowledge/organization/metriky.md
@@ -112,11 +112,29 @@ silnější model nebo delší dialog cenu násobí.
 
 | # | Datum | Zakázka | Stav | Cena USD | Čas (z toho člověk) | HITL zásahy / opravy | Nález |
 |---|---|---|---|---|---|---|---|
-| 1 | | | | | | | |
+| 1 | 2026-11-19 | Z-11192236 (5. pokus; předchozí Z-11191940, Z-11192036, Z-11192102, Z-11192207) | **Dokonceno** – [issue #54](https://github.com/akczcz/adam/issues/54), [PR #55](https://github.com/akczcz/adam/pull/55) mergnutý, `zakazky/Z-11192236/NOTES.md` | 0,1147 (rozpočet 3) | ~22 min (agenti ~5 min, zbytek čekání na H1/H2/H4/H5) | 4 schválení; H4 s odůvodněním proti falešnému `changes_requested` Reviewera; žádná ruční oprava artefaktu | 5 nálezů platformy z pokusů 1–5 (níže) |
 | 2 | | | | | | | |
 | 3 | | | | | | | |
 | 4 | | | | | | | |
 | 5 | | | | | | | |
 
+### Nálezy ze scénáře 1 (2026-11-19, ostrý běh na `platforma.autonomous.place`)
+
+Pět pokusů, platforma opravována mezi nimi (změny v `tools/harness_p0_o2/`, nová verze orchestrátoru `18c35c86197e`); detail v
+[p4-provoz.md – changelog](../platforma/p4-provoz.md#changelog):
+
+| Pokus | Zakázka | Co se stalo | Oprava |
+|---|---|---|---|
+| 1 | Z-11191940 | založena **bez flagu Ostrý běh** → mock model, falešný GitHub (`github.mock`), žádný PR; poznal až Claude z ledgeru (`live: False`) | zatím ne – kandidát: GUI varuje „mock“ v hlavičce a u H4 |
+| 2 | Z-11192036 | Architekt (živý model) místo `artifacts/adr.md` zapisoval `zakazky/<id>/NOTES.md` (odmítnuto), skončil bez ADR; orchestrátor otevřel H2 nad chybějícím artefaktem, GUI ukázalo jen hash | prompt Architekta (jediný výstup ADR); `agent_run_required` – chybí-li povinný artefakt, jeden opravný běh; GUI u předání bez souboru varuje a ukáže poslední zprávu role |
+| 3 | Z-11192102 | prompt Vývojáře odkazoval na `/tmp/p0-o2/<id>/work`, v Kata podu je `/work` → všechny příkazy selhaly, `AGENT_ERROR`; orchestrátor publikoval prázdné zbytky CLI (`package.json`, `bunfig.toml`, lock soubory) jako PR, Reviewer dal `ok` (mock evaly projdou s jakýmkoli souborem), otevřel se H4 | orchestrátor: chybný běh role → bod **`role`** (opakovat / pozastavit); prompt Vývojáře (cwd); filtr prázdných souborů nástrojů; Reviewer čte zadání a ADR, `ok` jen při shodě |
+| 4 | Z-11192207 | Vývojář podle nového promptu vytvořil `zakazky/<id>/NOTES.md`, publikace prefix přidala znovu → `zakazky/<id>/zakazky/<id>/NOTES.md`; titulek PR = 60 znaků markdownu s novými řádky | publikace prefix nezdvojuje; prompt: cwd = adresář zakázky; titulek z prvního řádku bez markdownu |
+| 5 | Z-11192236 | **prošlo**; Reviewer dal `changes_requested`, protože hledal `work/zakazky/<id>/NOTES.md` (nezná mapování cest) – člověk přebil v H4 s důvodem | prompt Reviewera s mapováním cest; karta H4 ukazuje verdikt a odkaz na PR; smyčka Review → Implementace při `changes_requested` zatím není (kandidát před scénářem 2) |
+
+Poučení: harness měřil role na mocku s kanonickými odpověďmi, takže chyby v promptech (cesty, názvy artefaktů) a chybějící
+ošetření chybného běhu role se ukázaly až s živým modelem; orchestrátor musí každý výstup role validovat (artefakt existuje, soubory
+neprázdné, cesty), ne věřit, že role „doběhla“.
+
 ## Changelog
+- 2026-11-19: scénář 1 ostře – 5 pokusů, pátý `Dokonceno` (0,1147 USD, ~22 min); tabulka nálezů 1–5 a opravy platformy.
 - 2026-11-05: první verze – pět scénářů od smoke testu po adversariální zakázku, společná kritéria, tabulka výsledků (prázdná).

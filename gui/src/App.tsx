@@ -336,6 +336,11 @@ function Thread({ id, user }: { id: string; user: User }) {
               <label>Nový strop zakázky (USD, 30 d) – navýšení = N6, zapisuje se do gateway (rozpočty klíčů), registru a schválení</label>
               <input data-testid="budget-new" type="number" min="0" step="0.01" value={budget} onChange={(x) => setBudget(x.target.value)} placeholder="ponechat = jen opakovat pokus" />
             </div>)}
+          {interrupt.metadata?.bod === "H4" && (
+            <div className="card" style={{ marginBottom: 8 }} data-testid="h4-box">
+              <b>Review:</b> <code data-testid="h4-verdict">{String(interrupt.metadata?.verdict ?? "?")}</code>{interrupt.metadata?.verdict === "changes_requested" && <span className="muted"> – Reviewer žádá změny; text review je v Průběhu (zpráva role reviewer). Schválení = merge i přes námitku, zamítnutí = pozastavit.</span>}
+              {interrupt.metadata?.pr_url && <> · PR <a href={String(interrupt.metadata.pr_url)} target="_blank" rel="noreferrer">{String(interrupt.metadata.pr_url)}</a></>}
+            </div>)}
           {interrupt.metadata?.bod === "role" && (
             <div className="card" style={{ marginBottom: 8 }} data-testid="role-box">
               <b>Běh role selhal</b> – role <code>{String(interrupt.metadata?.role ?? "?")}</code> (pokus {String(interrupt.metadata?.attempt ?? 1)}): <code data-testid="role-error">{String(interrupt.metadata?.error ?? "")}</code>
