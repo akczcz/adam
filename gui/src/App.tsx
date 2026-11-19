@@ -336,6 +336,11 @@ function Thread({ id, user }: { id: string; user: User }) {
               <label>Nový strop zakázky (USD, 30 d) – navýšení = N6, zapisuje se do gateway (rozpočty klíčů), registru a schválení</label>
               <input data-testid="budget-new" type="number" min="0" step="0.01" value={budget} onChange={(x) => setBudget(x.target.value)} placeholder="ponechat = jen opakovat pokus" />
             </div>)}
+          {interrupt.metadata?.bod === "role" && (
+            <div className="card" style={{ marginBottom: 8 }} data-testid="role-box">
+              <b>Běh role selhal</b> – role <code>{String(interrupt.metadata?.role ?? "?")}</code> (pokus {String(interrupt.metadata?.attempt ?? 1)}): <code data-testid="role-error">{String(interrupt.metadata?.error ?? "")}</code>
+              <div className="muted">Schválit = jeden opakovaný běh role (platí se znovu), Zamítnout = pozastavit zakázku. Nic se nepublikovalo, další role neběží.</div>
+            </div>)}
           {interrupt.metadata?.bod === "publikace" && (
             <div className="card" style={{ marginBottom: 8 }} data-testid="publish-box">
               <b>Publikace selhala</b> – {String(interrupt.metadata?.publish_kind ?? "?")} do GitHubu{interrupt.metadata?.live ? " (ostrý běh)" : ""}: <code data-testid="publish-error">{String(interrupt.metadata?.error ?? "")}</code>
