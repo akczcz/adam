@@ -128,13 +128,17 @@ Všechno jde z GitHubu (Actions → workflow `cluster`) a z Azure portálu; `kub
 1. **Tajemství před startem clusteru** (Key Vault `kv-platform-dev-<suffix>`, portál → Secrets → *New version*; nikdy do Gitu ani do chatu):
    `anthropic-api-key` = klíč workspace s limitem útraty; `github-token` = fine-grained PAT jen na `akczcz/adam` (Contents RW, Issues RW,
    Pull requests RW, platnost 1 den). Když jsou hodnoty v Key Vaultu **před** startem, pody gateway nabootují s nimi a ESO ani restart netřeba.
-   Volitelně `cloudflare-tunnel-token` + `cloudflare-tunnel-hostname` pro stálou adresu (postup výše), jinak quick tunnel.
+   Stálá adresa a Access (`cloudflare-*`) jsou od P4-10 nasazené (workflow `cloudflare`), nic dalšího nastavovat.
 2. **Start:** Actions → `cluster` → *Run workflow* → `action: start` (≈ 5 min AKS + Postgres, pody platformy dalších 3–5 min).
-3. **Adresa a kontrola:** Actions → `cluster` → `action: status` → v *Summary* běhu je `https://<hostname>/gui` a řádky
-   `ostrá tajemství: model ok=True`, `github ok=True` (předletová kontrola `/_live`, 1 token). Bez obou `ok=True` zakázku nezakládat – ostrý
-   běh by skončil na 401 v rozhodovacím bodě `publikace` nebo u role. Pokud URL chybí, pod aplikace ještě startuje → `status` znovu.
-4. **Přihlášení:** uživatel `adam` (tenant acme; `bea` = beta, `platform-admin` = governance), heslo = Key Vault secret
-   `kc-user-adam-password` (portál → Secrets → aktuální verze → *Show secret value*). Idle odhlášení 30 min (P4-5).
+3. **Adresa a kontrola:** Actions → `cluster` → `action: status` → v *Summary* běhu je `https://platforma.autonomous.place/gui – Cloudflare Access
+   (nejdřív e-mail OTP), pak …`, `vstup access=True` a řádky `ostrá tajemství: model ok=True`, `github ok=True` (předletová kontrola `/_live`,
+   1 token). Bez obou `ok=True` zakázku nezakládat – ostrý běh by skončil na 401 v rozhodovacím bodě `publikace` nebo u role. Pokud URL
+   chybí, pod aplikace ještě startuje → `status` znovu.
+4. **Přihlášení (dvě vrstvy, P4-10):** (a) Cloudflare Access na `https://platforma.autonomous.place/gui`: zadat e-mail z policy *Allow*
+   (ten, který šel do `cloudflare setup` jako `email`), kód z e-mailu („Your Cloudflare Access code“), session 24 h; (b) Keycloak: uživatel
+   `adam` (tenant acme; `bea` = beta, `platform-admin` = governance), heslo = Key Vault secret `kc-user-adam-password` (portál → Secrets →
+   aktuální verze → *Show secret value*). Idle odhlášení 30 min (P4-5). Jiný e-mail Access odmítne (403), další lidi přidá
+   `cloudflare setup` s více e-maily (čárkou).
 5. **Nová zakázka:** ID (např. `E1-<datum>`), rozpočet v USD (30 d), poptávka, dotazník K1–K6, zaškrtnout **Ostrý běh** → *Založit a sledovat*.
    Pak jen HITL: dialog Account (pokud se ptá), H1 zadání, H2 návrh, H4 merge, H5 nasazení – každé rozhodnutí s důvodem ≥ 10 znaků.
    Výsledek: issue → PR → merge v `akczcz/adam` (soubory `zakazky/<id>/…`), stav `Dokonceno`; cena v GUI FinOps.
