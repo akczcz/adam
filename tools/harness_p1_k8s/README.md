@@ -1306,7 +1306,7 @@ Nálezy:
 | V2b | `changes_requested` v 1. kole úkolu 1 → `REVIEW_LOOP` → oprava → 2. kolo `ok`; úkol 2 `ok` v 1. kole; nic nevyřešeno; PR jednou (mock GitHub) a H4 otevřen; zakázka zastavena | ✅ `reviews` [(1,1) changes_requested, (1,2) ok, (2,1) ok], `loops` 1, `unresolved: 0`, PR `github.mock/akczcz/adam/pull/10`, `h4: true`, stop `SUSPENDED` |
 | V2c | čas | ℹ️ wall 435 s, 7 běhů rolí (Account, Architekt, Vývojář ×3, Reviewer ×3 – Account i dialog v jednom) |
 
-Výsledek: RUN11B_SUMMARY. Předchozí běh 44777262164 (head 848206b): **101 PASS / 1 FAIL / 24 INFO** – V2a–b PASS, ❌ L1c (nález 1).
+Výsledek: **101 PASS / 0 FAIL / 24 INFO / 1 SKIP** (`measure` run 44797987864, head 010454c; e2e 97 min, L1c SKIP `secrets_live {model: true, github: true}`, L2b `probe: sentinel`, N3a–b PASS, cluster se zastavil sám). Předchozí běh 44777262164 (head 848206b): **101 PASS / 1 FAIL / 24 INFO** – V2a–b PASS, ❌ L1c (nález 1).
 
 Nálezy:
 
@@ -1316,7 +1316,8 @@ Nálezy:
    Oprava (2e6d1e6): tělo L1c v `_l1c()`, `l1_flow` ho spustí jen, když preflight nevrátí 200; jinak **L1c SKIP** s `secrets_live`.
    Cesta „bez klíče → 401 → bod `publikace`“ zůstává ověřená z p4-3/p4-10 (mock Key Vault). Důsledek pro provoz: měřicí workflow s ostrými
    tajemstvími v Key Vaultu by jinak při každém běhu platilo tokeny a zakládalo issue – ostrý běh patří jen do `p4-2-live` a eval scénářů.
-RUN11B_NALEZY
+2. **Mock ověřuje mechaniku, ne kvalitu plánu a review**: V2 dokazuje tok (plán → úkoly → kola → PR jednou), kvalitu `ukoly.json` a verdiktů
+   živého modelu změří až eval scénář 3 ([eval-scenare.md](../../knowledge/organization/eval-scenare.md)).
 
 ## Spuštění
 

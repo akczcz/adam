@@ -22,7 +22,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-8** Rotace bez restartu | Secrety s hesly DB rolí jako soubory v podech (kubelet je obnoví), aplikace sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení | ✅ 2026-11-05 AKS 96/96 PASS + 21 INFO, 4 běhy |
 | **P4-9** Rotace admina Postgresu | heslo admina Flexible Serveru jako provozní postup: ARM PATCH (identita Actions) → nová verze v Key Vaultu → ESO → nové pody Keycloaku, gateway a aplikace; poslední „ruční postup“ z tabulky P4-7 | ✅ 2026-11-05 AKS 98/98 PASS + 22 INFO, 2 běhy |
 | **P4-10** Pojmenovaný tunnel + Cloudflare Access | stálá adresa GUI (`platforma.<doména>`), Access před hostname (e-mail OTP pro lidi, service token pro harness/operátora), origin ověřuje Access JWT (obrana při obejití Cloudflare); quick tunnel zůstává pro měření bez účtu | ✅ 2026-11-06 AKS 100/100 PASS + 23 INFO, 3 běhy – nasazeno na `platforma.autonomous.place` (workflow `cloudflare`), N3a/N3b PASS proti skutečnému Access; nález L2b (re-registrace klíčů gateway) opraven |
-| **P4-11** Úkoly z plánu ADR + smyčka Review → Implementace | Architekt zapíše plán strojově (`artifacts/ukoly.json`, 1–4 úkoly), Vývojář běží per úkol, Reviewer per úkol a kolo (≤ 2), `changes_requested` → oprava podle review; PR jednou po review všech úkolů; nevyřešený verdikt vidí člověk v H4 | RUN11_STATUS |
+| **P4-11** Úkoly z plánu ADR + smyčka Review → Implementace | Architekt zapíše plán strojově (`artifacts/ukoly.json`, 1–4 úkoly), Vývojář běží per úkol, Reviewer per úkol a kolo (≤ 2), `changes_requested` → oprava podle review; PR jednou po review všech úkolů; nevyřešený verdikt vidí člověk v H4 | ✅ 2026-11-20 AKS 101/101 PASS + 24 INFO + 1 SKIP, 2 běhy – V2a/V2b PASS (2 úkoly, smyčka `changes_requested` → oprava → `ok`, PR jednou); nález: L1c s ostrými tajemstvími v Key Vaultu = SKIP |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -500,7 +500,15 @@ Měření `--step p4-11` = p4-10 + **V2a–c** (zakázka z API s markery `[TEST-
 v 1. kole úkolu 1 `changes_requested`): V2a úkoly z plánu (TASK_START 1/2, 2/2; Vývojář 3 běhy bez chyby), V2b smyčka (verdikty
 `changes_requested` → `ok` → `ok`, jeden REVIEW_LOOP, PR jednou, H4), V2c čas.
 
-Výsledek měření: RUN11_RESULT
+Výsledek měření: **101 PASS / 0 FAIL / 24 INFO / 1 SKIP** (run 44797987864, 2026-11-20; 1. běh 44777262164 101/1 – jediný FAIL L1c, viz nález).
+V2a: `plan: ok:2`, TASK_START 1/2 a 2/2, Vývojář 3 běhy (úkol 1 kolo 1, úkol 1 kolo 2 po review, úkol 2) bez chyby; V2b: verdikty
+`changes_requested` → `ok` → `ok`, jeden `REVIEW_LOOP`, `unresolved: 0`, PR jednou (mock GitHub), H4 otevřen; V2c 422 s, 7 běhů rolí.
+
+Nález měření: kontrola L1c (P4-2/P4-3, zakázka „ostrý běh“ bez ostrých tajemství → 401 → bod `publikace`) předpokládá výchozí mock hodnoty
+v Key Vaultu. Po eval scénářích tam jsou ostré hodnoty → zakázka L1c proběhla naostro (Account s živým modelem, issue nosiče H1 na skutečný
+GitHub #60). Od 2e6d1e6 harness L1c **přeskočí** (SKIP), když preflight `/_live/model` nebo `/_live/github` vrátí 200 – měření s ostrými
+tajemstvími tak neplatí tokeny ani nezakládá issue; ostrý běh patří jen do `p4-2-live` a eval scénářů. Kvalitu plánu a review živého modelu
+změří eval scénář 3 ([eval-scenare.md](../organization/eval-scenare.md)).
 
 ## Rizika
 
@@ -520,7 +528,7 @@ Výsledek měření: RUN11_RESULT
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
-- 2026-11-20: P4-11 RUN11_CHANGELOG – úkoly z plánu ADR (`ukoly.json`) a smyčka Review → Implementace ≤ 2 kol per úkol (nová verze orchestrátoru
+- 2026-11-20: P4-11 hotovo na AKS (101/101 PASS + 24 INFO + 1 SKIP, 2 běhy) – úkoly z plánu ADR (`ukoly.json`) a smyčka Review → Implementace ≤ 2 kol per úkol (nová verze orchestrátoru
   `d50ffca839ae`), PR jednou po review; eval scénář 2 ostře `Dokonceno` (Z-11201535, 0,2517 USD), nálezy 6–7 (pytest v obrazu, `P0_MAX_TURNS` 24).
 - 2026-11-19: první ostrá zakázka z GUI (eval scénář 1, `Z-11192236` → issue #54, PR #55, `Dokonceno`, 0,1147 USD, ~22 min) po pěti pokusech;
   nálezy a opravy v [eval-scenare.md](../organization/eval-scenare.md#nálezy-ze-scénáře-1-2026-11-19-ostrý-běh-na-platformaautonomousplace):

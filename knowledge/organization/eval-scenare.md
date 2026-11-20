@@ -144,6 +144,7 @@ ošetření chybného běhu role se ukázaly až s živým modelem; orchestráto
 neprázdné, cesty), ne věřit, že role „doběhla“.
 
 ## Changelog
+- 2026-11-20: před scénářem 3 doplněn do platformy plán úkolů z ADR (`ukoly.json`, 1–4 úkoly) a smyčka Review → Implementace ≤ 2 kol per úkol (P4-11, [p4-provoz.md](../platforma/p4-provoz.md#p4-11-úkoly-z-plánu-adr-a-smyčka-review--implementace)); scénář 3 tak měří plán Architekta a verdikty Reviewera naostro.
 - 2026-11-20: scénář 2 ostře – Z-11201535 `Dokonceno` po jednom opakování Vývojáře (bod `role`); nálezy 6–7; cesta modulu ve scénáři 2 opravena na adresář zakázky.
 - 2026-11-19: scénář 1 ostře – 5 pokusů, pátý `Dokonceno` (0,1147 USD, ~22 min); tabulka nálezů 1–5 a opravy platformy.
 - 2026-11-05: první verze – pět scénářů od smoke testu po adversariální zakázku, společná kritéria, tabulka výsledků (prázdná).
