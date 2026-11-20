@@ -1288,6 +1288,36 @@ Nálezy:
 4. **`cf_sync` v ostrém běhu nezasahoval** (`eso_synced: True`, `stale: False`): `cloudflare setup` běžel při zastaveném clusteru, pody
    vznikly už s hodnotami z Key Vaultu. Pojistka platí pro `setup`/`teardown` za běhu (`restart_pods` + rollout).
 
+## P4-11 V2 – úkoly z plánu ADR a smyčka Review → Implementace (2026-11-20, AKS, `--step p4-11` = p4-10 + **V2a–c**)
+
+- **Rozhodnutí** ([p4-provoz.md](../../knowledge/platforma/p4-provoz.md#p4-11-úkoly-z-plánu-adr-a-smyčka-review--implementace)): Architekt zapíše
+  vedle ADR i `artifacts/ukoly.json` (1–`P0_MAX_TASKS`=4 úkolů), Vývojář běží per úkol, Reviewer per úkol a kolo (`P0_REVIEW_ROUNDS`=2),
+  `changes_requested` → `REVIEW_LOOP` → oprava podle review; PR jednou po review všech úkolů; po posledním kole `REVIEW_UNRESOLVED` (rozhodne člověk v H4).
+  Nová verze orchestrátoru `d50ffca839ae` (`wf_versions freeze`).
+- **Harness:** `v2_flow()` založí zakázku `<tag>-v2` přes API s markery `[TEST-PLAN]` (mock Architekt zapíše `ukoly.json` se 2 úkoly) a `[TEST-LOOP]`
+  (mock Reviewer dá v 1. kole úkolu 1 `changes_requested`, jinak `ok`), odpoví na dialog Accounta, schválí H1 a H2 interním API, počká na H4 a zakázku
+  zastaví. Hodnotí ledger: `HANDOFF.plan` architekta, `TASK_START`, `AGENT_RUN`/`HANDOFF` vývojáře a reviewera per úkol a kolo, `REVIEW_LOOP`,
+  `REVIEW_UNRESOLVED`, `PUBLISH` (jednou) a `HITL_WAIT H4`.
+- Lokálně: `_plan_tasks` (chybějící / neplatný / prázdný / N úkolů → ořez na `P0_MAX_TASKS`) unit-test, orchestrátor `wf_versions check`, GUI `tsc` – 2026-11-20 OK.
+
+| Check | Tvrzení | Výsledek |
+|---|---|---|
+| V2a | Architekt zapsal `ukoly.json` (2 úkoly), orchestrátor je provedl postupně (TASK_START 1/2, 2/2), Vývojář běžel per úkol (+ oprava úkolu 1) bez chyby, PR až po všech úkolech | ✅ `plan: ok:2` (`NOTES.md zakázky`, `health.py`), `task_starts` 1/2 a 2/2, `vyvojar_runs` [(1,1), (1,2), (2,1)] každý 1 soubor, `error: null` |
+| V2b | `changes_requested` v 1. kole úkolu 1 → `REVIEW_LOOP` → oprava → 2. kolo `ok`; úkol 2 `ok` v 1. kole; nic nevyřešeno; PR jednou (mock GitHub) a H4 otevřen; zakázka zastavena | ✅ `reviews` [(1,1) changes_requested, (1,2) ok, (2,1) ok], `loops` 1, `unresolved: 0`, PR `github.mock/akczcz/adam/pull/10`, `h4: true`, stop `SUSPENDED` |
+| V2c | čas | ℹ️ wall 435 s, 7 běhů rolí (Account, Architekt, Vývojář ×3, Reviewer ×3 – Account i dialog v jednom) |
+
+Výsledek: RUN11B_SUMMARY. Předchozí běh 44777262164 (head 848206b): **101 PASS / 1 FAIL / 24 INFO** – V2a–b PASS, ❌ L1c (nález 1).
+
+Nálezy:
+
+1. **L1c předpokládá mock Key Vault; po eval scénářích tam jsou ostré hodnoty** (run 44777262164): preflight `/_live/model` i `/_live/github`
+   vrátily 200, zakázka „ostrý běh“ L1c proto proběhla naostro – Account s živým modelem (3 kola, haiku) a issue nosiče H1 na skutečný
+   GitHub (akczcz/adam#60) místo očekávaného 401 → bod `publikace`; instance zůstala `RUNNING` na H1 a harness ji zastavil (`SUSPENDED`).
+   Oprava (2e6d1e6): tělo L1c v `_l1c()`, `l1_flow` ho spustí jen, když preflight nevrátí 200; jinak **L1c SKIP** s `secrets_live`.
+   Cesta „bez klíče → 401 → bod `publikace`“ zůstává ověřená z p4-3/p4-10 (mock Key Vault). Důsledek pro provoz: měřicí workflow s ostrými
+   tajemstvími v Key Vaultu by jinak při každém běhu platilo tokeny a zakládalo issue – ostrý běh patří jen do `p4-2-live` a eval scénářů.
+RUN11B_NALEZY
+
 ## Spuštění
 
 ```bash
