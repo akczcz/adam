@@ -2554,47 +2554,9 @@ def m1_flow(a, rep, http, led, APP, KC, dsn, tag, shots):
     rep.add("M1d", "M1: čas", "INFO", {"wall_s": round(time.time() - t_m, 1)})
 
 
-def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots, l2=False):
-    """P4-2 L1: zapojení ostrého běhu ověřené BEZ ostrých tajemství (Key Vault má výchozí neplatné hodnoty): živé API modelu a GitHub jsou za gateway,
-    která vkládá klíč/PAT z Key Vaultu (ESO) – aplikace ani pody je nemají. Důkaz zapojení = odmítnutí skutečným upstreamem (401 authentication_error
-    z api.anthropic.com, 401 Bad credentials z api.github.com), ne mock. Flag `live` zakázky z GUI: viditelný (badge), v ledgeru, pod role dostane
-    alias modelu live-<model>; bez platného klíče role selže viditelně (nic se tiše nemockuje)."""
-    sys.path.insert(0, str(HERE)); from gui_checks import Gui
-    t_l = time.time(); z = f"{tag}-l1"
-    def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
-    last_led = []
-    def L(z_):
-        nonlocal last_led
-        try:
-            r = http("GET", f"{APP}/_debug/ledger", params={"zakazka": z_}, timeout=60)   # jen záznamy zakázky (celý ledger přes port-forward > 20 s → ReadTimeout, běhy 1–2)
-            if r.status_code == 200: last_led = r.json()
-        except Exception: pass   # dočasný výpadek – další otočka to zkusí znovu, mezitím poslední známý stav
-        return [e for e in last_led if e.get("zakazka") == z_]
-    def wait_led(pred, timeout):
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            e = next((e for e in L(z) if pred(e)), None)
-            if e: return e
-            time.sleep(3)
-    def J(r): return r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:160]}
-    gw = kj("-n", NS, "get", "deploy", "agentgateway"); gw_env = {e["name"]: e.get("value") for e in ((gw.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("env") or [])}
-    gw_mounts = [m.get("mountPath") for m in ((gw.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("volumeMounts") or [])]
-    # L1a: alias live-<model> → api.anthropic.com (klíč z Key Vaultu = výchozí mock → 401 authentication_error = cesta, TLS a vložení klíče fungují)
-    t0 = time.time(); lm = J(http("GET", f"{APP}/_live/model", timeout=120)); lm["s"] = round(time.time() - t0, 1)
-    mock_ok = J(http("GET", f"{APP}/health", timeout=10))   # mock upstream dál slouží ostatním (P21b to měří rolemi)
-    ok_a = bool(lm.get("wired")) and lm.get("model") == f"live-{a.model}" and str(gw_env.get("LLM_LIVE_URL", "")).startswith("https://api.anthropic.com") and str(gw_env.get("LLM_UPSTREAM_URL", "")).startswith("http://mock-upstream")
-    rep.add("L1a", "Živý model jen přes gateway: alias live-<model> (config z rolegen) míří na $LLM_LIVE_URL = api.anthropic.com s klíčem $ANTHROPIC_API_KEY z Key Vaultu (ESO), mock '*' zůstává pro ostatní zakázky; bez ostrého klíče skutečné API odpoví 401 authentication_error (= CONNECT/TLS/klíč zapojené, nic se nemockuje), s ostrým klíčem 200 (1 token)", "PASS" if ok_a else "FAIL",
-            {"preflight": lm, "gateway_env": {k: gw_env.get(k) for k in ("LLM_UPSTREAM_URL", "LLM_LIVE_URL", "GITHUB_API_BACKEND_HOST")}, "health": mock_ok})
-    # L1b: GitHub API přes gateway (listener github.platform.internal → api.github.com, PAT ze souboru ESO); mimo repozitář platformy gateway odmítne (PEP)
-    t0 = time.time(); lg = J(http("GET", f"{APP}/_live/github", timeout=120)); lg["s"] = round(time.time() - t0, 1)
-    deny = J(http("GET", f"{APP}/_live/github", params={"path": "/repos/akczcz/jiny-repozitar"}, timeout=60))
-    es = kj("-n", NS, "get", "externalsecret", "agentgateway-github-token"); es_ready = next((c.get("status") for c in es.get("status", {}).get("conditions", []) if c.get("type") == "Ready"), None)
-    sec = kubectl(a, "-n", NS, "get", "secret", "agentgateway-github-token", "-o", "jsonpath={.data.token}").stdout.strip()
-    cert = kj("-n", NS, "get", "certificate", "agentgateway-tls"); dns = cert.get("spec", {}).get("dnsNames") or []
-    ok_b = bool(lg.get("wired")) and lg.get("proxy") is True and deny.get("status") == 403 and es_ready == "True" and bool(sec) and "github.platform.internal" in dns and "/etc/platform-egress/github" in gw_mounts
-    rep.add("L1b", "GitHub jen přes gateway: aplikace volá https://github.platform.internal/api přes CONNECT gateway (cert platformy), routa github-api přepíše cestu a authority na api.github.com (TLS k backendu) a vloží PAT ze Secretu agentgateway-github-token (ESO ← Key Vault github-token, Ready); bez ostrého PAT GitHub odpoví 401 Bad credentials (= zapojení funguje), s ostrým 200; cesta mimo repozitář platformy → 403 (autorizace routy = PEP, PAT nelze použít jinde)", "PASS" if ok_b else "FAIL",
-            {"preflight": lg, "deny_other_repo": deny, "externalsecret_ready": es_ready, "secret_present": bool(sec), "cert_dns": dns, "gateway_mount": "/etc/platform-egress/github" in gw_mounts})
-    # L1c: zakázka „ostrý běh“ z GUI – flag viditelně (badge seznam + detail), v ledgeru, pod Account s aliasem modelu; bez klíče selže viditelně; pak stop
+def _l1c(a, rep, http, led, APP, KC, kj, tag, shots, z, K, L, wait_led, J):
+    """L1c (P4-2/P4-3): ostrá zakázka z GUI bez ostrých tajemství v Key Vaultu – běží jen, když preflight /_live/* nevrátí 200 (jinak SKIP v l1_flow)."""
+    from gui_checks import Gui
     gui = {}; g = None; pod = {}; run = {}; stp = {}
     try:
         g = Gui(gui_base(APP), shots=shots / "l1").open(); g.keepalive = lambda: http("GET", f"{APP}/health", timeout=10)
@@ -2655,6 +2617,55 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots, l2=False):
         and github_401 and bool(w1) and pub.get("box") is True and "401" in str(pub.get("box_error") or "") and pub.get("failed_count", 0) >= 2 and str(pub.get("interrupt2") or "").endswith(":1") and rejected and paused
     rep.add("L1c", "Zakázka „ostrý běh“ z GUI (zaškrtávátko při založení): flag live v ZAKAZKA_START, badge „ostrý“ v seznamu i detailu, stav AG-UI live=true; pod Account dostal P0_MODEL = live-<model> (ROLE_POD.model/live), Agent SDK poslal do gateway přesně tento alias (AGENT_RUN.model) a bez ostrého klíče selhal viditelně (AGENT_RUN is_error/error, ne rozpočet); publikace issue (nosič H1) šla na skutečný GitHub přes gateway a bez ostrého PAT skončila 401 → ne FAILED, ale rozhodovací bod `publikace` (P4-3): GUI karta „Publikace selhala“ s chybou 401, schválení = opakování (znovu 401 → bod podruhé, nový interrupt :1), zamítnutí → Pozastaveno (bod publikace); nic se tiše nemockuje", "PASS" if ok_c else "FAIL",
             {"zakazka": z, "gui": gui, "start_live": start.get("live"), "pod": {k: pod.get(k) for k in ("phase", "model", "live", "exit_code", "result_received")}, "agent_run": {k: run.get(k) for k in ("is_error", "error", "budget_exceeded", "num_turns", "model")}, "publikace": pub, "workflow": {"status": wf.get("status"), "output": {k: out.get(k) for k in ("stav", "bod", "publish_kind")}, "github_401": github_401, "rejected": rejected}, "stop": stp or None})
+
+
+def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots, l2=False):
+    """P4-2 L1: zapojení ostrého běhu ověřené BEZ ostrých tajemství (Key Vault má výchozí neplatné hodnoty): živé API modelu a GitHub jsou za gateway,
+    která vkládá klíč/PAT z Key Vaultu (ESO) – aplikace ani pody je nemají. Důkaz zapojení = odmítnutí skutečným upstreamem (401 authentication_error
+    z api.anthropic.com, 401 Bad credentials z api.github.com), ne mock. Flag `live` zakázky z GUI: viditelný (badge), v ledgeru, pod role dostane
+    alias modelu live-<model>; bez platného klíče role selže viditelně (nic se tiše nemockuje)."""
+    sys.path.insert(0, str(HERE)); from gui_checks import Gui
+    t_l = time.time(); z = f"{tag}-l1"
+    def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
+    last_led = []
+    def L(z_):
+        nonlocal last_led
+        try:
+            r = http("GET", f"{APP}/_debug/ledger", params={"zakazka": z_}, timeout=60)   # jen záznamy zakázky (celý ledger přes port-forward > 20 s → ReadTimeout, běhy 1–2)
+            if r.status_code == 200: last_led = r.json()
+        except Exception: pass   # dočasný výpadek – další otočka to zkusí znovu, mezitím poslední známý stav
+        return [e for e in last_led if e.get("zakazka") == z_]
+    def wait_led(pred, timeout):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            e = next((e for e in L(z) if pred(e)), None)
+            if e: return e
+            time.sleep(3)
+    def J(r): return r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:160]}
+    gw = kj("-n", NS, "get", "deploy", "agentgateway"); gw_env = {e["name"]: e.get("value") for e in ((gw.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("env") or [])}
+    gw_mounts = [m.get("mountPath") for m in ((gw.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}])[0].get("volumeMounts") or [])]
+    # L1a: alias live-<model> → api.anthropic.com (klíč z Key Vaultu = výchozí mock → 401 authentication_error = cesta, TLS a vložení klíče fungují)
+    t0 = time.time(); lm = J(http("GET", f"{APP}/_live/model", timeout=120)); lm["s"] = round(time.time() - t0, 1)
+    mock_ok = J(http("GET", f"{APP}/health", timeout=10))   # mock upstream dál slouží ostatním (P21b to měří rolemi)
+    ok_a = bool(lm.get("wired")) and lm.get("model") == f"live-{a.model}" and str(gw_env.get("LLM_LIVE_URL", "")).startswith("https://api.anthropic.com") and str(gw_env.get("LLM_UPSTREAM_URL", "")).startswith("http://mock-upstream")
+    rep.add("L1a", "Živý model jen přes gateway: alias live-<model> (config z rolegen) míří na $LLM_LIVE_URL = api.anthropic.com s klíčem $ANTHROPIC_API_KEY z Key Vaultu (ESO), mock '*' zůstává pro ostatní zakázky; bez ostrého klíče skutečné API odpoví 401 authentication_error (= CONNECT/TLS/klíč zapojené, nic se nemockuje), s ostrým klíčem 200 (1 token)", "PASS" if ok_a else "FAIL",
+            {"preflight": lm, "gateway_env": {k: gw_env.get(k) for k in ("LLM_UPSTREAM_URL", "LLM_LIVE_URL", "GITHUB_API_BACKEND_HOST")}, "health": mock_ok})
+    # L1b: GitHub API přes gateway (listener github.platform.internal → api.github.com, PAT ze souboru ESO); mimo repozitář platformy gateway odmítne (PEP)
+    t0 = time.time(); lg = J(http("GET", f"{APP}/_live/github", timeout=120)); lg["s"] = round(time.time() - t0, 1)
+    deny = J(http("GET", f"{APP}/_live/github", params={"path": "/repos/akczcz/jiny-repozitar"}, timeout=60))
+    es = kj("-n", NS, "get", "externalsecret", "agentgateway-github-token"); es_ready = next((c.get("status") for c in es.get("status", {}).get("conditions", []) if c.get("type") == "Ready"), None)
+    sec = kubectl(a, "-n", NS, "get", "secret", "agentgateway-github-token", "-o", "jsonpath={.data.token}").stdout.strip()
+    cert = kj("-n", NS, "get", "certificate", "agentgateway-tls"); dns = cert.get("spec", {}).get("dnsNames") or []
+    ok_b = bool(lg.get("wired")) and lg.get("proxy") is True and deny.get("status") == 403 and es_ready == "True" and bool(sec) and "github.platform.internal" in dns and "/etc/platform-egress/github" in gw_mounts
+    rep.add("L1b", "GitHub jen přes gateway: aplikace volá https://github.platform.internal/api přes CONNECT gateway (cert platformy), routa github-api přepíše cestu a authority na api.github.com (TLS k backendu) a vloží PAT ze Secretu agentgateway-github-token (ESO ← Key Vault github-token, Ready); bez ostrého PAT GitHub odpoví 401 Bad credentials (= zapojení funguje), s ostrým 200; cesta mimo repozitář platformy → 403 (autorizace routy = PEP, PAT nelze použít jinde)", "PASS" if ok_b else "FAIL",
+            {"preflight": lg, "deny_other_repo": deny, "externalsecret_ready": es_ready, "secret_present": bool(sec), "cert_dns": dns, "gateway_mount": "/etc/platform-egress/github" in gw_mounts})
+    # L1c: zakázka „ostrý běh“ z GUI – flag viditelně (badge seznam + detail), v ledgeru, pod Account s aliasem modelu; bez klíče selže viditelně; pak stop
+    # Předpoklad L1c = Key Vault drží výchozí (mock) hodnoty. Když preflight vrátí 200 (ostrý klíč/PAT nastavený pro eval scénáře), ostrá zakázka by
+    # utratila skutečné tokeny a založila skutečné issue (P4-11 běh 1: issue #60) – proto SKIP; cestu „bez klíče → bod publikace“ L1c ověřil v p4-3/p4-10.
+    secrets_live = {"model": lm.get("status") == 200, "github": lg.get("status") == 200}
+    if any(secrets_live.values()):
+        rep.add("L1c", "Zakázka „ostrý běh“ z GUI bez ostrých tajemství: SKIP – Key Vault drží ostrý klíč modelu/PAT (preflight 200), ostrá zakázka by platila tokeny a zakládala skutečné issue; ověřeno v p4-3/p4-10 (mock Key Vault)", "SKIP", {"secrets_live": secrets_live})
+    else: _l1c(a, rep, http, led, APP, KC, kj, tag, shots, z, K, L, wait_led, J)
     if not l2: rep.add("L1d", "L1: čas", "INFO", {"wall_s": round(time.time() - t_l, 1)}); return
     # ---- P4-3 L2: ostrý provoz bez tichého mocku a bez tichého pádu ----
     import yaml as _yk
