@@ -1,7 +1,7 @@
 ---
 tema: Pět eval scénářů pro ruční zkoušku autonomní IT firmy z GUI – od smoke testu po adversariální zakázku; co zadat, co má nastat, co měřit
-naposledy_overeno: 2026-11-19
-zralost: scénář 1 ověřen ostře (2026-11-19); 2–5 čekají
+naposledy_overeno: 2026-11-20
+zralost: scénáře 1–2 ověřeny ostře (2026-11-19/20); 3–5 čekají
 primarni_zdroje:
   - knowledge/organization/procesy.md
   - knowledge/organization/metriky.md
@@ -46,10 +46,10 @@ Výsledky doplnit do tabulky na konci souboru.
 
 ## Scénář 2 – kód s testy
 
-- **Poptávka:** „Vytvoř Python modul `tools/zakazky/<id>/slugify.py` s funkcí `slugify(text: str) -> str` (malá písmena, bez diakritiky,
+- **Poptávka:** „Vytvoř Python modul `slugify.py` s funkcí `slugify(text: str) -> str` (malá písmena, bez diakritiky,
   mezery a nealfanumerické znaky → `-`, bez opakovaných a krajních `-`) a testy `test_slugify.py` (pytest, ≥ 6 případů včetně české
   diakritiky a prázdného vstupu). Testy musí projít. Bez závislostí mimo standardní knihovnu.“ Rozpočet 5 USD.
-- **Nová schopnost:** Vývojář musí kód **spustit** v sandboxu (`sandboxed_bash`, python 3.13 v obrazu role) a Reviewer ho zkontrolovat
+- **Nová schopnost:** Vývojář musí kód **spustit** v sandboxu (`sandboxed_bash`, python 3.12 + pytest v obrazu role) a Reviewer ho zkontrolovat
   (`run_evals`), ne jen napsat.
 - **Měř:** testy v PR skutečně existují a procházejí (ověř lokálně po merge: `python -m pytest tools/zakazky/<id>`); Reviewer našel vadu,
   pokud tam byla (`verdict: changes_requested` → smyčka Review → Implementace ≤ 2); cena Vývojáře a počet kroků (`num_turns`).
@@ -113,7 +113,7 @@ silnější model nebo delší dialog cenu násobí.
 | # | Datum | Zakázka | Stav | Cena USD | Čas (z toho člověk) | HITL zásahy / opravy | Nález |
 |---|---|---|---|---|---|---|---|
 | 1 | 2026-11-19 | Z-11192236 (5. pokus; předchozí Z-11191940, Z-11192036, Z-11192102, Z-11192207) | **Dokonceno** – [issue #54](https://github.com/akczcz/adam/issues/54), [PR #55](https://github.com/akczcz/adam/pull/55) mergnutý, `zakazky/Z-11192236/NOTES.md` | 0,1147 (rozpočet 3) | ~22 min (agenti ~5 min, zbytek čekání na H1/H2/H4/H5) | 4 schválení; H4 s odůvodněním proti falešnému `changes_requested` Reviewera; žádná ruční oprava artefaktu | 5 nálezů platformy z pokusů 1–5 (níže) |
-| 2 | | | | | | | |
+| 2 | 2026-11-20 | Z-11201535 | **Dokonceno** – [PR #58](https://github.com/akczcz/adam/pull/58) mergnutý, `zakazky/Z-11201535/slugify.py` + `test_slugify.py` (15 testů, lokálně `15 passed`) | ≥ 0,25 (registr po review; rozpočet 5) | ~40 min (z toho ~22 min čekání na nasazení opravy, zbytek HITL) | 5 schválení (role.retry, H1, H2, H4, H5); 0 ručních oprav; H4 schváleno s odchylkou | nálezy 6–7 (níže) |
 | 3 | | | | | | | |
 | 4 | | | | | | | |
 | 5 | | | | | | | |
@@ -131,10 +131,19 @@ Pět pokusů, platforma opravována mezi nimi (změny v `tools/harness_p0_o2/`, 
 | 4 | Z-11192207 | Vývojář podle nového promptu vytvořil `zakazky/<id>/NOTES.md`, publikace prefix přidala znovu → `zakazky/<id>/zakazky/<id>/NOTES.md`; titulek PR = 60 znaků markdownu s novými řádky | publikace prefix nezdvojuje; prompt: cwd = adresář zakázky; titulek z prvního řádku bez markdownu |
 | 5 | Z-11192236 | **prošlo**; Reviewer dal `changes_requested`, protože hledal `work/zakazky/<id>/NOTES.md` (nezná mapování cest) – člověk přebil v H4 s důvodem | prompt Reviewera s mapováním cest; karta H4 ukazuje verdikt a odkaz na PR; smyčka Review → Implementace při `changes_requested` zatím není (kandidát před scénářem 2) |
 
+### Nálezy ze scénáře 2 (2026-11-20)
+
+| # | Zakázka | Co se stalo | Oprava |
+|---|---|---|---|
+| 6 | Z-11201535 | Vývojář vyčerpal **8 kroků** (`P0_MAX_TURNS`, hodnota z mock měření) – v obrazu role nebyl `pytest`, role ho zkoušela instalovat bez sítě; nový bod `role` zafungoval (karta „Běh role selhal“, člověk schválil opakování po opravě) | `pytest` v obrazu aplikace/rolí, `P0_MAX_TURNS` 24 (hodnota harnessu pro živý režim); opakovaný běh: 2 soubory, pytest skutečně spuštěn v sandboxu (ledger `sandboxed_bash` → `… PASSED [86%]`), 15 testů |
+| 7 | Z-11201535 | Reviewer dal `ok`, ale implementace **vynechává** nealfanumerické znaky místo náhrady `-` (`a!b` → `ab`, `e-mail@firma.cz` → `e-mailfirmacz`) – odchylka od zadání, testy ji nepokrývají; člověk schválil H4 s odůvodněním (smyčka Review → Implementace neexistuje, zamítnutí by jen pozastavilo) | kandidát: Reviewer má porovnat testy s akceptačními kritérii zadání (ne jen spustit), smyčka Review → Implementace ≤ 2 |
+| – | Z-11201535 | v cwd sandboxu se znovu objevil prázdný `pnpm-lock.yaml` (0 B) – filtr `TOOL_JUNK` ho do PR nepustil | – |
+
 Poučení: harness měřil role na mocku s kanonickými odpověďmi, takže chyby v promptech (cesty, názvy artefaktů) a chybějící
 ošetření chybného běhu role se ukázaly až s živým modelem; orchestrátor musí každý výstup role validovat (artefakt existuje, soubory
 neprázdné, cesty), ne věřit, že role „doběhla“.
 
 ## Changelog
+- 2026-11-20: scénář 2 ostře – Z-11201535 `Dokonceno` po jednom opakování Vývojáře (bod `role`); nálezy 6–7; cesta modulu ve scénáři 2 opravena na adresář zakázky.
 - 2026-11-19: scénář 1 ostře – 5 pokusů, pátý `Dokonceno` (0,1147 USD, ~22 min); tabulka nálezů 1–5 a opravy platformy.
 - 2026-11-05: první verze – pět scénářů od smoke testu po adversariální zakázku, společná kritéria, tabulka výsledků (prázdná).

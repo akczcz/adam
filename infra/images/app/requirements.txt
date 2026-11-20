@@ -12,3 +12,4 @@ opentelemetry-sdk>=1.30
 opentelemetry-exporter-otlp-proto-http>=1.30   # P3-5: spany serveru paměti do Collectoru
 spiffe>=0.2
 ag-ui-protocol==1.0.0
+pytest>=8   # 2026-11-20 (eval scénář 2): Vývojář spouští testy v sandboxu role (obraz role = tento obraz); bez pytestu role zkoušela pip install bez sítě a vyčerpala kroky
