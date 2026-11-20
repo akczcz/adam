@@ -49,7 +49,7 @@ Výsledky doplnit do tabulky na konci souboru.
 - **Poptávka:** „Vytvoř Python modul `tools/zakazky/<id>/slugify.py` s funkcí `slugify(text: str) -> str` (malá písmena, bez diakritiky,
   mezery a nealfanumerické znaky → `-`, bez opakovaných a krajních `-`) a testy `test_slugify.py` (pytest, ≥ 6 případů včetně české
   diakritiky a prázdného vstupu). Testy musí projít. Bez závislostí mimo standardní knihovnu.“ Rozpočet 5 USD.
-- **Nová schopnost:** Vývojář musí kód **spustit** v sandboxu (`sandboxed_bash`, python 3.13 v obrazu role) a Reviewer ho zkontrolovat
+- **Nová schopnost:** Vývojář musí kód **spustit** v sandboxu (`sandboxed_bash`, python 3.12 + pytest v obrazu role) a Reviewer ho zkontrolovat
   (`run_evals`), ne jen napsat.
 - **Měř:** testy v PR skutečně existují a procházejí (ověř lokálně po merge: `python -m pytest tools/zakazky/<id>`); Reviewer našel vadu,
   pokud tam byla (`verdict: changes_requested` → smyčka Review → Implementace ≤ 2); cena Vývojáře a počet kroků (`num_turns`).
