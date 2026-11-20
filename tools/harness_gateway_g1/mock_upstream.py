@@ -186,12 +186,16 @@ def _p0_message(body: dict) -> dict | None:
         elif last and last.endswith("read_artifact") and find("search_memory"): tu = (find("search_memory"), {"query": "ADR konvence firma Python FastAPI"})
         elif last and last.endswith("search_memory") and find("write_artifact"):
             tu = (find("write_artifact"), {"path": "artifacts/adr.md", "content": "# ADR 001\n\n## Kontext\nZadání viz artifacts/zadani.md.\n\n## Varianty\n| Varianta | Pro | Proti |\n|---|---|---|\n| A: 1 úkol, Python+FastAPI | konvence firmy | – |\n| B: rozdělit na 2 úkoly | menší PR | režie |\n\n## Rozhodnutí\nA.\n\n## Rizika\n- žádná nad rámec sandboxu\n\n## Odhad ceny\n≤ 1 USD (haiku), 1 úkol\n\n## Plán úkolů\n1. ukol-1: implementace + testy\n"})
+        elif last and last.endswith("write_artifact") and "[TEST-PLAN]" in prompt and calls.count(find("write_artifact")) == 1 and find("write_artifact"):   # P4-11 měření: plán 2 úkolů
+            tu = (find("write_artifact"), {"path": "artifacts/ukoly.json", "content": json.dumps([{"n": 1, "nazev": "NOTES.md zakázky", "popis": "vytvoř soubor NOTES.md s poznámkou o zakázce", "soubory": ["NOTES.md"]}, {"n": 2, "nazev": "health.py", "popis": "přidej health.py vracející ok", "soubory": ["health.py"]}], ensure_ascii=False)})
         else: tu = None
     elif role == "reviewer":
         files = _re.findall(r"work/[\w./-]+", sys_txt)
         if last is None and find("read_artifact"): tu = (find("read_artifact"), {"path": files[0] if files else "work/"})
         elif last and last.endswith("read_artifact") and find("run_evals"): tu = (find("run_evals"), {"target": "pr"})
-        elif last and last.endswith("run_evals") and find("write_artifact"): tu = (find("write_artifact"), {"path": "artifacts/review.md", "content": "# Review\n\nverdict: ok\n\n- soubory PR přečteny\n- evaly L0–L2 prošly\n- nalezené vady: žádné\n"})
+        elif last and last.endswith("run_evals") and find("write_artifact"):
+            loop = "[TEST-LOOP]" in prompt and "Kolo review: 1." in sys_txt and "ÚKOL 1" in sys_txt   # P4-11 měření: první kolo úkolu 1 = changes_requested, pak ok
+            tu = (find("write_artifact"), {"path": "artifacts/review.md", "content": ("# Review\n\nverdict: changes_requested\n\n- NOTES.md: chybí datum provedení (MOCK_LOOP)\n" if loop else "# Review\n\nverdict: ok\n\n- soubory PR přečteny\n- evaly L0–L2 prošly\n- nalezené vady: žádné\n")})
         else: tu = None
     elif last is None:
         if find("search_memory"):

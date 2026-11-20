@@ -28,7 +28,9 @@ VERSION = hashlib.sha256(open(__file__, "rb").read().replace(b"\r\n", b"\n")).he
 
 HITL_TIMEOUT_S = float(os.environ.get("O1_HITL_TIMEOUT_S", "3600"))
 BUDGET_USD = float(os.environ.get("O1_BUDGET_USD", "400"))
-BUDGET_TIMEOUT_S = float(os.environ.get("P0_BUDGET_TIMEOUT_S", str(4 * 3600)))   # roles/*.yaml on_exceeded.timeout: 4h, on_timeout: pause
+BUDGET_TIMEOUT_S = float(os.environ.get("P0_BUDGET_TIMEOUT_S", str(4 * 3600)))
+MAX_TASKS = int(os.environ.get("P0_MAX_TASKS", "4"))          # P4-11: úkoly z plánu ADR (artifacts/ukoly.json), víc = nález o Architektovi
+REVIEW_ROUNDS = int(os.environ.get("P0_REVIEW_ROUNDS", "2"))  # P4-11: kola review per úkol (procesy.md: smyčka Review → Implementace ≤ 2)   # roles/*.yaml on_exceeded.timeout: 4h, on_timeout: pause
 SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600, "publikace": 4 * 3600, "role": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0); publikace (P4-3) jako rozpocet
 
 
@@ -169,14 +171,29 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     if not adr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "architekt"}
     t2 = yield from hitl(ctx, z, "H2", adr["hash"])
     if not t2: return {**state, "stav": "Pozastaveno", "bod": "H2"}
-    pr = yield from run_role(ctx, z, "vyvojar", "role_vyvojar", z)             # P3 Implementace (sandbox)
-    if not pr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "vyvojar"}
+    # P4-11 (2026-11-20, eval scénáře 2–3): úkoly z plánu ADR (artifacts/ukoly.json, 1–4) a smyčka Review → Implementace ≤ REVIEW_ROUNDS kol
+    # per úkol (procesy.md P3/P4). Reviewer běží nad pracovním adresářem PŘED publikací; PR se publikuje jednou se všemi úkoly (H4 jednou).
+    # Nevyřešený verdikt po posledním kole nezastaví zakázku – vidí ho člověk v kartě H4 (REVIEW_UNRESOLVED) a rozhodne.
+    tasks = (adr.get("tasks") or [{"n": 1, "nazev": "úkol 1", "popis": z["poptavka"]}])[:MAX_TASKS]
+    pr = None; rev = None
+    for t in tasks:
+        yield ctx.call_activity("notify", input={"event": "TASK_START", "zakazka": z["id"], "n": t.get("n"), "total": len(tasks), "nazev": t.get("nazev")})
+        pr = yield from run_role(ctx, z, "vyvojar", "role_vyvojar", {"z": z, "task": t, "total": len(tasks)})   # P3 Implementace (sandbox)
+        if not pr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "vyvojar"}
+        for rnd in range(1, REVIEW_ROUNDS + 1):
+            rev = yield from run_role(ctx, z, "reviewer", "role_reviewer", {"z": z, "pr": pr, "task": t, "round": rnd})   # P4 Review
+            if not rev: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "reviewer"}
+            if rev.get("verdict") != "changes_requested": break
+            if rnd == REVIEW_ROUNDS:
+                yield ctx.call_activity("notify", input={"event": "REVIEW_UNRESOLVED", "zakazka": z["id"], "task": t.get("n"), "rounds": rnd, "verdict": rev.get("verdict")}); break
+            yield ctx.call_activity("notify", input={"event": "REVIEW_LOOP", "zakazka": z["id"], "task": t.get("n"), "round": rnd, "verdict": rev.get("verdict"), "review": (rev.get("review_text") or "")[:300]})
+            pr = yield from run_role(ctx, z, "vyvojar", "role_vyvojar", {"z": z, "task": t, "total": len(tasks), "review": rev, "round": rnd + 1})   # oprava podle review
+            if not pr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "vyvojar"}
+    pr = {**pr, "tasks": [{"n": t.get("n"), "nazev": t.get("nazev")} for t in tasks], "verdict": (rev or {}).get("verdict")}
     pr_pub = {}
     if os.environ.get("P0_GITHUB_MODE") == "1":
-        pr_pub = yield from publish(ctx, z, "publish_pr", {"z": z, "pr": pr}, pr["hash"])   # větev + PR = artefakt pro review (reverzibilní)
+        pr_pub = yield from publish(ctx, z, "publish_pr", {"z": z, "pr": pr}, pr["hash"])   # větev + PR = artefakt pro H4 (reverzibilní); P4-11: až po review všech úkolů
         if pr_pub is None: return {**state, "stav": "Pozastaveno", "bod": "publikace", "publish_kind": "pull_request"}
-    rev = yield from run_role(ctx, z, "reviewer", "role_reviewer", {"z": z, "pr": pr})   # P4 Review
-    if not rev: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "reviewer"}
     yield ctx.call_activity("budget_check", input=z)
     t4 = yield from hitl(ctx, z, "H4", pr["hash"])                            # merge = N1 – člověk vlastník
     if not t4: return {**state, "stav": "Pozastaveno", "bod": "H4"}

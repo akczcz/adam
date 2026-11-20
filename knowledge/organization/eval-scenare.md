@@ -113,7 +113,7 @@ silnější model nebo delší dialog cenu násobí.
 | # | Datum | Zakázka | Stav | Cena USD | Čas (z toho člověk) | HITL zásahy / opravy | Nález |
 |---|---|---|---|---|---|---|---|
 | 1 | 2026-11-19 | Z-11192236 (5. pokus; předchozí Z-11191940, Z-11192036, Z-11192102, Z-11192207) | **Dokonceno** – [issue #54](https://github.com/akczcz/adam/issues/54), [PR #55](https://github.com/akczcz/adam/pull/55) mergnutý, `zakazky/Z-11192236/NOTES.md` | 0,1147 (rozpočet 3) | ~22 min (agenti ~5 min, zbytek čekání na H1/H2/H4/H5) | 4 schválení; H4 s odůvodněním proti falešnému `changes_requested` Reviewera; žádná ruční oprava artefaktu | 5 nálezů platformy z pokusů 1–5 (níže) |
-| 2 | 2026-11-20 | Z-11201535 | **Dokonceno** – [PR #58](https://github.com/akczcz/adam/pull/58) mergnutý, `zakazky/Z-11201535/slugify.py` + `test_slugify.py` (15 testů, lokálně `15 passed`) | ≥ 0,25 (registr po review; rozpočet 5) | ~40 min (z toho ~22 min čekání na nasazení opravy, zbytek HITL) | 5 schválení (role.retry, H1, H2, H4, H5); 0 ručních oprav; H4 schváleno s odchylkou | nálezy 6–7 (níže) |
+| 2 | 2026-11-20 | Z-11201535 | **Dokonceno** – [PR #58](https://github.com/akczcz/adam/pull/58) mergnutý, `zakazky/Z-11201535/slugify.py` + `test_slugify.py` (15 testů, lokálně `15 passed`) | 0,2517 (rozpočet 5) | ~40 min (z toho ~22 min čekání na nasazení opravy, zbytek HITL) | 5 schválení (role.retry, H1, H2, H4, H5); 0 ručních oprav; H4 schváleno s odchylkou | nálezy 6–7 (níže) |
 | 3 | | | | | | | |
 | 4 | | | | | | | |
 | 5 | | | | | | | |
@@ -144,6 +144,7 @@ ošetření chybného běhu role se ukázaly až s živým modelem; orchestráto
 neprázdné, cesty), ne věřit, že role „doběhla“.
 
 ## Changelog
+- 2026-11-20: před scénářem 3 doplněn do platformy plán úkolů z ADR (`ukoly.json`, 1–4 úkoly) a smyčka Review → Implementace ≤ 2 kol per úkol (P4-11, [p4-provoz.md](../platforma/p4-provoz.md#p4-11-úkoly-z-plánu-adr-a-smyčka-review--implementace)); scénář 3 tak měří plán Architekta a verdikty Reviewera naostro.
 - 2026-11-20: scénář 2 ostře – Z-11201535 `Dokonceno` po jednom opakování Vývojáře (bod `role`); nálezy 6–7; cesta modulu ve scénáři 2 opravena na adresář zakázky.
 - 2026-11-19: scénář 1 ostře – 5 pokusů, pátý `Dokonceno` (0,1147 USD, ~22 min); tabulka nálezů 1–5 a opravy platformy.
 - 2026-11-05: první verze – pět scénářů od smoke testu po adversariální zakázku, společná kritéria, tabulka výsledků (prázdná).
