@@ -107,6 +107,7 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 | P4-8 Rotace bez restartu (Secrety jako soubory v podech, aplikace ALTER ROLE při změně, paměť a governance DSN ze souboru) | ✅ 2026-11-05 AKS 96/96 PASS + 21 INFO, 4 běhy ([p4-provoz.md](p4-provoz.md)) |
 | P4-9 Rotace admina Postgresu (ARM PATCH identitou Actions, Key Vault, ESO, nové pody Keycloaku, gateway a aplikace; workflow `rotate` group `pg-admin`) | ✅ 2026-11-05 AKS 98/98 PASS + 22 INFO, 2 běhy ([p4-provoz.md](p4-provoz.md)); žádný ruční postup rotace nezbývá |
 | P4-10 Pojmenovaný tunnel + Cloudflare Access (stálá adresa `platforma.<doména>`, OTP e-mail / service token před GUI, origin ověřuje Access JWT) | ✅ 2026-11-06 AKS 100/100 PASS + 23 INFO, 3 běhy ([p4-provoz.md](p4-provoz.md)); nasazeno na `platforma.autonomous.place` workflow `cloudflare` |
+| P4-11 Úkoly z plánu ADR + smyčka Review → Implementace (Architekt `ukoly.json`, Vývojář per úkol, Reviewer ≤ 2 kola, PR jednou) | RUN11_PRODUKT |
 
 ## Changelog
 - 2026-11-19: první ostrá zakázka z GUI dokončena (eval scénář 1: dokument do repa, 0,11 USD, ~22 min, 4 schválení člověkem) – platforma funguje end-to-end naostro; cestou 5 nálezů (hlavně chybějící validace výstupů rolí s živým modelem) opraveno, zbývá smyčka Review → Implementace a varování „mock“ v GUI.

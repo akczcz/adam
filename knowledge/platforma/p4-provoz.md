@@ -22,6 +22,7 @@ z [p3-zakaznik.md](p3-zakaznik.md) „Co zůstává zjednodušené i v P3“. Po
 | **P4-8** Rotace bez restartu | Secrety s hesly DB rolí jako soubory v podech (kubelet je obnoví), aplikace sleduje soubor a dělá ALTER ROLE, paměť a Governance MCP čtou DSN ze souboru při každém spojení | ✅ 2026-11-05 AKS 96/96 PASS + 21 INFO, 4 běhy |
 | **P4-9** Rotace admina Postgresu | heslo admina Flexible Serveru jako provozní postup: ARM PATCH (identita Actions) → nová verze v Key Vaultu → ESO → nové pody Keycloaku, gateway a aplikace; poslední „ruční postup“ z tabulky P4-7 | ✅ 2026-11-05 AKS 98/98 PASS + 22 INFO, 2 běhy |
 | **P4-10** Pojmenovaný tunnel + Cloudflare Access | stálá adresa GUI (`platforma.<doména>`), Access před hostname (e-mail OTP pro lidi, service token pro harness/operátora), origin ověřuje Access JWT (obrana při obejití Cloudflare); quick tunnel zůstává pro měření bez účtu | ✅ 2026-11-06 AKS 100/100 PASS + 23 INFO, 3 běhy – nasazeno na `platforma.autonomous.place` (workflow `cloudflare`), N3a/N3b PASS proti skutečnému Access; nález L2b (re-registrace klíčů gateway) opraven |
+| **P4-11** Úkoly z plánu ADR + smyčka Review → Implementace | Architekt zapíše plán strojově (`artifacts/ukoly.json`, 1–4 úkoly), Vývojář běží per úkol, Reviewer per úkol a kolo (≤ 2), `changes_requested` → oprava podle review; PR jednou po review všech úkolů; nevyřešený verdikt vidí člověk v H4 | RUN11_STATUS |
 | kandidát | mTLS mesh uvnitř clusteru (zbytek plaintextu mezi službami) | ⬜ |
 | kandidát | realm per tenant (vlastní IdP federace zákazníka) | ⬜ |
 | kandidát | SLA reporting (smluvní pohled místo timerů) | ⬜ |
@@ -475,6 +476,32 @@ Výsledek měření: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run 422
 4. `cf_sync` nebyl v ostrém běhu potřeba (`stale: False`): cluster při `setup` stál, pody vznikly už s hodnotami z Key Vaultu; pojistka
    zůstává pro `setup`/`teardown` za běhu clusteru.
 
+## P4-11 Úkoly z plánu ADR a smyčka Review → Implementace
+
+**Rozhodnutí (2026-11-20, po eval scénářích 1–2):** orchestrátor dosud uměl jeden úkol a review bez důsledku (verdikt jen do ledgeru →
+H4). Procesy P3/P4 ([procesy.md](../organization/procesy.md)) ale předpokládají plán úkolů z ADR a smyčku Review → Implementace ≤ 2;
+eval scénář 2 ukázal Reviewera s `ok` nad odchylkou od zadání a scénář 3 vyžaduje více úkolů. Zvoleno:
+
+| Prvek | Jak |
+|---|---|
+| Plán úkolů | Architekt zapíše vedle `artifacts/adr.md` i `artifacts/ukoly.json` (`[{n, nazev, popis, soubory}]`, 1–`P0_MAX_TASKS`=4); chybí-li / neplatný → 1 úkol = poptávka (ledger `HANDOFF.plan`) |
+| Implementace | Vývojář běží **per úkol** (prompt: úkol n/N, soubory předchozích úkolů v cwd), stejná větev a jeden PR |
+| Review | Reviewer **per úkol a kolo** (`P0_REVIEW_ROUNDS`=2), předchozí review odloženo jako `review-<úkol>.<kolo>.md`; `changes_requested` → `REVIEW_LOOP` → Vývojář opraví podle textu review → další kolo; po posledním kole `REVIEW_UNRESOLVED` (nezastaví – rozhodne člověk v H4, karta ukazuje verdikt) |
+| Publikace | PR až po review všech úkolů, jednou (H4 jednou); tělo PR nese úkoly a poslední verdikt |
+| Chyby | každý běh role dál přes bod `role` (P4-10 nálezy) |
+
+| Varianta | Proč ne / proč ano |
+|---|---|
+| PR per úkol (procesy.md doslova) | N× H4 pro člověka, N větví; u 1–4 úkolů zakázky zbytečná režie – jeden PR, review per úkol uvnitř |
+| review po publikaci (jako dosud) s aktualizací PR | další zápisy do GitHubu při každé opravě; review nad pracovním adresářem je levnější a PR vzniká až z přijatého stavu |
+| **review před publikací, smyčka ≤ 2, PR jednou** (zvoleno) | odpovídá procesu, minimum HITL, nevyřešený verdikt je viditelné rozhodnutí člověka |
+
+Měření `--step p4-11` = p4-10 + **V2a–c** (zakázka z API s markery `[TEST-PLAN]`/`[TEST-LOOP]` – mock Architekt zapíše 2 úkoly, mock Reviewer dá
+v 1. kole úkolu 1 `changes_requested`): V2a úkoly z plánu (TASK_START 1/2, 2/2; Vývojář 3 běhy bez chyby), V2b smyčka (verdikty
+`changes_requested` → `ok` → `ok`, jeden REVIEW_LOOP, PR jednou, H4), V2c čas.
+
+Výsledek měření: RUN11_RESULT
+
 ## Rizika
 
 | Riziko | Řešení |
@@ -493,6 +520,8 @@ Výsledek měření: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run 422
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-20: P4-11 RUN11_CHANGELOG – úkoly z plánu ADR (`ukoly.json`) a smyčka Review → Implementace ≤ 2 kol per úkol (nová verze orchestrátoru
+  `d50ffca839ae`), PR jednou po review; eval scénář 2 ostře `Dokonceno` (Z-11201535, 0,2517 USD), nálezy 6–7 (pytest v obrazu, `P0_MAX_TURNS` 24).
 - 2026-11-19: první ostrá zakázka z GUI (eval scénář 1, `Z-11192236` → issue #54, PR #55, `Dokonceno`, 0,1147 USD, ~22 min) po pěti pokusech;
   nálezy a opravy v [eval-scenare.md](../organization/eval-scenare.md#nálezy-ze-scénáře-1-2026-11-19-ostrý-běh-na-platformaautonomousplace):
   povinné artefakty rolí s opravným během, bod `role` při chybném běhu (nová verze orchestrátoru `18c35c86197e`), prompty Vývojáře a Reviewera
