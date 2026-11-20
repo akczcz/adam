@@ -29,7 +29,7 @@ VERSION = hashlib.sha256(open(__file__, "rb").read().replace(b"\r\n", b"\n")).he
 HITL_TIMEOUT_S = float(os.environ.get("O1_HITL_TIMEOUT_S", "3600"))
 BUDGET_USD = float(os.environ.get("O1_BUDGET_USD", "400"))
 BUDGET_TIMEOUT_S = float(os.environ.get("P0_BUDGET_TIMEOUT_S", str(4 * 3600)))   # roles/*.yaml on_exceeded.timeout: 4h, on_timeout: pause
-SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600, "publikace": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0); publikace (P4-3) jako rozpocet
+SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600, "publikace": 4 * 3600, "role": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0); publikace (P4-3) jako rozpocet
 
 
 def h(s): return hashlib.sha256(s.encode()).hexdigest()[:16]
@@ -88,6 +88,16 @@ def run_role(ctx: wf.DaprWorkflowContext, z, role, activity, inp):
         yield ctx.call_activity("notify", input={"event": "ROLE_STOPPED", "role": role, "zakazka": z["id"], "attempt": attempt + 1, "result": "rerun_after_resume" if attempt == 0 else "pozastaveno"})
         if attempt == 1: return None
         art = yield ctx.call_activity(activity, input=inp)   # bez prodlevy (P3-5 nález: timer/sleep po resume znovuspuštění rozbil); klíče tenanta odblokuje resume_tenant PŘED resume workflow
+    # 2026-11-19 (scénář 1 ostře, Z-11192102): běh Vývojáře skončil chybou (AGENT_ERROR – prompt odkazoval na neexistující adresář), orchestrátor
+    # přesto publikoval prázdné zbytky jako PR, Reviewer dal ok a otevřel se H4. Chybný běh role (activity vrací `error`, ne rozpočet ani stop)
+    # → rozhodovací bod `role` (jako `publikace`): schválení s důvodem = jeden opakovaný běh, zamítnutí/timeout = Pozastaveno (bod role).
+    for attempt in range(2):
+        if not art.get("error") or art.get("budget_exceeded") or art.get("stopped"): break
+        yield ctx.call_activity("notify", input={"event": "ROLE_FAILED", "bod": "role", "role": role, "zakazka": z["id"], "attempt": attempt + 1, "error": str(art.get("error"))[:300]})
+        if attempt == 1: z["pause"] = {"bod": "role", "role": role}; return None
+        tok, _ = yield from hitl_full(ctx, z, "role", role, timeout_s=z.get("budget_timeout_s", BUDGET_TIMEOUT_S))
+        if not tok: z["pause"] = {"bod": "role", "role": role}; return None
+        art = yield ctx.call_activity(activity, input=inp)
     if not gate.get("exceeded"):
         yield ctx.call_activity("registry_agent", input={"z": z, "role": role})   # P3-3: řádek org.agents píše workflow (T12), ne harness
         yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "Running"})   # P3-5 (O3e): útrata zakázky v org.zakazky po každé roli (FinOps per tenant bez čekání na konec)
@@ -137,7 +147,7 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
         if not t1a: return {**state, "stav": "Pozastaveno", "bod": "H1a", "profile": kl["profile"]}
     for rnd in range(int(z.get("dialog_max", 3)) + 1):                            # P1 Přijetí zadání – P3-3: ≤ 3 kola upřesňujících otázek Account ↔ zadavatel (AG-UI)
         zad = yield from run_role(ctx, z, "account", "role_account", z)
-        if not zad: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "account"}
+        if not zad: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "account"}
         if zad.get("type") != "otazky": break
         if rnd >= int(z.get("dialog_max", 3)): yield ctx.call_activity("notify", input={"event": "DIALOG_LIMIT", "zakazka": z["id"], "rounds": rnd}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
         yield ctx.call_activity("notify", input={"event": "DIALOG_WAIT", "bod": "dialog", "zakazka": z["id"], "artifact_hash": zad["hash"], "round": rnd + 1, "timeout_s": float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))})
@@ -156,17 +166,17 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     yield ctx.call_activity("notify_customer", input={"z": z, "channel": "email", "role": "account", "subject": f"Zakázka {z['id']}: zadání přijato (H1)",   # P3-4 N3 stavová zpráva (čl. 50 naostro)
                                                        "body": f"Zadání zakázky {z['id']} bylo schváleno člověkem (H1); profil rizika {kl['profile']}. Artefakt {zad['ref']} · hash {zad['hash']}."})
     adr = yield from run_role(ctx, z, "architekt", "role_architekt", z)        # P2 Návrh
-    if not adr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "architekt"}
+    if not adr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "architekt"}
     t2 = yield from hitl(ctx, z, "H2", adr["hash"])
     if not t2: return {**state, "stav": "Pozastaveno", "bod": "H2"}
     pr = yield from run_role(ctx, z, "vyvojar", "role_vyvojar", z)             # P3 Implementace (sandbox)
-    if not pr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "vyvojar"}
+    if not pr: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "vyvojar"}
     pr_pub = {}
     if os.environ.get("P0_GITHUB_MODE") == "1":
         pr_pub = yield from publish(ctx, z, "publish_pr", {"z": z, "pr": pr}, pr["hash"])   # větev + PR = artefakt pro review (reverzibilní)
         if pr_pub is None: return {**state, "stav": "Pozastaveno", "bod": "publikace", "publish_kind": "pull_request"}
     rev = yield from run_role(ctx, z, "reviewer", "role_reviewer", {"z": z, "pr": pr})   # P4 Review
-    if not rev: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": "rozpocet", "role": "reviewer"}
+    if not rev: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "reviewer"}
     yield ctx.call_activity("budget_check", input=z)
     t4 = yield from hitl(ctx, z, "H4", pr["hash"])                            # merge = N1 – člověk vlastník
     if not t4: return {**state, "stav": "Pozastaveno", "bod": "H4"}

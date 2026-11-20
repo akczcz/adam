@@ -493,6 +493,11 @@ Výsledek měření: **100 PASS / 0 FAIL / 23 INFO / 0 SKIP** (`measure` run 422
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-19: první ostrá zakázka z GUI (eval scénář 1, `Z-11192236` → issue #54, PR #55, `Dokonceno`, 0,1147 USD, ~22 min) po pěti pokusech;
+  nálezy a opravy v [eval-scenare.md](../organization/eval-scenare.md#nálezy-ze-scénáře-1-2026-11-19-ostrý-běh-na-platformaautonomousplace):
+  povinné artefakty rolí s opravným během, bod `role` při chybném běhu (nová verze orchestrátoru `18c35c86197e`), prompty Vývojáře a Reviewera
+  (cwd = adresář zakázky, mapování cest), publikace bez zdvojeného prefixu, GUI (varování u chybějícího artefaktu, verdikt a PR v kartě H4).
+  Provozně: `cluster live-sync` (ostrá tajemství bez restartu clusteru), `diag` s průběhem zakázky z ledgeru (`grep -a`).
 - 2026-11-06: P4-10 hotovo na AKS (100/100 PASS + 23 INFO, run 42289070940) – ostré nasazení na `platforma.autonomous.place` workflow `cloudflare`
   (`tools/cloudflare/cf_setup.py`: zóna, Zero Trust organizace, OTP IdP, service token, Access aplikace + policy, tunnel + ingress, DNS, Key Vault),
   harness `cf_sync`; N3a/N3b PASS proti skutečnému Access. Nález L2b: re-registrace klíčů gateway sonduje hlídacím klíčem (okno 401 po úklidu).

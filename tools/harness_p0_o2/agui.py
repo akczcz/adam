@@ -37,8 +37,8 @@ CTX: dict = {}   # dodá app.py: ledger, read_ledger, wf_state, create, approve,
 THREAD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,39}$")
 MIN_REASON = 10   # org.approvals CHECK (length(reason) >= 10) – proti automation bias (metriky.md T6)
 RUN_MAX_S = float(os.environ.get("P0_AGUI_RUN_MAX_S", "1800"))
-BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2", "klasifikace": "P1a", "dialog": "P1", "publikace": "N3"}
-BOD_ACTION = {"H1": "zadani.accept", "H1a": "pravnik.stanovisko", "H2": "navrh.accept", "H4": "pr.merge", "H5": "deploy.apply", "rozpocet": "budget.raise", "klasifikace": "zadani.classify", "publikace": "publish.retry"}   # P4-3: publikace selhala – schválení = opakovat
+BOD_PROCESS = {"H1": "P1", "H1a": "P1", "H2": "P2", "H4": "P4", "H5": "P5", "rozpocet": "X2", "klasifikace": "P1a", "dialog": "P1", "publikace": "N3", "role": "X1"}
+BOD_ACTION = {"H1": "zadani.accept", "H1a": "pravnik.stanovisko", "H2": "navrh.accept", "H4": "pr.merge", "H5": "deploy.apply", "rozpocet": "budget.raise", "klasifikace": "zadani.classify", "publikace": "publish.retry", "role": "role.retry"}   # P4-3: publikace selhala – schválení = opakovat; 2026-11-19: role selhala – schválení = opakovat běh
 WAIT_EVENTS = ("HITL_WAIT", "DIALOG_WAIT", "KLASIFIKACE_WAIT")   # P3-4: + dotazník klasifikační brány (interrupt reason=klasifikace)
 ARTIFACT_FILE = {"account": "artifacts/zadani.md", "architekt": "artifacts/adr.md", "reviewer": "artifacts/review.md"}
 
@@ -226,6 +226,12 @@ def _artifact_text(zid, e):
     try:
         if p: return open(os.path.join(root, p), encoding="utf-8", errors="replace").read()[:6000]
     except Exception: pass
+    # 2026-11-19 (Z-11192036): role artefakt nezapsala (HANDOFF file_exists=False) – člověk musí vidět, že chybí, a co role naposledy řekla;
+    # bez toho byla karta H2 jen hash bez obsahu. Doporučení = Zamítnout s důvodem (zakázka se pozastaví), ne schválit naslepo.
+    if p and e.get("file_exists") is False:
+        run = next((x for x in reversed(thread_entries(zid)) if x.get("kind") == "AGENT_RUN" and x.get("role") == frm), {})
+        return (f"⚠️ **Artefakt `{p}` chybí** – role ho nezapsala (pokus o zápis mimo `artifacts/` je odmítnut). Nelze posoudit → doporučení **Zamítnout** s důvodem.\n\n"
+                f"Poslední zpráva role: {(run.get('result_text') or '(prázdné)')[:1500]}")
     return ""
 
 
@@ -271,6 +277,7 @@ def events_for(zid, entries, start_idx=0, subagents=None):
             evn = e.get("event")
             if evn == "BUDGET_RAISED": act(i, "budget", {"state": "raised", "role": e.get("role"), "budget_usd": e.get("budget_usd"), "by": e.get("by"), "gateway_keys": (e.get("gateway") or {}).get("keys"), "propagation_s": ((e.get("gateway") or {}).get("propagation") or {}).get("s")})   # P3-6 E3
             elif evn == "PUBLISH_FAILED": act(i, "publish", {"state": "failed", "kind": e.get("publish_kind"), "error": e.get("error"), "live": e.get("live"), "bod": "publikace"})   # P4-3: selhání publikace ven → bod publikace
+            elif evn == "ROLE_FAILED": act(i, "role", {"state": "failed", "role": e.get("role"), "error": e.get("error"), "attempt": e.get("attempt"), "bod": "role"})   # 2026-11-19: chybný běh role → bod role
             elif evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result"), "reason": e.get("reason")})
             elif evn and evn.startswith("KLASIFIKACE_"): act(i, "klasifikace", {"state": evn[12:].lower(), "bod": "klasifikace", "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result")})
             elif evn and evn.startswith("DIALOG_"):
@@ -387,11 +394,14 @@ async def run(req: Request):
                     exc = next((e for e in reversed(ents) if e.get("kind") == "NOTIFY" and e.get("event") == "BUDGET_EXCEEDED"), {}) if w["bod"] == "rozpocet" else {}
                     bud = next((e for e in reversed(ents) if e.get("kind") in ("BUDGET_GATE", "BUDGET_EXCEEDED", "BUDGET")), {}) if w["bod"] == "rozpocet" else {}
                     pf = next((e for e in reversed(ents) if e.get("kind") == "NOTIFY" and e.get("event") == "PUBLISH_FAILED"), {}) if w["bod"] == "publikace" else {}   # P4-3
-                    itr = Interrupt(id=interrupt_id(w), reason="approval", message=f"Publikace ({pf.get('publish_kind')}) do GitHubu selhala – schválení = opakovat, zamítnutí = pozastavit (T6)" if w["bod"] == "publikace" else f"Schválení {w['bod']} – rozhodněte s důvodem (T6)", expires_at=exp,
+                    rf = next((e for e in reversed(ents) if e.get("kind") == "NOTIFY" and e.get("event") == "ROLE_FAILED"), {}) if w["bod"] == "role" else {}   # 2026-11-19
+                    itr = Interrupt(id=interrupt_id(w), reason="approval", message=f"Publikace ({pf.get('publish_kind')}) do GitHubu selhala – schválení = opakovat, zamítnutí = pozastavit (T6)" if w["bod"] == "publikace" else f"Běh role {rf.get('role')} selhal – schválení = jeden opakovaný běh, zamítnutí = pozastavit (T6)" if w["bod"] == "role" else f"Schválení {w['bod']} – rozhodněte s důvodem (T6)", expires_at=exp,
                                     response_schema={"type": "object", "required": ["decision", "reason"], "properties": {"decision": {"enum": ["approve", "reject"]}, "reason": {"type": "string", "minLength": MIN_REASON}, **({"budget_usd": {"type": "number", "exclusiveMinimum": 0}} if w["bod"] == "rozpocet" else {})}},
                                     metadata={"bod": w["bod"], "artifact_hash": w.get("artifact_hash"), "artifact": art.get("artifact"), "from": art.get("frm"), "action": BOD_ACTION.get(w["bod"], w["bod"]), "process": BOD_PROCESS.get(w["bod"]),
                                               **({"role": exc.get("role") or w.get("artifact_hash"), "source": exc.get("source"), "limit_usd": bud.get("limit_usd"), "spent_usd": bud.get("spent_usd")} if w["bod"] == "rozpocet" else {}),
-                                              **({"publish_kind": pf.get("publish_kind"), "error": pf.get("error"), "live": pf.get("live")} if w["bod"] == "publikace" else {})})
+                                              **({"publish_kind": pf.get("publish_kind"), "error": pf.get("error"), "live": pf.get("live")} if w["bod"] == "publikace" else {}),
+                                              **({"role": rf.get("role"), "error": rf.get("error"), "attempt": rf.get("attempt")} if w["bod"] == "role" else {}),
+                                              **({"verdict": art.get("verdict"), "pr_url": next((e.get("url") for e in reversed(ents) if e.get("kind") == "PUBLISHED" and e.get("publish_kind") == "pull_request"), None)} if w["bod"] == "H4" else {})})   # 2026-11-19 (Z-11192236): verdikt Reviewera a odkaz na PR přímo v kartě H4
                 yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedInterruptOutcome(type="interrupt", interrupts=[itr]), result=state_of(zid, ents)))
                 return
             st = await asyncio.to_thread(CTX["wf_state"], zid) or {}   # P4-2: každou sekundu per otevřený stream – sync gRPC nesmí stát v event loopu

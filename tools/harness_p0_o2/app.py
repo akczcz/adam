@@ -138,9 +138,9 @@ rt = wf.WorkflowRuntime()
 # --- role přes Claude Agent SDK ---------------------------------------------------------------------------------------
 ROLE_PROMPTS = {
     "account": "Jsi role Account virtuální IT firmy (P1 Přijetí zadání). Z poptávky sepiš Zadání do artifacts/zadani.md (write_artifact): cíl, akceptační kritéria, hranice, vstupy klasifikační brány. Nejdřív si najdi fakta o zákazníkovi (search_memory). Nikdy neslibuj cenu ani termín, nic neposílej ven – zadání schvaluje člověk zákazníka.",
-    "architekt": "Jsi role Architekt (P2 Návrh). Přečti artifacts/zadani.md (read_artifact), najdi fakta a konvence (search_memory) a napiš ADR do artifacts/adr.md (write_artifact): kontext, varianty v tabulce, rozhodnutí, rizika, odhad ceny, plán úkolů. Návrh schvaluje člověk (H2).",
-    "vyvojar": "Jsi role Vývojář (P3 Implementace). Pracuj jen na větvi {branch} v sandboxu (sandboxed_bash); pracovní adresář úkolu je {work} (prázdný, zapisovatelný), vzdálený repozitář zakázky https://git.harness.test/acme/platform.git. Před prací si najdi fakta v paměti (search_memory), nové poznatky zapiš create_memory. Nikdy nepushuj do main – merge dělá workflow po schválení. Buď úsporný: malé množství kroků, pak krátké shrnutí.",
-    "reviewer": "Jsi role Reviewer/QA (P4 Review). Přečti soubory PR (read_artifact s cestou work/...), spusť evaly (run_evals) a napiš review do artifacts/review.md (write_artifact) s řádkem 'verdict: ok' nebo 'verdict: changes_requested' a nalezenými vadami. Nemerguješ – merge dělá workflow po schválení člověkem.",
+    "architekt": "Jsi role Architekt (P2 Návrh). Přečti artifacts/zadani.md (read_artifact), najdi fakta a konvence (search_memory) a napiš ADR do artifacts/adr.md (write_artifact): kontext, varianty v tabulce, rozhodnutí, rizika, odhad ceny, plán úkolů. Tvůj JEDINÝ výstup je write_artifact s path přesně 'artifacts/adr.md' – soubory řešení (NOTES.md, kód, cokoli pod zakazky/ nebo work/) nevytvářej, to dělá Vývojář až po schválení. Návrh schvaluje člověk (H2).",
+    "vyvojar": "Jsi role Vývojář (P3 Implementace). Pracuj jen v sandboxu (sandboxed_bash); pracovní adresář úkolu je AKTUÁLNÍ adresář sandboxu (cwd, prázdný, zapisovatelný) – nepřecházej do jiných cest, cesty souborů piš relativně k ADRESÁŘI ZAKÁZKY – cwd odpovídá zakazky/<id>/ v repozitáři (soubor zakazky/<id>/NOTES.md tedy vytvoř jako ./NOTES.md). Soubory, které v cwd vytvoříš, platforma sama publikuje jako PR na větvi {branch} pod zakazky/<id>/; git clone (vzdálený repozitář zakázky https://git.harness.test/acme/platform.git) není nutný, a když ho použiješ, klonuj do cwd. Před prací si najdi fakta v paměti (search_memory), nové poznatky zapiš create_memory. Nikdy nepushuj do main – merge dělá workflow po schválení. Buď úsporný: malé množství kroků, pak krátké shrnutí.",
+    "reviewer": "Jsi role Reviewer/QA (P4 Review). Nejdřív si přečti zadání (read_artifact artifacts/zadani.md) a návrh (artifacts/adr.md), pak soubory PR (read_artifact s cestou work/...; cesty v PR jsou relativní k adresáři zakázky – work/NOTES.md v repozitáři znamená zakazky/<id>/NOTES.md, prefix zakazky/<id>/ přidává platforma, nehledej ho ve work/), spusť evaly (run_evals) a napiš review do artifacts/review.md (write_artifact) s řádkem 'verdict: ok' nebo 'verdict: changes_requested' a nalezenými vadami. 'verdict: ok' smíš dát jen když PR obsahuje přesně to, co zadání a ADR požadují (správné cesty a neprázdný obsah) a nic navíc; prázdné soubory, chybějící požadovaný soubor nebo soubory mimo zadání = 'verdict: changes_requested'. Evaly jsou jen jeden vstup, ne důkaz. Nemerguješ – merge dělá workflow po schválení člověkem.",
 }
 
 
@@ -332,6 +332,7 @@ def agent_run_local(role, z, prompt, tool_names):
         for n in sorted(names):
             fp = os.path.join(r_, n); rel = os.path.relpath(fp, work)
             if rel.startswith(".") or n == "health.py": continue
+            if n in TOOL_JUNK and os.path.getsize(fp) == 0: continue   # 2026-11-19 (Z-11192102): prázdné soubory správců balíčků z běhu CLI v cwd šly do PR jako „implementace“
             files.append({"path": rel, "sha256": hashlib.sha256(open(fp, "rb").read()).hexdigest()[:16]})
     ledger("AGENT_RUN", zakazka=z["id"], role=role, tool_uses=tool_uses, calls=calls, usage=usage, cost_usd=cost, files=files if role == "vyvojar" else None,
            role_options_source=opts_src, num_turns=getattr(result, "num_turns", None) if result else None, is_error=is_err, error=error, result_text=text[:600], budget_exceeded=budget_exceeded,
@@ -339,8 +340,35 @@ def agent_run_local(role, z, prompt, tool_names):
     return {"text": text, "cost": cost, "files": files, "work": work, "arts": arts, "error": error, "budget_exceeded": budget_exceeded}
 
 
+TOOL_JUNK = {"bunfig.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb", ".npmrc"}   # prázdné stopy nástrojů v cwd sandboxu – ne výstup role
+
+
+def _run_error(r):
+    """Chyba běhu role pro orchestrátor (bod `role`): výjimka/ResultError CLI, nebo text AGENT_ERROR; rozpočet a stop řeší jiné cesty."""
+    if r.get("budget_exceeded") or r.get("stopped"): return None
+    if r.get("error"): return str(r["error"])[:300]
+    t = r.get("text") or ""
+    return t[:300] if t.startswith("AGENT_ERROR") else None
+
+
 def _art_hash(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()[:16] if os.path.exists(path) else None
+
+
+def agent_run_required(role, z, prompt, tool_names, required):
+    """Role s povinným artefaktem (2026-11-19, scénář 1 ostře, Z-11192036): Architekt (živý model) místo artifacts/adr.md zkusil zapsat
+    zakazky/<id>/NOTES.md (write_artifact odmítl – jen artifacts/), skončil bez ADR a orchestrátor otevřel H2 nad chybějícím artefaktem.
+    Když po běhu povinný soubor chybí (a role nebyla zastavena ani bez rozpočtu), jeden opakovaný běh s explicitní opravou v promptu;
+    cena se sčítá. Vrací výsledek posledního běhu + 'retried'. Chybí-li i pak, rozhodne člověk (HANDOFF file_exists=False, GUI varuje)."""
+    r = agent_run(role, z, prompt, tool_names); path = os.path.join(r["arts"], required)
+    if os.path.exists(path) or r.get("stopped") or r.get("budget_exceeded") or r.get("error"): return r
+    ledger("ARTIFACT_MISSING", zakazka=z["id"], role=role, required=f"artifacts/{required}", attempt=1, result_text=(r.get("text") or "")[:300])
+    fix = (f" OPRAVA (druhý pokus): předchozí běh nezapsal povinný artefakt artifacts/{required} – pokus o zápis mimo artifacts/ byl odmítnut."
+           f" Teď zavolej write_artifact s path přesně 'artifacts/{required}' a úplným obsahem; nic jiného nezapisuj.")
+    r2 = agent_run(role, z, prompt + fix, tool_names); r2["retried"] = True
+    r2["cost"] = (r.get("cost") or 0) + (r2.get("cost") or 0) if (r.get("cost") or r2.get("cost")) else None
+    if not os.path.exists(path): ledger("ARTIFACT_MISSING", zakazka=z["id"], role=role, required=f"artifacts/{required}", attempt=2, result_text=(r2.get("text") or "")[:300])
+    return r2
 
 
 @rt.activity(name="role_account")
@@ -352,18 +380,18 @@ def role_account(ctx, z):
         ledger("HANDOFF", frm="account", to="human:zadavatel", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=True, cost_usd=(r["cost"] or COST["account"]), dialog_round=len(z.get("dialog") or []) + 1)
         return art
     art = {"type": "zadani", "ref": f"issue://{z['id']}", "path": "artifacts/zadani.md", "hash": _art_hash(p) or h(z["poptavka"])}
-    art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False)
+    art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False); art["error"] = _run_error(r)
     if not art["stopped"]: ledger("HANDOFF", frm="account", to="human:zakaznik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["account"]), dialog_rounds=len(z.get("dialog") or []))   # P3-5: po stopu žádné předání (role poběží znovu)
     return art
 
 
 @rt.activity(name="role_architekt")
 def role_architekt(ctx, z):
-    r = agent_run("architekt", z, ROLE_PROMPTS["architekt"], ["search_memory", "read_artifact", "write_artifact"])
+    r = agent_run_required("architekt", z, ROLE_PROMPTS["architekt"], ["search_memory", "read_artifact", "write_artifact"], "adr.md")
     p = os.path.join(r["arts"], "adr.md")
     art = {"type": "adr", "ref": f"adr://{z['id']}/001", "path": "artifacts/adr.md", "hash": _art_hash(p) or h("adr-missing" + z["id"])}
-    art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False)
-    if not art["stopped"]: ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), cost_usd=(r["cost"] or COST["architekt"]))
+    art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False); art["error"] = _run_error(r)
+    if not art["stopped"]: ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), retried=bool(r.get("retried")), cost_usd=(r["cost"] or COST["architekt"]))
     return art
 
 
@@ -379,7 +407,8 @@ def role_vyvojar(ctx, z):
         d = pdp("merge", "vyvojar", z, pr["hash"])
         ledger("INJECTION_ATTEMPT", zakazka=z["id"], action="merge", allowed=d["allow"], reason=d["reason"])
     pr["budget_exceeded"] = r.get("budget_exceeded", False); pr["stopped"] = r.get("stopped", False)
-    if not pr["stopped"]: ledger("HANDOFF", frm="vyvojar", to="reviewer", zakazka=z["id"], artifact=pr["ref"], hash=pr["hash"], cost_usd=(r["cost"] or COST["vyvojar"]))
+    pr["error"] = _run_error(r) or (None if r["files"] or pr["budget_exceeded"] or pr["stopped"] else "Vývojář nevytvořil žádný soubor (prázdný PR)")   # 2026-11-19: PR z prázdného cwd nedává smysl → bod role
+    if not pr["stopped"]: ledger("HANDOFF", frm="vyvojar", to="reviewer", zakazka=z["id"], artifact=pr["ref"], hash=pr["hash"], files=len(r["files"]), error=pr["error"], cost_usd=(r["cost"] or COST["vyvojar"]))
     return pr
 
 
@@ -387,11 +416,11 @@ def role_vyvojar(ctx, z):
 def role_reviewer(ctx, inp):
     z, pr = inp["z"], inp["pr"]
     files = ", ".join("work/" + f["path"] for f in pr.get("files", [])) or "(PR bez souborů)"
-    r = agent_run("reviewer", z, ROLE_PROMPTS["reviewer"] + f" Soubory PR: {files}.", ["read_artifact", "run_evals", "write_artifact"])
+    r = agent_run_required("reviewer", z, ROLE_PROMPTS["reviewer"] + f" Soubory PR: {files}.", ["read_artifact", "run_evals", "write_artifact"], "review.md")
     p = os.path.join(r["arts"], "review.md"); txt = open(p).read() if os.path.exists(p) else ""
     verdict = "ok" if "verdict: ok" in txt else ("changes_requested" if "verdict: changes_requested" in txt else "missing")
     rep = {"type": "review", "ref": f"review://{z['id']}/1", "verdict": verdict, "path": "artifacts/review.md", "pr_hash": pr["hash"], "hash": _art_hash(p) or pr["hash"]}
-    rep["budget_exceeded"] = r.get("budget_exceeded", False); rep["stopped"] = r.get("stopped", False)
+    rep["budget_exceeded"] = r.get("budget_exceeded", False); rep["stopped"] = r.get("stopped", False); rep["error"] = _run_error(r)
     if not rep["stopped"]: ledger("HANDOFF", frm="reviewer", to="human:vlastnik", zakazka=z["id"], artifact=rep["ref"], hash=pr["hash"], verdict=verdict, cost_usd=(r["cost"] or COST["reviewer"]))
     return rep
 
@@ -501,9 +530,11 @@ def publish_pr(ctx, inp):
     for f in pr.get("files", []):
         fp = os.path.join(pr["work"], f["path"])
         if os.path.exists(fp):
-            try: files.append({"path": f"zakazky/{z['id']}/{f['path']}", "content": open(fp, "rb").read().decode("utf-8"), "sha256": f["sha256"]})
+            rel = f["path"][len(f"zakazky/{z['id']}/"):] if f["path"].startswith(f"zakazky/{z['id']}/") else f["path"]   # 2026-11-19 (Z-11192207): role už psala pod zakazky/<id>/ → nezdvojit
+            try: files.append({"path": f"zakazky/{z['id']}/{rel}", "content": open(fp, "rb").read().decode("utf-8"), "sha256": f["sha256"]})
             except UnicodeDecodeError: ledger("PUBLISH_SKIP_BINARY", zakazka=z["id"], path=f["path"])   # PR přes git data API nese jen textové blob-y (binárka by shodila aktivitu workflow)
-    payload = {"base": "main", "head": pr["branch"], "title": f"[{z['id']}] {pr['text'][:60] or 'PR zakázky'}", "files": files,
+    title = re.sub(r"[*_`#>]+", "", (pr.get("text") or "").strip().splitlines()[0] if (pr.get("text") or "").strip() else "").strip()[:60]   # 2026-11-19: první řádek bez markdownu, ne 60 znaků s \n
+    payload = {"base": "main", "head": pr["branch"], "title": f"[{z['id']}] {title or 'implementace úkolu 1'}", "files": files,
                "commit_message": f"{z['id']}: implementace úkolu 1\n\nAI-Agent: vyvojar@0.1.0 on-behalf-of Adam Kolařík\nArtifact-Hash: {pr['hash']}",
                "body": f"> {_disclosure('vyvojar', 'pr_description')}\n\n`zakazka_id`: {z['id']} · artefakt `{pr['ref']}` · hash `{pr['hash']}`\n\nSoubory: " + ", ".join(f["path"] for f in files) + "\n\nSloučení = HITL H4 (člověk) → merge-executor."}
     try: return _publish(z, "pull_request", payload, approval_hash=pr["hash"])
@@ -656,8 +687,8 @@ KLAS_QUESTIONS = [   # autonomie.md „Klasifikační brána (příloha III)“ 
     ("K6", "Zpracovávají se osobní údaje nad rámec kontaktů (GDPR)?", "sensitivity=personal"),
 ]
 KLAS_KEYS = [k for k, _, _ in KLAS_QUESTIONS]
-SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600, "publikace": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0); publikace (P4-3) jako rozpocet
-SLA_ESCALATION = {"klasifikace": "vlastnik:account", "dialog": "vlastnik:account", "H1": "vlastnik:account", "H1a": "governance", "H2": "vlastnik:architekt", "H4": "vlastnik:vyvoj", "H5": "vlastnik:nasazeni", "rozpocet": "governance", "publikace": "vlastnik:nasazeni"}   # autonomie.md T2 eskalace; publikace = provoz integrace GitHub
+SLA_DEFAULT_S = {"klasifikace": 2 * 86400, "dialog": 2 * 86400, "H1": 2 * 86400, "H1a": 5 * 86400, "H2": 3 * 86400, "H4": 1 * 86400, "H5": 2 * 86400, "rozpocet": 4 * 3600, "publikace": 4 * 3600, "role": 4 * 3600}   # procesy.md SLA (prac. dny ≈ dny – zjednodušení v0); publikace (P4-3) jako rozpocet
+SLA_ESCALATION = {"klasifikace": "vlastnik:account", "dialog": "vlastnik:account", "H1": "vlastnik:account", "H1a": "governance", "H2": "vlastnik:architekt", "H4": "vlastnik:vyvoj", "H5": "vlastnik:nasazeni", "rozpocet": "governance", "publikace": "vlastnik:nasazeni", "role": "governance"}   # autonomie.md T2 eskalace; publikace = provoz integrace GitHub
 CHANNELS_URL = os.environ.get("P0_CHANNELS_URL", "")   # adaptér kanálů k lidem (mock-channels v clusteru; ostrý provoz SMTP/helpdesk za gateway); prázdné = suchý běh
 
 
