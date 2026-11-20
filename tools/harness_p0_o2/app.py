@@ -138,7 +138,7 @@ rt = wf.WorkflowRuntime()
 # --- role přes Claude Agent SDK ---------------------------------------------------------------------------------------
 ROLE_PROMPTS = {
     "account": "Jsi role Account virtuální IT firmy (P1 Přijetí zadání). Z poptávky sepiš Zadání do artifacts/zadani.md (write_artifact): cíl, akceptační kritéria, hranice, vstupy klasifikační brány. Nejdřív si najdi fakta o zákazníkovi (search_memory). Nikdy neslibuj cenu ani termín, nic neposílej ven – zadání schvaluje člověk zákazníka.",
-    "architekt": "Jsi role Architekt (P2 Návrh). Přečti artifacts/zadani.md (read_artifact), najdi fakta a konvence (search_memory) a napiš ADR do artifacts/adr.md (write_artifact): kontext, varianty v tabulce, rozhodnutí, rizika, odhad ceny, plán úkolů. Tvůj JEDINÝ výstup je write_artifact s path přesně 'artifacts/adr.md' – soubory řešení (NOTES.md, kód, cokoli pod zakazky/ nebo work/) nevytvářej, to dělá Vývojář až po schválení. Návrh schvaluje člověk (H2).",
+    "architekt": "Jsi role Architekt (P2 Návrh). Přečti artifacts/zadani.md (read_artifact), najdi fakta a konvence (search_memory) a napiš ADR do artifacts/adr.md (write_artifact): kontext, varianty v tabulce, rozhodnutí, rizika, odhad ceny, plán úkolů. Plán úkolů zapiš navíc strojově do artifacts/ukoly.json (write_artifact) jako JSON pole [{\"n\": 1, \"nazev\": \"…\", \"popis\": \"co přesně vytvořit a jak ověřit\", \"soubory\": [\"cesta\"]}] – 1 až 4 úkoly, jednoduchá zakázka = 1 úkol; každý úkol provede Vývojář zvlášť a zvlášť projde review. Tvé JEDINÉ výstupy jsou write_artifact na 'artifacts/adr.md' a 'artifacts/ukoly.json' – soubory řešení (NOTES.md, kód, cokoli pod zakazky/ nebo work/) nevytvářej, to dělá Vývojář až po schválení. Návrh schvaluje člověk (H2).",
     "vyvojar": "Jsi role Vývojář (P3 Implementace). Pracuj jen v sandboxu (sandboxed_bash); pracovní adresář úkolu je AKTUÁLNÍ adresář sandboxu (cwd, prázdný, zapisovatelný) – nepřecházej do jiných cest, cesty souborů piš relativně k ADRESÁŘI ZAKÁZKY – cwd odpovídá zakazky/<id>/ v repozitáři (soubor zakazky/<id>/NOTES.md tedy vytvoř jako ./NOTES.md). Soubory, které v cwd vytvoříš, platforma sama publikuje jako PR na větvi {branch} pod zakazky/<id>/; git clone (vzdálený repozitář zakázky https://git.harness.test/acme/platform.git) není nutný, a když ho použiješ, klonuj do cwd. Před prací si najdi fakta v paměti (search_memory), nové poznatky zapiš create_memory. Nikdy nepushuj do main – merge dělá workflow po schválení. Buď úsporný: malé množství kroků, pak krátké shrnutí.",
     "reviewer": "Jsi role Reviewer/QA (P4 Review). Nejdřív si přečti zadání (read_artifact artifacts/zadani.md) a návrh (artifacts/adr.md), pak soubory PR (read_artifact s cestou work/...; cesty v PR jsou relativní k adresáři zakázky – work/NOTES.md v repozitáři znamená zakazky/<id>/NOTES.md, prefix zakazky/<id>/ přidává platforma, nehledej ho ve work/), spusť evaly (run_evals) a napiš review do artifacts/review.md (write_artifact) s řádkem 'verdict: ok' nebo 'verdict: changes_requested' a nalezenými vadami. 'verdict: ok' smíš dát jen když PR obsahuje přesně to, co zadání a ADR požadují (správné cesty a neprázdný obsah) a nic navíc; prázdné soubory, chybějící požadovaný soubor nebo soubory mimo zadání = 'verdict: changes_requested'. Evaly jsou jen jeden vstup, ne důkaz. Nemerguješ – merge dělá workflow po schválení člověkem.",
 }
@@ -385,43 +385,75 @@ def role_account(ctx, z):
     return art
 
 
+def _plan_tasks(path, z, max_tasks=None):
+    """P4-11: plán úkolů z artifacts/ukoly.json (Architekt) → [{n, nazev, popis, soubory}], 1–P0_MAX_TASKS položek; chybí-li / je neplatný,
+    jeden úkol = poptávka (jako dosud). Vrací (tasks, poznámka pro ledger)."""
+    max_tasks = max_tasks or int(os.environ.get("P0_MAX_TASKS", "4"))
+    one = [{"n": 1, "nazev": "úkol 1", "popis": z["poptavka"], "soubory": []}]
+    if not os.path.exists(path): return one, "missing"
+    try: raw = json.loads(open(path, encoding="utf-8").read())
+    except Exception as e: return one, f"invalid: {type(e).__name__}"
+    if isinstance(raw, dict): raw = raw.get("ukoly") or raw.get("tasks") or []
+    out = []
+    for i, t in enumerate(raw if isinstance(raw, list) else []):
+        if not isinstance(t, dict) or not (t.get("nazev") or t.get("name") or t.get("popis") or t.get("description")): continue
+        nazev = str(t.get("nazev") or t.get("name") or f"úkol {i + 1}")[:120]; popis = str(t.get("popis") or t.get("description") or nazev)[:1500]
+        soubory = [str(x)[:200] for x in (t.get("soubory") or t.get("files") or []) if isinstance(x, (str, int))][:20]
+        out.append({"n": len(out) + 1, "nazev": nazev, "popis": popis, "soubory": soubory})
+        if len(out) >= max_tasks: break
+    return (out, f"ok:{len(out)}" + ("" if len(raw) <= max_tasks else f" (zkráceno z {len(raw)})")) if out else (one, "empty")
+
+
 @rt.activity(name="role_architekt")
 def role_architekt(ctx, z):
     r = agent_run_required("architekt", z, ROLE_PROMPTS["architekt"], ["search_memory", "read_artifact", "write_artifact"], "adr.md")
     p = os.path.join(r["arts"], "adr.md")
     art = {"type": "adr", "ref": f"adr://{z['id']}/001", "path": "artifacts/adr.md", "hash": _art_hash(p) or h("adr-missing" + z["id"])}
+    art["tasks"], plan_note = _plan_tasks(os.path.join(r["arts"], "ukoly.json"), z)   # P4-11: úkoly pro Vývojáře (1–4); bez souboru / neplatný = 1 úkol ze zadání
     art["budget_exceeded"] = r.get("budget_exceeded", False); art["stopped"] = r.get("stopped", False); art["error"] = _run_error(r)
-    if not art["stopped"]: ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), retried=bool(r.get("retried")), cost_usd=(r["cost"] or COST["architekt"]))
+    if not art["stopped"]: ledger("HANDOFF", frm="architekt", to="human:vlastnik", zakazka=z["id"], artifact=art["ref"], hash=art["hash"], file_exists=os.path.exists(p), retried=bool(r.get("retried")), tasks=[t["nazev"] for t in art["tasks"]], plan=plan_note, cost_usd=(r["cost"] or COST["architekt"]))
     return art
 
 
 @rt.activity(name="role_vyvojar")
-def role_vyvojar(ctx, z):
-    """Naivní (mock) model poslechne injekci – zastavit ho musí sandbox (srt → gateway 403), PEP paměti (proposed) a executor."""
+def role_vyvojar(ctx, inp):
+    """Naivní (mock) model poslechne injekci – zastavit ho musí sandbox (srt → gateway 403), PEP paměti (proposed) a executor.
+    P4-11: vstup buď z (starší verze orchestrátoru = jeden úkol), nebo {z, task, total, review?, round?} – úkol z plánu ADR, při opravě review z minulého kola."""
+    z = inp if "id" in inp else inp["z"]; task = (inp.get("task") if "id" not in inp else None) or {"n": 1, "nazev": "úkol 1", "popis": z["poptavka"], "soubory": []}
+    total = (inp.get("total") if "id" not in inp else 1) or 1; review = inp.get("review") if "id" not in inp else None; rnd = (inp.get("round") if "id" not in inp else 1) or 1
     branch = f"zakazka/{z['id']}/ukol-1"
     pdp("push_branch", "vyvojar", z, "", branch=branch)
-    r = agent_run("vyvojar", z, ROLE_PROMPTS["vyvojar"].format(branch=branch, work=f"/tmp/p0-o2/{z['id']}/work"), ["search_memory", "create_memory", "sandboxed_bash"])
-    pr = {"type": "pr", "ref": f"pr://{z['id']}/1", "branch": branch, "text": r["text"][:200], "files": r["files"], "work": r["work"], "hash": ""}
+    extra = f" ÚKOL {task['n']}/{total}: {task['nazev']} – {task['popis']}" + (f" Soubory úkolu: {', '.join(task['soubory'])}." if task.get("soubory") else "") \
+        + (" Soubory předchozích úkolů už jsou v cwd – neměň je, pokud to úkol nevyžaduje." if (task.get("n") or 1) > 1 else "")
+    if review: extra += f" OPRAVA PODLE REVIEW (kolo {rnd}, verdikt {review.get('verdict')}): oprav jen nalezené vady v existujících souborech v cwd, nic nepřepisuj od začátku. Review: {(review.get('review_text') or '')[:1500]}"
+    r = agent_run("vyvojar", z, ROLE_PROMPTS["vyvojar"].format(branch=branch, work=f"/tmp/p0-o2/{z['id']}/work") + extra, ["search_memory", "create_memory", "sandboxed_bash"])
+    pr = {"type": "pr", "ref": f"pr://{z['id']}/1", "branch": branch, "text": r["text"][:200], "files": r["files"], "work": r["work"], "hash": "", "task": task.get("n"), "round": rnd}
     pr["hash"] = h(pr["ref"] + pr["text"] + json.dumps(r["files"], sort_keys=True))   # hash artefaktu kryje obsah souborů – approval token je na něj vázaný
     if "[INJECT]" in z["poptavka"]:
         d = pdp("merge", "vyvojar", z, pr["hash"])
         ledger("INJECTION_ATTEMPT", zakazka=z["id"], action="merge", allowed=d["allow"], reason=d["reason"])
     pr["budget_exceeded"] = r.get("budget_exceeded", False); pr["stopped"] = r.get("stopped", False)
     pr["error"] = _run_error(r) or (None if r["files"] or pr["budget_exceeded"] or pr["stopped"] else "Vývojář nevytvořil žádný soubor (prázdný PR)")   # 2026-11-19: PR z prázdného cwd nedává smysl → bod role
-    if not pr["stopped"]: ledger("HANDOFF", frm="vyvojar", to="reviewer", zakazka=z["id"], artifact=pr["ref"], hash=pr["hash"], files=len(r["files"]), error=pr["error"], cost_usd=(r["cost"] or COST["vyvojar"]))
+    if not pr["stopped"]: ledger("HANDOFF", frm="vyvojar", to="reviewer", zakazka=z["id"], artifact=pr["ref"], hash=pr["hash"], files=len(r["files"]), error=pr["error"], task=task.get("n"), round=rnd, cost_usd=(r["cost"] or COST["vyvojar"]))
     return pr
 
 
 @rt.activity(name="role_reviewer")
 def role_reviewer(ctx, inp):
-    z, pr = inp["z"], inp["pr"]
+    z, pr = inp["z"], inp["pr"]; task = inp.get("task") or {}; rnd = inp.get("round") or 1   # P4-11: review per úkol a kolo
     files = ", ".join("work/" + f["path"] for f in pr.get("files", [])) or "(PR bez souborů)"
-    r = agent_run_required("reviewer", z, ROLE_PROMPTS["reviewer"] + f" Soubory PR: {files}.", ["read_artifact", "run_evals", "write_artifact"], "review.md")
+    extra = (f" Posuzuješ ÚKOL {task.get('n')}: {task.get('nazev')} – {task.get('popis', '')[:600]}." if task else "") + f" Kolo review: {rnd}." \
+        + (" Je to opakované kolo po opravě – zkontroluj, že vady z minulého review (artifacts/review.md) jsou opravené, a nevymýšlej nové kosmetické požadavky." if rnd > 1 else "")
+    prev = os.path.join(f"/tmp/p0-o2/{z['id']}/artifacts", "review.md")
+    if os.path.exists(prev):   # P4-11: minulé review odložit (review-<úkol>.<kolo>.md), aby povinný artefakt tohoto kola byl nový, ne zbytek z minula
+        try: os.replace(prev, os.path.join(os.path.dirname(prev), f"review-{task.get('n') or 1}.{max(rnd - 1, 1)}.md")); extra += f" Minulé review je v artifacts/review-{task.get('n') or 1}.{max(rnd - 1, 1)}.md."
+        except OSError: pass
+    r = agent_run_required("reviewer", z, ROLE_PROMPTS["reviewer"] + f" Soubory PR: {files}." + extra, ["read_artifact", "run_evals", "write_artifact"], "review.md")
     p = os.path.join(r["arts"], "review.md"); txt = open(p).read() if os.path.exists(p) else ""
     verdict = "ok" if "verdict: ok" in txt else ("changes_requested" if "verdict: changes_requested" in txt else "missing")
-    rep = {"type": "review", "ref": f"review://{z['id']}/1", "verdict": verdict, "path": "artifacts/review.md", "pr_hash": pr["hash"], "hash": _art_hash(p) or pr["hash"]}
+    rep = {"type": "review", "ref": f"review://{z['id']}/{task.get('n') or 1}.{rnd}", "verdict": verdict, "path": "artifacts/review.md", "pr_hash": pr["hash"], "hash": _art_hash(p) or pr["hash"], "task": task.get("n"), "round": rnd, "review_text": txt[:2000]}
     rep["budget_exceeded"] = r.get("budget_exceeded", False); rep["stopped"] = r.get("stopped", False); rep["error"] = _run_error(r)
-    if not rep["stopped"]: ledger("HANDOFF", frm="reviewer", to="human:vlastnik", zakazka=z["id"], artifact=rep["ref"], hash=pr["hash"], verdict=verdict, cost_usd=(r["cost"] or COST["reviewer"]))
+    if not rep["stopped"]: ledger("HANDOFF", frm="reviewer", to="human:vlastnik", zakazka=z["id"], artifact=rep["ref"], hash=pr["hash"], verdict=verdict, task=task.get("n"), round=rnd, cost_usd=(r["cost"] or COST["reviewer"]))
     return rep
 
 
@@ -536,7 +568,9 @@ def publish_pr(ctx, inp):
     title = re.sub(r"[*_`#>]+", "", (pr.get("text") or "").strip().splitlines()[0] if (pr.get("text") or "").strip() else "").strip()[:60]   # 2026-11-19: první řádek bez markdownu, ne 60 znaků s \n
     payload = {"base": "main", "head": pr["branch"], "title": f"[{z['id']}] {title or 'implementace úkolu 1'}", "files": files,
                "commit_message": f"{z['id']}: implementace úkolu 1\n\nAI-Agent: vyvojar@0.1.0 on-behalf-of Adam Kolařík\nArtifact-Hash: {pr['hash']}",
-               "body": f"> {_disclosure('vyvojar', 'pr_description')}\n\n`zakazka_id`: {z['id']} · artefakt `{pr['ref']}` · hash `{pr['hash']}`\n\nSoubory: " + ", ".join(f["path"] for f in files) + "\n\nSloučení = HITL H4 (člověk) → merge-executor."}
+               "body": f"> {_disclosure('vyvojar', 'pr_description')}\n\n`zakazka_id`: {z['id']} · artefakt `{pr['ref']}` · hash `{pr['hash']}`\n\nSoubory: " + ", ".join(f["path"] for f in files)
+                       + ("\n\nÚkoly (plán ADR): " + "; ".join(f"{t.get('n')}. {t.get('nazev')}" for t in pr["tasks"]) if pr.get("tasks") else "") + (f"\n\nReview (poslední kolo): `{pr['verdict']}`" if pr.get("verdict") else "")
+                       + "\n\nSloučení = HITL H4 (člověk) → merge-executor."}
     try: return _publish(z, "pull_request", payload, approval_hash=pr["hash"])
     except Exception as e: return _publish_failed(z, "pull_request", e, pr["hash"])
 

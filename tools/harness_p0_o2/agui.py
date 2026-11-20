@@ -267,7 +267,7 @@ def events_for(zid, entries, start_idx=0, subagents=None):
         elif k == "HANDOFF":
             disc = CTX["disclosure"](e.get("frm"), "agui")
             msg(i, "assistant", e.get("frm"), f"> {disc}\n\n**Předání → {e.get('to')}** · artefakt `{e.get('artifact')}` · hash `{e.get('hash')}`\n\n{_artifact_text(zid, e)}", subagents.get(e.get("frm")))
-            act(i, "handoff", {"from": e.get("frm"), "to": e.get("to"), "artifact": e.get("artifact"), "hash": e.get("hash"), "cost_usd": e.get("cost_usd"), "verdict": e.get("verdict")}, subagents.get(e.get("frm")))
+            act(i, "handoff", {"from": e.get("frm"), "to": e.get("to"), "artifact": e.get("artifact"), "hash": e.get("hash"), "cost_usd": e.get("cost_usd"), "verdict": e.get("verdict"), **({"task": e.get("task"), "round": e.get("round")} if e.get("task") else {})}, subagents.get(e.get("frm")))
         elif k == "AGENT_RUN":
             sub = subagents.get(role) or f"{zid}:{role}:{i}"
             if e.get("error"): ev.append(SubagentErrorEvent(type=EventType.SUBAGENT_ERROR, subagent_run_id=sub, message=str(e.get("error"))[:300], timestamp=int(e.get("ts", 0) * 1000)))
@@ -278,6 +278,9 @@ def events_for(zid, entries, start_idx=0, subagents=None):
             if evn == "BUDGET_RAISED": act(i, "budget", {"state": "raised", "role": e.get("role"), "budget_usd": e.get("budget_usd"), "by": e.get("by"), "gateway_keys": (e.get("gateway") or {}).get("keys"), "propagation_s": ((e.get("gateway") or {}).get("propagation") or {}).get("s")})   # P3-6 E3
             elif evn == "PUBLISH_FAILED": act(i, "publish", {"state": "failed", "kind": e.get("publish_kind"), "error": e.get("error"), "live": e.get("live"), "bod": "publikace"})   # P4-3: selhání publikace ven → bod publikace
             elif evn == "ROLE_FAILED": act(i, "role", {"state": "failed", "role": e.get("role"), "error": e.get("error"), "attempt": e.get("attempt"), "bod": "role"})   # 2026-11-19: chybný běh role → bod role
+            elif evn == "TASK_START": act(i, "task", {"state": "start", "n": e.get("n"), "total": e.get("total"), "nazev": e.get("nazev")})   # P4-11: úkol z plánu ADR
+            elif evn == "REVIEW_LOOP": act(i, "review", {"state": "changes_requested", "task": e.get("task"), "round": e.get("round"), "review": e.get("review")})   # P4-11: smyčka Review → Implementace
+            elif evn == "REVIEW_UNRESOLVED": act(i, "review", {"state": "unresolved", "task": e.get("task"), "rounds": e.get("rounds"), "verdict": e.get("verdict")})
             elif evn and evn.startswith("HITL_"): act(i, "hitl", {"state": evn[5:].lower(), "bod": e.get("bod"), "artifact_hash": e.get("artifact_hash"), "by": e.get("by"), "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result"), "reason": e.get("reason")})
             elif evn and evn.startswith("KLASIFIKACE_"): act(i, "klasifikace", {"state": evn[12:].lower(), "bod": "klasifikace", "timeout_s": e.get("timeout_s"), "sla_s": e.get("sla_s"), "result": e.get("result")})
             elif evn and evn.startswith("DIALOG_"):

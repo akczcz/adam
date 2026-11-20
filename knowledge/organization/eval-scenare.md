@@ -113,7 +113,7 @@ silnější model nebo delší dialog cenu násobí.
 | # | Datum | Zakázka | Stav | Cena USD | Čas (z toho člověk) | HITL zásahy / opravy | Nález |
 |---|---|---|---|---|---|---|---|
 | 1 | 2026-11-19 | Z-11192236 (5. pokus; předchozí Z-11191940, Z-11192036, Z-11192102, Z-11192207) | **Dokonceno** – [issue #54](https://github.com/akczcz/adam/issues/54), [PR #55](https://github.com/akczcz/adam/pull/55) mergnutý, `zakazky/Z-11192236/NOTES.md` | 0,1147 (rozpočet 3) | ~22 min (agenti ~5 min, zbytek čekání na H1/H2/H4/H5) | 4 schválení; H4 s odůvodněním proti falešnému `changes_requested` Reviewera; žádná ruční oprava artefaktu | 5 nálezů platformy z pokusů 1–5 (níže) |
-| 2 | 2026-11-20 | Z-11201535 | **Dokonceno** – [PR #58](https://github.com/akczcz/adam/pull/58) mergnutý, `zakazky/Z-11201535/slugify.py` + `test_slugify.py` (15 testů, lokálně `15 passed`) | ≥ 0,25 (registr po review; rozpočet 5) | ~40 min (z toho ~22 min čekání na nasazení opravy, zbytek HITL) | 5 schválení (role.retry, H1, H2, H4, H5); 0 ručních oprav; H4 schváleno s odchylkou | nálezy 6–7 (níže) |
+| 2 | 2026-11-20 | Z-11201535 | **Dokonceno** – [PR #58](https://github.com/akczcz/adam/pull/58) mergnutý, `zakazky/Z-11201535/slugify.py` + `test_slugify.py` (15 testů, lokálně `15 passed`) | 0,2517 (rozpočet 5) | ~40 min (z toho ~22 min čekání na nasazení opravy, zbytek HITL) | 5 schválení (role.retry, H1, H2, H4, H5); 0 ručních oprav; H4 schváleno s odchylkou | nálezy 6–7 (níže) |
 | 3 | | | | | | | |
 | 4 | | | | | | | |
 | 5 | | | | | | | |

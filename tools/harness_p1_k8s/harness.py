@@ -2708,6 +2708,57 @@ def l1_flow(a, rep, http, led, APP, KC, kj, tag, shots, l2=False):
     rep.add("L2d", "L2: čas", "INFO", {"wall_s": round(time.time() - t_2, 1)})
     rep.add("L1d", "L1: čas", "INFO", {"wall_s": round(time.time() - t_l, 1)})
 
+def v2_flow(a, rep, http, led, APP, tag):
+    """P4-11 (2026-11-20): úkoly z plánu ADR a smyčka Review → Implementace. Zakázka z API s markery [TEST-PLAN] (mock Architekt zapíše
+    artifacts/ukoly.json se 2 úkoly) a [TEST-LOOP] (mock Reviewer dá v 1. kole úkolu 1 changes_requested, pak ok): dialog Account → H1 →
+    H2 → úkol 1 (vývojář → review ×2 + oprava) → úkol 2 (vývojář → review) → PR (mock GitHub) → H4; harness zakázku pak zastaví."""
+    t_v = time.time(); z = f"{tag}-v2"; v2d = {}
+    def K(e): return e.get("event") if e.get("kind") == "NOTIFY" else e.get("kind")
+    last_led = []
+    def L(z_):
+        nonlocal last_led
+        try:
+            r = http("GET", f"{APP}/_debug/ledger", params={"zakazka": z_}, timeout=60)
+            if r.status_code == 200: last_led = r.json()
+        except Exception: pass
+        return [e for e in last_led if e.get("zakazka") == z_]
+    def wait_led(pred, timeout):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            e = next((e for e in L(z) if pred(e)), None)
+            if e: return e
+            time.sleep(3)
+    def J(r): return r.json() if r.status_code == 200 else {"http": r.status_code, "text": r.text[:160]}
+    http("POST", f"{APP}/zakazky", json={"id": z, "poptavka": f"[TEST-PLAN] [TEST-LOOP] Zakázka {z}: přidej soubor zakazky/{z}/NOTES.md (test plánu úkolů a smyčky review).", "tenant": "acme", "klasifikace": KLAS_NO, "budget_usd": 2, "hitl_timeout_s": 1800}, timeout=15)
+    w = {}
+    for _ in range(3):   # dialog Account (mock se nejdřív ptá) → odpověď → H1
+        w = wait_led(lambda e: (K(e) == "HITL_WAIT" and e.get("bod") == "H1") or (K(e) == "DIALOG_WAIT" and not any(K(x) == "DIALOG_ANSWER" and x.get("round") == e.get("round") for x in L(z))), 900) or {}
+        if K(w) != "DIALOG_WAIT": break
+        http("POST", f"{APP}/zakazky/{z}/dialog", json={"by": "adam", "answer": "Stačí jeden soubor NOTES.md v adresáři zakázky; rozpočet i termín výchozí."}, timeout=15)
+    v2d["h1"] = bool(w) and K(w) == "HITL_WAIT"
+    if v2d["h1"]: http("POST", f"{APP}/zakazky/{z}/approve/H1", json={"by": "adam", "by_kind": "human", "artifact_hash": w.get("artifact_hash"), "exp_s": 86400}, timeout=15)
+    w2 = wait_led(lambda e: K(e) == "HITL_WAIT" and e.get("bod") == "H2", 900) or {}
+    adr = next((e for e in L(z) if e.get("kind") == "HANDOFF" and e.get("frm") == "architekt"), {})
+    v2d["plan"] = {"tasks": adr.get("tasks"), "plan": adr.get("plan")}; v2d["h2"] = bool(w2)
+    if w2: http("POST", f"{APP}/zakazky/{z}/approve/H2", json={"by": "adam", "by_kind": "human", "artifact_hash": w2.get("artifact_hash"), "exp_s": 86400}, timeout=15)
+    w4 = wait_led(lambda e: K(e) == "HITL_WAIT" and e.get("bod") == "H4", 1800) or {}
+    ents = L(z)
+    starts = [e for e in ents if K(e) == "TASK_START"]; loops = [e for e in ents if K(e) == "REVIEW_LOOP"]; unres = [e for e in ents if K(e) == "REVIEW_UNRESOLVED"]
+    hv = [e for e in ents if e.get("kind") == "HANDOFF" and e.get("frm") == "vyvojar"]; hr = [e for e in ents if e.get("kind") == "HANDOFF" and e.get("frm") == "reviewer"]
+    pub = next((e for e in ents if e.get("kind") == "PUBLISHED" and e.get("publish_kind") == "pull_request"), {})
+    v2d.update({"task_starts": [{k: e.get(k) for k in ("n", "total", "nazev")} for e in starts], "vyvojar_runs": [{k: e.get(k) for k in ("task", "round", "files", "error")} for e in hv],
+                "reviews": [{k: e.get(k) for k in ("task", "round", "verdict")} for e in hr], "loops": [{k: e.get(k) for k in ("task", "round", "verdict")} for e in loops], "unresolved": len(unres),
+                "pr": {"url": pub.get("url"), "number": pub.get("number")}, "h4": bool(w4), "wall_s": round(time.time() - t_v, 1)})
+    try: v2d["stop"] = J(http("POST", f"{APP}/zakazky/{z}/stop", json={"by": "harness", "reason": "V2: úklid po měření"}, timeout=60))
+    except Exception as e: v2d["stop"] = {"error": f"{type(e).__name__}: {str(e)[:160]}"}
+    ok_a = v2d["h1"] and v2d["h2"] and (adr.get("plan") or "").startswith("ok:2") and [t.get("n") for t in starts] == [1, 2] and all(t.get("total") == 2 for t in starts) \
+        and [(e.get("task"), e.get("round")) for e in hv] == [(1, 1), (1, 2), (2, 1)] and all(not e.get("error") for e in hv)
+    rep.add("V2a", "Úkoly z plánu ADR (P4-11): Architekt zapsal artifacts/ukoly.json (2 úkoly), orchestrátor je provedl postupně (TASK_START 1/2, 2/2), Vývojář běžel per úkol (+ oprava úkolu 1), každý běh bez chyby; PR až po všech úkolech", "PASS" if ok_a else "FAIL", v2d)
+    ok_b = [(e.get("task"), e.get("round"), e.get("verdict")) for e in hr] == [(1, 1, "changes_requested"), (1, 2, "ok"), (2, 1, "ok")] and [(e.get("task"), e.get("round")) for e in loops] == [(1, 1)] \
+        and not unres and bool(pub.get("url")) and v2d["h4"] and (v2d["stop"] or {}).get("ok") is True
+    rep.add("V2b", "Smyčka Review → Implementace (P4-11): verdikt changes_requested v 1. kole úkolu 1 → REVIEW_LOOP → Vývojář opravil podle review → 2. kolo ok; úkol 2 ok v 1. kole; žádný nevyřešený verdikt; PR publikován jednou po review (mock GitHub) a H4 otevřen; zakázka zastavena", "PASS" if ok_b else "FAIL", {k: v2d[k] for k in ("reviews", "loops", "unresolved", "pr", "h4", "stop")})
+    rep.add("V2c", "V2: čas", "INFO", {"wall_s": v2d["wall_s"], "roles_runs": len(hv) + len(hr) + 1})
+
 
 def live_flow(a, rep, http, led, APP, KC, dsn, kj, tag, shots):
     """P4-2 ostrý běh (jen na vyžádání, platí se): předletová kontrola (klíč modelu i PAT z Key Vaultu platí → 200) a teprve pak zakázka
@@ -3063,7 +3114,7 @@ def step_live(a, rep, env):
     return step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, live=True)
 
 
-def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False, r2=False, r3=False, n3=False):
+def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=False, finops=False, gui=False, tenant=False, gov=False, klas=False, o3=False, e3=False, e4=False, e1=False, e2=False, e6=False, e7=False, e8=False, e9=False, e10=False, e11=False, e12=False, e13=False, m1=False, l1=False, live=False, l2=False, n1=False, n2=False, q1=False, r1=False, r2=False, r3=False, n3=False, v2=False):
     """P2-1 na AKS (nahrazuje p1-6): konfigurace gateway a rolegen build z Gitu přes Flux (infra/k8s/rolegen), klíče role × zakázka vydává aplikace;
     harness dodává jen tajemství. Checky P21a–h = P16a–h + ověření původu konfigurace a vydaných klíčů.
     gui (P3-1, U-1): zakázka se místo GitHub HITL řídí z GUI v prohlížeči (Playwright, gui_checks.py) – přihlášení Keycloak, založení, schválení
@@ -3473,6 +3524,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
             ok_2c = 15 <= n2c.get("idle_s", 0) <= 60 and "nečinnosti" in n2c.get("notice", "") and n2c.get("token_cleared") is True
             rep.add("N2c", "Idle odhlášení GUI (P4-5): bez aktivity člověka (myš, klávesy) se pult odhlásí a token zahodí (výchozí 30 min, měření 20 s přes sessionStorage.agui_idle_s), přihlašovací stránka to říká; keepalive mandátu běží jen při aktivitě posledních 10 min – zapomenutá záložka mandát navždy nedrží (riziko P4-1)", "PASS" if ok_2c else "FAIL", n2c)
             rep.add("N2d", "N2: čas", "INFO", {"wall_s": round(time.time() - t_2, 1)})
+        if v2: v2_flow(a, rep, http, led, APP, zid[:-2])   # P4-11 V2: plán úkolů + smyčka review (mock markery)
         if l1: l1_flow(a, rep, http, led, APP, KC, kj, zid[:-2], LOGS / "gui-shots", l2=l2)   # P4-2 L1: zapojení ostrého běhu bez tajemství (živé API 401, GitHub 401, flag live viditelně); P4-3 L2: bez catch-all mocku, GC klíčů + reissue
         if live: live_flow(a, rep, http, led, APP, KC, dsn, kj, zid[:-2], LOGS / "gui-shots")   # P4-2 ostrý běh: živý model + skutečný GitHub (jen p4-2-live, platí se)
         if e11: e11b_check(a, rep, ca_file, t_bao0)   # P3-6 E11b: spany gateway i paměti přes TLS – až po LLM provozu rolí
@@ -3728,7 +3780,7 @@ def rotate_cli(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-10", "p4-2-live"], default="p1-2")
+    ap.add_argument("--step", choices=["p1-2", "p1-3", "p1-4", "p1-5", "p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-10", "p4-11", "p4-2-live"], default="p1-2")
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--dapr-bin-dir", default=os.getenv("DAPR_BIN_DIR", ""), help="p1-3: O-2 identity potřebuje lokální Dapr (placement, scheduler, daprd)")
     ap.add_argument("--kubectl", default=os.getenv("KUBECTL", shutil.which("kubectl") or ""))
@@ -3750,7 +3802,7 @@ def main():
         assert a.kubectl, "chybí KUBECTL"
         for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
         sys.exit(rotate_cli(a))
-    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-10", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
+    if not a.kubectl or (a.step not in ("p1-6", "p2-1", "p2-2", "p2-5", "p2-3", "p2-4", "p2-6", "p3-1", "p3-2", "p3-3", "p3-4", "p3-5", "p3-6", "p4-1", "p4-2", "p4-3", "p4-4", "p4-5", "p4-6", "p4-7", "p4-8", "p4-9", "p4-10", "p4-11", "p4-2-live") and not (a.opa_bin and a.agentgateway_bin)):
         print("chybí KUBECTL, OPA_BIN nebo AGENTGATEWAY_BIN"); sys.exit(2)
     for d in (RESULTS, LOGS): d.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("anthropic_base_url",)}
@@ -3776,6 +3828,7 @@ def main():
      "p4-8": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True),   # P4-8: p4-7 + R2a–c (rotace DB rolí bez restartu)
      "p4-9": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True, r3=True),   # P4-9: p4-8 + R3a–c (rotace admina Postgresu)
      "p4-10": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True, r3=True, n3=True),   # P4-10: p4-9 + N3a–c (pojmenovaný tunnel + Cloudflare Access; SKIP bez nasazení)
+     "p4-11": lambda a, rep, env: step_p2_1(a, rep, env, images=True, identity=True, egress=True, gui=True, tenant=True, gov=True, klas=True, o3=True, e3=True, e4=True, e1=True, e2=True, e6=True, e7=True, e8=True, e9=True, e10=True, e11=True, e12=True, e13=True, m1=True, l1=True, l2=True, n1=True, n2=True, q1=True, r1=True, r2=True, r3=True, n3=True, v2=True),   # P4-11: p4-10 + V2a–c (úkoly z plánu ADR, smyčka review)
      "p4-2-live": lambda a, rep, env: step_live(a, rep, env)}[a.step](a, rep, env)   # p4-2-live: ostrý běh (živý model + skutečný GitHub) – jen na vyžádání, platí se   # p3-1: GUI řídí zakázku; registry/finops checky (P25/P26) jsou v p2-6   # p1-6 = alias (od P2-1 je konfigurace z Gitu)
     out = RESULTS / f"{a.step}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({"meta": {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step, "context": a.context, "kind": sh([a.kind, "version"]).stdout.strip() if a.kind else None, "images": IMAGES}, "checks": rep.checks}, ensure_ascii=False, indent=1))
