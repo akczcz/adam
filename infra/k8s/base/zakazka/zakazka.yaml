@@ -173,7 +173,7 @@ spec:
         - {containerPort: 8010, name: http}
         volumeMounts:
         - {name: data, mountPath: /data}
-        - {name: work, mountPath: /tmp/p0-o2}
+        - {name: data, mountPath: /tmp/p0-o2, subPath: zakazky}   # 2026-11-22 (eval scénář 3, Z-11220949): soubory zakázek (work/, artifacts/) byly v emptyDir → restart aplikace (live-sync) je smazal a opakovaný Vývojář začal v prázdném cwd; teď na PVC jako ledger
         - {name: rolegen, mountPath: /rolegen, readOnly: true}
         - {name: finops-secret, mountPath: /etc/platform/secrets/finops, readOnly: true}   # P4-8: hesla DB rolí jako soubor – kubelet obnoví bez restartu (ne subPath, ne env)
         readinessProbe:
@@ -207,8 +207,6 @@ spec:
         configMap: {name: rolegen-build, optional: true}   # vytváří harness/CI z rolegen (agent_sdk/<role>.json, registry/roles.json)
       - name: data
         persistentVolumeClaim: {claimName: zakazka-data}   # ledger a HOME CLI přežijí restart podu (P1-5 měří durabilitu workflow)
-      - name: work
-        emptyDir: {}
       - name: finops-secret
         secret: {secretName: zakazka-finops, optional: true}
 ---
