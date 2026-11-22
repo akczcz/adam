@@ -259,7 +259,9 @@ def agent_run_local(role, z, prompt, tool_names):
         viol = [l.split("] ", 1)[-1] for l in r.stderr.splitlines() if "Connection blocked" in l or "denying" in l]
         calls.append({"tool": "sandboxed_bash", "cmd": args["cmd"][:300], "exit": r.returncode, "stdout": r.stdout[-400:], "violations": viol[-4:]})
         ledger("TOOL", zakazka=z["id"], role=role, tool="sandboxed_bash", exit=r.returncode, stdout=r.stdout[-300:], violations=viol[-4:])
-        return {"content": [{"type": "text", "text": json.dumps({"exit": r.returncode, "stdout": r.stdout[-600:], "sandbox_violations": viol[-4:]}, ensure_ascii=False)}]}
+        # eval scénář 3, 3. pokus: model dostával jen posledních 600 znaků stdout a žádný stderr → `cat soubor` ukázal jen konec, chyba bez 2>&1 byla neviditelná,
+        # Vývojář četl tentýž soubor deseti způsoby a vyčerpal kola (nález 15). Ledger/calls dál nesou jen zkrácený konec.
+        return {"content": [{"type": "text", "text": json.dumps({"exit": r.returncode, "stdout": _clip(r.stdout, 9000, 3000), "stderr": _clip(r.stderr, 1500, 1500), "sandbox_violations": viol[-4:]}, ensure_ascii=False)}]}
 
     def _safe(path, write=False):
         p = os.path.realpath(os.path.join(root, path))
@@ -290,9 +292,10 @@ def agent_run_local(role, z, prompt, tool_names):
         elif p:
             try: txt = open(p, encoding="utf-8", errors="replace").read()
             except OSError: txt = None
-        calls.append({"tool": "read_artifact", "path": args["path"], "found": txt is not None})
-        ledger("TOOL", zakazka=z["id"], role=role, tool="read_artifact", path=args["path"], found=txt is not None)
-        return {"content": [{"type": "text", "text": (txt or "")[:4000] if txt is not None else f"ERROR: {args['path']} neexistuje nebo je mimo zakázku (soubory PR: work/<cesta> nebo work/ pro výpis)"}]}
+        calls.append({"tool": "read_artifact", "path": args["path"], "found": txt is not None, "chars": len(txt or "")})
+        ledger("TOOL", zakazka=z["id"], role=role, tool="read_artifact", path=args["path"], found=txt is not None, chars=len(txt or ""))
+        # eval scénář 3, 3. pokus (nález 14): dřív tiše prvních 4000 znaků → Reviewer hlásil „test_core.py je seříznutý“ (241 řádků), Vývojář vadu nenašel, kolo review propadlo
+        return {"content": [{"type": "text", "text": _clip(txt, 30000, 2000, what=f"soubor {args['path']}") if txt is not None else f"ERROR: {args['path']} neexistuje nebo je mimo zakázku (soubory PR: work/<cesta> nebo work/ pro výpis)"}]}
 
     @tool("write_artifact", "Zapíše artefakt zakázky (jen pod artifacts/).", {"path": str, "content": str})
     async def write_artifact(args):
@@ -367,6 +370,13 @@ def agent_run_local(role, z, prompt, tool_names):
 
 TOOL_JUNK = {"bunfig.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb", ".npmrc"}   # prázdné stopy nástrojů v cwd sandboxu – ne výstup role
 JUNK_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", ".venv", "venv", ".mypy_cache", ".ruff_cache", ".tox"}
+
+
+def _clip(s, head, tail, what="výstup"):
+    """Zkrácení textu pro model s viditelnou značkou (ne tiché useknutí): začátek + konec a kolik chybí."""
+    s = s or ""
+    if len(s) <= head + tail: return s
+    return s[:head] + f"\n[… {what} zkrácen: celkem {len(s)} znaků, vynecháno {len(s) - head - tail} uprostřed …]\n" + s[-tail:]
 
 
 def _junk_dir(d):
