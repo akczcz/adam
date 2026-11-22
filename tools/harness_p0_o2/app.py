@@ -140,7 +140,7 @@ ROLE_PROMPTS = {
     "account": "Jsi role Account virtuální IT firmy (P1 Přijetí zadání). Nejdřív si najdi fakta o zákazníkovi (search_memory). Pak rozhodni: (a) Když v poptávce chybí něco, co rozhoduje o návrhu nebo o přijetí díla (vstupy a jejich formát, prostředí, jazyk, rozsah, kde poběží, jak se pozná hotovo), NEHÁDEJ – napiš upřesňující otázky zadavateli do artifacts/otazky.md (write_artifact; 2–5 očíslovaných otázek, jen ty, které rozhodují; u každé navrhni výchozí odpověď) a artifacts/zadani.md v tomto běhu NEPIŠ – platforma otázky předá zadavateli a spustí tě znovu s odpověďmi (max. 3 kola). (b) Když je poptávka jasná nebo už máš odpovědi zadavatele, sepiš Zadání do artifacts/zadani.md (write_artifact): cíl, akceptační kritéria (ověřitelná, z odpovědí zadavatele), hranice, vstupy klasifikační brány. Nikdy neslibuj cenu ani termín, nic neposílej ven – zadání schvaluje člověk zákazníka.",
     "architekt": "Jsi role Architekt (P2 Návrh). Přečti artifacts/zadani.md (read_artifact), najdi fakta a konvence (search_memory) a napiš ADR do artifacts/adr.md (write_artifact): kontext, varianty v tabulce, rozhodnutí, rizika, odhad ceny, plán úkolů. Co zadání neříká a rozhoduje o návrhu, uveď v ADR v sekci Otevřené otázky s navrženým předpokladem – člověk je rozhodne v H2 a jeho rozhodnutí dostane Vývojář i Reviewer. Plán úkolů zapiš navíc strojově do artifacts/ukoly.json (write_artifact) jako JSON pole [{\"n\": 1, \"nazev\": \"…\", \"popis\": \"co přesně vytvořit a jak ověřit\", \"soubory\": [\"cesta\"]}] – 1 až 4 úkoly; úkol = samostatně ověřitelný celek (např. jádro nástroje, CLI, testy, README – ne vše v jednom), jen triviální zakázka (jeden soubor) = 1 úkol; každý úkol provede Vývojář zvlášť a zvlášť projde review. Tvé JEDINÉ výstupy jsou write_artifact na 'artifacts/adr.md' a 'artifacts/ukoly.json' – soubory řešení (NOTES.md, kód, cokoli pod zakazky/ nebo work/) nevytvářej, to dělá Vývojář až po schválení. Návrh schvaluje člověk (H2).",
     "vyvojar": "Jsi role Vývojář (P3 Implementace). Pracuj jen v sandboxu (sandboxed_bash); pracovní adresář úkolu je AKTUÁLNÍ adresář sandboxu (cwd, prázdný, zapisovatelný) – nepřecházej do jiných cest, cesty souborů piš relativně k ADRESÁŘI ZAKÁZKY – cwd odpovídá zakazky/<id>/ v repozitáři (soubor zakazky/<id>/NOTES.md tedy vytvoř jako ./NOTES.md). Soubory, které v cwd vytvoříš, platforma sama publikuje jako PR na větvi {branch} pod zakazky/<id>/; git clone (vzdálený repozitář zakázky https://git.harness.test/acme/platform.git) není nutný, a když ho použiješ, klonuj do cwd. Před prací si najdi fakta v paměti (search_memory), nové poznatky zapiš create_memory. Nikdy nepushuj do main – merge dělá workflow po schválení. Buď úsporný: malé množství kroků, pak krátké shrnutí.",
-    "reviewer": "Jsi role Reviewer/QA (P4 Review). Nejdřív si přečti zadání (read_artifact artifacts/zadani.md) a návrh (artifacts/adr.md), pak soubory PR (read_artifact s cestou work/...; cesty v PR jsou relativní k adresáři zakázky – work/NOTES.md v repozitáři znamená zakazky/<id>/NOTES.md, prefix zakazky/<id>/ přidává platforma, nehledej ho ve work/), spusť evaly (run_evals) a napiš review do artifacts/review.md (write_artifact) s řádkem 'verdict: ok' nebo 'verdict: changes_requested' a nalezenými vadami. 'verdict: ok' smíš dát jen když PR obsahuje přesně to, co zadání a ADR požadují (správné cesty a neprázdný obsah) a nic navíc; prázdné soubory, chybějící požadovaný soubor nebo soubory mimo zadání = 'verdict: changes_requested'. Evaly jsou jen jeden vstup, ne důkaz. Nemerguješ – merge dělá workflow po schválení člověkem.",
+    "reviewer": "Jsi role Reviewer/QA (P4 Review). Nejdřív si přečti zadání (read_artifact artifacts/zadani.md) a návrh (artifacts/adr.md), pak soubory PR (read_artifact s cestou work/<cesta> včetně podadresářů, např. work/csv2md/cli.py; read_artifact work/ vrátí výpis; cesty v PR jsou relativní k adresáři zakázky – work/NOTES.md v repozitáři znamená zakazky/<id>/NOTES.md, prefix zakazky/<id>/ přidává platforma, nehledej ho ve work/), spusť evaly (run_evals) a napiš review do artifacts/review.md (write_artifact): PRVNÍ řádek je přesně 'verdict: ok' nebo 'verdict: changes_requested', pak nalezené vady (co a kde opravit). Posuzuješ jen úkol uvedený níže, ne celý plán. 'verdict: ok' smíš dát jen když PR obsahuje přesně to, co zadání a ADR požadují (správné cesty a neprázdný obsah) a nic navíc; prázdné soubory, chybějící požadovaný soubor nebo soubory mimo zadání = 'verdict: changes_requested'. Evaly jsou jen jeden vstup, ne důkaz. Nemerguješ – merge dělá workflow po schválení člověkem.",
 }
 
 
@@ -266,12 +266,33 @@ def agent_run_local(role, z, prompt, tool_names):
         ok = p.startswith(root + os.sep) and (not write or p.startswith(arts + os.sep))
         return p if ok else None
 
-    @tool("read_artifact", "Přečte artefakt zakázky (artifacts/… nebo soubor PR work/…).", {"path": str})
+    def _resolve_read(path):
+        """eval scénář 3 (nález 11): v podu role je pracovní adresář P0_WORK_DIR=/work, ne root/work – Reviewer tak nikdy nedosáhl na soubory PR
+        (work/…: „neexistuje“). work/… a holá cesta → pracovní adresář, artifacts/… → artefakty; vrací reálnou cestu uvnitř zakázky nebo None."""
+        rel = (path or "").strip().replace("\\", "/").lstrip("./")
+        if rel == "work" or rel.startswith("work/"): cands = [os.path.join(work, rel[4:].lstrip("/"))]
+        elif rel == "artifacts" or rel.startswith("artifacts/"): cands = [os.path.join(root, rel)]
+        else: cands = [os.path.join(work, rel), os.path.join(arts, rel)]
+        for c in cands:
+            rp = os.path.realpath(c); w = os.path.realpath(work)
+            if (rp == w or rp.startswith(w + os.sep) or rp.startswith(root + os.sep)) and os.path.exists(rp): return rp
+        return None
+
+    @tool("read_artifact", "Přečte artefakt zakázky (artifacts/…) nebo soubor PR (work/<cesta>, i v podadresářích); work/ = výpis souborů PR.", {"path": str})
     async def read_artifact(args):
-        p = _safe(args["path"]); txt = open(p).read() if p and os.path.exists(p) else None
+        p = _resolve_read(args["path"]); txt = None
+        if p and os.path.isdir(p):
+            lst = []
+            for d, dirs, names in os.walk(p):
+                dirs[:] = [x for x in dirs if not _junk_dir(x)]
+                lst += [os.path.relpath(os.path.join(d, n), p) for n in sorted(names) if not n.endswith((".pyc", ".pyo"))]
+            txt = "adresář " + args["path"] + ":\n" + "\n".join(sorted(lst)[:300])
+        elif p:
+            try: txt = open(p, encoding="utf-8", errors="replace").read()
+            except OSError: txt = None
         calls.append({"tool": "read_artifact", "path": args["path"], "found": txt is not None})
         ledger("TOOL", zakazka=z["id"], role=role, tool="read_artifact", path=args["path"], found=txt is not None)
-        return {"content": [{"type": "text", "text": (txt or "")[:4000] if txt is not None else f"ERROR: {args['path']} neexistuje nebo je mimo zakázku"}]}
+        return {"content": [{"type": "text", "text": (txt or "")[:4000] if txt is not None else f"ERROR: {args['path']} neexistuje nebo je mimo zakázku (soubory PR: work/<cesta> nebo work/ pro výpis)"}]}
 
     @tool("write_artifact", "Zapíše artefakt zakázky (jen pod artifacts/).", {"path": str, "content": str})
     async def write_artifact(args):
@@ -331,10 +352,11 @@ def agent_run_local(role, z, prompt, tool_names):
     budget_exceeded = bool((is_err or error) and BUDGET_RE.search((error or "") + " " + text))   # 429 z gateway = rozpočet klíče role × zakázka (onBudgetExceeded: Block)
     if budget_exceeded: ledger("BUDGET_EXCEEDED", zakazka=z["id"], role=role, source="agentgateway", detail=((error or "") + " " + text)[:300])
     files = []
-    for r_, _, names in os.walk(work):
+    for r_, dirs, names in os.walk(work):
+        dirs[:] = [d for d in dirs if not _junk_dir(d)]   # eval scénář 3 (Z-11220949): pytest-of-app/, __pycache__/ šly do PR (36 „souborů“ úkolu 3)
         for n in sorted(names):
             fp = os.path.join(r_, n); rel = os.path.relpath(fp, work)
-            if rel.startswith(".") or n == "health.py": continue
+            if rel.startswith(".") or n == "health.py" or n.endswith((".pyc", ".pyo")): continue
             if n in TOOL_JUNK and os.path.getsize(fp) == 0: continue   # 2026-11-19 (Z-11192102): prázdné soubory správců balíčků z běhu CLI v cwd šly do PR jako „implementace“
             files.append({"path": rel, "sha256": hashlib.sha256(open(fp, "rb").read()).hexdigest()[:16]})
     ledger("AGENT_RUN", zakazka=z["id"], role=role, tool_uses=tool_uses, calls=calls, usage=usage, cost_usd=cost, files=files if role == "vyvojar" else None,
@@ -344,6 +366,15 @@ def agent_run_local(role, z, prompt, tool_names):
 
 
 TOOL_JUNK = {"bunfig.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb", ".npmrc"}   # prázdné stopy nástrojů v cwd sandboxu – ne výstup role
+JUNK_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git", ".venv", "venv", ".mypy_cache", ".ruff_cache", ".tox"}
+
+
+def _junk_dir(d):
+    """Adresáře, které nejsou výstupem role (cache, dočasné adresáře pytestu, tečkové) – nejdou do PR, uploadu ani výpisu pro Reviewera."""
+    return d.startswith(".") or d in JUNK_DIRS or d.startswith("pytest-of-") or d.endswith(".egg-info")
+
+
+VERDICT_RE = re.compile(r"^\W*verdi[ck]t\W{0,6}(ok|changes_requested)\b", re.I | re.M)   # eval scénář 3 (nález 12): „**Verdict:** `changes_requested`“ dřív prošlo jako ok (hledal se jen 'verdict: ok' kdekoli v textu)
 
 
 def _run_error(r):
@@ -426,8 +457,14 @@ def role_vyvojar(ctx, inp):
     total = (inp.get("total") if "id" not in inp else 1) or 1; review = inp.get("review") if "id" not in inp else None; rnd = (inp.get("round") if "id" not in inp else 1) or 1
     branch = f"zakazka/{z['id']}/ukol-1"
     pdp("push_branch", "vyvojar", z, "", branch=branch)
+    existing = []
+    wdir = f"/tmp/p0-o2/{z['id']}/work"
+    for d, dirs, names in os.walk(wdir):   # eval scénář 3 (Z-11220949): Vývojář v úkolu 3 utratil 24 kol průzkumem cwd (ls, cat, wc, hexdump) → seznam dostane v promptu
+        dirs[:] = [x for x in dirs if not _junk_dir(x)]
+        existing += [os.path.relpath(os.path.join(d, n), wdir) for n in sorted(names) if not n.startswith(".") and not n.endswith((".pyc", ".pyo")) and n not in TOOL_JUNK]
     extra = f" ÚKOL {task['n']}/{total}: {task['nazev']} – {task['popis']}" + (f" Soubory úkolu: {', '.join(task['soubory'])}." if task.get("soubory") else "") \
-        + (" Soubory předchozích úkolů už jsou v cwd – neměň je, pokud to úkol nevyžaduje." if (task.get("n") or 1) > 1 else "")
+        + ((f" V cwd už jsou soubory předchozích úkolů: {', '.join(sorted(existing)[:60])}. Neprozkoumávej je znovu příkaz po příkazu – přečti jen to, na co navazuješ, a neměň je, pokud to úkol nevyžaduje." if existing else " Soubory předchozích úkolů už jsou v cwd – neměň je, pokud to úkol nevyžaduje.") if (task.get("n") or 1) > 1 else "") \
+        + " Máš omezený počet kroků: nejdřív zapiš soubory, pak testy spusť jednou (pytest -q -p no:cacheprovider --basetemp=.pt); dočasné soubory a cache patří jen do tečkových adresářů v cwd."
     if review: extra += f" OPRAVA PODLE REVIEW (kolo {rnd}, verdikt {review.get('verdict')}): oprav jen nalezené vady v existujících souborech v cwd, nic nepřepisuj od začátku. Review: {(review.get('review_text') or '')[:1500]}"
     r = agent_run("vyvojar", z, ROLE_PROMPTS["vyvojar"].format(branch=branch, work=f"/tmp/p0-o2/{z['id']}/work") + extra, ["search_memory", "create_memory", "sandboxed_bash"])
     pr = {"type": "pr", "ref": f"pr://{z['id']}/1", "branch": branch, "text": r["text"][:200], "files": r["files"], "work": r["work"], "hash": "", "task": task.get("n"), "round": rnd}
@@ -448,12 +485,16 @@ def role_reviewer(ctx, inp):
     extra = (f" Posuzuješ ÚKOL {task.get('n')}: {task.get('nazev')} – {task.get('popis', '')[:600]}." if task else "") + f" Kolo review: {rnd}." \
         + (" Je to opakované kolo po opravě – zkontroluj, že vady z minulého review (artifacts/review.md) jsou opravené, a nevymýšlej nové kosmetické požadavky." if rnd > 1 else "")
     prev = os.path.join(f"/tmp/p0-o2/{z['id']}/artifacts", "review.md")
-    if os.path.exists(prev):   # P4-11: minulé review odložit (review-<úkol>.<kolo>.md), aby povinný artefakt tohoto kola byl nový, ne zbytek z minula
-        try: os.replace(prev, os.path.join(os.path.dirname(prev), f"review-{task.get('n') or 1}.{max(rnd - 1, 1)}.md")); extra += f" Minulé review je v artifacts/review-{task.get('n') or 1}.{max(rnd - 1, 1)}.md."
+    if os.path.exists(prev):   # P4-11: povinný artefakt tohoto kola musí být nový, ne zbytek z minula; historie je v review-<úkol>.<kolo>.md (ukládá se po běhu)
+        try: os.remove(prev)
         except OSError: pass
+    if rnd > 1: extra += f" Minulé review tohoto úkolu je v artifacts/review-{task.get('n') or 1}.{rnd - 1}.md."
     r = agent_run_required("reviewer", z, ROLE_PROMPTS["reviewer"] + f" Soubory PR: {files}." + extra, ["read_artifact", "run_evals", "write_artifact"], "review.md")
-    p = os.path.join(r["arts"], "review.md"); txt = open(p).read() if os.path.exists(p) else ""
-    verdict = "ok" if "verdict: ok" in txt else ("changes_requested" if "verdict: changes_requested" in txt else "missing")
+    p = os.path.join(r["arts"], "review.md"); txt = open(p, encoding="utf-8", errors="replace").read() if os.path.exists(p) else ""
+    if txt:
+        try: open(os.path.join(r["arts"], f"review-{task.get('n') or 1}.{rnd}.md"), "w", encoding="utf-8").write(txt)   # eval scénář 3: dřív se minulé review přejmenovalo indexem nového kola (review-2.1 = review úkolu 1)
+        except OSError: pass
+    m = VERDICT_RE.search(txt); verdict = m.group(1).lower() if m else "missing"   # první řádek s verdiktem (prompt: verdikt = první řádek review.md)
     rep = {"type": "review", "ref": f"review://{z['id']}/{task.get('n') or 1}.{rnd}", "verdict": verdict, "path": "artifacts/review.md", "pr_hash": pr["hash"], "hash": _art_hash(p) or pr["hash"], "task": task.get("n"), "round": rnd, "review_text": txt[:2000]}
     rep["budget_exceeded"] = r.get("budget_exceeded", False); rep["stopped"] = r.get("stopped", False); rep["error"] = _run_error(r)
     if not rep["stopped"]: ledger("HANDOFF", frm="reviewer", to="human:vlastnik", zakazka=z["id"], artifact=rep["ref"], hash=pr["hash"], verdict=verdict, task=task.get("n"), round=rnd, cost_usd=(r["cost"] or COST["reviewer"]))
@@ -1230,10 +1271,10 @@ async def files_get(zid: str, req: Request):
     for rootname in ("artifacts", "work"):
         base = os.path.join(root, rootname)
         for d, dirs, names in os.walk(base):
-            dirs[:] = [x for x in dirs if not x.startswith(".")]
+            dirs[:] = [x for x in dirs if not _junk_dir(x)]
             for n in names:
                 fp = os.path.join(d, n); rel = os.path.relpath(fp, base)
-                if rel.startswith(".") or os.path.getsize(fp) > 2_000_000: continue
+                if rel.startswith(".") or n.endswith((".pyc", ".pyo")) or os.path.getsize(fp) > 2_000_000: continue
                 out.append({"root": rootname, "path": rel, "content_b64": base64.b64encode(open(fp, "rb").read()).decode()})
     return {"files": out}
 

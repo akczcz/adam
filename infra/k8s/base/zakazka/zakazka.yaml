@@ -75,7 +75,7 @@ data:
   P0_MEMORY_URL: http://memory:9900
   P0_LLM_URL: http://agentgateway:4100
   P0_MODEL: claude-haiku-4-5
-  P0_MAX_TURNS: "24"   # 2026-11-20: 8 stačilo na jeden soubor (scénář 1), ne na modul + testy + pytest (scénář 2: Reached maximum number of turns) – 24 = hodnota harnessu pro živý režim; role pody dědí z env aplikace
+  P0_MAX_TURNS: "40"   # 2026-11-22 (eval scénář 3, Z-11220949): 24 nestačilo na úkol „testy + fixtures“ nad hotovým balíkem (Vývojář 16 kol průzkumu); strop útraty hlídá rozpočet zakázky a klíče rolí, ne počet kol. 2026-11-20: 8 stačilo na jeden soubor (scénář 1), ne na modul + testy + pytest (scénář 2: Reached maximum number of turns) – 24 = hodnota harnessu pro živý režim; role pody dědí z env aplikace
   P0_SRT: none
   P0_ROLE_OPTIONS_DIR: /rolegen           # ConfigMap rolegen-build (ploché klíče: <role>.json, roles.json)
   P0_REGISTRY: /rolegen/roles.json
