@@ -75,7 +75,9 @@ def hitl_full(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None
         yield ctx.call_activity("notify", input={"event": "HITL_INVALID_TOKEN", "bod": bod, "zakazka": z["id"]})
         return None, data
     if isinstance(data.get("subject"), dict) and data["subject"].get("token"): z["subject"] = data["subject"]   # P3-6 E2: další role jedná jménem tohoto schvalovatele (Q6: obnova při každém HITL)
-    yield ctx.call_activity("notify", input={"event": "HITL_APPROVED", "bod": bod, "zakazka": z["id"], "by": tok.get("by"), "artifact_hash": artifact_hash, "subject_sub": (data.get("subject") or {}).get("sub")})
+    if tok.get("reason") and bod in ("H1", "H2"):   # eval scénář 3 (nález 9): odůvodnění člověka = rozhodnutí pro další role (prompt Architekta, Vývojáře, Reviewera), ne jen audit
+        z["rozhodnuti"] = (z.get("rozhodnuti") or []) + [{"bod": bod, "by": tok.get("by"), "reason": str(tok["reason"])[:1500]}]
+    yield ctx.call_activity("notify", input={"event": "HITL_APPROVED", "bod": bod, "zakazka": z["id"], "by": tok.get("by"), "artifact_hash": artifact_hash, "subject_sub": (data.get("subject") or {}).get("sub"), "reason": (str(tok.get("reason"))[:300] if tok.get("reason") else None)})
     return data["token"], data
 
 
