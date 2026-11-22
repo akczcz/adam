@@ -211,3 +211,5 @@ jobs:
           except Exception as e:
               print("vstup", "chyba %s: %s" % (type(e).__name__, str(e)[:120]))
           PY
+          # 2026-11-22 (eval scénář 3): konfigurace z Gitu = větev Fluxu; změna ConfigMapy na jiné větvi (P0_MAX_TURNS) se nasadí až po merge – ať je vidět, co v clusteru platí
+          { echo "konfigurace: Flux větev $(kubectl -n flux-system get gitrepository platform -o jsonpath='{.spec.ref.branch}' 2>/dev/null || echo ?) rev $(kubectl -n flux-system get gitrepository platform -o jsonpath='{.status.artifact.revision}' 2>/dev/null | cut -c1-30); zakazka-env P0_MAX_TURNS=$(kubectl -n platform-data get cm zakazka-env -o jsonpath='{.data.P0_MAX_TURNS}' 2>/dev/null) P0_MODEL=$(kubectl -n platform-data get cm zakazka-env -o jsonpath='{.data.P0_MODEL}' 2>/dev/null)"; } | tee -a "$GITHUB_STEP_SUMMARY"
