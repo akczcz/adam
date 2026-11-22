@@ -1,0 +1,3 @@
+#!/bin/bash
+# Wrapper script pro csv2md.py
+exec "$(dirname "$0")/csv2md.py" "$@"
