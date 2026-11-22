@@ -1,0 +1,9 @@
+jméno;obsah;popis
+Alice;"a|b";pipe v datech
+Bob;"c\d";backslash v datech
+"Čeněk""Novák"";radek1
+radek2;newline v bunce
+Daniel;;"prázdné buňky"
+Eve;"text
+na více
+řádků";multiline
