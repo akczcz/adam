@@ -114,7 +114,7 @@ silnější model nebo delší dialog cenu násobí.
 |---|---|---|---|---|---|---|---|
 | 1 | 2026-11-19 | Z-11192236 (5. pokus; předchozí Z-11191940, Z-11192036, Z-11192102, Z-11192207) | **Dokonceno** – [issue #54](https://github.com/akczcz/adam/issues/54), [PR #55](https://github.com/akczcz/adam/pull/55) mergnutý, `zakazky/Z-11192236/NOTES.md` | 0,1147 (rozpočet 3) | ~22 min (agenti ~5 min, zbytek čekání na H1/H2/H4/H5) | 4 schválení; H4 s odůvodněním proti falešnému `changes_requested` Reviewera; žádná ruční oprava artefaktu | 5 nálezů platformy z pokusů 1–5 (níže) |
 | 2 | 2026-11-20 | Z-11201535 | **Dokonceno** – [PR #58](https://github.com/akczcz/adam/pull/58) mergnutý, `zakazky/Z-11201535/slugify.py` + `test_slugify.py` (15 testů, lokálně `15 passed`) | 0,2517 (rozpočet 5) | ~40 min (z toho ~22 min čekání na nasazení opravy, zbytek HITL) | 5 schválení (role.retry, H1, H2, H4, H5); 0 ručních oprav; H4 schváleno s odchylkou | nálezy 6–7 (níže) |
-| 3 | | | | | | | |
+| 3 | 2026-11-22 | Z-11220852 (1. pokus) | **Dokonceno** – [PR #63](https://github.com/akczcz/adam/pull/63) mergnutý (10 souborů: `converter.py`, `main.py`, testy, README, vzorky CSV), po vyhodnocení z repa odstraněno | 0,2980 (rozpočet 10) | ~18 min (agenti ~9 min: Account 3, Architekt 1,5, Vývojář 3,5, Reviewer 2,5; zbytek HITL) | 4 schválení (H1, H2 s doplněním zadání, H4 „plnohodnotný výsledek bez doplněného zadání“, H5); 0 ručních oprav | nálezy 8–10: Account se neptal, odpovědi z H2 se k rolím nedostaly, plán = 1 úkol, titulek PR z chatu modelu |
 | 4 | | | | | | | |
 | 5 | | | | | | | |
 
@@ -143,7 +143,22 @@ Poučení: harness měřil role na mocku s kanonickými odpověďmi, takže chyb
 ošetření chybného běhu role se ukázaly až s živým modelem; orchestrátor musí každý výstup role validovat (artefakt existuje, soubory
 neprázdné, cesty), ne věřit, že role „doběhla“.
 
+### Nálezy ze scénáře 3 (2026-11-22, 1. pokus)
+
+| # | Zakázka | Co se stalo | Oprava |
+|---|---|---|---|
+| 8 | Z-11220852 | Account se **neptal** (žádný `DIALOG_WAIT`): rovnou napsal `zadani.md` z poptávky bez oddělovače, kódování, jazyka… a otevřel H1. Mechanismus dialogu (P3-3: `artifacts/otazky.md` → otázky zadavateli, ≤ 3 kola) existuje, ale **prompt role ho nezmiňoval** – mock ho znal, živý model ne (stejná třída chyby jako nález 1) | prompt Accounta: když chybí, co rozhoduje o návrhu nebo přijetí díla, napsat 2–5 otázek s navrženou výchozí odpovědí do `otazky.md` a zadání nepsat; po odpovědích zadání s ověřitelnými kritérii |
+| 9 | Z-11220852 | Zadavatel doplnil zadání až v odůvodnění H2 (`;`, UTF-8/1250, CLI v Pythonu, čeština) – zapsalo se do `org.approvals`, ale **k Vývojáři ani Reviewerovi se nedostalo** (role dostávají jen poptávku, odpovědi dialogu a popis úkolu); Vývojář dělal podle předpokladů Architekta | `hitl_full` ukládá odůvodnění H1/H2 do `z.rozhodnuti`; `agent_run` ho dává do promptu Architekta, Vývojáře a Reviewera jako „Rozhodnutí zadavatele (závazné, má přednost před ADR)“; GUI u H1/H2 říká, že důvod dostanou role; Architekt má otevřené otázky uvést v ADR s předpokladem (člověk je rozhodne v H2); nová verze orchestrátoru `6736fabdd4c7` |
+| 10 | Z-11220852 | Titulek PR = první řádek odpovědi modelu: „Výborně! Všechno je hotovo. Zde je finální shrnutí:“ | titulek z prvního řádku poptávky; commit message nese počet úkolů z plánu |
+| – | Z-11220852 | Architekt dal celé řešení (jádro, CLI, testy, README, vzorky = 10 souborů) do **1 úkolu**; prompt říkal „jednoduchá zakázka = 1 úkol“ – review per úkol tím ztratilo smysl | prompt Architekta: úkol = samostatně ověřitelný celek (jádro, CLI, testy, README), 1 úkol jen pro triviální zakázku; ověří 2. pokus |
+| – | Z-11220852 | Dvě 401 z gateway (`invalid credentials`, role prázdná) ~2 min po `Dokonceno` – klíče zakázky už uklizené; zdroj neznámý (kandidát: sonda/health po GC) | pozorování, bez dopadu; sledovat |
+
+Poučení: člověk může zadání doplnit kdekoli (dialog, H1, H2) a platforma mu to dovolí – každé takové rozhodnutí musí dál téct k rolím,
+jinak si ho „vezme“ jen audit. Výsledek 1. pokusu je použitelný nástroj (testy, README česky), ale postavený na domněnkách; 2. pokus
+(nové id) změří dialog Accounta, varianty v ADR a plán úkolů naostro.
+
 ## Changelog
+- 2026-11-22: scénář 3, 1. pokus (Z-11220852, `Dokonceno`, 0,298 USD) – nálezy 8–10 (Account se neptal, rozhodnutí z H2 se k rolím nedostalo, titulek PR) opraveny; 2. pokus následuje.
 - 2026-11-20: před scénářem 3 doplněn do platformy plán úkolů z ADR (`ukoly.json`, 1–4 úkoly) a smyčka Review → Implementace ≤ 2 kol per úkol (P4-11, [p4-provoz.md](../platforma/p4-provoz.md#p4-11-úkoly-z-plánu-adr-a-smyčka-review--implementace)); scénář 3 tak měří plán Architekta a verdikty Reviewera naostro.
 - 2026-11-20: scénář 2 ostře – Z-11201535 `Dokonceno` po jednom opakování Vývojáře (bod `role`); nálezy 6–7; cesta modulu ve scénáři 2 opravena na adresář zakázky.
 - 2026-11-19: scénář 1 ostře – 5 pokusů, pátý `Dokonceno` (0,1147 USD, ~22 min); tabulka nálezů 1–5 a opravy platformy.
