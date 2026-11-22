@@ -307,7 +307,7 @@ def agent_run_local(role, z, prompt, tool_names):
 
     @tool("run_evals", "Spustí evaly L0–L2 nad PR (mock gate).", {"target": str})
     async def run_evals(args):
-        files = [f for f in os.listdir(work)] if os.path.isdir(work) else []
+        files = [f for f in sorted(os.listdir(work)) if not f.startswith(".") and not _junk_dir(f) and f not in TOOL_JUNK] if os.path.isdir(work) else []   # bez stop CLI v cwd (node_modules, .claude, .env.*)
         res = {"L0": 1.0, "L1": 1.0, "L2_passk": 1.0 if files else 0.0, "files": files, "note": "mock evaly – skutečné přes inspect_k8s_sandbox (P2)"}
         calls.append({"tool": "run_evals", "result": res})
         ledger("TOOL", zakazka=z["id"], role=role, tool="run_evals", result=res)
@@ -571,7 +571,7 @@ def _publish(z, kind, payload, approval_hash=None):
     elif kind == "pull_request":
         base = g("GET", f"/repos/{o}/{r}/git/ref/heads/{payload['base']}")["object"]["sha"]
         base_tree = g("GET", f"/repos/{o}/{r}/git/commits/{base}")["tree"]["sha"]
-        blobs = [{"path": f["path"], "mode": "100644", "type": "blob", "sha": g("POST", f"/repos/{o}/{r}/git/blobs", {"content": f["content"], "encoding": "utf-8"})["sha"]} for f in payload["files"]]
+        blobs = [{"path": f["path"], "mode": "100644", "type": "blob", "sha": g("POST", f"/repos/{o}/{r}/git/blobs", ({"content": f["content_b64"], "encoding": "base64"} if f.get("content_b64") else {"content": f["content"], "encoding": "utf-8"}))["sha"]} for f in payload["files"]]   # eval scénář 3 (nález 16): soubory mimo UTF-8 (fixture Windows-1250) jako base64 blob, ne přeskočit
         tree = g("POST", f"/repos/{o}/{r}/git/trees", {"base_tree": base_tree, "tree": blobs})["sha"]
         commit = g("POST", f"/repos/{o}/{r}/git/commits", {"message": payload["commit_message"], "tree": tree, "parents": [base]})["sha"]
         try: g("POST", f"/repos/{o}/{r}/git/refs", {"ref": f"refs/heads/{payload['head']}", "sha": commit})
@@ -617,8 +617,10 @@ def publish_pr(ctx, inp):
         fp = os.path.join(pr["work"], f["path"])
         if os.path.exists(fp):
             rel = f["path"][len(f"zakazky/{z['id']}/"):] if f["path"].startswith(f"zakazky/{z['id']}/") else f["path"]   # 2026-11-19 (Z-11192207): role už psala pod zakazky/<id>/ → nezdvojit
-            try: files.append({"path": f"zakazky/{z['id']}/{rel}", "content": open(fp, "rb").read().decode("utf-8"), "sha256": f["sha256"]})
-            except UnicodeDecodeError: ledger("PUBLISH_SKIP_BINARY", zakazka=z["id"], path=f["path"])   # PR přes git data API nese jen textové blob-y (binárka by shodila aktivitu workflow)
+            raw = open(fp, "rb").read()
+            if len(raw) > 2_000_000: ledger("PUBLISH_SKIP_BINARY", zakazka=z["id"], path=f["path"], bytes=len(raw)); continue
+            try: files.append({"path": f"zakazky/{z['id']}/{rel}", "content": raw.decode("utf-8"), "sha256": f["sha256"]})
+            except UnicodeDecodeError: files.append({"path": f"zakazky/{z['id']}/{rel}", "content_b64": base64.b64encode(raw).decode(), "sha256": f["sha256"]}); ledger("PUBLISH_BASE64", zakazka=z["id"], path=f["path"], bytes=len(raw))   # eval scénář 3 (Z-11221144, nález 16): sample_win1250.csv a test_data/sample_cp1250.csv tiše vypadly z PR (PUBLISH_SKIP_BINARY) → testy po merge selžou
     # eval scénář 3 (2026-11-22, nález 10): titulek PR z poptávky (první řádek), ne z prvního řádku odpovědi modelu („Výborně! Všechno je hotovo…“, PR #63)
     title = re.sub(r"[*_`#>]+", "", (z.get("poptavka") or "").strip().splitlines()[0] if (z.get("poptavka") or "").strip() else "").strip()[:60]
     n_tasks = len(pr.get("tasks") or []) or 1
