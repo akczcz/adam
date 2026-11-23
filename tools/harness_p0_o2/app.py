@@ -1317,13 +1317,28 @@ async def files_get(zid: str, req: Request):
 async def files_put(zid: str, req: Request):
     run = _run_auth(req)
     if run["zakazka"] != zid: raise HTTPException(403)
-    root = _zroot(zid); b = await req.json(); n = 0
+    root = _zroot(zid); b = await req.json(); n = 0; present = set()
     for f in b.get("files", []):
         if f.get("root") not in ("artifacts", "work"): continue
         p = os.path.realpath(os.path.join(root, f["root"], f["path"]))
         if not p.startswith(os.path.join(root, f["root"]) + os.sep): continue
         os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "wb").write(base64.b64decode(f["content_b64"])); n += 1
-    return {"written": n}
+        if f["root"] == "work": present.add(p)
+    # 2026-11-23 (eval scénář 4, Z-11231246, nález 20): pod posílal jen přítomné soubory, mazání se do aplikace nedostalo – Vývojář smazal duplicitní
+    # test_csv2md.py, Reviewer (čte work/ aplikace) ho dál viděl → 2× changes_requested → REVIEW_UNRESOLVED a soubor by šel i do PR. Úplný obraz
+    # (complete=True, sync-up po běhu i checkpoint) = soubory work/, které pod neposlal, se smažou; artifacts/ se nemažou (píše do nich i aplikace).
+    removed = []
+    if b.get("complete"):
+        wbase = os.path.join(root, "work")
+        for d, dirs, names in os.walk(wbase):
+            dirs[:] = [x for x in dirs if not _junk_dir(x)]
+            for nm in names:
+                fp = os.path.realpath(os.path.join(d, nm)); rel = os.path.relpath(fp, wbase)
+                if fp in present or rel.startswith(".") or nm.endswith((".pyc", ".pyo")) or nm in TOOL_JUNK or os.path.getsize(fp) > 2_000_000: continue
+                try: os.remove(fp); removed.append(rel)
+                except OSError: pass
+        if removed: ledger("FILES_REMOVED", zakazka=zid, role=run.get("role"), files=removed[:50], n=len(removed))
+    return {"written": n, "removed": len(removed)}
 
 
 @app.post("/runs/{run_id}/result")
