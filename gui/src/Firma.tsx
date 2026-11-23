@@ -32,7 +32,7 @@ export function FirmaPage({ user }: { user: User }) {
   const [res, setRes] = useState<any>(null); const [seq, setSeq] = useState(0); const [stopSeq, setStopSeq] = useState(0);
   const [stopForm, setStopForm] = useState({ tenant: user.tenant === "platform" ? "beta" : user.tenant, reason: "" }); const [stopRes, setStopRes] = useState<any>(null);
   const submit = async (ev: React.FormEvent) => { ev.preventDefault(); const r = await govPost("autonomy", form); setRes({ ...r.body, http: r.status }); setSeq((x) => x + 1); roles.reload(); };
-  const stop = async (resume: boolean) => { const r = await govPost(`tenant/${stopForm.tenant}/${resume ? "resume" : "stop"}`, { reason: stopForm.reason }); setStopRes({ ...r.body, http: r.status, action: resume ? "resume" : "stop" }); setStopSeq((x) => x + 1); tenants.reload(); };
+  const stop = async (resume: boolean) => { let r: { ok: boolean; status: number; body: any }; try { r = await govPost(`tenant/${stopForm.tenant}/${resume ? "resume" : "stop"}`, { reason: stopForm.reason }); } catch (e) { r = { ok: false, status: 0, body: { detail: `síť: ${String(e)}` } }; } setStopRes({ ...r.body, http: r.status, action: resume ? "resume" : "stop" }); setStopSeq((x) => x + 1); tenants.reload(); };
   return (
     <>
       <div className="card">
@@ -76,7 +76,7 @@ export function FirmaPage({ user }: { user: User }) {
           <button className="danger" disabled={stopForm.reason.trim().length < 10} onClick={() => stop(false)} data-testid="tstop-submit">Stop tenanta</button>
           <button disabled={stopForm.reason.trim().length < 10} onClick={() => stop(true)} data-testid="tresume-submit">Resume</button>
         </div>
-        {stopRes && <div className="ev stop" style={{ marginTop: 8 }} data-testid="tstop-result" data-ok={String(!!stopRes.ok)} data-seq={stopSeq}>{stopRes.ok ? <span className="ok">{stopRes.action}: zakázky {JSON.stringify(stopRes.paused ?? stopRes.resumed)} · pody {JSON.stringify(stopRes.pods_killed ?? [])} · klíče {String(stopRes.keys_blocked ?? stopRes.keys_unblocked)}</span> : <span className="err">chyba ({stopRes.http}): {stopRes.detail}</span>}</div>}
+        {stopRes && <div className="ev stop" style={{ marginTop: 8 }} data-testid="tstop-result" data-ok={String(!!stopRes.ok)} data-seq={stopSeq}>{stopRes.ok ? <span className="ok">{stopRes.action}: zakázky {JSON.stringify(stopRes.paused ?? stopRes.resumed)} · pody {JSON.stringify(stopRes.pods_killed ?? [])} · klíče {String(stopRes.keys_blocked ?? stopRes.keys_unblocked)}</span> : <span className="err">chyba ({stopRes.http}): {stopRes.detail ?? "bez odpovědi serveru (požadavek vypršel – stav zakázek zkontroluj v seznamu Zakázky)"}</span>}</div>}
       </div>
       {user.tenant === "platform" && <WfVersions />}
     </>

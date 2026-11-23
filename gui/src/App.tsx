@@ -226,6 +226,9 @@ function Thread({ id, user }: { id: string; user: User }) {
     setReason(""); setBudget("");
   };
   const stop = () => { start({ forwardedProps: { action: "stop", reason: stopReason.trim() } }); setStopOpen(false); setStopReason(""); };
+  // eval scénář 4 (nález 17): Resume zakázky z její karty – dřív jen resume celého tenanta na stránce Firma (prochází všechny zakázky tenanta)
+  const resume = () => { start({ forwardedProps: { action: "resume", reason: stopReason.trim() } }); setResumeOpen(false); setStopReason(""); };
+  const [resumeOpen, setResumeOpen] = useState(false);
 
   const reasonOk = reason.trim().length >= 10;
   const timeline = useMemo(() => {
@@ -255,8 +258,18 @@ function Thread({ id, user }: { id: string; user: User }) {
           <span className="muted">AG-UI <span data-testid="run-protocol">{proto ?? "?"}</span> · run <code data-testid="run-id">{runId?.slice(0, 8) ?? "-"}</code></span>
           <span className="spacer" />
           {state?.status === "RUNNING" && !stopOpen && <button className="danger" onClick={() => setStopOpen(true)} data-testid="stop-button">Stop zakázky</button>}
+          {state?.status === "SUSPENDED" && !resumeOpen && <button className="primary" onClick={() => setResumeOpen(true)} data-testid="resume-button">Resume zakázky</button>}
           {(runStatus === "finished" || runStatus === "error") && <button onClick={() => start()} data-testid="refresh">Obnovit</button>}
         </div>
+        {resumeOpen && (
+          <div className="card interrupt" style={{ marginTop: 10 }}>
+            <b>Resume zakázky</b> – obnoví pozastavený workflow; zastavená role se spustí znovu od checkpointu, čekající schválení pokračuje tam, kde skončilo. Důvod je povinný (T5/T6).
+            <textarea data-testid="resume-reason" value={stopReason} onChange={(x) => setStopReason(x.target.value)} placeholder="důvod (≥ 10 znaků)" />
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="primary" disabled={stopReason.trim().length < 10} onClick={resume} data-testid="resume-confirm">Obnovit běh</button>
+              <button onClick={() => setResumeOpen(false)}>Zrušit</button>
+            </div>
+          </div>)}
         {stopOpen && (
           <div className="card interrupt" style={{ marginTop: 10 }}>
             <b>Stop zakázky</b> – pozastaví workflow (čekající schválení zůstává) a ukončí běžící sandboxy rolí. Důvod je povinný (T5/T6).
