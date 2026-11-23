@@ -1033,15 +1033,39 @@ def answer_dialog(zid, *, by, answer, channel="agui"):
     ledger("DIALOG_RAISED", zakazka=zid, by=by, channel=channel, answer=str(answer)[:300])
 
 
-def tenant_zakazky(tenant):
-    return sorted({e["zakazka"] for e in _ledger() if e.get("kind") == "ZAKAZKA_START" and (e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == tenant})
+FINAL_STATUS = {"Dokonceno", "Zamitnuto", "Odmitnuto", "BudgetExceeded", "RoleFailed"}
+
+
+def tenant_zakazky(tenant, max_age_s=None):
+    """Zakázky tenanta, u kterých má smysl ptát se Dapru na stav (stop/resume tenanta). 2026-11-23 (eval scénář 4, nález 18): ledger acme nese stovky
+    zakázek z měření; resume tenanta volal get_workflow_state na každou z nich sekvenčně, požadavek z GUI přes Cloudflare vypršel (100 s) bez odpovědi
+    a instance zůstala SUSPENDED. Teď jen zakázky bez konečného stavu v registru (poslední REGISTRY_ZAKAZKA) a mladší než P0_TENANT_SCAN_DAYS (30)."""
+    max_age_s = float(os.environ.get("P0_TENANT_SCAN_DAYS", "30")) * 86400 if max_age_s is None else max_age_s
+    start, last = {}, {}
+    for e in _ledger():
+        k = e.get("kind")
+        if k == "ZAKAZKA_START" and (e.get("tenant") or os.environ.get("P0_TENANT", "acme")) == tenant: start[e["zakazka"]] = e.get("ts") or 0
+        elif k == "REGISTRY_ZAKAZKA" and e.get("zakazka") in start: last[e["zakazka"]] = e.get("status")
+    now = time.time()
+    return sorted(z for z, ts in start.items() if now - ts <= max_age_s and last.get(z) not in FINAL_STATUS)
+
+
+def resume_zakazka(zid, *, by, reason, channel="api"):
+    """Resume jedné zakázky (eval scénář 4, nález 17: GUI mělo Stop na zakázce, ale Resume jen pro celý tenant). Stop zakázky klíče gateway neblokuje
+    (`budget: frozen` = pauza workflow + ukončené pody), stačí resume workflow; pod role se spustí znovu od checkpointu (run_role: ROLE_STOPPED)."""
+    before = client().get_workflow_state(zid).runtime_status.name
+    if before == "SUSPENDED": client().resume_workflow(zid)
+    st = client().get_workflow_state(zid).runtime_status.name
+    if st == "RUNNING": registry_sync(zid, tenant_of(zid), "Running")
+    ledger("RESUME", zakazka=zid, by=by, reason=reason, channel=channel, status_before=before, status=st)
+    return {"ok": st == "RUNNING", "status": st, "status_before": before}
 
 
 def stop_tenant(tenant, *, by, reason, channel="agui"):
     """Stop per tenant (autonomie.md T5): pause všech běžících instancí tenanta + ukončení podů rolí, gateway klíče tenanta Block (ConfigMap budgets 0),
     paměť deny (server paměti čte org.tenants.status přes /tenants/<id>), org.tenants.status=stopped + agent_events suspended; SPIRE entries zůstávají (audit)."""
-    paused, killed = [], []
-    for zid in tenant_zakazky(tenant):
+    paused, killed = [], []; t0 = time.time(); cands = tenant_zakazky(tenant)
+    for zid in cands:
         st = _wf_state(zid) or {}
         if st.get("status") == "RUNNING":
             try: client().pause_workflow(zid); paused.append(zid)
@@ -1053,22 +1077,22 @@ def stop_tenant(tenant, *, by, reason, channel="agui"):
     if os.environ.get("P0_GATEWAY_KEYS") == "issue":
         import gateway_keys; blocked = gateway_keys.block_tenant(tenant, ledger, block=True)
     reg = finops.tenant_status(tenant, "stopped", by=by, reason=reason)
-    ledger("STOP_TENANT", tenant=tenant, by=by, reason=reason, channel=channel, paused=paused, pods_killed=killed, keys_blocked=blocked, registry=reg)
-    return {"ok": True, "tenant": tenant, "paused": paused, "pods_killed": killed, "keys_blocked": blocked, "registry": reg}
+    ledger("STOP_TENANT", tenant=tenant, by=by, reason=reason, channel=channel, paused=paused, pods_killed=killed, keys_blocked=blocked, registry=reg, candidates=len(cands), scan_s=round(time.time() - t0, 1))
+    return {"ok": True, "tenant": tenant, "paused": paused, "pods_killed": killed, "keys_blocked": blocked, "registry": reg, "candidates": len(cands), "scan_s": round(time.time() - t0, 1)}
 
 
 def resume_tenant(tenant, *, by, reason, channel="agui"):
-    unblocked = None
+    unblocked = None; t0 = time.time()
     if os.environ.get("P0_GATEWAY_KEYS") == "issue":   # P3-5: klíče odblokovat PŘED resume workflow (propagace ConfigMapy ~1 min; nový pod role dělá první request za ~2 min)
         import gateway_keys; unblocked = gateway_keys.block_tenant(tenant, ledger, block=False)
-    resumed = []
-    for zid in tenant_zakazky(tenant):
+    resumed = []; cands = tenant_zakazky(tenant)
+    for zid in cands:
         if (_wf_state(zid) or {}).get("status") == "SUSPENDED":
             try: client().resume_workflow(zid); resumed.append(zid); registry_sync(zid, tenant, "Running")
             except Exception as e: ledger("RESUME_TENANT_ERROR", tenant=tenant, zakazka=zid, error=f"{type(e).__name__}: {str(e)[:120]}")
     reg = finops.tenant_status(tenant, "active", by=by, reason=reason)
-    ledger("RESUME_TENANT", tenant=tenant, by=by, reason=reason, channel=channel, resumed=resumed, keys_unblocked=unblocked, registry=reg)
-    return {"ok": True, "tenant": tenant, "resumed": resumed, "keys_unblocked": unblocked, "registry": reg}
+    ledger("RESUME_TENANT", tenant=tenant, by=by, reason=reason, channel=channel, resumed=resumed, keys_unblocked=unblocked, registry=reg, candidates=len(cands), scan_s=round(time.time() - t0, 1))
+    return {"ok": True, "tenant": tenant, "resumed": resumed, "keys_unblocked": unblocked, "registry": reg, "candidates": len(cands), "scan_s": round(time.time() - t0, 1)}
 
 
 @app.get("/tenants/{tenant}")
@@ -1245,9 +1269,7 @@ async def stop(zid: str, req: Request):
 async def resume(zid: str, req: Request):
     b = await req.json()
     if b.get("by_kind") != "human" or not b.get("reason"): raise HTTPException(403, "resume jen člověk s důvodem")
-    client().resume_workflow(zid); registry_sync(zid, tenant_of(zid), "Running")
-    ledger("RESUME", zakazka=zid, by=b.get("by"), reason=b["reason"])
-    return {"ok": True, "status": client().get_workflow_state(zid).runtime_status.name}
+    return resume_zakazka(zid, by=b.get("by"), reason=b["reason"], channel="api")
 
 
 @app.get("/_debug/ledger")
@@ -1295,13 +1317,28 @@ async def files_get(zid: str, req: Request):
 async def files_put(zid: str, req: Request):
     run = _run_auth(req)
     if run["zakazka"] != zid: raise HTTPException(403)
-    root = _zroot(zid); b = await req.json(); n = 0
+    root = _zroot(zid); b = await req.json(); n = 0; present = set()
     for f in b.get("files", []):
         if f.get("root") not in ("artifacts", "work"): continue
         p = os.path.realpath(os.path.join(root, f["root"], f["path"]))
         if not p.startswith(os.path.join(root, f["root"]) + os.sep): continue
         os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "wb").write(base64.b64decode(f["content_b64"])); n += 1
-    return {"written": n}
+        if f["root"] == "work": present.add(p)
+    # 2026-11-23 (eval scénář 4, Z-11231246, nález 20): pod posílal jen přítomné soubory, mazání se do aplikace nedostalo – Vývojář smazal duplicitní
+    # test_csv2md.py, Reviewer (čte work/ aplikace) ho dál viděl → 2× changes_requested → REVIEW_UNRESOLVED a soubor by šel i do PR. Úplný obraz
+    # (complete=True, sync-up po běhu i checkpoint) = soubory work/, které pod neposlal, se smažou; artifacts/ se nemažou (píše do nich i aplikace).
+    removed = []
+    if b.get("complete"):
+        wbase = os.path.join(root, "work")
+        for d, dirs, names in os.walk(wbase):
+            dirs[:] = [x for x in dirs if not _junk_dir(x)]
+            for nm in names:
+                fp = os.path.realpath(os.path.join(d, nm)); rel = os.path.relpath(fp, wbase)
+                if fp in present or rel.startswith(".") or nm.endswith((".pyc", ".pyo")) or nm in TOOL_JUNK or os.path.getsize(fp) > 2_000_000: continue
+                try: os.remove(fp); removed.append(rel)
+                except OSError: pass
+        if removed: ledger("FILES_REMOVED", zakazka=zid, role=run.get("role"), files=removed[:50], n=len(removed))
+    return {"written": n, "removed": len(removed)}
 
 
 @app.post("/runs/{run_id}/result")
@@ -1343,6 +1380,7 @@ agui.CTX.update({
     "approve": lambda zid, bod, hh, u, reason, budget=None: approve_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"], budget_usd=budget, subject=subject_of(u)),
     "reject": lambda zid, bod, hh, u, reason: reject_zakazka(zid, bod, by=u["name"], artifact_hash=hh, reason=reason, channel="agui", tenant=u["tenant"], approver_sub=u["sub"]),
     "stop": lambda zid, u, reason: stop_zakazka(zid, by=u["name"], reason=reason, channel="agui"),
+    "resume": lambda zid, u, reason: resume_zakazka(zid, by=u["name"], reason=reason, channel="agui"),   # scénář 4 (nález 17): resume zakázky z její karty
     "answer": lambda zid, u, answer: answer_dialog(zid, by=u["name"], answer=answer),
     "mandat": lambda zid, u, auto: renew_mandat(zid, u, auto=auto),   # P4-1: obnova mandátu z GUI
     "stop_tenant": lambda tenant, u, reason: stop_tenant(tenant, by=u["name"], reason=reason),

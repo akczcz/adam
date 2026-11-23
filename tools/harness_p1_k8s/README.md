@@ -1315,6 +1315,16 @@ soubory mimo UTF-8 do PR jako base64, verze orchestrátoru `6736fabdd4c7`): **10
 celý běh 105 min, cluster se zastavil sám – AKS i PG `Stopped`). Mock role tedy fungují i s novým mapováním cest `read_artifact`, parserem verdiktu a filtry
 dočasných souborů; kvalita živého modelu je ověřená scénářem 3 (Z-11221144, `Dokonceno`).
 
+Běh 4 po opravách z eval scénáře 4 (nálezy 17–20 v [eval-scenare.md](../../knowledge/organization/eval-scenare.md#nálezy-ze-scénáře-4-2026-11-23-z-11231015--1-běh-dokonceno) – Resume
+zakázky z její karty (AG-UI `action=resume`), stop/resume tenanta jen nad živými zakázkami (`tenant_zakazky`: bez terminálního stavu v registru, ≤ 30 dní), mazání
+souborů v podu role se propíše do `work/` aplikace (`complete` sync-up, `FILES_REMOVED`), akce `stop-zakazky` a širší `diag` ve workflow `cluster`):
+**100 PASS / 1 FAIL / 24 INFO / 1 SKIP** (`measure` run 45187029861, head d6c94a8, 2026-11-23; celý běh 100 min, cluster se zastavil sám – AKS i PG `Stopped`).
+O3b/O3c (stop a resume tenanta beta přes nový filtr), U1f (stop z GUI), V2a `plan: ok:2`, V2b `loops` 1 / `unresolved: 0` / PR jednou, V2c wall 444 s, L1c SKIP – vše jako
+v běhu 3. Jediný ❌ **N3a je falešný**: `gui_login_access {n: 17, service_token: 16, email_hash: 1}` – během měření byla otevřená záložka GUI operátora
+(Access identita e-mail OTP, ne service token harnessu) a kontrola čekala jen service tokeny. Oprava (tento commit): N3a projde, když **každý** `GUI_LOGIN`
+přes Cloudflare nese identitu Access (service token nebo `email_hash`, nový čítač `without_identity` = 0) a aspoň jeden je od harnessu; přeměření v dalším
+běhu `measure` (kontrola se mění jen v harnessu, platforma beze změny).
+
 Nálezy:
 
 1. **L1c předpokládá mock Key Vault; po eval scénářích tam jsou ostré hodnoty** (run 44777262164): preflight `/_live/model` i `/_live/github`

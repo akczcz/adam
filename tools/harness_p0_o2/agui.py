@@ -5,7 +5,7 @@ zakázku do dalšího rozhodovacího bodu“. Spec AG-UI 1.0 (ag-ui-protocol 1.0
 platforma – T7), aktivity (ACTIVITY_SNAPSHOT), stav zakázky (STATE_SNAPSHOT); HITL = RUN_FINISHED outcome=interrupt (interrupt id
 `hitl:<bod>:<hash>`), rozhodnutí člověka = RunAgentInput.resume [{interruptId, status: resolved, payload: {decision, reason}}] –
 důvod povinný (T6, org.approvals.reason ≥ 10 znaků), approval token podepsaný transitem jako dřív, workflow se nemění (raise_event).
-Stop = forwardedProps.action=stop (pause workflow + ukončení podů rolí zakázky) → outcome=cancelled.
+Stop = forwardedProps.action=stop (pause workflow + ukončení podů rolí zakázky) → outcome=cancelled; Resume = action=resume (důvod ≥ 10 znaků) → CustomEvent resumed.
 
 Autorizace na transportu (spec ji neřeší): Bearer token Keycloaku (RS256 z JWKS P0_KC_JWKS_URL, iss P0_KC_ISSUER, realm role `human`,
 tenant z claimu `tenant_id`); thread cizího tenanta = 404. Login člověka pro GUI: POST /agui/login (password grant přes klient
@@ -355,10 +355,13 @@ async def run(req: Request):
         if d["kind"] == "klasifikace": await asyncio.to_thread(CTX["classify"], zid, u, d["answers"], d["reason"]); continue
         if d["decision"] == "approve": await asyncio.to_thread(CTX["approve"], zid, d["bod"], d["artifact_hash"], u, d["reason"], d.get("budget_usd"))
         else: await asyncio.to_thread(CTX["reject"], zid, d["bod"], d["artifact_hash"], u, d["reason"])
-    stopped = None
+    stopped = None; resumed = None
     if fp.get("action") == "stop":
         if len((fp.get("reason") or "").strip()) < MIN_REASON: raise HTTPException(422, "stop vyžaduje důvod (≥ 10 znaků)")
         stopped = await asyncio.to_thread(CTX["stop"], zid, u, fp["reason"].strip())
+    elif fp.get("action") == "resume":   # 2026-11-23 (eval scénář 4, nález 17): resume zakázky z její karty – člověk s důvodem (T5), dřív jen resume celého tenanta
+        if len((fp.get("reason") or "").strip()) < MIN_REASON: raise HTTPException(422, "resume vyžaduje důvod (≥ 10 znaků)")
+        resumed = await asyncio.to_thread(CTX["resume"], zid, u, fp["reason"].strip())
     run_id = inp.run_id or str(uuid.uuid4())
     enc = EventEncoder()
 
@@ -369,6 +372,7 @@ async def run(req: Request):
         for e in events_for(zid, ents, 0, subagents): yield enc.encode(e)
         yield enc.encode(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=await asyncio.to_thread(state_of, zid, ents)))   # P4-2: stav z Dapru je sync gRPC → mimo event loop
         if created: yield enc.encode(CustomEvent(type=EventType.CUSTOM, name="thread_created", value={"threadId": zid, "by": u["name"]}))
+        if resumed is not None: yield enc.encode(CustomEvent(type=EventType.CUSTOM, name="resumed", value=resumed))
         if stopped is not None:
             yield enc.encode(CustomEvent(type=EventType.CUSTOM, name="stopped", value=stopped))
             yield enc.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=zid, run_id=run_id, outcome=RunFinishedCancelledOutcome(type="cancelled"), result=state_of(zid, thread_entries(zid))))

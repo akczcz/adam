@@ -154,7 +154,7 @@ def main():
         if STOP["flag"]: return
         STOP["flag"] = True; t_s = time.time()
         up = collect_files(WORK, root); n = 0
-        try: n = httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up}, headers=H, timeout=15).json().get("written", 0)
+        try: n = httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up, "complete": True}, headers=H, timeout=15).json().get("written", 0)
         except Exception as e: print(f"checkpoint upload error: {e}", flush=True)
         out = {"text": "AGENT_STOPPED (SIGTERM)", "cost": None, "files": [], "error": "stopped: pod ukončen stopem (SIGTERM), checkpoint nahrán", "stopped": True,
                "checkpoint": {"files": len(up), "written": n, "s": round(time.time() - t_s, 1)}, "identity": S["identity"], "egress_probe": S["probe"], "memory_probe": S["mprobe"], "pod": os.environ.get("HOSTNAME"), "uid": os.getuid()}
@@ -245,8 +245,8 @@ def main():
     res = app_mod.agent_run_local(role, z, prompt, tools)
     agent_s = round(time.time() - t0, 1)
 
-    up = collect_files(WORK, root)
-    try: httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up}, headers=H, timeout=120)
+    up = collect_files(WORK, root)   # complete=True: úplný obraz work/ – aplikace smaže, co role smazala (eval scénář 4, Z-11231246, nález 20)
+    try: httpx.post(f"{api}/zakazky/{z['id']}/files", json={"files": up, "complete": True}, headers=H, timeout=120)
     except Exception as e: print(f"sync-up error: {e}", flush=True)
     led = []
     if os.path.exists(os.environ["O1_LEDGER"]):
