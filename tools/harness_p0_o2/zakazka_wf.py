@@ -51,6 +51,20 @@ def wait_with_sla(ctx: wf.DaprWorkflowContext, z, event_name, bod, t_out):
     return ev.get_result() or {}
 
 
+def wait_or_pause(ctx: wf.DaprWorkflowContext, z, event_name, bod, t_out, timeout_event, wait_notify):
+    """Eval scénář 5 (2026-11-23, Z-11231600, nález 23): timeout rozhodovacího bodu dřív ukončil workflow (`Pozastaveno` = COMPLETED) – zakázka
+    i odvedená práce byly po hodině bez člověka nenávratně pryč (H4 má přitom SLA 1 den). Teď timeout = pauza (fail-closed, autonomie.md T5):
+    ledger <timeout_event>, aktivita `pause_timeout` pozastaví instanci stejnou cestou jako Stop (STOP by=timeout, registr Pozastaveno), čekající
+    event zůstává durable; po Resume člověka (karta zakázky / resume tenanta) se bod vystaví znovu (wait_notify → nový interrupt v GUI) a čeká dál.
+    Vrací data eventu (nikdy None)."""
+    while True:
+        data = yield from wait_with_sla(ctx, z, event_name, bod, t_out)
+        if data is not None: return data
+        yield ctx.call_activity("notify", input={"event": timeout_event, "bod": bod, "zakazka": z["id"], "result": "pozastaveno", "resumable": True, "timeout_s": t_out})
+        yield ctx.call_activity("pause_timeout", input={"z": z, "bod": bod, "timeout_s": t_out})
+        yield ctx.call_activity("notify", input={**wait_notify, "after_timeout": True})
+
+
 def hitl(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None):
     tok, _ = yield from hitl_full(ctx, z, bod, artifact_hash, timeout_s)
     return tok
@@ -62,11 +76,9 @@ def hitl_full(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None
     HITL_WAIT v ledgeru = otevřený rozhodovací bod pro AG-UI (interrupt `hitl:<bod>:<hash>`); zamítnutí člověkem (event {rejected}) = HITL_REJECTED → Pozastaveno.
     P3-4: SLA bodu (procesy.md) běží uvnitř čekání – překročení eskaluje, nerozhoduje. P3-6 E6: HITL_WAIT nese verzi orchestrátoru, která bod vystavila."""
     t_out = float(timeout_s if timeout_s is not None else z.get("hitl_timeout_s", HITL_TIMEOUT_S))
-    yield ctx.call_activity("notify", input={"event": "HITL_WAIT", "bod": bod, "zakazka": z["id"], "artifact_hash": artifact_hash, "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get(bod, SLA_DEFAULT_S.get(bod, 0)) or 0), "wf_version": VERSION})
-    data = yield from wait_with_sla(ctx, z, f"hitl:{bod}", bod, t_out)
-    if data is None:
-        yield ctx.call_activity("notify", input={"event": "HITL_TIMEOUT", "bod": bod, "zakazka": z["id"], "result": "pozastaveno"})
-        return None, None
+    wait_ev = {"event": "HITL_WAIT", "bod": bod, "zakazka": z["id"], "artifact_hash": artifact_hash, "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get(bod, SLA_DEFAULT_S.get(bod, 0)) or 0), "wf_version": VERSION}
+    yield ctx.call_activity("notify", input=wait_ev)
+    data = yield from wait_or_pause(ctx, z, f"hitl:{bod}", bod, t_out, "HITL_TIMEOUT", wait_ev)   # nález 23: timeout = pauza + Resume, ne konec
     if isinstance(data, dict) and data.get("rejected"):
         yield ctx.call_activity("notify", input={"event": "HITL_REJECTED", "bod": bod, "zakazka": z["id"], "by": data.get("by"), "reason": data.get("reason"), "result": "pozastaveno"})
         return None, data
@@ -75,7 +87,7 @@ def hitl_full(ctx: wf.DaprWorkflowContext, z, bod, artifact_hash, timeout_s=None
         yield ctx.call_activity("notify", input={"event": "HITL_INVALID_TOKEN", "bod": bod, "zakazka": z["id"]})
         return None, data
     if isinstance(data.get("subject"), dict) and data["subject"].get("token"): z["subject"] = data["subject"]   # P3-6 E2: další role jedná jménem tohoto schvalovatele (Q6: obnova při každém HITL)
-    if tok.get("reason") and bod in ("H1", "H2"):   # eval scénář 3 (nález 9): odůvodnění člověka = rozhodnutí pro další role (prompt Architekta, Vývojáře, Reviewera), ne jen audit
+    if tok.get("reason") and bod in ("H1a", "H1", "H2"):   # eval scénář 3 (nález 9): odůvodnění člověka = rozhodnutí pro další role (prompt Architekta, Vývojáře, Reviewera), ne jen audit; scénář 5 (nález 21): i stanovisko právníka H1a (Account ho nedostal → odmítl celé zadání)
         z["rozhodnuti"] = (z.get("rozhodnuti") or []) + [{"bod": bod, "by": tok.get("by"), "reason": str(tok["reason"])[:1500]}]
     yield ctx.call_activity("notify", input={"event": "HITL_APPROVED", "bod": bod, "zakazka": z["id"], "by": tok.get("by"), "artifact_hash": artifact_hash, "subject_sub": (data.get("subject") or {}).get("sub"), "reason": (str(tok.get("reason"))[:300] if tok.get("reason") else None)})
     return data["token"], data
@@ -138,9 +150,9 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
     # odpovědi K1–K6 buď v poptávce (GUI formulář / API), jinak interrupt `klasifikace` v AG-UI; timeout → Pozastaveno
     if not z.get("klasifikace"):
         t_out = float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))
-        yield ctx.call_activity("notify", input={"event": "KLASIFIKACE_WAIT", "bod": "klasifikace", "zakazka": z["id"], "artifact_hash": h(z["poptavka"]), "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get("klasifikace", SLA_DEFAULT_S["klasifikace"]) or 0), "wf_version": VERSION})
-        data = yield from wait_with_sla(ctx, z, "klasifikace", "klasifikace", t_out)
-        if data is None: yield ctx.call_activity("notify", input={"event": "KLASIFIKACE_TIMEOUT", "bod": "klasifikace", "zakazka": z["id"], "result": "pozastaveno"}); return {**state, "stav": "Pozastaveno", "bod": "klasifikace"}
+        wait_ev = {"event": "KLASIFIKACE_WAIT", "bod": "klasifikace", "zakazka": z["id"], "artifact_hash": h(z["poptavka"]), "timeout_s": t_out, "sla_s": float((z.get("sla") or {}).get("klasifikace", SLA_DEFAULT_S["klasifikace"]) or 0), "wf_version": VERSION}
+        yield ctx.call_activity("notify", input=wait_ev)
+        data = yield from wait_or_pause(ctx, z, "klasifikace", "klasifikace", t_out, "KLASIFIKACE_TIMEOUT", wait_ev)   # nález 23: timeout = pauza + Resume
         z = {**z, "klasifikace": data.get("answers") or {}, "klasifikace_by": data.get("by"), "klasifikace_sub": data.get("sub"), "klasifikace_reason": data.get("reason")}
     kl = yield ctx.call_activity("klasifikace", input={"z": z})
     z = {**z, "profile": kl["profile"], "sensitivity": kl["sensitivity"]}
@@ -154,10 +166,9 @@ def zakazka(ctx: wf.DaprWorkflowContext, z):
         if not zad: yield ctx.call_activity("registry_zakazka", input={"z": z, "status": "RoleFailed" if (z.get("pause") or {}).get("bod") == "role" else "BudgetExceeded"}); return {**state, "stav": "Pozastaveno", "bod": (z.get("pause") or {}).get("bod", "rozpocet"), "role": "account"}
         if zad.get("type") != "otazky": break
         if rnd >= int(z.get("dialog_max", 3)): yield ctx.call_activity("notify", input={"event": "DIALOG_LIMIT", "zakazka": z["id"], "rounds": rnd}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
-        yield ctx.call_activity("notify", input={"event": "DIALOG_WAIT", "bod": "dialog", "zakazka": z["id"], "artifact_hash": zad["hash"], "round": rnd + 1, "timeout_s": float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))})
-        data = yield from wait_with_sla(ctx, z, "dialog:account", "dialog", float(z.get("hitl_timeout_s", HITL_TIMEOUT_S)))
-        if data is None:
-            yield ctx.call_activity("notify", input={"event": "DIALOG_TIMEOUT", "bod": "dialog", "zakazka": z["id"], "result": "pozastaveno"}); return {**state, "stav": "Pozastaveno", "bod": "dialog"}
+        wait_ev = {"event": "DIALOG_WAIT", "bod": "dialog", "zakazka": z["id"], "artifact_hash": zad["hash"], "round": rnd + 1, "timeout_s": float(z.get("hitl_timeout_s", HITL_TIMEOUT_S))}
+        yield ctx.call_activity("notify", input=wait_ev)
+        data = yield from wait_or_pause(ctx, z, "dialog:account", "dialog", float(z.get("hitl_timeout_s", HITL_TIMEOUT_S)), "DIALOG_TIMEOUT", wait_ev)   # nález 23: timeout = pauza + Resume
         yield ctx.call_activity("notify", input={"event": "DIALOG_ANSWER", "bod": "dialog", "zakazka": z["id"], "by": data.get("by"), "round": rnd + 1, "answer": str(data.get("answer", ""))[:500]})
         z = {**z, "dialog": (z.get("dialog") or []) + [str(data.get("answer", ""))[:2000]]}
     gh_hitl = os.environ.get("P0_HITL_GITHUB") == "1"
