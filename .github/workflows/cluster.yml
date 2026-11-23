@@ -141,7 +141,7 @@ jobs:
             echo "## pody rolí v namespaces tenantů (zombie zakázky po resume tenanta – nález 18)"
             kubectl get pods -A -l app=role -o custom-columns='NS:.metadata.namespace,POD:.metadata.name,ZAKAZKA:.metadata.labels.platform\.zakazka,PHASE:.status.phase,START:.status.startTime' 2>&1 | head -40
             echo "## poslední RESUME_TENANT celý + stav obnovených zakázek z API"
-            kubectl -n $ns exec deploy/zakazka -c app -- python3 - <<'PY' 2>&1 | tail -60
+            kubectl -n $ns exec -i deploy/zakazka -c app -- python3 - <<'PY' 2>&1 | tail -60
           import json, urllib.request
           last = None
           for l in open("/data/ledger.jsonl", "rb"):
