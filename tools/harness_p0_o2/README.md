@@ -170,7 +170,7 @@ opakovaný pokus (cesta schválení zatím neměřena).
 | B1 | LLM listener `strict`: bez klíče / cizí klíč 401; klíč role projde; log nese `role` a `zakazka` | ✅ |
 | B2 | P0-7 (ostré limity z rolí) Dokonceno; BUDGET `source=agentgateway`, součet logu = 0,045 USD, 4 role × vlastní klíč; shoda s SDK na 1e-6 | ✅ 15 requestů |
 | B3 | `budget_usage` (sqlite): per klíč 3 okna (24h audit, 24h block, 30d block), USD v nanodolarech, okna v ms zarovnaná na epochu; flush každých 5 s | ✅ |
-| B4 | **Block:** klíč Vývojáře P0-8 s limitem 0,005 USD → po 2 requestech 429 (`Retry-After`) → SDK run selže → `BUDGET_EXCEEDED` → eskalace → timeout 5 s → Pozastaveno `rozpocet`, Reviewer nespuštěn | ✅ |
+| B4 | **Block:** klíč Vývojáře P0-8 s limitem 0,005 USD → po 2 requestech 429 (`Retry-After`) → SDK run selže → `BUDGET_EXCEEDED` → eskalace → timeout 5 s → pauza instance (`SUSPENDED`, `STOP by=timeout`; od 2026-11-23, nález 23 scénáře 5 – dřív Pozastaveno = konec workflow), Reviewer nespuštěn | ✅ (nová podmínka zatím neměřena lokálně – kind) |
 | B5 | **Audit:** klíč Architekta P0-8 s limitem 0,001 USD → warn `API key budget exceeded` (exceeded=true), requesty dál 200, ADR vzniklo | ✅ |
 | B6 | Cena gateway vs. SDK per role | ℹ️ shodné |
 
