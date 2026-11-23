@@ -1,7 +1,7 @@
 ---
 tema: Pět eval scénářů pro ruční zkoušku autonomní IT firmy z GUI – od smoke testu po adversariální zakázku; co zadat, co má nastat, co měřit
-naposledy_overeno: 2026-11-20
-zralost: scénáře 1–2 ověřeny ostře (2026-11-19/20); 3–5 čekají
+naposledy_overeno: 2026-11-23
+zralost: scénáře 1–3 ověřeny ostře (2026-11-19/20/22); 4 běží (2026-11-23), 5 čeká
 primarni_zdroje:
   - knowledge/organization/procesy.md
   - knowledge/organization/metriky.md
@@ -192,7 +192,23 @@ Poučení: člověk může zadání doplnit kdekoli (dialog, H1, H2) a platforma
 jinak si ho „vezme“ jen audit. Výsledek 1. pokusu je použitelný nástroj (testy, README česky), ale postavený na domněnkách; 2. pokus
 (nové id) změří dialog Accounta, varianty v ADR a plán úkolů naostro.
 
+### Nálezy ze scénáře 4 (2026-11-23, Z-11231015 – průběžně)
+
+Průběh do Stopu (čas od založení): Account 5 otázek → odpověď → zadání, [issue #68](https://github.com/akczcz/adam/issues/68), H1 (9 min);
+Architekt ADR 3 varianty, plán 3 úkolů (jádro, testy, README), H2 (14 min); úkol 1: Vývojář 10 kol → Reviewer `changes_requested`
+(QUOTE_ALL místo QUOTE_MINIMAL, popis zarovnání) → oprava 12 kol → `ok`, 13 testů (22 min); úkol 2 start, Vývojář ~47 s → **Stop** z GUI.
+Útrata při Stopu 0,443 USD z 1 USD.
+
+| # | Zakázka | Co se stalo | Oprava |
+|---|---|---|---|
+| – | Z-11231015 | **Stop → `Pozastaveno` do ~20 s** (grace podu 20 s): `ROLE_POD_KILLED` → `ROLE_CHECKPOINT` 15 souborů (SIGTERM) → `STOP` (`SUSPENDED`) → registr `Pozastaveno`; orchestrátor běh označil `stopped` (opakování po resume) | – (cíl ≤ 60 s splněn) |
+| 17 | Z-11231015 | **GUI nemá Resume zakázky** – karta zakázky má jen Stop (při `RUNNING`), Resume existuje jen pro celý tenant na stránce Firma; API `/zakazky/{id}/resume` GUI nevolalo. Scénář počítá s „Resume (Firma → tenant, nebo zakázka)“ | AG-UI akce `resume` (důvod ≥ 10 znaků, CustomEvent `resumed`), tlačítko **Resume zakázky** na kartě při `SUSPENDED`; ledger `RESUME` se stavem před/po |
+| 18 | Z-11231015 | **Resume tenanta z GUI „nic neudělal“**: handler procházel `get_workflow_state` **všech** zakázek tenanta z ledgeru (stovky z měření harnessu, acme je výchozí tenant), požadavek přes Cloudflare vypršel (100 s) bez odpovědi, instance zůstala `SUSPENDED` i po 35 min; 5 kliknutí = 5× odblokování klíčů (`GATEWAY_KEYS_UNBLOCK`), žádný `RESUME_TENANT`. Harness O3 to nezachytil (tenant beta má jednotky zakázek) | `tenant_zakazky`: jen zakázky bez konečného stavu v registru a mladší než `P0_TENANT_SCAN_DAYS` (30); `STOP_TENANT`/`RESUME_TENANT` nesou `candidates` a `scan_s`; GUI Firma ukáže chybu i bez těla odpovědi |
+| 19 | Z-11231015 | **Sonda propagace klíčů účtuje zakázce**: odblokování klíčů tenanta ověřuje `POST /v1/messages` (`max_tokens: 1`) klíčem první zakázky tenanta – 16 sond × 0,003 USD = **0,048 USD** připsáno roli `account` zakázky Z-11231015 (5 % rozpočtu 1 USD), v FinOps nerozlišitelné od práce role | kandidát: vyhrazený sondovací klíč tenanta (`zakazka: _sonda`), nebo sondu neúčtovat (`budget_usage` filtr) – zatím jen zapsáno |
+| – | Z-11231015 | Karta zakázky i seznam ukazují `SUSPENDED` jako červený badge třídy `error` (text `Pozastaveno` ze registru je v pořádku) | kosmetické, zatím ne |
+
 ## Changelog
+- 2026-11-23: scénář 4 (Z-11231015) – Stop → `Pozastaveno` do ~20 s s checkpointem; nálezy 17–18 (Resume jen pro tenant a bez odezvy při stovkách zakázek v ledgeru) opraveny, 19 (sonda klíčů účtuje zakázce) zapsán; běh pokračuje po nasazení.
 - 2026-11-22: scénář 3 ostře `Dokonceno` ve 3. pokusu (Z-11221144, 1,5965 USD, ~90 min, PR #66) – smyčka review per úkol naostro; nálezy 14–16 (tiché zkrácení výstupu nástrojů, fixtures mimo UTF-8 v PR) opraveny.
 - 2026-11-22: scénář 3, 2. pokus (Z-11220949, `RoleFailed`) – dialog a rozhodnutí z H2 fungují; nálezy 11–13 (Reviewer nečte soubory PR v podu, verdikt jako podřetězec, soubory zakázky v emptyDir) opraveny; 3. pokus následuje.
 - 2026-11-22: scénář 3, 1. pokus (Z-11220852, `Dokonceno`, 0,298 USD) – nálezy 8–10 (Account se neptal, rozhodnutí z H2 se k rolím nedostalo, titulek PR) opraveny; 2. pokus následuje.
