@@ -1,0 +1,3 @@
+| jmeno | mesto | poznamka |
+|---|---|---|
+| Jan Novák | Brno | zkouška; s čárkou \| a svislítkem |
