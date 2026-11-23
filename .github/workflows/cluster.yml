@@ -8,9 +8,9 @@ on:
         description: stop | start | status | live-sync (ostrá tajemství anthropic-api-key/github-token z Key Vaultu do běžícího clusteru – ESO force-sync, nové pody gateway a aplikace, předletová kontrola) | diag (diagnostika telemetrie – Collector, ClickHouse, gateway; nic nemění) | clickhouse-retention (úklid systémových logů ClickHouse a TTL otel tabulek – harness --ch-retention)
         default: status
         type: choice
-        options: [stop, start, status, live-sync, diag, clickhouse-retention]
+        options: [stop, start, status, live-sync, diag, clickhouse-retention, stop-zakazky]
       tag:
-        description: diag – prefix zakázek běhu harnessu (např. P31-071221); prázdné = jen stav podů a logy
+        description: diag – prefix zakázek běhu harnessu (např. P31-071221); prázdné = jen stav podů a logy. stop-zakazky – ID zakázek oddělená čárkou (úklid zombie zakázek, nález 18)
         default: ''
         type: string
 permissions:
@@ -138,6 +138,21 @@ jobs:
             kubectl -n $ns exec deploy/zakazka -c app -- python3 -c "import json,urllib.request,sys; print(json.dumps(json.load(urllib.request.urlopen('http://127.0.0.1:8010/zakazky/'+sys.argv[1], timeout=60)), ensure_ascii=False)[:1200])" "$TAG" 2>&1 | tail -3
             echo "## ledger aplikace – stop/resume tenanta a zakázek bez filtru tagu (posledních 15)"
             kubectl -n $ns exec deploy/zakazka -c app -- sh -c "grep -aE '\"kind\": \"(STOP|RESUME|STOP_TENANT|RESUME_TENANT|STOP_TENANT_ERROR|RESUME_TENANT_ERROR|ROLE_STOPPED)\"' /data/ledger.jsonl | tail -15 | cut -c1-600" 2>&1
+            echo "## pody rolí v namespaces tenantů (zombie zakázky po resume tenanta – nález 18)"
+            kubectl get pods -A -l app=role -o custom-columns='NS:.metadata.namespace,POD:.metadata.name,ZAKAZKA:.metadata.labels.platform\.zakazka,PHASE:.status.phase,START:.status.startTime' 2>&1 | head -40
+            echo "## poslední RESUME_TENANT celý + stav obnovených zakázek z API"
+            kubectl -n $ns exec deploy/zakazka -c app -- python3 - <<'PY' 2>&1 | tail -60
+          import json, urllib.request
+          last = None
+          for l in open("/data/ledger.jsonl", "rb"):
+              if b'"kind": "RESUME_TENANT"' in l:
+                  try: last = json.loads(l)
+                  except Exception: pass
+          print(json.dumps(last, ensure_ascii=False)[:3000] if last else "žádný RESUME_TENANT")
+          for z in (last or {}).get("resumed") or []:
+              try: j = json.load(urllib.request.urlopen("http://127.0.0.1:8010/zakazky/" + z, timeout=30)); print(z, j.get("status"), (j.get("output") or {}).get("stav"), (j.get("output") or {}).get("bod"))
+              except Exception as e: print(z, "chyba", type(e).__name__, str(e)[:80])
+          PY
             echo "## log aplikace – chyby bez filtru tagu (posledních 25 z 4000)"
             kubectl -n $ns logs deploy/zakazka -c app --tail=4000 2>&1 | grep -iE 'error|traceback|exception|timeout' | grep -viE 'ROLE_POD_ERROR|egress_probe' | tail -25 | cut -c1-500
           } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
@@ -157,6 +172,26 @@ jobs:
           pip install -q httpx pyyaml 'psycopg[binary]' 'PyJWT[crypto]' cryptography certifi
           python tools/harness_p1_k8s/harness.py --ch-retention --context "$CLUSTER-admin" 2>&1 | tee "$RUNNER_TEMP/ch.log"
           { echo "## retence ClickHouse"; echo '```'; grep -E "^(✅|❌)" "$RUNNER_TEMP/ch.log" | cut -c1-3000; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # stop-zakazky (2026-11-23, eval scénář 4, nález 18): resume tenanta acme ze staré verze aplikace obnovil desítky zakázek harnessu zastavených
+      # „úklid po měření“ – ty teď spouštějí pody rolí (Kata uzel sdílený s ostrou zakázkou). Stop jednotlivých zakázek interním API aplikace
+      # (stejná cesta jako úklid harnessu): pause workflow + ukončení podů; důvod v ledgeru STOP (by=cluster-workflow).
+      - if: inputs.action == 'stop-zakazky'
+        name: stop-zakazky
+        run: |
+          set +e
+          [ -n "${{ inputs.tag }}" ] || { echo "stop-zakazky: tag = ID zakázek oddělená čárkou" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; }
+          az aks get-credentials -g "$RG" -n "$CLUSTER" --admin --overwrite-existing -o none
+          echo "## stop-zakazky" | tee -a "$GITHUB_STEP_SUMMARY"
+          kubectl -n platform-data exec -i deploy/zakazka -c app -- python3 - "${{ inputs.tag }}" <<'PY' 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys, urllib.request
+          for z in [x.strip() for x in sys.argv[1].split(",") if x.strip()]:
+              try:
+                  st = json.load(urllib.request.urlopen("http://127.0.0.1:8010/zakazky/" + z, timeout=30)).get("status")
+                  if st != "RUNNING": print(z, "přeskočeno: stav", st); continue
+                  req = urllib.request.Request("http://127.0.0.1:8010/zakazky/" + z + "/stop", data=json.dumps({"by": "cluster-workflow", "reason": "úklid: zakázka harnessu obnovená omylem resume tenanta (nález 18)"}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+                  print(z, json.dumps(json.load(urllib.request.urlopen(req, timeout=120)), ensure_ascii=False)[:300])
+              except Exception as e: print(z, "chyba", type(e).__name__, str(e)[:160])
+          PY
       # live-sync (P4-10, 2026-11-19): Adam nastavil ostré hodnoty v Key Vaultu až po startu clusteru → bez kubectl nešlo vynutit ESO sync a nové pody
       # (klíč modelu je env gateway i aplikace; PAT je soubor gateway – watched). Anotace force-sync na třech ExternalSecretech, čekání na refreshTime,
       # rollout restart gateway + aplikace; hodnoty se nikam nevypisují (jen „výchozí (mock)“ / „nastavena“). Předletová kontrola je ve kroku níže.
