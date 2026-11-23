@@ -27,10 +27,10 @@ def collect_files(WORK, root):
     for rootname in ("artifacts", "work"):
         base = WORK if rootname == "work" else os.path.join(root, rootname)
         for d, dirs, names in os.walk(base):
-            dirs[:] = [x for x in dirs if not x.startswith(".")]
+            dirs[:] = [x for x in dirs if not (x.startswith(".") or x in ("__pycache__", ".pytest_cache", "node_modules", ".venv", "venv") or x.startswith("pytest-of-") or x.endswith(".egg-info"))]   # eval scénář 3: dočasné adresáře pytestu nejsou výstup role
             for n in names:
                 fp = os.path.join(d, n); rel = os.path.relpath(fp, base)
-                if rel.startswith("."): continue
+                if rel.startswith(".") or n.endswith((".pyc", ".pyo")): continue
                 try: data = open(fp, "rb").read()
                 except Exception: continue
                 if len(data) > 2_000_000: continue

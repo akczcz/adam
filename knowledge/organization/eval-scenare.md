@@ -114,7 +114,9 @@ silnější model nebo delší dialog cenu násobí.
 |---|---|---|---|---|---|---|---|
 | 1 | 2026-11-19 | Z-11192236 (5. pokus; předchozí Z-11191940, Z-11192036, Z-11192102, Z-11192207) | **Dokonceno** – [issue #54](https://github.com/akczcz/adam/issues/54), [PR #55](https://github.com/akczcz/adam/pull/55) mergnutý, `zakazky/Z-11192236/NOTES.md` | 0,1147 (rozpočet 3) | ~22 min (agenti ~5 min, zbytek čekání na H1/H2/H4/H5) | 4 schválení; H4 s odůvodněním proti falešnému `changes_requested` Reviewera; žádná ruční oprava artefaktu | 5 nálezů platformy z pokusů 1–5 (níže) |
 | 2 | 2026-11-20 | Z-11201535 | **Dokonceno** – [PR #58](https://github.com/akczcz/adam/pull/58) mergnutý, `zakazky/Z-11201535/slugify.py` + `test_slugify.py` (15 testů, lokálně `15 passed`) | 0,2517 (rozpočet 5) | ~40 min (z toho ~22 min čekání na nasazení opravy, zbytek HITL) | 5 schválení (role.retry, H1, H2, H4, H5); 0 ručních oprav; H4 schváleno s odchylkou | nálezy 6–7 (níže) |
-| 3 | | | | | | | |
+| 3 | 2026-11-22 | Z-11221144 (3. pokus) | **Dokonceno** – dialog (4 bloky otázek s výchozími odpověďmi), ADR s 5 variantami a plánem 4 úkolů, review per úkol (úkol 2: `changes_requested` → oprava → `ok`; úkol 3: 2× `changes_requested` → `REVIEW_UNRESOLVED`; úkol 4: `changes_requested` → `ok`), [issue #65](https://github.com/akczcz/adam/issues/65), [PR #66](https://github.com/akczcz/adam/pull/66) mergnutý; po merge lokálně `37 passed`, CLI převádí UTF-8 i Windows-1250 | 1,5965 (rozpočet 10; Architekt odhad v ADR) | ~90 min (agenti ~45 min, 16 běhů rolí; ~25 min čekání na nasazení opravy po vyčerpání kol) | 6 schválení (dialog, H1, H2, role.retry, H4 s výhradou, H5); 0 ručních oprav | nálezy 14–16: nástroje tiše krátily výstup (Reviewer „seříznutý soubor“, Vývojář 40 kol čtením), fixtures Windows-1250 vypadly z PR |
+| 3 | 2026-11-22 | Z-11220949 (2. pokus) | **RoleFailed** – dialog ✅ (5 otázek s výchozími odpověďmi), ADR se 4 úkoly ✅, úkoly 1–2 hotové, Vývojář v úkolu 3 vyčerpal kola 2× (podruhé v prázdném cwd po restartu aplikace); [issue #64](https://github.com/akczcz/adam/issues/64), PR nevznikl | ~0,9 (rozpočet 10) | ~60 min (z toho ~25 min nasazení oprav) | 5 schválení (dialog, H1, H2, role.retry); 0 ručních oprav | nálezy 11–13: Reviewer nečte soubory PR v podu, verdikt se parsuje špatně, soubory zakázky v emptyDir |
+| 3 | 2026-11-22 | Z-11220852 (1. pokus) | **Dokonceno** – [PR #63](https://github.com/akczcz/adam/pull/63) mergnutý (10 souborů: `converter.py`, `main.py`, testy, README, vzorky CSV), po vyhodnocení z repa odstraněno | 0,2980 (rozpočet 10) | ~18 min (agenti ~9 min: Account 3, Architekt 1,5, Vývojář 3,5, Reviewer 2,5; zbytek HITL) | 4 schválení (H1, H2 s doplněním zadání, H4 „plnohodnotný výsledek bez doplněného zadání“, H5); 0 ručních oprav | nálezy 8–10: Account se neptal, odpovědi z H2 se k rolím nedostaly, plán = 1 úkol, titulek PR z chatu modelu |
 | 4 | | | | | | | |
 | 5 | | | | | | | |
 
@@ -143,7 +145,57 @@ Poučení: harness měřil role na mocku s kanonickými odpověďmi, takže chyb
 ošetření chybného běhu role se ukázaly až s živým modelem; orchestrátor musí každý výstup role validovat (artefakt existuje, soubory
 neprázdné, cesty), ne věřit, že role „doběhla“.
 
+### Nálezy ze scénáře 3 (2026-11-22, 1. pokus)
+
+| # | Zakázka | Co se stalo | Oprava |
+|---|---|---|---|
+| 8 | Z-11220852 | Account se **neptal** (žádný `DIALOG_WAIT`): rovnou napsal `zadani.md` z poptávky bez oddělovače, kódování, jazyka… a otevřel H1. Mechanismus dialogu (P3-3: `artifacts/otazky.md` → otázky zadavateli, ≤ 3 kola) existuje, ale **prompt role ho nezmiňoval** – mock ho znal, živý model ne (stejná třída chyby jako nález 1) | prompt Accounta: když chybí, co rozhoduje o návrhu nebo přijetí díla, napsat 2–5 otázek s navrženou výchozí odpovědí do `otazky.md` a zadání nepsat; po odpovědích zadání s ověřitelnými kritérii |
+| 9 | Z-11220852 | Zadavatel doplnil zadání až v odůvodnění H2 (`;`, UTF-8/1250, CLI v Pythonu, čeština) – zapsalo se do `org.approvals`, ale **k Vývojáři ani Reviewerovi se nedostalo** (role dostávají jen poptávku, odpovědi dialogu a popis úkolu); Vývojář dělal podle předpokladů Architekta | `hitl_full` ukládá odůvodnění H1/H2 do `z.rozhodnuti`; `agent_run` ho dává do promptu Architekta, Vývojáře a Reviewera jako „Rozhodnutí zadavatele (závazné, má přednost před ADR)“; GUI u H1/H2 říká, že důvod dostanou role; Architekt má otevřené otázky uvést v ADR s předpokladem (člověk je rozhodne v H2); nová verze orchestrátoru `6736fabdd4c7` |
+| 10 | Z-11220852 | Titulek PR = první řádek odpovědi modelu: „Výborně! Všechno je hotovo. Zde je finální shrnutí:“ | titulek z prvního řádku poptávky; commit message nese počet úkolů z plánu |
+| – | Z-11220852 | Architekt dal celé řešení (jádro, CLI, testy, README, vzorky = 10 souborů) do **1 úkolu**; prompt říkal „jednoduchá zakázka = 1 úkol“ – review per úkol tím ztratilo smysl | prompt Architekta: úkol = samostatně ověřitelný celek (jádro, CLI, testy, README), 1 úkol jen pro triviální zakázku; ověří 2. pokus |
+| – | Z-11220852 | Dvě 401 z gateway (`invalid credentials`, role prázdná) ~2 min po `Dokonceno` – klíče zakázky už uklizené; zdroj neznámý (kandidát: sonda/health po GC) | pozorování, bez dopadu; sledovat |
+
+### Nálezy ze scénáře 3 (2026-11-22, 2. pokus – Z-11220949)
+
+Dialog Accounta i předání rozhodnutí z H2 už fungovaly (5 otázek s výchozími odpověďmi, ADR s variantami a 4 úkoly: jádro, CLI, testy, README).
+Úkoly 1 a 2 Vývojář dokončil (38 + 12 testů zelených), pak:
+
+| # | Zakázka | Co se stalo | Oprava |
+|---|---|---|---|
+| 11 | Z-11220949 | **Reviewer nedosáhl na soubory PR**: `read_artifact work/…` mapoval cestu na `/tmp/p0-o2/<id>/work`, v podu role je ale pracovní adresář `/work` (emptyDir, srt allowWrite) → každý pokus „neexistuje“; Reviewer úkolu 1 strávil 37 kol variantami cest a napsal `changes_requested` „kvůli technické chybě“. Platilo od zavedení podů rolí (P2-4) – scénáře 1–2 to zakryly (jeden soubor, mock evaly) | `read_artifact`: `work/<cesta>` i podadresáře → `P0_WORK_DIR`, holá cesta → work pak artifacts, `work/` = výpis; prompt Reviewera |
+| 12 | Z-11220949 | **Verdikt se parsoval jako podřetězec** `'verdict: ok' in txt` kdekoli v textu: Reviewer napsal „**Verdict:** `changes_requested`“ a v textu zmínil, že `verdict: ok` dát nemůže → ledger `ok`, smyčka Review → Implementace (P4-11) se nikdy nespustila; v mocku prošlo (kanonický řádek) | regex na první řádek s verdiktem (ok / changes_requested, i markdown, Verdikt/Verdict); prompt: verdikt = první řádek `review.md` |
+| 13 | Z-11220949 | **Soubory zakázky (work/, artifacts/) žily v emptyDir podu aplikace** – `live-sync` (nové pody) je smazal; opakovaný Vývojář (bod `role`) začal v prázdném cwd, postavil projekt znovu pod jiným názvem balíku a vyčerpal 40 kol → `RoleFailed`. Ledger byl na PVC, soubory ne | `/tmp/p0-o2` = PVC `zakazka-data` (subPath `zakazky`) jako ledger; durabilita souborů zakázky přes restart aplikace |
+| – | Z-11220949 | `pytest-of-app/`, `__pycache__/` z běhu testů šly do PR jako soubory úkolu (28 → 36 „souborů“) a do výpisu pro Reviewera | filtr dočasných adresářů při sběru výstupu role, uploadu z podu i v `files` API |
+| – | Z-11220949 | Vývojář v úkolu 3 (testy nad hotovým balíkem) utratil 16 z 24 kol průzkumem cwd (`ls`, `cat`, `wc`, `hexdump`) | prompt: seznam souborů předchozích úkolů a pokyn šetřit kroky (testy jednou, `--basetemp` v tečkovém adresáři); `P0_MAX_TURNS` 40 |
+| – | Z-11220949 | historie review: minulé `review.md` se přejmenovalo indexem **nového** kola (`review-2.1.md` = review úkolu 1) | `review-<úkol>.<kolo>.md` podle vlastního kola, uloženo po běhu |
+
+### Nálezy ze scénáře 3 (2026-11-22, 3. pokus – Z-11221144, Dokonceno)
+
+| # | Zakázka | Co se stalo | Oprava |
+|---|---|---|---|
+| 14 | Z-11221144 | `read_artifact` vracel tiše jen **prvních 4000 znaků** → Reviewer u úkolu 1 hlásil „`test_core.py` je seříznutý“ (soubor má 241 řádků), Vývojář v opravném kole vadu logicky nenašel (40 kol čtení souboru deseti způsoby), 2. kolo opět `changes_requested` → `REVIEW_UNRESOLVED` z falešného nálezu | 30 000 znaků se **značkou zkrácení** (celkem / vynecháno); ledger `TOOL.read_artifact.chars` |
+| 15 | Z-11221144 | `sandboxed_bash` vracel modelu jen **posledních 600 znaků stdout a žádný stderr**: `cat soubor` ukázal konec, chyba bez `2>&1` byla neviditelná → Vývojář v úkolu 2 vyčerpal 40 kol průzkumem (head/cat/sed/python read) a zakázka šla na bod `role`; po opravě úkol 2 za 16 kol | stdout 9000 + 3000 znaků se značkou, stderr 1500 + 1500; ledger/calls dál jen zkrácený konec |
+| 16 | Z-11221144 | Publikace PR nese jen UTF-8 text: `sample_win1250.csv` a `test_data/sample_cp1250.csv` **tiše vypadly z PR** (`PUBLISH_SKIP_BINARY`), Reviewer to nemohl vidět (posuzuje pracovní adresář); člověk schválil H4 s výhradou. Testy po merge přesto zelené (fixtures si tvoří samy), CLI Windows-1250 zvládá | soubory mimo UTF-8 jako **base64 blob** (git data API), ledger `PUBLISH_BASE64`; přeskočí se jen > 2 MB |
+| – | Z-11221144 | Reviewer u úkolu 3 (testovací data) dal 2× `changes_requested` („jen částečně opraveno“: chyběly některé speciální znaky ve vzorcích) → `REVIEW_UNRESOLVED`; H4 to ukázal jako poslední verdikt `ok` (úkol 4), ne nevyřešený úkol 3 | kandidát: karta H4 má vypsat verdikty všech úkolů, ne jen poslední |
+| – | Z-11221144 | `run_evals` vypisoval stopy CLI v cwd (`node_modules`, `.claude`, `.env.production.local`) jako „soubory PR“ | filtr jako u sběru výstupu role |
+| – | Z-11221144 | Dialog Accounta: 4 bloky otázek, každá s výchozí odpovědí; ADR 5 variant (parser, kódování, escapování, nové řádky, chyby) s cenou a rizikem; plán 4 úkolů (jádro, CLI, testy, README) – přesně, co scénář měří | – |
+
+Poučení: smyčka Review → Implementace funguje jen tak dobře, jak **věrně role vidí artefakty** – tiché zkrácení výstupu nástroje vyrobí
+falešný nález, falešnou opravu a propadlé kolo review, a žádný z aktérů to nepozná. Nástroje rolí musí zkracovat viditelně (se značkou) a
+publikace nesmí tiše vynechávat soubory; člověk v H4 má vidět, co z pracovního adresáře do PR nedošlo.
+
+Poučení: každý výstup role musí být pro další roli **dosažitelný stejnou cestou v každém prostředí** (proces, pod) a musí přežít restart
+platformy – jinak se smyčka review a opakování běhu role (P4-10/P4-11) jen tváří, že fungují. Mock to nezachytí: čte kanonické cesty a píše
+kanonické řádky; měření na mocku ověří tok, ne to, že role vidí, co vidět má. 3. pokus (nové id) změří celý tok včetně smyčky review naostro.
+
+Poučení: člověk může zadání doplnit kdekoli (dialog, H1, H2) a platforma mu to dovolí – každé takové rozhodnutí musí dál téct k rolím,
+jinak si ho „vezme“ jen audit. Výsledek 1. pokusu je použitelný nástroj (testy, README česky), ale postavený na domněnkách; 2. pokus
+(nové id) změří dialog Accounta, varianty v ADR a plán úkolů naostro.
+
 ## Changelog
+- 2026-11-22: scénář 3 ostře `Dokonceno` ve 3. pokusu (Z-11221144, 1,5965 USD, ~90 min, PR #66) – smyčka review per úkol naostro; nálezy 14–16 (tiché zkrácení výstupu nástrojů, fixtures mimo UTF-8 v PR) opraveny.
+- 2026-11-22: scénář 3, 2. pokus (Z-11220949, `RoleFailed`) – dialog a rozhodnutí z H2 fungují; nálezy 11–13 (Reviewer nečte soubory PR v podu, verdikt jako podřetězec, soubory zakázky v emptyDir) opraveny; 3. pokus následuje.
+- 2026-11-22: scénář 3, 1. pokus (Z-11220852, `Dokonceno`, 0,298 USD) – nálezy 8–10 (Account se neptal, rozhodnutí z H2 se k rolím nedostalo, titulek PR) opraveny; 2. pokus následuje.
 - 2026-11-20: před scénářem 3 doplněn do platformy plán úkolů z ADR (`ukoly.json`, 1–4 úkoly) a smyčka Review → Implementace ≤ 2 kol per úkol (P4-11, [p4-provoz.md](../platforma/p4-provoz.md#p4-11-úkoly-z-plánu-adr-a-smyčka-review--implementace)); scénář 3 tak měří plán Architekta a verdikty Reviewera naostro.
 - 2026-11-20: scénář 2 ostře – Z-11201535 `Dokonceno` po jednom opakování Vývojáře (bod `role`); nálezy 6–7; cesta modulu ve scénáři 2 opravena na adresář zakázky.
 - 2026-11-19: scénář 1 ostře – 5 pokusů, pátý `Dokonceno` (0,1147 USD, ~22 min); tabulka nálezů 1–5 a opravy platformy.

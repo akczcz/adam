@@ -528,6 +528,7 @@ změří eval scénář 3 ([eval-scenare.md](../organization/eval-scenare.md)).
 | Tokeny v souboru aplikace | krátkodobé (30 min), 0600, tytéž tokeny jsou v historii workflow v Postgresu; úklid po 30 dnech |
 
 ## Changelog
+- 2026-11-22: eval scénář 3 ostře `Dokonceno` (Z-11221144, 3. pokus, 1,60 USD) – nálezy 8–16 opraveny ([eval-scenare.md](../organization/eval-scenare.md)): Account se ptá (`otazky.md`), rozhodnutí člověka z H1/H2 jde rolím, Reviewer čte soubory PR v podu (`work/` = `P0_WORK_DIR`), verdikt z prvního řádku review, soubory zakázek na PVC `zakazka-data` (restart aplikace je mazal), `P0_MAX_TURNS` 40, výstup nástrojů rolí se krátí jen se značkou, ne-UTF-8 soubory do PR jako base64; `cluster diag` kreslí osu zakázky a plné příkazy rolí, `status` vypisuje větev Fluxu a ConfigMapu. Měřicí L1c s ostrými tajemstvími v Key Vaultu = SKIP.
 - 2026-11-20: P4-11 hotovo na AKS (101/101 PASS + 24 INFO + 1 SKIP, 2 běhy) – úkoly z plánu ADR (`ukoly.json`) a smyčka Review → Implementace ≤ 2 kol per úkol (nová verze orchestrátoru
   `d50ffca839ae`), PR jednou po review; eval scénář 2 ostře `Dokonceno` (Z-11201535, 0,2517 USD), nálezy 6–7 (pytest v obrazu, `P0_MAX_TURNS` 24).
 - 2026-11-19: první ostrá zakázka z GUI (eval scénář 1, `Z-11192236` → issue #54, PR #55, `Dokonceno`, 0,1147 USD, ~22 min) po pěti pokusech;

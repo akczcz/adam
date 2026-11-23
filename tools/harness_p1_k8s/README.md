@@ -1308,6 +1308,13 @@ Nálezy:
 
 Výsledek: **101 PASS / 0 FAIL / 24 INFO / 1 SKIP** (`measure` run 44797987864, head 010454c; e2e 97 min, L1c SKIP `secrets_live {model: true, github: true}`, L2b `probe: sentinel`, N3a–b PASS, cluster se zastavil sám). Předchozí běh 44777262164 (head 848206b): **101 PASS / 1 FAIL / 24 INFO** – V2a–b PASS, ❌ L1c (nález 1).
 
+Běh 3 po opravách z eval scénáře 3 (nálezy 8–16 v [eval-scenare.md](../../knowledge/organization/eval-scenare.md#nálezy-ze-scénáře-3-2026-11-22-3-pokus--z-11221144-dokonceno) – Account se ptá přes
+`otazky.md`, rozhodnutí z H1/H2 jde rolím, Reviewer čte `work/` v podu a verdikt z prvního řádku, soubory zakázek na PVC, výstupy nástrojů se nekrátí tiše,
+soubory mimo UTF-8 do PR jako base64, verze orchestrátoru `6736fabdd4c7`): **101 PASS / 0 FAIL / 24 INFO / 1 SKIP** (`measure` run 45028021114, head 181b0f5,
+2026-11-22; V2a `plan: ok:2`, V2b `loops` 1 / `unresolved: 0` / PR jednou, V2c wall 411 s, 7 běhů rolí; L1c SKIP `secrets_live {model: true, github: true}`;
+celý běh 105 min, cluster se zastavil sám – AKS i PG `Stopped`). Mock role tedy fungují i s novým mapováním cest `read_artifact`, parserem verdiktu a filtry
+dočasných souborů; kvalita živého modelu je ověřená scénářem 3 (Z-11221144, `Dokonceno`).
+
 Nálezy:
 
 1. **L1c předpokládá mock Key Vault; po eval scénářích tam jsou ostré hodnoty** (run 44777262164): preflight `/_live/model` i `/_live/github`

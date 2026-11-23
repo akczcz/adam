@@ -351,6 +351,8 @@ function Thread({ id, user }: { id: string; user: User }) {
               <b>Publikace selhala</b> – {String(interrupt.metadata?.publish_kind ?? "?")} do GitHubu{interrupt.metadata?.live ? " (ostrý běh)" : ""}: <code data-testid="publish-error">{String(interrupt.metadata?.error ?? "")}</code>
               <div className="muted">Schválit = opakovat publikaci (po opravě PAT nebo výpadku), Zamítnout = pozastavit zakázku. Nic se neodeslalo jinam, role znovu neběží.</div>
             </div>)}
+          {(interrupt.metadata?.bod === "H1" || interrupt.metadata?.bod === "H2") && (
+            <div className="muted" style={{ marginBottom: 6 }} data-testid="reason-roles-hint">Důvod schválení u {String(interrupt.metadata?.bod)} dostanou další role jako závazné rozhodnutí zadavatele (volba varianty, doplnění zadání, předpoklady z ADR) – pište ho tak, aby podle něj mohl Vývojář pracovat.</div>)}
           <label>Důvod rozhodnutí (povinný, ≥ 10 znaků – zapisuje se do org.approvals, podepsaný token nese vaše jméno)</label>
           <textarea data-testid="approve-reason" value={reason} onChange={(x) => setReason(x.target.value)} />
           <div className="row" style={{ marginTop: 8 }}>
