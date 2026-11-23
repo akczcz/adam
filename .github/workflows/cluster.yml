@@ -131,6 +131,15 @@ jobs:
           PY
             echo "## log aplikace – chyby a HITL (posledních 60 z 4000)"
             kubectl -n $ns logs deploy/zakazka -c app --tail=4000 2>&1 | grep -iE 'error|traceback|hitl|approve|reject|interrupt|403|401|422' | grep -F "$TAG" | tail -60 | cut -c1-500
+            # 2026-11-23 (eval scénář 4, Z-11231015): Resume tenanta z GUI „nic neukázal“ – handler prochází stav všech zakázek tenanta a Cloudflare požadavek
+            # po 100 s utne; události tenanta nenesou ID zakázky (filtr tagu je skryl). Proto stav instance Dapr přímo z API aplikace, události tenanta
+            # a chyby aplikace bez filtru tagu.
+            echo "## stav instance $TAG (API aplikace: Dapr runtime status, výstup, failure)"
+            kubectl -n $ns exec deploy/zakazka -c app -- python3 -c "import json,urllib.request,sys; print(json.dumps(json.load(urllib.request.urlopen('http://127.0.0.1:8010/zakazky/'+sys.argv[1], timeout=60)), ensure_ascii=False)[:1200])" "$TAG" 2>&1 | tail -3
+            echo "## ledger aplikace – stop/resume tenanta a zakázek bez filtru tagu (posledních 15)"
+            kubectl -n $ns exec deploy/zakazka -c app -- sh -c "grep -aE '\"kind\": \"(STOP|RESUME|STOP_TENANT|RESUME_TENANT|STOP_TENANT_ERROR|RESUME_TENANT_ERROR|ROLE_STOPPED)\"' /data/ledger.jsonl | tail -15 | cut -c1-600" 2>&1
+            echo "## log aplikace – chyby bez filtru tagu (posledních 25 z 4000)"
+            kubectl -n $ns logs deploy/zakazka -c app --tail=4000 2>&1 | grep -iE 'error|traceback|exception|timeout' | grep -viE 'ROLE_POD_ERROR|egress_probe' | tail -25 | cut -c1-500
           } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           kill "$PF" 2>/dev/null; true
       # clickhouse-retention (P4-8 běh 3): plný PVC ClickHouse → Collector zahazoval spany. Stejný kód jako na startu měření (harness ch_retention):
