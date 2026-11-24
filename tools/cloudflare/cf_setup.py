@@ -171,7 +171,10 @@ def service_token(acc: str):
 
 def access_app(acc: str, fqdn: str, idp_id: str, st_id: str, emails: list[str]):
     """Self-hosted aplikace na hostname: policy 1 Service Auth (service token harnessu), policy 2 Allow e-maily (OTP). Existující aplikaci přepíše stejným tělem (PUT)."""
-    cur = next((a for a in (api("GET", f"/accounts/{acc}/access/apps") or []) if a.get("domain") == fqdn or any((d or {}).get("uri") == fqdn for d in (a.get("destinations") or []))), None)
+    apps = api("GET", f"/accounts/{acc}/access/apps") or []
+    cur = next((a for a in apps if a.get("domain") == fqdn or any((d or {}).get("uri") == fqdn for d in (a.get("destinations") or []))), None)
+    if cur is None:   # přejmenování hostname (2026-11-24 platforma → platform): aplikaci platformy najít podle jména a jen přepsat doménu – policy, AUD i session zůstávají, žádná druhá aplikace
+        cur = next((a for a in apps if a.get("name") == APP_NAME), None)
     policies = [{"name": "harness service token", "decision": "non_identity", "precedence": 1, "include": [{"service_token": {"token_id": st_id}}]}]
     if emails:
         policies.append({"name": "lide OTP", "decision": "allow", "precedence": 2, "include": [{"email": {"email": e}} for e in emails]})
@@ -184,7 +187,7 @@ def access_app(acc: str, fqdn: str, idp_id: str, st_id: str, emails: list[str]):
             "allowed_idps": [idp_id], "auto_redirect_to_identity": True, "app_launcher_visible": False, "service_auth_401_redirect": False,
             "http_only_cookie_attribute": True, "policies": policies}
     a = api("PUT", f"/accounts/{acc}/access/apps/{cur['id']}", body) if cur else api("POST", f"/accounts/{acc}/access/apps", body)
-    return {"id": a["id"], "aud": a.get("aud"), "domain": a.get("domain"), "created": not cur, "policies": [(p.get("name"), p.get("decision")) for p in (a.get("policies") or [])], "humans": len(emails)}
+    return {"id": a["id"], "aud": a.get("aud"), "domain": a.get("domain"), "created": not cur, "renamed_from": (cur or {}).get("domain") if cur and cur.get("domain") != fqdn else None, "policies": [(p.get("name"), p.get("decision")) for p in (a.get("policies") or [])], "humans": len(emails)}
 
 
 def tunnel(acc: str, fqdn: str):
@@ -202,13 +205,18 @@ def dns(zone_id: str, fqdn: str, tunnel_id: str):
     other = [r for r in recs if r.get("type") != "CNAME"]
     for r in other:   # A/AAAA na stejném jméně by CNAME blokovaly
         api("DELETE", f"/zones/{zone_id}/dns_records/{r['id']}")
+    # stará jména tunelu (přejmenování hostname): CNAME na tentýž tunnel pod jiným jménem už nemá ingress ani Access → smazat, ať nezůstává slepá adresa
+    stale = [r for r in (api("GET", f"/zones/{zone_id}/dns_records", params={"type": "CNAME", "content": target}) or []) if r.get("name") != fqdn]
+    for r in stale:
+        api("DELETE", f"/zones/{zone_id}/dns_records/{r['id']}")
+    extra = {"removed_stale": [r.get("name") for r in stale]} if stale else {}
     if cur and cur.get("content") == target and cur.get("proxied"):
-        return {"id": cur["id"], "op": "keep", "target": target}
+        return {"id": cur["id"], "op": "keep", "target": target, **extra}
     if cur:
         r = api("PATCH", f"/zones/{zone_id}/dns_records/{cur['id']}", {"content": target, "proxied": True, "ttl": 1})
-        return {"id": r["id"], "op": "update", "target": target}
+        return {"id": r["id"], "op": "update", "target": target, **extra}
     r = api("POST", f"/zones/{zone_id}/dns_records", {"type": "CNAME", "name": fqdn, "content": target, "proxied": True, "ttl": 1, "comment": "P4-10 pojmenovaný tunnel platformy"})
-    return {"id": r["id"], "op": "create", "target": target}
+    return {"id": r["id"], "op": "create", "target": target, **extra}
 
 
 # --- akce -------------------------------------------------------------------------------------------------------------------------------
@@ -295,7 +303,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--action", choices=["setup", "status", "teardown"], default="status")
     p.add_argument("--zone", required=True, help="doména (zóna) v účtu Cloudflare, např. autonomous.place")
-    p.add_argument("--host", default="platforma", help="subdoména GUI (jedna úroveň – víceúrovňová potřebuje Advanced Certificate)")
+    p.add_argument("--host", default="platform", help="subdoména GUI (jedna úroveň – víceúrovňová potřebuje Advanced Certificate); do 2026-11-24 `platforma`, setup s novým jménem přepíše doménu aplikace a ingress tunelu a smaže starý CNAME")
     p.add_argument("--team", default="", help="team name pro založení Zero Trust organizace, když ještě není (jinak se použije existující)")
     p.add_argument("--email", default="", help="e-maily lidí pro Access policy Allow (OTP), oddělené čárkou; prázdné = zachovat existující")
     p.add_argument("--kv", default="", help="jméno Key Vaultu (hodnoty zapsat tam); prázdné = jen Cloudflare")
