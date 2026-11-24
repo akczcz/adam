@@ -2,8 +2,15 @@
 <html lang="cs">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
     <title>Platforma – řídicí pult firmy</title>
+    <script>
+      // motiv před prvním vykreslením (bez bliknutí): uložená volba > prefers-color-scheme > dark (theme.ts drží stejná pravidla)
+      (function () { var t = null; try { t = localStorage.getItem("gui_theme"); } catch (e) {}
+        if (t !== "light" && t !== "dark") { try { t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; } catch (e) { t = "dark"; } }
+        document.documentElement.setAttribute("data-theme", t); })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
