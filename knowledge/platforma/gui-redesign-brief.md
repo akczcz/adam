@@ -1,7 +1,7 @@
 ---
 oblast: platforma
 téma: redesign GUI (řídicí pult firmy) – předávací brief pro samostatnou session
-stav: zadání (2026-11-24), realizace zatím nezačala
+stav: realizace (2026-11-24) – varianta A Nebula, kód ve větvi redesignu, ostré měření čeká
 zdroje: gui/src/*, tools/harness_p0_o2/agui.py, tools/harness_p1_k8s/{harness.py,gui_fixture.py}, knowledge/organization/eval-scenare.md
 ---
 
@@ -145,8 +145,19 @@ E6/E13 (stalled, verze), N3a–c (přes Cloudflare), M1, R1–R3, L1c, V2c a dal
 
 ## Rozhodnutí
 
-_(doplní nová session po výběru varianty: název varianty, paleta, typografie, co se z ostatních variant převzalo, datum)_
+- **2026-11-24 – varianta A „Nebula“** (Adam vybral z náhledu tří variant A Nebula / B Observatory / C Aurora; nic z B a C se nepřebírá).
+  Paleta: hluboké indigo (`#090c1a`), skleněné karty, akcent fialová `#8b7cf6` + azurová `#38bdf8`, sémantika stavů ok/warn/err/info + `live`
+  (magenta) pro ostrý běh a `susp` (azurová) pro Pozastaveno; světlý motiv `#eef0fb` se stejnými akcenty. Typografie: Inter (text),
+  Space Grotesk (nadpisy, čísla), JetBrains Mono (id, hash, kód) – self-hosted přes `@fontsource-variable`, bez CDN. Poloměry 14/9 px,
+  horní navigace s gradientním podtržením, kosmické pozadí (dvě záře + hvězdy) jen jako `::before/::after` stránky.
+- **Flux zůstává na `claude/intelligent-hypatia-4d7uun`** (shodný commit s `main`): redesign nemění manifesty, GUI je v obrazu aplikace
+  (`zakazka-app:p1`, `live-sync` = rollout restart), takže ostrý test = `images` + `live-sync` z větve redesignu.
+- Stavový model: reducer `gui/src/threadView.ts` + hook `useThreadRun.ts` (viz `gui/README.md`); interrupt odvozený z aktivit, ne jen z posledního
+  `RUN_FINISHED`; nový run pohled nemaže (generace), chyby streamu jako toast.
+- Harness: `.err` → `[data-testid=page-error]`, buňky řádků zakázek `thread-<pole>` místo pořadí `td`, buňky verzí `wf-col-<pole>`; fixture simuluje
+  bod `rozpocet` (strop ≤ 0,01 USD), skript `gui_screenshots.py` dělá důkazní screenshoty.
 
 ## Changelog
 
+- 2026-11-24: varianta A Nebula vybrána a implementována (tokeny, motiv, komponenty, reducer karty zakázky, harness na testid, screenshoty v `gui/screenshots/`); lokálně `gui_checks.py` 17/17; ostré měření AKS čeká na start clusteru.
 - 2026-11-24: brief založen (uzavření eval scénářů 1–5; GUI je další krok produktu). Realizace v samostatné session.
