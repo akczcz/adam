@@ -3667,14 +3667,28 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
                     adr2 = next((e for e in L2 if e["kind"] == "HANDOFF" and e["zakazka"] == zid2 and str(e.get("artifact", "")).startswith("adr://")), None)
                     if adr2: approve(zid2, "H2", adr2.get("hash")); approved.add("H2")
                 time.sleep(4)
-            st2 = wait_status(zid2, {"COMPLETED", "FAILED"}, 240) if exc else status(zid2)
+            # eval scénář 5 (nález 23): timeout bodu = pauza instance (SUSPENDED, STOP by=timeout, registr Pozastaveno) místo konce workflow – zakázka jde obnovit
+            st2 = wait_status(zid2, {"SUSPENDED", "COMPLETED", "FAILED"}, 240) if exc else status(zid2)
             out2 = (st2 or {}).get("output") or {}
-            gates = [e for e in led() if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zid2]
+            L3 = led(); gates = [e for e in L3 if e["kind"] == "BUDGET_GATE" and e["zakazka"] == zid2]
+            t_led = next((e for e in reversed(L3) if e["kind"] == "NOTIFY" and e.get("event") == "HITL_TIMEOUT" and e["zakazka"] == zid2), {})
+            s_led = next((e for e in reversed(L3) if e["kind"] == "STOP" and e["zakazka"] == zid2), {})
             with psycopg.connect(dsn("org"), autocommit=True, connect_timeout=10) as c:
                 zrow2 = c.execute("SELECT budget_usd, spent_usd, status FROM org.zakazky WHERE zakazka_id = %s", (zid2,)).fetchone()
-            ok_cap = exc is not None and float(exc.get("spent_usd", 0)) >= 0.01 and exc.get("role") in ("architekt", "vyvojar", "reviewer") and out2.get("stav") == "Pozastaveno" and out2.get("bod") == "rozpocet" \
-                     and zrow2 is not None and zrow2[2] == "BudgetExceeded" and float(zrow2[1]) >= 0.01
-            rep.add("P26c", "Strop zakázky (sdílený napříč rolemi) vynucuje orchestrátor ze součtu klíčů: zakázka s budget_usd 0,01 projde první rolí, gate před další rolí hlásí BudgetExceeded (zdroj zakazka-sum), eskalace HITL rozpocet bez schválení → timeout → Pozastaveno; registr org.zakazky status BudgetExceeded se spent_usd >= strop", "PASS" if ok_cap else "FAIL", {"exceeded": {k: exc.get(k) for k in ("role", "spent_usd", "limit_usd", "by_role")} if exc else None, "gates": [(g.get("role"), g.get("spent_usd"), g.get("exceeded")) for g in gates], "output": out2, "approved": sorted(approved), "registry_row": [str(x) for x in zrow2] if zrow2 else None, "s": round(time.time() - t26, 1)})
+            # Resume po pauze (interní API, jako člověk s důvodem – harness): orchestrátor dokončí aktivitu pause_timeout a bod rozpocet vystaví znovu (HITL_WAIT after_timeout)
+            re_wait = None; rs2 = {}
+            if (st2 or {}).get("status") == "SUSPENDED":
+                t_w0 = len([e for e in L3 if e["kind"] == "NOTIFY" and e.get("event") == "HITL_WAIT" and e["zakazka"] == zid2 and e.get("bod") == "rozpocet"])
+                r_ = http("POST", f"{APP}/zakazky/{zid2}/resume", json={"by": "harness-human", "by_kind": "human", "reason": "P26c: obnova po timeoutu bodu rozpocet (nález 23) – bod se má vystavit znovu."}, timeout=60); rs2 = r_.json() if r_.status_code == 200 else {"http": r_.status_code}
+                t_r = time.time()
+                while time.time() - t_r < 90 and re_wait is None:
+                    ws = [e for e in led() if e["kind"] == "NOTIFY" and e.get("event") == "HITL_WAIT" and e["zakazka"] == zid2 and e.get("bod") == "rozpocet"]
+                    if len(ws) > t_w0: re_wait = ws[-1]
+                    else: time.sleep(3)
+            ok_cap = exc is not None and float(exc.get("spent_usd", 0)) >= 0.01 and exc.get("role") in ("architekt", "vyvojar", "reviewer") and (st2 or {}).get("status") == "SUSPENDED" \
+                     and t_led.get("bod") == "rozpocet" and t_led.get("resumable") is True and s_led.get("by") == "timeout" and s_led.get("channel") == "workflow" \
+                     and zrow2 is not None and zrow2[2] == "Pozastaveno" and float(zrow2[1]) >= 0.01 and rs2.get("ok") is True and re_wait is not None and re_wait.get("after_timeout") is True
+            rep.add("P26c", "Strop zakázky (sdílený napříč rolemi) vynucuje orchestrátor ze součtu klíčů: zakázka s budget_usd 0,01 projde první rolí, gate před další rolí hlásí BudgetExceeded (zdroj zakazka-sum), eskalace HITL rozpocet bez schválení → timeout = pauza instance (SUSPENDED, STOP by=timeout, registr Pozastaveno; nález 23), ne konec workflow; po Resume člověka (API s důvodem) orchestrátor týž bod vystaví znovu (HITL_WAIT rozpocet after_timeout) a čeká dál", "PASS" if ok_cap else "FAIL", {"exceeded": {k: exc.get(k) for k in ("role", "spent_usd", "limit_usd", "by_role")} if exc else None, "gates": [(g.get("role"), g.get("spent_usd"), g.get("exceeded")) for g in gates], "wf": {k: (st2 or {}).get(k) for k in ("status", "output")}, "timeout": {k: t_led.get(k) for k in ("bod", "resumable", "timeout_s")}, "stop": {k: s_led.get(k) for k in ("by", "channel", "status", "reason")}, "resume": rs2, "re_wait": {k: (re_wait or {}).get(k) for k in ("bod", "after_timeout", "timeout_s")}, "approved": sorted(approved), "registry_row": [str(x) for x in zrow2] if zrow2 else None, "s": round(time.time() - t26, 1)})
 
         if registry:
             # P2-5 – eval gate (Git → ConfigMap → aplikace) a registr org.* na Flexible Serveru

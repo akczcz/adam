@@ -342,7 +342,7 @@ function Thread({ id, user }: { id: string; user: User }) {
       {interrupt && interrupt.reason !== "dialog" && interrupt.reason !== "klasifikace" && (
         <div className="card interrupt" data-testid="interrupt" data-interrupt-id={interrupt.id} data-kind="approval">
           <h3 style={{ marginTop: 0 }}>Rozhodnutí člověka: <span data-testid="interrupt-bod">{interrupt.metadata?.bod}</span> <span className="muted">({interrupt.metadata?.action})</span></h3>
-          <p>{interrupt.message} · artefakt <code>{interrupt.metadata?.artifact}</code> · hash <code data-testid="interrupt-hash">{interrupt.metadata?.artifact_hash}</code> · od role <b>{interrupt.metadata?.from}</b>{interrupt.expiresAt && <span className="muted"> · timeout {new Date(interrupt.expiresAt).toLocaleString("cs-CZ")} (bez rozhodnutí → Pozastaveno)</span>}</p>
+          <p>{interrupt.message} · artefakt <code>{interrupt.metadata?.artifact}</code> · hash <code data-testid="interrupt-hash">{interrupt.metadata?.artifact_hash}</code> · od role <b>{interrupt.metadata?.from}</b>{interrupt.expiresAt && <span className="muted"> · timeout {new Date(interrupt.expiresAt).toLocaleString("cs-CZ")} (bez rozhodnutí → Pozastaveno; pokračuje po Obnovit běh)</span>}</p>
           {interrupt.metadata?.bod === "rozpocet" && (
             <div className="card" style={{ marginBottom: 8 }} data-testid="budget-box">
               <b>Rozpočet vyčerpán</b> – role <code>{interrupt.metadata?.role}</code>, zdroj <code data-testid="budget-source">{interrupt.metadata?.source}</code>, útrata <code data-testid="budget-spent">{interrupt.metadata?.spent_usd ?? "?"}</code> / strop <code data-testid="budget-limit">{interrupt.metadata?.limit_usd ?? state?.budget_usd ?? "?"}</code> USD.

@@ -266,7 +266,7 @@ role pod srt dnes nemůže zapisovat do pracovního adresáře (mock tok to nepo
 |---|---|---|
 | P26a | klíče v OpenBao KV (4 role), hash == ConfigMap, Secret `zakazka-keys-<id>` neexistuje, ledger `keys_source=openbao`, entropie openbao | ✅ KV `secret/data/zakazky/<id>/gateway-keys` 5 rolí (vč. SRE), hashe == ConfigMap, Secret chybí, `entropy=[openbao]` |
 | P26b | `BUDGET source=budget_usage window=30d`, spent == nezávislý součet harnessu z DB, `org.zakazky` řádek (Dokonceno, openbao, budget_usage, 4 hashe) | ✅ spent 0,051264 USD (account 0,015078; architekt/vyvojar/reviewer 0,012062; SRE 0) == součet z DB 0,051265; registr: budget 20, status Dokonceno, keys_source openbao |
-| P26c | zakázka `budget_usd=0.01`: po první roli gate → `BUDGET_EXCEEDED zakazka-sum`, HITL timeout → Pozastaveno/rozpocet, registr `BudgetExceeded` | ✅ gate před Architektem: 0,015078 ≥ 0,01 → BudgetExceeded (zakazka-sum), HITL `rozpocet` timeout 25 s → `Pozastaveno/rozpocet/architekt`; registr `BudgetExceeded`, spent 0,015078 |
+| P26c | zakázka `budget_usd=0.01`: po první roli gate → `BUDGET_EXCEEDED zakazka-sum`, HITL timeout → Pozastaveno/rozpocet, registr `BudgetExceeded` | ✅ gate před Architektem: 0,015078 ≥ 0,01 → BudgetExceeded (zakazka-sum), HITL `rozpocet` timeout 25 s → `Pozastaveno/rozpocet/architekt`; registr `BudgetExceeded`, spent 0,015078. **Od 2026-11-23 (nález 23, scénář 5):** timeout = pauza instance – čeká `SUSPENDED`, `HITL_TIMEOUT resumable`, `STOP by=timeout channel=workflow`, registr `Pozastaveno` (po Resume se bod `rozpocet` vystaví znovu) – nová podmínka zatím neměřena (`p2-6` neběžel) |
 | P24b přes srt | sonda egressu přes srt (`via: srt`), ne přímo | ✅ `/work` tmpfs (uid 0, gid 1000, 3777, zapisovatelný), srt parentProxy → gateway: clone/push větve/push main odmítnut, pip i npm z mirroru – 6,2 s; cizí host srt odmítne `CONNECT 403` |
 
 Výsledek: **24/24 + 2 INFO** (`measure` run 40340791174, `results/p2-6-20261026-145722.json`; 4 běhy – nálezy srt na Katě v `infra/README.md`:
@@ -1324,6 +1324,14 @@ v běhu 3. Jediný ❌ **N3a je falešný**: `gui_login_access {n: 17, service_t
 (Access identita e-mail OTP, ne service token harnessu) a kontrola čekala jen service tokeny. Oprava (tento commit): N3a projde, když **každý** `GUI_LOGIN`
 přes Cloudflare nese identitu Access (service token nebo `email_hash`, nový čítač `without_identity` = 0) a aspoň jeden je od harnessu; přeměření v dalším
 běhu `measure` (kontrola se mění jen v harnessu, platforma beze změny).
+
+Běh 5 po opravách z eval scénáře 5 (nálezy 21–23 v [eval-scenare.md](../../knowledge/organization/eval-scenare.md#nálezy-ze-scénáře-5-2026-11-23-z-11231600--1-běh-pozastaveno-na-h4) – stanovisko
+H1a jde rolím, Account má opravný běh bez `zadani.md`/`otazky.md`, timeout rozhodovacího bodu = pauza instance s Resume místo konce workflow, orchestrátor `3c55dfff17a9`;
+N3a s identitou Access `email_hash`): **101 PASS / 0 FAIL / 24 INFO / 1 SKIP** (`measure` run 45263625313, head 4121b40, 2026-11-23; celý běh 106 min, cluster se
+zastavil sám – AKS i PG `Stopped`). N3a PASS (`service_token` od harnessu, `without_identity: 0`), K1f (SLA uvnitř HITL čekání – „timeout teprve pozastaví“), E3a–b,
+O3b–c, U1f, U2d, V2a–c jako v běhu 3 – běžný průchod bodů (`wait_or_pause` s rozhodnutím) na novém orchestrátoru funguje. **Cesta timeout → `pause_timeout` →
+`SUSPENDED` → Resume → týž bod znovu (nález 23) v tomto běhu měřená není**: kontroluje ji P26c (krok `p2-6`, není v `p4-11`) a B4 harnessu P0 – obě upraveny, zatím
+neměřeny; naostro ji zatím ukázal jen 1. běh scénáře 5 na starém orchestrátoru (timeout H4 = konec), nový běh s krátkým timeoutem je k ověření v GUI.
 
 Nálezy:
 
