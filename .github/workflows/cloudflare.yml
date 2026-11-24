@@ -18,8 +18,8 @@ on:
         default: autonomous.place
         type: string
       host:
-        description: subdoména GUI (jedna úroveň)
-        default: platforma
+        description: subdoména GUI (jedna úroveň; do 2026-11-24 `platforma` – setup s novým jménem přepíše doménu Access aplikace a ingress tunelu, smaže starý CNAME)
+        default: platform
         type: string
       team:
         description: team name Zero Trust jen při zakládání organizace (existující se použije)
