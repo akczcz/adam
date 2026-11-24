@@ -59,7 +59,7 @@ def main():
                     if ev.get("rejected"): A.ledger("NOTIFY", event="HITL_REJECTED", bod=bod, zakazka=zid, by=ev.get("by"), reason=ev.get("reason"), result="pozastaveno"); return None
                     tok = A.verify(ev.get("token", "")); A.ledger("VERIFY", backend="hmac", zakazka=zid, bod=bod, valid=bool(tok), by=(tok or {}).get("by"))
                     if not tok or tok.get("artifact_hash") != hh or tok.get("bod") != bod: A.ledger("NOTIFY", event="HITL_INVALID_TOKEN", bod=bod, zakazka=zid); return None
-                    A.ledger("NOTIFY", event="HITL_APPROVED", bod=bod, zakazka=zid, by=tok.get("by"), artifact_hash=hh); return ev["token"]
+                    A.ledger("NOTIFY", event="HITL_APPROVED", bod=bod, zakazka=zid, by=tok.get("by"), artifact_hash=hh); st["last_hitl"] = ev; return ev["token"]
                 time.sleep(0.2)
             A.ledger("NOTIFY", event="HITL_TIMEOUT", bod=bod, zakazka=zid, result="pozastaveno"); return None
         def _role(self, zid, role, art, to, text):
@@ -112,6 +112,12 @@ def main():
             h2 = self._role(zid, "architekt", f"adr://{zid}", "human:vlastnik", "# ADR\n\n| varianta | + | - |\n|---|---|---|\n| A | jednoduchá | – |\n\nRozhodnutí: A.")
             if h2 is None: return
             if (t := self._wait(zid, "H2", h2, z.get("hitl_timeout_s", 3600))) in (None, "paused"): return (None if t == "paused" else end({"id": zid, "stav": "Pozastaveno", "bod": "H2"}))
+            if float(z.get("budget_usd") or 1) <= 0.01:   # simulace stropu (P3-6 E3 / eval scénář 4): BUDGET_EXCEEDED z gateway → bod rozpocet; schválení s novým stropem = BUDGET_RAISED
+                A.ledger("BUDGET_EXCEEDED", zakazka=zid, role="vyvojar", source="agentgateway", spent_usd=0.0124, limit_usd=z["budget_usd"])
+                A.ledger("NOTIFY", event="BUDGET_EXCEEDED", zakazka=zid, role="vyvojar", source="agentgateway", spent_usd=0.0124, limit_usd=z["budget_usd"], escalate_to="process_owner", timeout_s=3600.0)
+                if (t := self._wait(zid, "rozpocet", "vyvojar", z.get("hitl_timeout_s", 3600))) in (None, "paused"): return (None if t == "paused" else end({"id": zid, "stav": "Pozastaveno", "bod": "rozpocet"}))
+                nb = (st.get("last_hitl") or {}).get("budget_usd")
+                if nb: z = st["z"] = {**z, "budget_usd": float(nb)}; A.ledger("NOTIFY", event="BUDGET_RAISED", zakazka=zid, role="vyvojar", budget_usd=float(nb), by=(st.get("last_hitl") or {}).get("by"))
             hp = self._role(zid, "vyvojar", f"pr://{zid}", "reviewer", "implementace hotová")
             if hp is None: return
             A.ledger("PUBLISHED", zakazka=zid, publish_kind="pull_request", number=8, mode="mock")

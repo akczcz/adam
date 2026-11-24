@@ -145,7 +145,8 @@ class Gui:
         rows = self.page.locator("[data-testid^=thread-row-]")
         out = []
         for i in range(rows.count()):
-            r = rows.nth(i); out.append({"id": r.get_attribute("data-testid")[len("thread-row-"):], "cells": [c.strip() for c in r.locator("td").all_inner_texts()]})
+            r = rows.nth(i); cell = lambda k: (r.locator(f"[data-testid=thread-{k}]").first.inner_text().strip() if r.locator(f"[data-testid=thread-{k}]").count() else None)   # redesign GUI 2026-11-24: buňky podle testid, ne pořadí <td>
+            out.append({"id": r.get_attribute("data-testid")[len("thread-row-"):], "tenant": cell("tenant"), "stav": cell("stav"), "bod": cell("bod"), "mandat": cell("mandat"), "spent": cell("spent"), "status": r.locator("[data-testid=thread-stav]").get_attribute("data-status") if r.locator("[data-testid=thread-stav]").count() else None})
         self.shot("threads")
         return out
 
@@ -340,7 +341,7 @@ class Gui:
                 out[tid] = int(self.t(tid).get_attribute("data-rows")) if self.t(tid).count() else 0
             except Exception as e:
                 out[tid] = f"err:{type(e).__name__}"
-                try: out.setdefault("page_errors", sorted({t.strip()[:160] for t in self.page.locator(".err").all_inner_texts() if t.strip()}))   # proč tabulka chybí (chyba nástroje / fetch)
+                try: out.setdefault("page_errors", sorted({t.strip()[:160] for t in self.page.locator("[data-testid=page-error]").all_inner_texts() if t.strip()}))   # proč tabulka chybí (chyba nástroje / fetch)
                 except Exception: pass
         self.shot(f"page-{page}")
         return out
@@ -415,10 +416,10 @@ class Gui:
             s = self.t("wf-summary"); out["stalled"] = int(s.get_attribute("data-stalled") or 0); out["missing"] = [m for m in (s.get_attribute("data-missing") or "").split(",") if m]
             out["missing_text"] = self.t("wf-missing").inner_text()[:200] if self.t("wf-missing").count() else None
             for r in self.page.locator("[data-testid^=wf-version-]").all():
-                out["rows"][r.get_attribute("data-testid")[len("wf-version-"):]] = {"registered": r.get_attribute("data-registered") == "true", "stalled": int(r.get_attribute("data-stalled") or 0), "missing": r.get_attribute("data-missing") == "true", "cells": [c.strip()[:120] for c in r.locator("td").all_inner_texts()]}
+                out["rows"][r.get_attribute("data-testid")[len("wf-version-"):]] = {"registered": r.get_attribute("data-registered") == "true", "stalled": int(r.get_attribute("data-stalled") or 0), "missing": r.get_attribute("data-missing") == "true", "cells": {c.get_attribute("data-testid")[len("wf-col-"):]: c.inner_text().strip()[:120] for c in r.locator("[data-testid^=wf-col-]").all()}}
         except Exception as e:
             out["error"] = f"{type(e).__name__}"
-            try: out["page_errors"] = sorted({t.strip()[:160] for t in self.page.locator(".err").all_inner_texts() if t.strip()})
+            try: out["page_errors"] = sorted({t.strip()[:160] for t in self.page.locator("[data-testid=page-error]").all_inner_texts() if t.strip()})
             except Exception: pass
         self.shot("wf-versions")
         return out
