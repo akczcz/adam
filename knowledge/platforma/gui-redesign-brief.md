@@ -1,7 +1,7 @@
 ---
 oblast: platforma
 téma: redesign GUI (řídicí pult firmy) – předávací brief pro samostatnou session
-stav: realizace (2026-11-24) – varianta A Nebula, kód ve větvi redesignu, ostré měření čeká
+stav: hotovo (2026-11-25) – varianta A Nebula, PR z větve claude/nice-cori-immetc, 3 ostré běhy
 zdroje: gui/src/*, tools/harness_p0_o2/agui.py, tools/harness_p1_k8s/{harness.py,gui_fixture.py}, knowledge/organization/eval-scenare.md
 ---
 
@@ -135,13 +135,15 @@ E6/E13 (stalled, verze), N3a–c (přes Cloudflare), M1, R1–R3, L1c, V2c a dal
 
 ## Definice hotového
 
-- [ ] Vybraná varianta zapsaná v sekci „Rozhodnutí“; tokeny a komponenty podle ní, dark výchozí, light přepínatelný a persistovaný.
-- [ ] Všechny obrazovky z inventáře, včetně všech variant interruptu, v obou módech a na šířce telefonu bez horizontálního scrollu.
-- [ ] Stavový model (reducer) místo šesti `useState`; nový run nemaže pohled; interrupt odvozený, ne jen z posledního eventu.
-- [ ] Všechny `data-testid` zachované; `.err`/`td` selektory v harnessu nahrazené testid v tomtéž PR.
-- [ ] Screenshoty (Playwright) všech obrazovek dark/light/mobil přiložené v PR (`gui/screenshots/` nebo artefakt workflow).
-- [ ] `npm run build` čisté; `measure e2e=p4-11` ≥ 101 PASS / 0 FAIL; cluster po měření `Stopped`.
-- [ ] Docs: `knowledge/platforma/produkt.md` (changelog), tento brief (Rozhodnutí + výsledek), README `gui/`.
+- [x] Vybraná varianta zapsaná v sekci „Rozhodnutí“; tokeny a komponenty podle ní, dark výchozí, light přepínatelný a persistovaný.
+- [x] Všechny obrazovky z inventáře, včetně všech variant interruptu, v obou módech a na šířce telefonu bez horizontálního scrollu.
+- [x] Stavový model (reducer) místo šesti `useState`; nový run nemaže pohled; interrupt odvozený, ne jen z posledního eventu.
+- [x] Všechny `data-testid` zachované; `.err`/`td` selektory v harnessu nahrazené testid v tomtéž PR.
+- [x] Screenshoty (Playwright) všech obrazovek dark/light/mobil přiložené v PR (`gui/screenshots/`, 48 PNG + `index.md`).
+- [x] `npm run build` čisté; `measure e2e=p4-11`: tři běhy (64/0 pád infra, 100/1 harness, 97/4 flaky infra) – každý ze 102 checků prošel
+  aspoň jednou, všechny GUI checky naostro, cluster po každém měření `Stopped`; **uzavřeno rozhodnutím Adama 2026-11-25 bez čtvrtého běhu**
+  (jeden čistý běh zůstává jako kandidát spolu s kandidáty pro harness v changelogu).
+- [x] Docs: `knowledge/platforma/produkt.md` (changelog), tento brief (Rozhodnutí + výsledek), README `gui/`.
 
 ## Rozhodnutí
 
