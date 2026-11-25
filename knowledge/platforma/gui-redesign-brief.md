@@ -159,5 +159,12 @@ E6/E13 (stalled, verze), N3a–c (přes Cloudflare), M1, R1–R3, L1c, V2c a dal
 
 ## Changelog
 
+- 2026-11-25: ostré měření `measure e2e=p4-11` z větve redesignu, 2 běhy: (1) 64 PASS / 0 FAIL, pak pád harnessu v M1 – Azure spustil automatický
+  upgrade image systémového uzlu, zanikl pod `pgfwd` a port-forward na Postgres (`db()` v harnessu obnovu nemá, `http` ano – kandidát); AKS se
+  kvůli témuž upgradu nezastavil, zastaven ručně `cluster stop`. (2) **100 PASS / 1 FAIL / 24 INFO / 1 SKIP** – všechny GUI checky naostro
+  prošly (U1, U2, K1, E3, E13, M1, N3a na `platform.autonomous.place`), jediný FAIL N2c byl v harnessu: nový `threads_list` četl 520 řádků
+  seznamu po jednom dotazu Playwrightu na buňku (≈ 19 s na 600 řádků), GUI se mezitím odhlásilo po 20 s idle limitu měření → nahrazeno jedním
+  `page.evaluate` (0,2 s). Brána Fluxu: harness přijme commit se shodným stromem `infra/k8s` (Flux zůstal na větvi
+  `claude/intelligent-hypatia-4d7uun`); bez toho měření z jiné větve neprojde kontrolou P21a.
 - 2026-11-24: varianta A Nebula vybrána a implementována (tokeny, motiv, komponenty, reducer karty zakázky, harness na testid, screenshoty v `gui/screenshots/`); lokálně `gui_checks.py` 17/17; ostré měření AKS čeká na start clusteru.
 - 2026-11-24: brief založen (uzavření eval scénářů 1–5; GUI je další krok produktu). Realizace v samostatné session.

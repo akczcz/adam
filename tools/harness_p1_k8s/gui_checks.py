@@ -142,11 +142,13 @@ class Gui:
 
     def threads_list(self):
         self._goto_wait("#/", "document.querySelector('[data-testid=threads-table]') || document.querySelector('[data-testid=threads-empty]')", where="threads_list")
-        rows = self.page.locator("[data-testid^=thread-row-]")
-        out = []
-        for i in range(rows.count()):
-            r = rows.nth(i); cell = lambda k: (r.locator(f"[data-testid=thread-{k}]").first.inner_text().strip() if r.locator(f"[data-testid=thread-{k}]").count() else None)   # redesign GUI 2026-11-24: buňky podle testid, ne pořadí <td>
-            out.append({"id": r.get_attribute("data-testid")[len("thread-row-"):], "tenant": cell("tenant"), "stav": cell("stav"), "bod": cell("bod"), "mandat": cell("mandat"), "spent": cell("spent"), "status": r.locator("[data-testid=thread-stav]").get_attribute("data-status") if r.locator("[data-testid=thread-stav]").count() else None})
+        # redesign GUI 2026-11-24: buňky podle testid, ne pořadí <td>; jedním evaluate (běh 2 p4-11, N2c: per-řádkové dotazy Playwrightu nad 520 řádky
+        # trvaly déle než 20 s idle limit měření → GUI se mezitím odhlásilo a seznam zmizel)
+        out = self.page.evaluate("""() => Array.from(document.querySelectorAll('[data-testid^=thread-row-]')).map(r => {
+            const c = k => { const e = r.querySelector('[data-testid=thread-' + k + ']'); return e ? e.textContent.trim() : null; };
+            const st = r.querySelector('[data-testid=thread-stav]');
+            return { id: r.getAttribute('data-testid').slice('thread-row-'.length), tenant: c('tenant'), stav: c('stav'), bod: c('bod'), mandat: c('mandat'), spent: c('spent'), status: st ? st.getAttribute('data-status') : null };
+        })""")
         self.shot("threads")
         return out
 
