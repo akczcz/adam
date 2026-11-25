@@ -140,9 +140,8 @@ E6/E13 (stalled, verze), N3a–c (přes Cloudflare), M1, R1–R3, L1c, V2c a dal
 - [x] Stavový model (reducer) místo šesti `useState`; nový run nemaže pohled; interrupt odvozený, ne jen z posledního eventu.
 - [x] Všechny `data-testid` zachované; `.err`/`td` selektory v harnessu nahrazené testid v tomtéž PR.
 - [x] Screenshoty (Playwright) všech obrazovek dark/light/mobil přiložené v PR (`gui/screenshots/`, 48 PNG + `index.md`).
-- [x] `npm run build` čisté; `measure e2e=p4-11`: tři běhy (64/0 pád infra, 100/1 harness, 97/4 flaky infra) – každý ze 102 checků prošel
-  aspoň jednou, všechny GUI checky naostro, cluster po každém měření `Stopped`; **uzavřeno rozhodnutím Adama 2026-11-25 bez čtvrtého běhu**
-  (jeden čistý běh zůstává jako kandidát spolu s kandidáty pro harness v changelogu).
+- [x] `npm run build` čisté; `measure e2e=p4-11`: z větve tři běhy (64/0 pád infra, 100/1 harness, 97/4 flaky infra), **po merge z `main`
+  101 PASS / 0 FAIL / 24 INFO / 1 SKIP** (run 45617493227, Flux na `main`); cluster po každém měření `Stopped`.
 - [x] Docs: `knowledge/platforma/produkt.md` (changelog), tento brief (Rozhodnutí + výsledek), README `gui/`.
 
 ## Rozhodnutí
@@ -161,6 +160,9 @@ E6/E13 (stalled, verze), N3a–c (přes Cloudflare), M1, R1–R3, L1c, V2c a dal
 
 ## Changelog
 
+- 2026-11-25 (po merge PR #80, run 45617493227 z `main`): **101 PASS / 0 FAIL / 24 INFO / 1 SKIP** – čistý ostrý běh podle definice hotového;
+  Flux přepnut Terraformem na `main` (`infra apply`, prázdný `gitops_branch`), obraz z `main` (automatický `images` po merge) + `live-sync`,
+  N3a na `platform.autonomous.place` PASS, cluster po měření Stopped. Redesign GUI uzavřen.
 - 2026-11-25 (3. běh, run 45589022104): **97 PASS / 4 FAIL / 24 INFO / 1 SKIP**; N2c po opravě `threads_list` PASS. Čtyři FAILy jsou
   časování infrastruktury, všechny ve 2. běhu se stejným buildem GUI prošly: E13b (karta verzí ve Firmě se po restartu podu aplikace nenačetla
   do 60 s – požadavek přes tunel visel, žádná chyba v GUI), E13c (přihlášení přes tunel po dalším restartu podu nestihlo 30 s), N2a (přihlášení

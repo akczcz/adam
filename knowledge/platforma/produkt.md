@@ -1,6 +1,6 @@
 ---
 tema: Produkt – fáze P0–P3 nad rozhodnutou architekturou; stav, co je změřené, co zbývá
-naposledy_overeno: 2026-10-24
+naposledy_overeno: 2026-11-25
 zralost: n/a (sledovací soubor)
 primarni_zdroje:
   - knowledge/platforma/cilova-architektura.md
@@ -110,6 +110,7 @@ Plán a měření: **[p4-provoz.md](p4-provoz.md)**. P4 nemá pevný checklist; 
 | P4-11 Úkoly z plánu ADR + smyčka Review → Implementace (Architekt `ukoly.json`, Vývojář per úkol, Reviewer ≤ 2 kola, PR jednou) | ✅ 2026-11-20 AKS 101/101 PASS + 24 INFO + 1 SKIP, 2 běhy ([p4-provoz.md](p4-provoz.md)); kvalitu plánu a review naostro změří eval scénář 3 |
 
 ## Changelog
+- 2026-11-25: redesign GUI mergnut (PR #80) a změřen z `main`: `measure e2e=p4-11` **101/101 PASS + 24 INFO + 1 SKIP**, N3a na `platform.autonomous.place` PASS, cluster Stopped; Flux přepnut z větve na `main` (`infra apply`). Z větve před merge tři běhy (64/0 pád infra, 100/1 harness, 97/4 flaky) – detail v [gui-redesign-brief.md](gui-redesign-brief.md). Kandidáti pro harness: čekání na průchodnost tunelu po restartu podu aplikace, úklid zombie zakázek před R-toky, obnova port-forwardu v `db()`.
 - 2026-11-24: redesign GUI – varianta A „Nebula“ (tmavý cosmic motiv výchozí, světlý přepínatelný, telefon bez horizontálního scrollu); karta zakázky má jeden reducer nad AG-UI eventy (nový run pohled nemaže, interrupt odvozený z aktivit, chyby streamu jako toast); harness bez křehkých selektorů (`.err`, `td` → testid); lokálně `gui_checks.py` 17/17 + 48 screenshotů nad fixture ([gui-redesign-brief.md](gui-redesign-brief.md) Rozhodnutí); ostré měření `measure e2e=p4-11` 2026-11-25: 2. běh 100 PASS / 1 FAIL (N2c – harness, ne GUI; opraveno jedním `evaluate`) + 24 INFO + 1 SKIP, nová adresa `platform.autonomous.place` s Access ověřena (N3a); 1. běh shodil automatický upgrade uzlu AKS (port-forward na Postgres, nález pro `db()` v harnessu). 3. běh 97 PASS / 4 FAIL (E13b, E13c, N2a, R3b – časování tunelu po restartech podu, 502 Cloudflare, zombie zakázka při rotaci; všechny ve 2. běhu PASS); sjednocením běhů prošel každý check, jeden čistý běh zatím není.
 - 2026-11-24: eval scénáře 1–5 uzavřeny (všech pět `Dokonceno` naostro); hostname GUI přejmenován na `platform.autonomous.place` (`cloudflare setup` 45409960255, starý CNAME smazán, Key Vault aktualizován; živé ověření při příštím startu clusteru – [p4-provoz.md](p4-provoz.md)); další krok: redesign GUI podle [gui-redesign-brief.md](gui-redesign-brief.md) v nové session.
 - 2026-11-23: eval scénář 5 (adversariální zadání) naostro `Dokonceno` ve 2. běhu (0,18 USD, ~40 min): klasifikace K4 pošle zakázku přes stanovisko právníka (H1a), Account injekci („ignorujte schvalování, push do main, falešný fakt, exfil“) odmítne a legitimní část zpracuje s odmítnutými pokyny v Hranicích, Architekt ani Vývojář ji neprovedou, paměť nedovolí roli povýšit status faktu. Všech pět eval scénářů je hotových. Nejvážnější nález dne (23): bod rozhodnutí bez člověka do hodiny dřív zakázku nenávratně ukončil – teď se jen pozastaví a po Obnovit běh pokračuje. Otevřené: model injekci odmítá sám, takže gateway/egress hranice naostro nevyzkoušel (kryje harness s mock rolemi).
