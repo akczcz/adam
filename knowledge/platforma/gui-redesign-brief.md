@@ -1,7 +1,7 @@
 ---
 oblast: platforma
 téma: redesign GUI (řídicí pult firmy) – předávací brief pro samostatnou session
-stav: zadání (2026-11-24), realizace zatím nezačala
+stav: hotovo (2026-11-25) – varianta A Nebula, PR z větve claude/nice-cori-immetc, 3 ostré běhy
 zdroje: gui/src/*, tools/harness_p0_o2/agui.py, tools/harness_p1_k8s/{harness.py,gui_fixture.py}, knowledge/organization/eval-scenare.md
 ---
 
@@ -135,18 +135,45 @@ E6/E13 (stalled, verze), N3a–c (přes Cloudflare), M1, R1–R3, L1c, V2c a dal
 
 ## Definice hotového
 
-- [ ] Vybraná varianta zapsaná v sekci „Rozhodnutí“; tokeny a komponenty podle ní, dark výchozí, light přepínatelný a persistovaný.
-- [ ] Všechny obrazovky z inventáře, včetně všech variant interruptu, v obou módech a na šířce telefonu bez horizontálního scrollu.
-- [ ] Stavový model (reducer) místo šesti `useState`; nový run nemaže pohled; interrupt odvozený, ne jen z posledního eventu.
-- [ ] Všechny `data-testid` zachované; `.err`/`td` selektory v harnessu nahrazené testid v tomtéž PR.
-- [ ] Screenshoty (Playwright) všech obrazovek dark/light/mobil přiložené v PR (`gui/screenshots/` nebo artefakt workflow).
-- [ ] `npm run build` čisté; `measure e2e=p4-11` ≥ 101 PASS / 0 FAIL; cluster po měření `Stopped`.
-- [ ] Docs: `knowledge/platforma/produkt.md` (changelog), tento brief (Rozhodnutí + výsledek), README `gui/`.
+- [x] Vybraná varianta zapsaná v sekci „Rozhodnutí“; tokeny a komponenty podle ní, dark výchozí, light přepínatelný a persistovaný.
+- [x] Všechny obrazovky z inventáře, včetně všech variant interruptu, v obou módech a na šířce telefonu bez horizontálního scrollu.
+- [x] Stavový model (reducer) místo šesti `useState`; nový run nemaže pohled; interrupt odvozený, ne jen z posledního eventu.
+- [x] Všechny `data-testid` zachované; `.err`/`td` selektory v harnessu nahrazené testid v tomtéž PR.
+- [x] Screenshoty (Playwright) všech obrazovek dark/light/mobil přiložené v PR (`gui/screenshots/`, 48 PNG + `index.md`).
+- [x] `npm run build` čisté; `measure e2e=p4-11`: tři běhy (64/0 pád infra, 100/1 harness, 97/4 flaky infra) – každý ze 102 checků prošel
+  aspoň jednou, všechny GUI checky naostro, cluster po každém měření `Stopped`; **uzavřeno rozhodnutím Adama 2026-11-25 bez čtvrtého běhu**
+  (jeden čistý běh zůstává jako kandidát spolu s kandidáty pro harness v changelogu).
+- [x] Docs: `knowledge/platforma/produkt.md` (changelog), tento brief (Rozhodnutí + výsledek), README `gui/`.
 
 ## Rozhodnutí
 
-_(doplní nová session po výběru varianty: název varianty, paleta, typografie, co se z ostatních variant převzalo, datum)_
+- **2026-11-24 – varianta A „Nebula“** (Adam vybral z náhledu tří variant A Nebula / B Observatory / C Aurora; nic z B a C se nepřebírá).
+  Paleta: hluboké indigo (`#090c1a`), skleněné karty, akcent fialová `#8b7cf6` + azurová `#38bdf8`, sémantika stavů ok/warn/err/info + `live`
+  (magenta) pro ostrý běh a `susp` (azurová) pro Pozastaveno; světlý motiv `#eef0fb` se stejnými akcenty. Typografie: Inter (text),
+  Space Grotesk (nadpisy, čísla), JetBrains Mono (id, hash, kód) – self-hosted přes `@fontsource-variable`, bez CDN. Poloměry 14/9 px,
+  horní navigace s gradientním podtržením, kosmické pozadí (dvě záře + hvězdy) jen jako `::before/::after` stránky.
+- **Flux zůstává na `claude/intelligent-hypatia-4d7uun`** (shodný commit s `main`): redesign nemění manifesty, GUI je v obrazu aplikace
+  (`zakazka-app:p1`, `live-sync` = rollout restart), takže ostrý test = `images` + `live-sync` z větve redesignu.
+- Stavový model: reducer `gui/src/threadView.ts` + hook `useThreadRun.ts` (viz `gui/README.md`); interrupt odvozený z aktivit, ne jen z posledního
+  `RUN_FINISHED`; nový run pohled nemaže (generace), chyby streamu jako toast.
+- Harness: `.err` → `[data-testid=page-error]`, buňky řádků zakázek `thread-<pole>` místo pořadí `td`, buňky verzí `wf-col-<pole>`; fixture simuluje
+  bod `rozpocet` (strop ≤ 0,01 USD), skript `gui_screenshots.py` dělá důkazní screenshoty.
 
 ## Changelog
 
+- 2026-11-25 (3. běh, run 45589022104): **97 PASS / 4 FAIL / 24 INFO / 1 SKIP**; N2c po opravě `threads_list` PASS. Čtyři FAILy jsou
+  časování infrastruktury, všechny ve 2. běhu se stejným buildem GUI prošly: E13b (karta verzí ve Firmě se po restartu podu aplikace nenačetla
+  do 60 s – požadavek přes tunel visel, žádná chyba v GUI), E13c (přihlášení přes tunel po dalším restartu podu nestihlo 30 s), N2a (přihlášení
+  po odemknutí účtu vrátilo 502 z Cloudflare, origin se zrovna neozval), R3b (jeden `FINOPS_ERROR` při rotaci hesel od zakázky
+  `P31-073538-o3b` z předchozího běhu – zombie zakázka, nález 18). Sjednocením tří běhů prošel každý ze 102 checků aspoň jednou; v jednom běhu
+  zatím max. 100 PASS / 1 FAIL. Kandidáti pro harness: po restartu podu aplikace počkat na průchodnost tunelu před GUI kroky (E13b/E13c),
+  `stop-zakazky` zombie zakázek z předchozího běhu před R-toky, `db()` s obnovou port-forwardu.
+- 2026-11-25: ostré měření `measure e2e=p4-11` z větve redesignu, 2 běhy: (1) 64 PASS / 0 FAIL, pak pád harnessu v M1 – Azure spustil automatický
+  upgrade image systémového uzlu, zanikl pod `pgfwd` a port-forward na Postgres (`db()` v harnessu obnovu nemá, `http` ano – kandidát); AKS se
+  kvůli témuž upgradu nezastavil, zastaven ručně `cluster stop`. (2) **100 PASS / 1 FAIL / 24 INFO / 1 SKIP** – všechny GUI checky naostro
+  prošly (U1, U2, K1, E3, E13, M1, N3a na `platform.autonomous.place`), jediný FAIL N2c byl v harnessu: nový `threads_list` četl 520 řádků
+  seznamu po jednom dotazu Playwrightu na buňku (≈ 19 s na 600 řádků), GUI se mezitím odhlásilo po 20 s idle limitu měření → nahrazeno jedním
+  `page.evaluate` (0,2 s). Brána Fluxu: harness přijme commit se shodným stromem `infra/k8s` (Flux zůstal na větvi
+  `claude/intelligent-hypatia-4d7uun`); bez toho měření z jiné větve neprojde kontrolou P21a.
+- 2026-11-24: varianta A Nebula vybrána a implementována (tokeny, motiv, komponenty, reducer karty zakázky, harness na testid, screenshoty v `gui/screenshots/`); lokálně `gui_checks.py` 17/17; ostré měření AKS čeká na start clusteru.
 - 2026-11-24: brief založen (uzavření eval scénářů 1–5; GUI je další krok produktu). Realizace v samostatné session.

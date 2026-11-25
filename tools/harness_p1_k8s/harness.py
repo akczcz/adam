@@ -1008,7 +1008,7 @@ def tenant_flow(a, rep, http, led, APP, dsn, kj, zid_acme, tag, gui_shots):
         r403p = http("POST", f"{APP}/agui/run", headers={"Authorization": f"Bearer {g2.token}"}, json={"threadId": f"{tag}-plat", "runId": "t1e2", "messages": [{"id": "m", "role": "user", "content": "platform nesmí zakládat"}]}, timeout=15).status_code
         g2.close()
         ids_b_list = [t["id"] for t in lst_b]; ids_p = [t["id"] for t in lst_p]
-        rep.add("T1e", "GUI per tenant: bea (tenant beta) vidí jen zakázky beta (acme zakázka v seznamu není, otevřít ji → 404 v GUI i API), stop zakázky beta s důvodem funguje; platform-admin (tenant platform) vidí průřez obou tenantů (acme i beta), otevře thread beta, ale zakázku založit nesmí (403)", "PASS" if li["tenant"] == "beta" and zb in ids_b_list and zid_acme not in ids_b_list and all(t["cells"][1] == "beta" for t in lst_b) and ot["status"] == "error" and "404" in (ot["error"] or "") and r403 == 404 and stp["run_status"] == "cancelled" and lp["tenant"] == "platform" and {zid_acme, zb} <= set(ids_p) and ot_p["status"] != "error" and r403p == 403 else "FAIL", {"bea": {"tenant": li["tenant"], "listed": ids_b_list[:8], "open_acme": ot, "api_acme": r403, "stop": stp["run_status"]}, "platform_admin": {"tenant": lp["tenant"], "listed_n": len(ids_p), "has_both": {zid_acme, zb} <= set(ids_p), "open_beta": ot_p["status"], "open_beta_error": ot_p.get("error"), "open_beta_first_error": ot_p.get("first_error"), "create_http": r403p}, "wall_s": round(time.time() - t_b, 1)})
+        rep.add("T1e", "GUI per tenant: bea (tenant beta) vidí jen zakázky beta (acme zakázka v seznamu není, otevřít ji → 404 v GUI i API), stop zakázky beta s důvodem funguje; platform-admin (tenant platform) vidí průřez obou tenantů (acme i beta), otevře thread beta, ale zakázku založit nesmí (403)", "PASS" if li["tenant"] == "beta" and zb in ids_b_list and zid_acme not in ids_b_list and all(t["tenant"] == "beta" for t in lst_b) and ot["status"] == "error" and "404" in (ot["error"] or "") and r403 == 404 and stp["run_status"] == "cancelled" and lp["tenant"] == "platform" and {zid_acme, zb} <= set(ids_p) and ot_p["status"] != "error" and r403p == 403 else "FAIL", {"bea": {"tenant": li["tenant"], "listed": ids_b_list[:8], "open_acme": ot, "api_acme": r403, "stop": stp["run_status"]}, "platform_admin": {"tenant": lp["tenant"], "listed_n": len(ids_p), "has_both": {zid_acme, zb} <= set(ids_p), "open_beta": ot_p["status"], "open_beta_error": ot_p.get("error"), "open_beta_first_error": ot_p.get("first_error"), "create_http": r403p}, "wall_s": round(time.time() - t_b, 1)})
     finally:
         try: g.close()
         except Exception: pass
@@ -3148,7 +3148,19 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     # Flux sleduje hlavu větve: commit pushnutý během měření (např. jen docs) by jinak měření shodil; přijmout i aktuální hlavu větve z originu
     head_now = (sh(["git", "-C", str(ROOT), "ls-remote", "origin", f"refs/heads/{os.environ.get('GITHUB_REF_NAME', '')}"]).stdout.split() or [""])[0] if os.environ.get("GITHUB_REF_NAME") else ""
     want_shas = {want_sha} | ({head_now} if head_now else set())
-    def rev_ok(r): return any(r.endswith(w) for w in want_shas)
+    # 2026-11-24 (redesign GUI): Flux může sledovat jinou větev než měřenou (gitops_branch Terraformu, viz brief redesignu) – měření z HEAD platí,
+    # když aplikovaný commit má shodné manifesty infra/k8s (strom stejného obsahu); jinak by každá session musela přepínat Flux přes infra apply
+    _tree_cache = {}
+    def manifests_tree(sha):
+        if sha not in _tree_cache:
+            r = sh(["git", "-C", str(ROOT), "rev-parse", f"{sha}:infra/k8s"])
+            if r.returncode != 0: sh(["git", "-C", str(ROOT), "fetch", "--depth=1", "origin", sha]); r = sh(["git", "-C", str(ROOT), "rev-parse", f"{sha}:infra/k8s"])
+            _tree_cache[sha] = r.stdout.strip() if r.returncode == 0 else None
+        return _tree_cache[sha]
+    def rev_ok(r):
+        if any(r.endswith(w) for w in want_shas): return True
+        sha = r.rsplit(":", 1)[-1].strip() if r else ""
+        return bool(sha) and manifests_tree(sha) is not None and manifests_tree(sha) == manifests_tree(want_sha)
     # P3-6 E1: tajemství egressu gateway (Secret agentgateway-tls, agentgateway-git-token) a CA pro pody rolí (ConfigMap platform-ca) vydávají z Gitu
     # cert-manager, ESO (Key Vault) a trust-manager (infra/k8s/operators, trust, overlays/aks/secrets-eso.yaml) – harness nic nevydává. Jen uklidí
     # ConfigMapy platform-ca z dřívějších běhů, které vydal sám (bez labelu trust-manageru – SSA konflikt by bundle nepřepsal; Secrety bez vlastníka
@@ -3198,7 +3210,7 @@ def step_p2_1(a, rep, env, images=False, registry=False, identity=False, egress=
     print(f"  flux: ready={flux} rev={flux_rev} wait_s={round(time.time() - t0)} sts_unstick={sts_deleted}\n  flux msg: {json.dumps(flux_msg, ensure_ascii=False)}")
     if not (flux and all(v == "True" for v in flux.values()) and all(rev_ok(k.get("status", {}).get("lastAppliedRevision") or "") for k in ks_now)):   # fail-fast: bez applyované konfigurace z HEAD měření nemá smysl
         ops = {f'{o["kind"]}/{o["metadata"]["name"]}': next((f'{c["status"]} {c.get("reason", "")}: {c.get("message", "")[:300]}' for c in (o.get("status") or {}).get("conditions", []) if c["type"] == "Ready"), "?") for kind in ("clustersecretstore", "helmreleases", "externalsecrets", "certificate") for o in kj("get", kind, "-A").get("items", [])}   # P3-6 E1: stav operátorů do zprávy
-        raise AssertionError(f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]}: {flux_msg}\n  operátoři: {json.dumps(ops, ensure_ascii=False)}")
+        raise AssertionError(f"Flux neaplikoval HEAD {[w[:12] for w in want_shas]} ani commit se shodnými manifesty infra/k8s: {flux_msg}\n  operátoři: {json.dumps(ops, ensure_ascii=False)}")
     egress_secrets = ensure_platform_secrets(wait_s=600) | {"legacy_removed": egress_secrets["legacy_removed"]}   # ns tenantů existují až po Flux → trust bundle, Certificate a ExternalSecrety
     assert egress_secrets["ok"], f"operátoři nedodali tajemství platformy (cert-manager/ESO/trust-manager): {json.dumps(egress_secrets['status'], ensure_ascii=False)}"
     if e1: e1_checks(a, rep, kj, egress_secrets)

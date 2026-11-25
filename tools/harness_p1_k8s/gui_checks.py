@@ -142,10 +142,13 @@ class Gui:
 
     def threads_list(self):
         self._goto_wait("#/", "document.querySelector('[data-testid=threads-table]') || document.querySelector('[data-testid=threads-empty]')", where="threads_list")
-        rows = self.page.locator("[data-testid^=thread-row-]")
-        out = []
-        for i in range(rows.count()):
-            r = rows.nth(i); out.append({"id": r.get_attribute("data-testid")[len("thread-row-"):], "cells": [c.strip() for c in r.locator("td").all_inner_texts()]})
+        # redesign GUI 2026-11-24: buňky podle testid, ne pořadí <td>; jedním evaluate (běh 2 p4-11, N2c: per-řádkové dotazy Playwrightu nad 520 řádky
+        # trvaly déle než 20 s idle limit měření → GUI se mezitím odhlásilo a seznam zmizel)
+        out = self.page.evaluate("""() => Array.from(document.querySelectorAll('[data-testid^=thread-row-]')).map(r => {
+            const c = k => { const e = r.querySelector('[data-testid=thread-' + k + ']'); return e ? e.textContent.trim() : null; };
+            const st = r.querySelector('[data-testid=thread-stav]');
+            return { id: r.getAttribute('data-testid').slice('thread-row-'.length), tenant: c('tenant'), stav: c('stav'), bod: c('bod'), mandat: c('mandat'), spent: c('spent'), status: st ? st.getAttribute('data-status') : null };
+        })""")
         self.shot("threads")
         return out
 
@@ -340,7 +343,7 @@ class Gui:
                 out[tid] = int(self.t(tid).get_attribute("data-rows")) if self.t(tid).count() else 0
             except Exception as e:
                 out[tid] = f"err:{type(e).__name__}"
-                try: out.setdefault("page_errors", sorted({t.strip()[:160] for t in self.page.locator(".err").all_inner_texts() if t.strip()}))   # proč tabulka chybí (chyba nástroje / fetch)
+                try: out.setdefault("page_errors", sorted({t.strip()[:160] for t in self.page.locator("[data-testid=page-error]").all_inner_texts() if t.strip()}))   # proč tabulka chybí (chyba nástroje / fetch)
                 except Exception: pass
         self.shot(f"page-{page}")
         return out
@@ -415,10 +418,10 @@ class Gui:
             s = self.t("wf-summary"); out["stalled"] = int(s.get_attribute("data-stalled") or 0); out["missing"] = [m for m in (s.get_attribute("data-missing") or "").split(",") if m]
             out["missing_text"] = self.t("wf-missing").inner_text()[:200] if self.t("wf-missing").count() else None
             for r in self.page.locator("[data-testid^=wf-version-]").all():
-                out["rows"][r.get_attribute("data-testid")[len("wf-version-"):]] = {"registered": r.get_attribute("data-registered") == "true", "stalled": int(r.get_attribute("data-stalled") or 0), "missing": r.get_attribute("data-missing") == "true", "cells": [c.strip()[:120] for c in r.locator("td").all_inner_texts()]}
+                out["rows"][r.get_attribute("data-testid")[len("wf-version-"):]] = {"registered": r.get_attribute("data-registered") == "true", "stalled": int(r.get_attribute("data-stalled") or 0), "missing": r.get_attribute("data-missing") == "true", "cells": {c.get_attribute("data-testid")[len("wf-col-"):]: c.inner_text().strip()[:120] for c in r.locator("[data-testid^=wf-col-]").all()}}
         except Exception as e:
             out["error"] = f"{type(e).__name__}"
-            try: out["page_errors"] = sorted({t.strip()[:160] for t in self.page.locator(".err").all_inner_texts() if t.strip()})
+            try: out["page_errors"] = sorted({t.strip()[:160] for t in self.page.locator("[data-testid=page-error]").all_inner_texts() if t.strip()})
             except Exception: pass
         self.shot("wf-versions")
         return out
